@@ -1,0 +1,40 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {
+    "started": "2025-12-15T16:42:00Z",
+    "completed": "2025-12-15T17:20:00Z"
+  },
+  "mode": "initial_scan",
+  "scan_level": "exhaustive",
+  "status": "completed",
+  "project_root": "/Users/josh/Projects/gobby",
+  "output_folder": "/Users/josh/Projects/gobby/docs",
+  "completed_steps": [
+    {"step": "step_1", "status": "completed", "summary": "Classified as monolith, Python backend+cli hybrid"},
+    {"step": "step_2", "status": "completed", "summary": "Found 14 existing docs"},
+    {"step": "step_3", "status": "completed", "summary": "Tech stack: Python 3.11+, FastAPI, FastMCP, SQLite, Click"},
+    {"step": "step_4", "status": "completed", "summary": "API scan: 17 MCP tools, 6 HTTP endpoints, 5 DB tables"},
+    {"step": "step_5", "status": "completed", "summary": "Source tree: 62 src files, 11 test files, ~28k LOC"},
+    {"step": "step_6", "status": "completed", "summary": "Dev info: uv commands, pytest, ruff/mypy"},
+    {"step": "step_7", "status": "completed", "summary": "Integration: 3 CLIs, 4 LLM providers, MCP proxy"},
+    {"step": "step_8", "status": "completed", "summary": "Generated architecture.md"},
+    {"step": "step_9", "status": "completed", "summary": "Generated source-tree.md, development-guide.md, technology-stack.md"},
+    {"step": "step_10", "status": "completed", "summary": "Generated index.md"},
+    {"step": "step_11", "status": "completed", "summary": "Validation passed, 1020 lines generated"},
+    {"step": "step_12", "status": "completed", "summary": "Finalized documentation"}
+  ],
+  "findings": {
+    "project_classification": {"repository_type": "monolith", "parts_count": 1, "primary_tech": "Python/FastAPI"},
+    "technology_stack": {"language": "Python 3.11+", "framework": "FastAPI + FastMCP", "database": "SQLite", "cli": "Click"},
+    "api_contracts": {"mcp_tools": 17, "http_endpoints": 6, "database_tables": 5},
+    "source_stats": {"src_files": 62, "test_files": 11, "estimated_loc": 28000}
+  },
+  "project_types": [{"part_id": "main", "project_type_id": "backend", "secondary_type": "cli", "display_name": "Backend + CLI (Daemon)"}],
+  "outputs_generated": [
+    "architecture/index.md",
+    "architecture/architecture.md",
+    "architecture/source-tree.md",
+    "architecture/development-guide.md",
+    "architecture/technology-stack.md"
+  ]
+}
