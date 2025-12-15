@@ -1,5 +1,7 @@
 # Gobby
 
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/GobbyAI/gobby?utm_source=oss&utm_medium=github&utm_campaign=GobbyAI%2Fgobby&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 A local daemon that unifies Claude Code, Gemini CLI, and Codex through a hook interface for session tracking, with an MCP proxy featuring progressive tool discovery for efficient access to downstream servers.
 
 ## Features

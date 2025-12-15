@@ -212,4 +212,8 @@ __marimo__/
 .codex/
 .gobby/
 .agent/
+.agentvibes/
+.bmad/
+bmad-custom-modules-src/
+bmad-custom-src/
 .DS_Store

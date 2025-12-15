@@ -1,0 +1,115 @@
+# CodeRabbit Configuration
+# https://docs.coderabbit.ai/reference/configuration
+
+language: en-US
+tone_instructions: "Be constructive and specific. Focus on correctness and maintainability."
+
+early_access: true
+
+reviews:
+  profile: chill
+  auto_review:
+    enabled: true
+    drafts: false
+  high_level_summary: true
+  collapse_walkthrough: true
+  review_status: true
+
+  # Skip PRs with these keywords in title
+  ignore_title_keywords:
+    - WIP
+    - DO NOT MERGE
+    - DRAFT
+
+  path_instructions:
+    - path: "src/servers/**"
+      instructions: |
+        Focus on:
+        - Async/await correctness and potential race conditions
+        - Proper error handling and HTTP status codes
+        - Request validation and sanitization
+        - Resource cleanup (connections, file handles)
+        - FastAPI best practices
+
+    - path: "src/mcp/**"
+      instructions: |
+        Focus on:
+        - MCP protocol compliance
+        - Tool schema validation
+        - Proper async handling for MCP connections
+        - Error propagation and client feedback
+        - Connection lifecycle management
+
+    - path: "src/hooks/**"
+      instructions: |
+        Focus on:
+        - Hook event handling correctness
+        - Cross-CLI compatibility (Claude Code, Gemini, Codex)
+        - Event normalization consistency
+        - Error isolation (one hook failure shouldn't affect others)
+
+    - path: "src/storage/**"
+      instructions: |
+        Focus on:
+        - SQL injection prevention
+        - Thread-safety for SQLite connections
+        - Transaction handling and rollback
+        - Migration safety and backwards compatibility
+        - Proper connection cleanup
+
+    - path: "src/sessions/**"
+      instructions: |
+        Focus on:
+        - Session state consistency
+        - Parent-child relationship integrity
+        - Concurrent access handling
+        - Memory management for long-running sessions
+
+    - path: "src/llm/**"
+      instructions: |
+        Focus on:
+        - API key handling and security
+        - Rate limiting and retry logic
+        - Timeout handling
+        - Response parsing and error recovery
+
+    - path: "src/cli.py"
+      instructions: |
+        Focus on:
+        - User-friendly error messages
+        - Proper exit codes
+        - Click best practices
+
+    - path: "tests/**"
+      instructions: |
+        Focus on:
+        - Test coverage for edge cases
+        - Proper async test patterns
+        - Mock usage and isolation
+        - Meaningful assertions
+
+    - path: "**/*.md"
+      instructions: |
+        Focus on:
+        - Accuracy of technical information
+        - Clarity and completeness
+        - Code example correctness
+
+# Security and code quality tools
+tools:
+  ruff:
+    enabled: true
+  gitleaks:
+    enabled: true
+  checkov:
+    enabled: true
+
+# Knowledge base settings
+knowledge_base:
+  learnings:
+    scope: auto
+  issues:
+    enabled: true
+
+chat:
+  auto_reply: true
