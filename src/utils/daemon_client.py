@@ -18,7 +18,7 @@ Example:
 
     # Call HTTP API endpoint
     response = client.call_http_api("/sessions/register", method="POST", json_data={
-        "cli_key": "abc123"
+        "external_id": "abc123"
     })
     ```
 """

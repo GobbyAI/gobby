@@ -16,7 +16,7 @@ class Session:
     """Session data model."""
 
     id: str
-    cli_key: str
+    external_id: str
     machine_id: str
     source: str
     project_id: str  # Required - sessions must belong to a project
@@ -35,7 +35,7 @@ class Session:
         """Create Session from database row."""
         return cls(
             id=row["id"],
-            cli_key=row["cli_key"],
+            external_id=row["external_id"],
             machine_id=row["machine_id"],
             source=row["source"],
             project_id=row["project_id"],
@@ -54,7 +54,7 @@ class Session:
         """Convert to dictionary."""
         return {
             "id": self.id,
-            "cli_key": self.cli_key,
+            "external_id": self.external_id,
             "machine_id": self.machine_id,
             "source": self.source,
             "project_id": self.project_id,
@@ -79,7 +79,7 @@ class LocalSessionManager:
 
     def register(
         self,
-        cli_key: str,
+        external_id: str,
         machine_id: str,
         source: str,
         project_id: str,
@@ -91,10 +91,10 @@ class LocalSessionManager:
         """
         Register a new session or update existing one.
 
-        Uses upsert to handle duplicate cli_key/machine_id/source combinations.
+        Uses upsert to handle duplicate external_id/machine_id/source combinations.
 
         Args:
-            cli_key: CLI session identifier
+            external_id: External session identifier
             machine_id: Machine identifier
             source: CLI source (claude_code, codex, gemini)
             project_id: Project ID (required - sessions must belong to a project)
@@ -113,12 +113,12 @@ class LocalSessionManager:
         self.db.execute(
             """
             INSERT INTO sessions (
-                id, cli_key, machine_id, source, project_id, title,
+                id, external_id, machine_id, source, project_id, title,
                 jsonl_path, git_branch, parent_session_id,
                 status, created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
-            ON CONFLICT(cli_key, machine_id, source) DO UPDATE SET
+            ON CONFLICT(external_id, machine_id, source) DO UPDATE SET
                 project_id = COALESCE(excluded.project_id, project_id),
                 title = COALESCE(excluded.title, title),
                 jsonl_path = COALESCE(excluded.jsonl_path, jsonl_path),
@@ -128,7 +128,7 @@ class LocalSessionManager:
             """,
             (
                 session_id,
-                cli_key,
+                external_id,
                 machine_id,
                 source,
                 project_id,
@@ -142,7 +142,7 @@ class LocalSessionManager:
         )
 
         # Return the session (either newly created or existing)
-        return self.find_current(cli_key, machine_id, source)  # type: ignore
+        return self.find_current(external_id, machine_id, source)  # type: ignore
 
     def get(self, session_id: str) -> Session | None:
         """Get session by ID."""
@@ -151,17 +151,17 @@ class LocalSessionManager:
 
     def find_current(
         self,
-        cli_key: str,
+        external_id: str,
         machine_id: str,
         source: str,
     ) -> Session | None:
-        """Find current session by cli_key, machine_id, and source."""
+        """Find current session by external_id, machine_id, and source."""
         row = self.db.fetchone(
             """
             SELECT * FROM sessions
-            WHERE cli_key = ? AND machine_id = ? AND source = ?
+            WHERE external_id = ? AND machine_id = ? AND source = ?
             """,
-            (cli_key, machine_id, source),
+            (external_id, machine_id, source),
         )
         return Session.from_row(row) if row else None
 

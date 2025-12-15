@@ -1,6 +1,5 @@
 """Tests for the LocalSessionManager storage layer."""
 
-
 from gobby.storage.sessions import LocalSessionManager, Session
 
 
@@ -14,20 +13,18 @@ class TestSession:
     ):
         """Test creating Session from database row."""
         session = session_manager.register(
-            cli_key="test-cli-key",
+            external_id="test-cli-key",
             machine_id="test-machine",
             source="claude",
             project_id=sample_project["id"],
         )
 
-        row = session_manager.db.fetchone(
-            "SELECT * FROM sessions WHERE id = ?", (session.id,)
-        )
+        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session.id,))
         assert row is not None
 
         session_from_row = Session.from_row(row)
         assert session_from_row.id == session.id
-        assert session_from_row.cli_key == "test-cli-key"
+        assert session_from_row.external_id == "test-cli-key"
         assert session_from_row.source == "claude"
 
     def test_to_dict(
@@ -37,7 +34,7 @@ class TestSession:
     ):
         """Test converting Session to dictionary."""
         session = session_manager.register(
-            cli_key="dict-test",
+            external_id="dict-test",
             machine_id="machine-1",
             source="gemini",
             project_id=sample_project["id"],
@@ -46,7 +43,7 @@ class TestSession:
 
         d = session.to_dict()
         assert d["id"] == session.id
-        assert d["cli_key"] == "dict-test"
+        assert d["external_id"] == "dict-test"
         assert d["machine_id"] == "machine-1"
         assert d["source"] == "gemini"
         assert d["title"] == "Test Session"
@@ -63,7 +60,7 @@ class TestLocalSessionManager:
     ):
         """Test registering a new session."""
         session = session_manager.register(
-            cli_key="session-123",
+            external_id="session-123",
             machine_id="machine-abc",
             source="claude",
             project_id=sample_project["id"],
@@ -73,7 +70,7 @@ class TestLocalSessionManager:
         )
 
         assert session.id is not None
-        assert session.cli_key == "session-123"
+        assert session.external_id == "session-123"
         assert session.machine_id == "machine-abc"
         assert session.source == "claude"
         assert session.project_id == sample_project["id"]
@@ -90,7 +87,7 @@ class TestLocalSessionManager:
         """Test that register updates existing session on conflict."""
         # First registration
         session1 = session_manager.register(
-            cli_key="unique-key",
+            external_id="unique-key",
             machine_id="machine-1",
             source="claude",
             project_id=sample_project["id"],
@@ -99,7 +96,7 @@ class TestLocalSessionManager:
 
         # Second registration with same key combo
         session2 = session_manager.register(
-            cli_key="unique-key",
+            external_id="unique-key",
             machine_id="machine-1",
             source="claude",
             project_id=sample_project["id"],
@@ -117,7 +114,7 @@ class TestLocalSessionManager:
     ):
         """Test getting a session by ID."""
         created = session_manager.register(
-            cli_key="get-test",
+            external_id="get-test",
             machine_id="machine",
             source="codex",
             project_id=sample_project["id"],
@@ -126,7 +123,7 @@ class TestLocalSessionManager:
         retrieved = session_manager.get(created.id)
         assert retrieved is not None
         assert retrieved.id == created.id
-        assert retrieved.cli_key == "get-test"
+        assert retrieved.external_id == "get-test"
 
     def test_get_nonexistent(self, session_manager: LocalSessionManager):
         """Test getting nonexistent session returns None."""
@@ -138,16 +135,16 @@ class TestLocalSessionManager:
         session_manager: LocalSessionManager,
         sample_project: dict,
     ):
-        """Test finding current session by cli_key, machine_id, source."""
+        """Test finding current session by external_id, machine_id, source."""
         session = session_manager.register(
-            cli_key="findable",
+            external_id="findable",
             machine_id="my-machine",
             source="claude",
             project_id=sample_project["id"],
         )
 
         found = session_manager.find_current(
-            cli_key="findable",
+            external_id="findable",
             machine_id="my-machine",
             source="claude",
         )
@@ -158,7 +155,7 @@ class TestLocalSessionManager:
     def test_find_current_not_found(self, session_manager: LocalSessionManager):
         """Test find_current returns None when not found."""
         result = session_manager.find_current(
-            cli_key="nonexistent",
+            external_id="nonexistent",
             machine_id="machine",
             source="claude",
         )
@@ -172,7 +169,7 @@ class TestLocalSessionManager:
         """Test finding parent session for handoff."""
         # Create a session marked as handoff_ready
         session = session_manager.register(
-            cli_key="parent-session",
+            external_id="parent-session",
             machine_id="handoff-machine",
             source="claude",
             project_id=sample_project["id"],
@@ -197,7 +194,7 @@ class TestLocalSessionManager:
         """Test find_parent returns None when no handoff_ready session."""
         # Create an active session (not handoff_ready)
         session_manager.register(
-            cli_key="active-session",
+            external_id="active-session",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
@@ -217,7 +214,7 @@ class TestLocalSessionManager:
     ):
         """Test updating session status."""
         session = session_manager.register(
-            cli_key="status-test",
+            external_id="status-test",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
@@ -235,7 +232,7 @@ class TestLocalSessionManager:
     ):
         """Test updating session title."""
         session = session_manager.register(
-            cli_key="title-test",
+            external_id="title-test",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
@@ -252,7 +249,7 @@ class TestLocalSessionManager:
     ):
         """Test updating session summary."""
         session = session_manager.register(
-            cli_key="summary-test",
+            external_id="summary-test",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
@@ -275,13 +272,13 @@ class TestLocalSessionManager:
     ):
         """Test listing sessions."""
         session_manager.register(
-            cli_key="list-1",
+            external_id="list-1",
             machine_id="m1",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
-            cli_key="list-2",
+            external_id="list-2",
             machine_id="m2",
             source="gemini",
             project_id=sample_project["id"],
@@ -297,13 +294,13 @@ class TestLocalSessionManager:
     ):
         """Test listing sessions with filters."""
         s1 = session_manager.register(
-            cli_key="filter-1",
+            external_id="filter-1",
             machine_id="m1",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
-            cli_key="filter-2",
+            external_id="filter-2",
             machine_id="m2",
             source="gemini",
             project_id=sample_project["id"],
@@ -328,7 +325,7 @@ class TestLocalSessionManager:
         """Test listing sessions with limit."""
         for i in range(5):
             session_manager.register(
-                cli_key=f"limit-{i}",
+                external_id=f"limit-{i}",
                 machine_id=f"m{i}",
                 source="claude",
                 project_id=sample_project["id"],
@@ -344,7 +341,7 @@ class TestLocalSessionManager:
     ):
         """Test deleting a session."""
         session = session_manager.register(
-            cli_key="delete-me",
+            external_id="delete-me",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],

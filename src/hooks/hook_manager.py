@@ -22,7 +22,7 @@ Example:
 
     result = manager.execute(
         hook_type="session-start",
-        input_data={"cli_key": "abc123", ...}
+        input_data={"external_id": "abc123", ...}
     )
     ```
 """
@@ -332,42 +332,42 @@ class HookManager:
             )
 
         # Look up platform session_id from cli_key (event.session_id is the cli_key)
-        cli_key = event.session_id
+        external_id = event.session_id
         platform_session_id = None
 
-        if cli_key:
+        if external_id:
             # Check SessionManager's cache first
-            platform_session_id = self._session_manager.get_session_id(cli_key)
+            platform_session_id = self._session_manager.get_session_id(external_id)
 
             # If not in mapping and not session-start, try to query database
             if not platform_session_id and event.event_type != HookEventType.SESSION_START:
                 with self._lookup_lock:
                     # Double check in case another thread finished lookup
-                    platform_session_id = self._session_manager.get_session_id(cli_key)
+                    platform_session_id = self._session_manager.get_session_id(external_id)
 
                     if not platform_session_id:
                         self.logger.debug(
-                            f"Session not in mapping, querying database for cli_key={cli_key}"
+                            f"Session not in mapping, querying database for external_id={external_id}"
                         )
                         # Pass source for multi-CLI support
                         machine_id = event.machine_id or self.get_machine_id()
                         platform_session_id = self._session_manager.lookup_session_id(
-                            cli_key, source=event.source.value, machine_id=machine_id
+                            external_id, source=event.source.value, machine_id=machine_id
                         )
                         if platform_session_id:
                             self.logger.debug(
-                                f"Found session_id {platform_session_id} for cli_key {cli_key}"
+                                f"Found session_id {platform_session_id} for external_id {external_id}"
                             )
                         else:
                             # Auto-register session if not found
                             self.logger.debug(
-                                f"Session not found for cli_key={cli_key}, auto-registering"
+                                f"Session not found for external_id={external_id}, auto-registering"
                             )
                             # Resolve project_id from cwd
                             cwd = event.data.get("cwd")
                             project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
                             platform_session_id = self._session_manager.register_session(
-                                cli_key=cli_key,
+                                external_id=external_id,
                                 machine_id=machine_id,
                                 project_id=project_id,
                                 parent_session_id=None,
@@ -491,7 +491,7 @@ class HookManager:
         Returns:
             HookResponse with restored context in the context field
         """
-        cli_key = event.session_id
+        external_id = event.session_id
         input_data = event.data
         transcript_path = input_data.get("transcript_path")
         trigger_source = input_data.get("source", "unknown")  # startup/clear/resume trigger
@@ -502,7 +502,7 @@ class HookManager:
         project_id = self._resolve_project_id(input_data.get("project_id"), cwd)
 
         # Get session_id early for logging
-        session_id_check = self._session_manager.get_session_id(cli_key)
+        session_id_check = self._session_manager.get_session_id(external_id)
 
         if session_id_check:
             self.logger.debug(
@@ -545,7 +545,7 @@ class HookManager:
 
         # Step 3: Register new session (pass source for multi-CLI support)
         session_id = self._session_manager.register_session(
-            cli_key=cli_key,
+            external_id=external_id,
             machine_id=machine_id,
             project_id=project_id,
             parent_session_id=parent_session_id,
@@ -562,7 +562,7 @@ class HookManager:
         if transcript_path:
             try:
                 with self._registered_sessions_lock:
-                    self._registered_sessions.add(cli_key)
+                    self._registered_sessions.add(external_id)
             except Exception as e:
                 self.logger.error(f"Failed to setup session tracking: {e}", exc_info=True)
 
@@ -586,7 +586,7 @@ class HookManager:
                 f"⏺ Context restored from previous session.\n"
                 f"  Session ID: {session_id}\n"
                 f"  Parent ID: {parent_session_id}\n"
-                f"  Claude Code ID: {cli_key}"
+                f"  Claude Code ID: {external_id}"
             )
 
         return HookResponse(
@@ -597,7 +597,7 @@ class HookManager:
                 "session_id": session_id,
                 "machine_id": machine_id,
                 "parent_session_id": parent_session_id,
-                "cli_key": cli_key,
+                "external_id": external_id,
             },
         )
 
@@ -613,7 +613,7 @@ class HookManager:
         Returns:
             HookResponse (always allow)
         """
-        cli_key = event.session_id
+        external_id = event.session_id
         input_data = event.data
         transcript_path = input_data.get("transcript_path")
         session_id = event.metadata.get("_platform_session_id")
@@ -621,14 +621,16 @@ class HookManager:
         if session_id:
             self.logger.debug(f"🔴 Session end: session {session_id}")
         else:
-            self.logger.warning(f"🔴 Session end: session_id not found for cli_key={cli_key}")
+            self.logger.warning(
+                f"🔴 Session end: session_id not found for external_id={external_id}"
+            )
 
         # If not in mapping, query database
-        if not session_id and cli_key:
-            self.logger.debug(f"cli_key {cli_key} not in mapping, querying database")
+        if not session_id and external_id:
+            self.logger.debug(f"external_id {external_id} not in mapping, querying database")
             machine_id = event.machine_id or self.get_machine_id()
             session_id = self._session_manager.lookup_session_id(
-                cli_key, source=event.source.value, machine_id=machine_id
+                external_id, source=event.source.value, machine_id=machine_id
             )
 
         if session_id and transcript_path:
@@ -636,7 +638,7 @@ class HookManager:
             try:
                 summary_result = self._summary_generator.generate_session_summary(
                     session_id=session_id,
-                    input_data={"session_id": cli_key, "transcript_path": transcript_path},
+                    input_data={"session_id": external_id, "transcript_path": transcript_path},
                 )
                 if summary_result.get("status") == "success":
                     summary_length = summary_result.get("summary_length", 0)
@@ -665,7 +667,7 @@ class HookManager:
         """
         input_data = event.data
         prompt = input_data.get("prompt", "")
-        cli_key = event.session_id
+        external_id = event.session_id
         transcript_path = input_data.get("transcript_path")
         session_id = event.metadata.get("_platform_session_id")
 
@@ -674,12 +676,12 @@ class HookManager:
             self.logger.debug(f"   Prompt: {prompt[:100]}...")
 
             # Synthesize title if null
-            if cli_key:
+            if external_id:
                 try:
                     machine_id = event.machine_id or self.get_machine_id()
                     title_result = self._summary_generator.synthesize_title(
                         session_id=session_id,
-                        cli_key=cli_key,
+                        external_id=external_id,
                         user_prompt=prompt,
                         source=event.source.value,
                         machine_id=machine_id,
@@ -703,7 +705,7 @@ class HookManager:
                 try:
                     summary_result = self._summary_generator.generate_session_summary(
                         session_id=session_id,
-                        input_data={"session_id": cli_key, "transcript_path": transcript_path},
+                        input_data={"session_id": external_id, "transcript_path": transcript_path},
                     )
                     if summary_result.get("status") == "success":
                         self.logger.debug("Session summary generated for /clear handoff")
@@ -727,7 +729,7 @@ class HookManager:
         """
         session_id = event.metadata.get("_platform_session_id")
         cli_source = event.source.value
-        cli_key = event.session_id
+        external_id = event.session_id
 
         if session_id:
             self.logger.debug(f"🛑 Agent stop: session {session_id}, cli={cli_source}")
@@ -739,12 +741,12 @@ class HookManager:
             # Synthesize title on first event if prompt is available (for Codex)
             is_first_event = event.data.get("is_first_event", False)
             prompt = event.data.get("prompt")
-            if is_first_event and prompt and cli_key:
+            if is_first_event and prompt and external_id:
                 try:
                     machine_id = event.machine_id or self.get_machine_id()
                     self._summary_generator.synthesize_title(
                         session_id=session_id,
-                        cli_key=cli_key,
+                        external_id=external_id,
                         user_prompt=prompt,
                         source=cli_source,
                         machine_id=machine_id,

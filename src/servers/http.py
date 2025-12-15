@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 class SessionRegisterRequest(BaseModel):
     """Request model for session registration endpoint."""
 
-    cli_key: str = Field(..., description="Session key from Claude Code")
+    external_id: str = Field(
+        ..., description="External session identifier (e.g., from Claude Code)"
+    )
     machine_id: str | None = Field(None, description="Unique machine identifier")
 
     # Session metadata
@@ -550,7 +552,7 @@ class HTTPServer:
 
                 # Register session in local storage
                 session = self.session_manager.register(
-                    cli_key=request_data.cli_key,
+                    external_id=request_data.external_id,
                     machine_id=machine_id,
                     source=request_data.source or "Claude Code",
                     project_id=project_id,
@@ -562,7 +564,7 @@ class HTTPServer:
 
                 return {
                     "status": "registered",
-                    "cli_key": request_data.cli_key,
+                    "external_id": request_data.external_id,
                     "id": session.id,
                     "machine_id": machine_id,
                 }
@@ -620,24 +622,24 @@ class HTTPServer:
             """
             Find current active session by composite key.
 
-            Uses composite key: cli_key, machine_id, source
+            Uses composite key: external_id, machine_id, source
             """
             try:
                 if self.session_manager is None:
                     raise HTTPException(status_code=503, detail="Session manager not available")
 
                 body = await request.json()
-                cli_key = body.get("cli_key")
+                external_id = body.get("external_id")
                 machine_id = body.get("machine_id")
                 source = body.get("source")
 
-                if not cli_key or not machine_id or not source:
+                if not external_id or not machine_id or not source:
                     raise HTTPException(
                         status_code=400,
-                        detail="Required fields: cli_key, machine_id, source",
+                        detail="Required fields: external_id, machine_id, source",
                     )
 
-                session = self.session_manager.find_current(cli_key, machine_id, source)
+                session = self.session_manager.find_current(external_id, machine_id, source)
 
                 if session is None:
                     return {"session": None}

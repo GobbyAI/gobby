@@ -17,19 +17,21 @@ class TestAddMcpServer:
     async def test_add_http_server_success(self):
         """Test successfully adding an HTTP server."""
         mock_manager = AsyncMock()
-        mock_manager.add_server = AsyncMock(return_value={
-            "success": True,
-            "name": "test-server",
-            "connected": True,
-            "full_tool_schemas": []
-        })
+        mock_manager.add_server = AsyncMock(
+            return_value={
+                "success": True,
+                "name": "test-server",
+                "connected": True,
+                "full_tool_schemas": [],
+            }
+        )
 
         result = await add_mcp_server(
             mcp_manager=mock_manager,
             name="Test-Server",  # Should be lowercased
             transport="http",
             project_id="project-123",
-            url="http://localhost:8080/mcp"
+            url="http://localhost:8080/mcp",
         )
 
         assert result["success"] is True
@@ -40,12 +42,14 @@ class TestAddMcpServer:
     async def test_add_stdio_server_success(self):
         """Test successfully adding a stdio server."""
         mock_manager = AsyncMock()
-        mock_manager.add_server = AsyncMock(return_value={
-            "success": True,
-            "name": "context7",
-            "connected": True,
-            "full_tool_schemas": []
-        })
+        mock_manager.add_server = AsyncMock(
+            return_value={
+                "success": True,
+                "name": "context7",
+                "connected": True,
+                "full_tool_schemas": [],
+            }
+        )
 
         result = await add_mcp_server(
             mcp_manager=mock_manager,
@@ -53,7 +57,7 @@ class TestAddMcpServer:
             transport="stdio",
             project_id="project-456",
             command="uvx",
-            args=["context7-mcp"]
+            args=["context7-mcp"],
         )
 
         assert result["success"] is True
@@ -62,18 +66,16 @@ class TestAddMcpServer:
     async def test_add_server_normalizes_name(self):
         """Test that server name is normalized to lowercase."""
         mock_manager = AsyncMock()
-        mock_manager.add_server = AsyncMock(return_value={
-            "success": True,
-            "name": "myserver",
-            "full_tool_schemas": []
-        })
+        mock_manager.add_server = AsyncMock(
+            return_value={"success": True, "name": "myserver", "full_tool_schemas": []}
+        )
 
         await add_mcp_server(
             mcp_manager=mock_manager,
             name="MyServer",
             transport="http",
             project_id="project-789",
-            url="http://localhost:8080"
+            url="http://localhost:8080",
         )
 
         # Verify the config was created with lowercase name
@@ -85,17 +87,16 @@ class TestAddMcpServer:
     async def test_add_server_failure(self):
         """Test handling server add failure."""
         mock_manager = AsyncMock()
-        mock_manager.add_server = AsyncMock(return_value={
-            "success": False,
-            "error": "Connection failed"
-        })
+        mock_manager.add_server = AsyncMock(
+            return_value={"success": False, "error": "Connection failed"}
+        )
 
         result = await add_mcp_server(
             mcp_manager=mock_manager,
             name="failing-server",
             transport="http",
             project_id="project-123",
-            url="http://localhost:9999"
+            url="http://localhost:9999",
         )
 
         assert result["success"] is False
@@ -111,7 +112,7 @@ class TestAddMcpServer:
             name="error-server",
             transport="http",
             project_id="project-123",
-            url="http://localhost:8080"
+            url="http://localhost:8080",
         )
 
         assert result["success"] is False
@@ -122,13 +123,17 @@ class TestAddMcpServer:
     async def test_add_server_generates_description(self):
         """Test that description is generated if not provided."""
         mock_manager = AsyncMock()
-        mock_manager.add_server = AsyncMock(return_value={
-            "success": True,
-            "name": "test-server",
-            "full_tool_schemas": [{"name": "tool1", "description": "A tool"}]
-        })
+        mock_manager.add_server = AsyncMock(
+            return_value={
+                "success": True,
+                "name": "test-server",
+                "full_tool_schemas": [{"name": "tool1", "description": "A tool"}],
+            }
+        )
 
-        with patch('gobby.mcp_proxy.actions.generate_server_description', new_callable=AsyncMock) as mock_gen:
+        with patch(
+            "gobby.mcp_proxy.actions.generate_server_description", new_callable=AsyncMock
+        ) as mock_gen:
             mock_gen.return_value = "Generated description"
 
             result = await add_mcp_server(
@@ -136,7 +141,7 @@ class TestAddMcpServer:
                 name="test-server",
                 transport="http",
                 project_id="project-123",
-                url="http://localhost:8080"
+                url="http://localhost:8080",
             )
 
         # Description generation should be attempted
@@ -146,24 +151,28 @@ class TestAddMcpServer:
     async def test_add_server_with_custom_description(self):
         """Test adding server with custom description skips generation."""
         mock_manager = AsyncMock()
-        mock_manager.add_server = AsyncMock(return_value={
-            "success": True,
-            "name": "test-server",
-            "full_tool_schemas": []
-        })
+        mock_manager.add_server = AsyncMock(
+            return_value={
+                "success": True,
+                "name": "test-server",
+                "full_tool_schemas": [{"name": "tool1", "description": "A tool"}],
+            }
+        )
 
-        with patch('gobby.mcp_proxy.actions.generate_server_description', new_callable=AsyncMock) as mock_gen:
+        with patch(
+            "gobby.mcp_proxy.actions.generate_server_description", new_callable=AsyncMock
+        ) as mock_gen:
             result = await add_mcp_server(
                 mcp_manager=mock_manager,
                 name="test-server",
                 transport="http",
                 project_id="project-123",
                 url="http://localhost:8080",
-                description="My custom description"
+                description="My custom description",
             )
 
         # Should not generate description since one was provided
-        # (or full_tool_schemas is empty)
+        mock_gen.assert_not_called()
 
 
 class TestRemoveMcpServer:
@@ -173,14 +182,10 @@ class TestRemoveMcpServer:
     async def test_remove_server_success(self):
         """Test successfully removing a server."""
         mock_manager = AsyncMock()
-        mock_manager.remove_server = AsyncMock(return_value={
-            "success": True
-        })
+        mock_manager.remove_server = AsyncMock(return_value={"success": True})
 
         result = await remove_mcp_server(
-            mcp_manager=mock_manager,
-            name="test-server",
-            project_id="project-123"
+            mcp_manager=mock_manager, name="test-server", project_id="project-123"
         )
 
         assert result["success"] is True
@@ -190,15 +195,12 @@ class TestRemoveMcpServer:
     async def test_remove_server_not_found(self):
         """Test removing non-existent server."""
         mock_manager = AsyncMock()
-        mock_manager.remove_server = AsyncMock(return_value={
-            "success": False,
-            "error": "Server not found"
-        })
+        mock_manager.remove_server = AsyncMock(
+            return_value={"success": False, "error": "Server not found"}
+        )
 
         result = await remove_mcp_server(
-            mcp_manager=mock_manager,
-            name="nonexistent",
-            project_id="project-123"
+            mcp_manager=mock_manager, name="nonexistent", project_id="project-123"
         )
 
         assert result["success"] is False
@@ -210,9 +212,7 @@ class TestRemoveMcpServer:
         mock_manager.remove_server = AsyncMock(side_effect=Exception("Database error"))
 
         result = await remove_mcp_server(
-            mcp_manager=mock_manager,
-            name="error-server",
-            project_id="project-123"
+            mcp_manager=mock_manager, name="error-server", project_id="project-123"
         )
 
         assert result["success"] is False

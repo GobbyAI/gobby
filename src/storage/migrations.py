@@ -173,6 +173,40 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         PRAGMA foreign_keys = ON;
         """,
     ),
+    (
+        8,
+        "Rename cli_key to external_id in sessions table",
+        """
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE sessions_new (
+            id TEXT PRIMARY KEY,
+            external_id TEXT NOT NULL,
+            machine_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            title TEXT,
+            status TEXT DEFAULT 'active',
+            jsonl_path TEXT,
+            summary_path TEXT,
+            summary_markdown TEXT,
+            git_branch TEXT,
+            parent_session_id TEXT REFERENCES sessions(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO sessions_new (id, external_id, machine_id, source, project_id, title, status, jsonl_path, summary_path, summary_markdown, git_branch, parent_session_id, created_at, updated_at)
+        SELECT id, cli_key, machine_id, source, project_id, title, status, jsonl_path, summary_path, summary_markdown, git_branch, parent_session_id, created_at, updated_at FROM sessions;
+        DROP TABLE sessions;
+        ALTER TABLE sessions_new RENAME TO sessions;
+        CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_machine_id ON sessions(machine_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
+        CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+        CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_unique ON sessions(external_id, machine_id, source);
+        PRAGMA foreign_keys = ON;
+        """,
+    ),
 ]
 
 

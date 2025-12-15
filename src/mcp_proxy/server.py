@@ -1456,9 +1456,9 @@ If no tools are relevant, say so clearly."""
 
                             machine_id = get_machine_id()
 
-                            # Register session with thread_id as cli_key
+                            # Register session with thread_id as external_id
                             session_id, _ = hook_manager._session_manager.register_session(
-                                cli_key=thread.id,
+                                external_id=thread.id,
                                 machine_id=machine_id,
                                 cwd=working_dir,
                             )

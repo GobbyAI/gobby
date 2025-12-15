@@ -249,12 +249,12 @@ class TestMCPClientManagerInit:
 
         manager = MCPClientManager(
             server_configs=configs,
-            cli_key="test-cli-key",
+            external_id="test-cli-key",
             project_path="/path/to/project",
             project_id="project-uuid",
         )
 
-        assert manager.cli_key == "test-cli-key"
+        assert manager.external_id == "test-cli-key"
         assert manager.project_path == "/path/to/project"
         assert manager.project_id == "project-uuid"
 

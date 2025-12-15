@@ -43,7 +43,7 @@ def build_session_context(
 def build_restored_context(
     session_id: str,
     parent_session_id: str,
-    cli_key: str,
+    external_id: str,
     summary_markdown: str,
 ) -> dict[str, str]:
     """Build context restoration message for session handoff.
@@ -51,7 +51,7 @@ def build_restored_context(
     Args:
         session_id: New session's database ID
         parent_session_id: Previous session's database ID
-        cli_key: Claude Code session identifier
+        external_id: Claude Code session identifier
         summary_markdown: Restored session summary
 
     Returns:
@@ -60,7 +60,7 @@ def build_restored_context(
     system_message = f"""⏺ Context restored from the previous session.
   Session ID: {session_id}
   Parent ID: {parent_session_id}
-  Claude Code ID: {cli_key}"""
+  Claude Code ID: {external_id}"""
 
     additional_context = f"""## Previous Session Context
 
@@ -79,7 +79,7 @@ def inject_context_into_response(
     machine_id: str,
     parent_session_id: str | None = None,
     restored_summary: str | None = None,
-    cli_key: str | None = None,
+    external_id: str | None = None,
 ) -> dict[str, Any]:
     """Inject session context into a hook response.
 
@@ -94,7 +94,7 @@ def inject_context_into_response(
         machine_id: Machine identifier
         parent_session_id: Optional parent session ID if this is a handoff
         restored_summary: Optional restored session summary markdown
-        cli_key: Optional Claude Code session ID (required if restored_summary provided)
+        external_id: Optional Claude Code session ID (required if restored_summary provided)
 
     Returns:
         Modified response dict with context injected
@@ -108,11 +108,11 @@ def inject_context_into_response(
     )
 
     # If we have restored context, add it
-    if restored_summary and cli_key and parent_session_id:
+    if restored_summary and external_id and parent_session_id:
         restored = build_restored_context(
             session_id=session_id,
             parent_session_id=parent_session_id,
-            cli_key=cli_key,
+            external_id=external_id,
             summary_markdown=restored_summary,
         )
 

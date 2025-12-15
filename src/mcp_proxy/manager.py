@@ -597,7 +597,7 @@ class MCPClientManager:
     def __init__(
         self,
         server_configs: list[MCPServerConfig] | None = None,
-        cli_key: str = "",
+        external_id: str = "",
         project_path: str | None = None,
         project_id: str | None = None,
         token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None = None,
@@ -608,7 +608,7 @@ class MCPClientManager:
 
         Args:
             server_configs: List of MCP server configurations (optional if mcp_db_manager provided)
-            cli_key: Unique session identifier
+            external_id: Unique session identifier
             project_path: Project root path (optional)
             project_id: Project ID for scoped server filtering (optional).
                        When set, loads project-specific servers + global servers,
@@ -652,7 +652,7 @@ class MCPClientManager:
         else:
             self.server_configs = server_configs
 
-        self.cli_key = cli_key
+        self.external_id = external_id
         self.project_path = project_path
         self.token_refresh_callback = token_refresh_callback
         self.mcp_db_manager = mcp_db_manager

@@ -54,9 +54,16 @@ class TestHookTypeEnum:
     def test_all_hook_types_defined(self):
         """Test that all expected hook types are defined."""
         expected_types = {
-            "SESSION_START", "SESSION_END", "USER_PROMPT_SUBMIT",
-            "PRE_TOOL_USE", "POST_TOOL_USE", "PRE_COMPACT",
-            "STOP", "SUBAGENT_START", "SUBAGENT_STOP", "NOTIFICATION"
+            "SESSION_START",
+            "SESSION_END",
+            "USER_PROMPT_SUBMIT",
+            "PRE_TOOL_USE",
+            "POST_TOOL_USE",
+            "PRE_COMPACT",
+            "STOP",
+            "SUBAGENT_START",
+            "SUBAGENT_STOP",
+            "NOTIFICATION",
         }
         actual_types = {t.name for t in HookType}
         assert actual_types == expected_types
@@ -157,35 +164,34 @@ class TestSessionStartInput:
     def test_required_fields(self):
         """Test that required fields are enforced."""
         with pytest.raises(ValidationError):
-            SessionStartInput()  # Missing cli_key and transcript_path
+            SessionStartInput()  # Missing external_id and transcript_path
 
     def test_valid_input(self):
         """Test creating valid session start input."""
         input_data = SessionStartInput(
-            cli_key="test-key-123",
-            transcript_path="/path/to/transcript.jsonl"
+            external_id="test-key-123", transcript_path="/path/to/transcript.jsonl"
         )
-        assert input_data.cli_key == "test-key-123"
+        assert input_data.external_id == "test-key-123"
         assert input_data.transcript_path == "/path/to/transcript.jsonl"
         assert input_data.source == SessionStartSource.STARTUP  # Default
 
     def test_all_fields(self):
         """Test with all fields specified."""
         input_data = SessionStartInput(
-            cli_key="key",
+            external_id="key",
             transcript_path="/path",
             source=SessionStartSource.RESUME,
             machine_id="machine-123",
-            cwd="/home/user/project"
+            cwd="/home/user/project",
         )
         assert input_data.source == SessionStartSource.RESUME
         assert input_data.machine_id == "machine-123"
         assert input_data.cwd == "/home/user/project"
 
-    def test_empty_cli_key_rejected(self):
-        """Test that empty cli_key is rejected."""
+    def test_empty_external_id_rejected(self):
+        """Test that empty external_id is rejected."""
         with pytest.raises(ValidationError):
-            SessionStartInput(cli_key="", transcript_path="/path")
+            SessionStartInput(external_id="", transcript_path="/path")
 
 
 class TestSessionStartOutput:
@@ -207,18 +213,18 @@ class TestSessionEndInput:
     """Tests for SessionEndInput model."""
 
     def test_required_fields(self):
-        """Test required cli_key field."""
+        """Test required external_id field."""
         with pytest.raises(ValidationError):
             SessionEndInput()
 
     def test_default_reason(self):
         """Test default reason is OTHER."""
-        input_data = SessionEndInput(cli_key="key")
+        input_data = SessionEndInput(external_id="key")
         assert input_data.reason == SessionEndReason.OTHER
 
     def test_custom_reason(self):
         """Test custom reason."""
-        input_data = SessionEndInput(cli_key="key", reason=SessionEndReason.LOGOUT)
+        input_data = SessionEndInput(external_id="key", reason=SessionEndReason.LOGOUT)
         assert input_data.reason == SessionEndReason.LOGOUT
 
 
@@ -228,14 +234,11 @@ class TestUserPromptSubmitInput:
     def test_required_fields(self):
         """Test required fields."""
         with pytest.raises(ValidationError):
-            UserPromptSubmitInput(cli_key="key")  # Missing prompt_text
+            UserPromptSubmitInput(external_id="key")  # Missing prompt_text
 
     def test_valid_input(self):
         """Test valid input."""
-        input_data = UserPromptSubmitInput(
-            cli_key="key",
-            prompt_text="What is the weather?"
-        )
+        input_data = UserPromptSubmitInput(external_id="key", prompt_text="What is the weather?")
         assert input_data.prompt_text == "What is the weather?"
         assert input_data.estimated_tokens is None
         assert input_data.metadata == {}
@@ -243,9 +246,7 @@ class TestUserPromptSubmitInput:
     def test_with_metadata(self):
         """Test with metadata."""
         input_data = UserPromptSubmitInput(
-            cli_key="key",
-            prompt_text="test",
-            metadata={"source": "web", "user_id": 123}
+            external_id="key", prompt_text="test", metadata={"source": "web", "user_id": 123}
         )
         assert input_data.metadata["source"] == "web"
 
@@ -261,10 +262,7 @@ class TestUserPromptSubmitOutput:
 
     def test_blocked_output(self):
         """Test blocked output."""
-        output = UserPromptSubmitOutput(
-            allowed=False,
-            block_message="This prompt violates policy"
-        )
+        output = UserPromptSubmitOutput(allowed=False, block_message="This prompt violates policy")
         assert output.allowed is False
         assert output.block_message == "This prompt violates policy"
 
@@ -275,23 +273,18 @@ class TestPreToolUseInput:
     def test_required_fields(self):
         """Test required fields."""
         with pytest.raises(ValidationError):
-            PreToolUseInput(cli_key="key")  # Missing tool_name
+            PreToolUseInput(external_id="key")  # Missing tool_name
 
     def test_valid_input(self):
         """Test valid input."""
-        input_data = PreToolUseInput(
-            cli_key="key",
-            tool_name="Bash"
-        )
+        input_data = PreToolUseInput(external_id="key", tool_name="Bash")
         assert input_data.tool_name == "Bash"
         assert input_data.tool_input == {}
 
     def test_with_tool_input(self):
         """Test with tool input parameters."""
         input_data = PreToolUseInput(
-            cli_key="key",
-            tool_name="Read",
-            tool_input={"file_path": "/etc/passwd"}
+            external_id="key", tool_name="Read", tool_input={"file_path": "/etc/passwd"}
         )
         assert input_data.tool_input["file_path"] == "/etc/passwd"
 
@@ -314,9 +307,7 @@ class TestContextItem:
     def test_with_metadata(self):
         """Test with metadata."""
         item = ContextItem(
-            type="memory",
-            content="Previous conversation about X",
-            metadata={"relevance": 0.95}
+            type="memory", content="Previous conversation about X", metadata={"relevance": 0.95}
         )
         assert item.metadata["relevance"] == 0.95
 
@@ -331,10 +322,12 @@ class TestPreToolUseOutput:
 
     def test_with_items(self):
         """Test with context items."""
-        output = PreToolUseOutput(items=[
-            ContextItem(type="text", content="Context 1"),
-            ContextItem(type="code", content="def foo(): pass")
-        ])
+        output = PreToolUseOutput(
+            items=[
+                ContextItem(type="text", content="Context 1"),
+                ContextItem(type="code", content="def foo(): pass"),
+            ]
+        )
         assert len(output.items) == 2
         assert output.items[0].type == "text"
 
@@ -345,10 +338,10 @@ class TestPostToolUseInput:
     def test_valid_input(self):
         """Test valid input."""
         input_data = PostToolUseInput(
-            cli_key="key",
+            external_id="key",
             tool_name="Write",
             tool_input={"file_path": "/tmp/test.txt"},
-            transcript_path="/path/to/transcript.jsonl"
+            transcript_path="/path/to/transcript.jsonl",
         )
         assert input_data.tool_name == "Write"
         assert input_data.transcript_path == "/path/to/transcript.jsonl"
@@ -360,23 +353,20 @@ class TestPreCompactInput:
     def test_required_fields(self):
         """Test required fields."""
         with pytest.raises(ValidationError):
-            PreCompactInput(cli_key="key")  # Missing transcript_path
+            PreCompactInput(external_id="key")  # Missing transcript_path
 
     def test_default_trigger(self):
         """Test default trigger is AUTO."""
-        input_data = PreCompactInput(
-            cli_key="key",
-            transcript_path="/path"
-        )
+        input_data = PreCompactInput(external_id="key", transcript_path="/path")
         assert input_data.trigger == CompactTrigger.AUTO
 
     def test_manual_trigger(self):
         """Test manual trigger with custom instructions."""
         input_data = PreCompactInput(
-            cli_key="key",
+            external_id="key",
             transcript_path="/path",
             trigger=CompactTrigger.MANUAL,
-            custom_instructions="Focus on authentication changes"
+            custom_instructions="Focus on authentication changes",
         )
         assert input_data.trigger == CompactTrigger.MANUAL
         assert input_data.custom_instructions == "Focus on authentication changes"
@@ -392,10 +382,9 @@ class TestPreCompactOutput:
 
     def test_with_summary(self):
         """Test with summary data."""
-        output = PreCompactOutput(summary={
-            "key_decisions": ["Use PostgreSQL"],
-            "files_modified": ["src/main.py"]
-        })
+        output = PreCompactOutput(
+            summary={"key_decisions": ["Use PostgreSQL"], "files_modified": ["src/main.py"]}
+        )
         assert output.summary["key_decisions"] == ["Use PostgreSQL"]
 
 
@@ -404,7 +393,7 @@ class TestStopInput:
 
     def test_valid_input(self):
         """Test valid stop input."""
-        input_data = StopInput(cli_key="key", reason="User requested stop")
+        input_data = StopInput(external_id="key", reason="User requested stop")
         assert input_data.reason == "User requested stop"
         assert input_data.metadata == {}
 
@@ -415,15 +404,15 @@ class TestSubagentStartInput:
     def test_required_fields(self):
         """Test required fields."""
         with pytest.raises(ValidationError):
-            SubagentStartInput(cli_key="key")  # Missing subagent_id
+            SubagentStartInput(external_id="key")  # Missing subagent_id
 
     def test_valid_input(self):
         """Test valid input."""
         input_data = SubagentStartInput(
-            cli_key="key",
+            external_id="key",
             subagent_id="subagent-123",
             agent_id="agent-456",
-            agent_transcript_path="/path/to/subagent.jsonl"
+            agent_transcript_path="/path/to/subagent.jsonl",
         )
         assert input_data.subagent_id == "subagent-123"
         assert input_data.agent_id == "agent-456"
@@ -435,9 +424,7 @@ class TestSubagentStopInput:
     def test_valid_input(self):
         """Test valid input."""
         input_data = SubagentStopInput(
-            cli_key="key",
-            subagent_id="subagent-123",
-            reason="Task completed"
+            external_id="key", subagent_id="subagent-123", reason="Task completed"
         )
         assert input_data.subagent_id == "subagent-123"
         assert input_data.reason == "Task completed"
@@ -449,14 +436,14 @@ class TestNotificationInput:
     def test_required_fields(self):
         """Test required fields."""
         with pytest.raises(ValidationError):
-            NotificationInput(cli_key="key")  # Missing notification_type and message
+            NotificationInput(external_id="key")  # Missing notification_type and message
 
     def test_valid_input(self):
         """Test valid notification input."""
         input_data = NotificationInput(
-            cli_key="key",
+            external_id="key",
             notification_type="build_complete",
-            message="Build finished successfully"
+            message="Build finished successfully",
         )
         assert input_data.notification_type == "build_complete"
         assert input_data.severity == NotificationSeverity.INFO  # Default
@@ -464,10 +451,10 @@ class TestNotificationInput:
     def test_error_severity(self):
         """Test error severity notification."""
         input_data = NotificationInput(
-            cli_key="key",
+            external_id="key",
             notification_type="build_failed",
             message="Build failed with errors",
-            severity=NotificationSeverity.ERROR
+            severity=NotificationSeverity.ERROR,
         )
         assert input_data.severity == NotificationSeverity.ERROR
 

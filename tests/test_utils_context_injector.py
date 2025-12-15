@@ -58,7 +58,7 @@ class TestBuildRestoredContext:
         result = build_restored_context(
             session_id="new-sess",
             parent_session_id="old-sess",
-            cli_key="claude-abc123",
+            external_id="claude-abc123",
             summary_markdown="# Session Summary\n\nUser worked on tests.",
         )
 
@@ -96,7 +96,7 @@ This was a productive session.
         result = build_restored_context(
             session_id="sess-1",
             parent_session_id="sess-0",
-            cli_key="key-123",
+            external_id="key-123",
             summary_markdown=summary,
         )
 
@@ -171,7 +171,7 @@ class TestInjectContextIntoResponse:
             machine_id="machine-789",
             parent_session_id="old-sess",
             restored_summary="# Previous Summary\nImportant context.",
-            cli_key="claude-key",
+            external_id="claude-key",
         )
 
         # Should have system message for handoff
@@ -184,8 +184,8 @@ class TestInjectContextIntoResponse:
         assert "Previous Session Context" in context
         assert "Important context" in context
 
-    def test_inject_context_handoff_without_cli_key(self):
-        """Test that handoff requires cli_key."""
+    def test_inject_context_handoff_without_external_id(self):
+        """Test that handoff requires external_id."""
         response = {}
 
         result = inject_context_into_response(
@@ -195,10 +195,10 @@ class TestInjectContextIntoResponse:
             machine_id="machine-789",
             parent_session_id="old-sess",
             restored_summary="# Summary",
-            cli_key=None,  # Missing cli_key
+            external_id=None,  # Missing external_id
         )
 
-        # Should not add restored context or system message without cli_key
+        # Should not add restored context or system message without external_id
         assert "systemMessage" not in result
         assert "Previous Session Context" not in result["hookSpecificOutput"]["additionalContext"]
 
@@ -213,7 +213,7 @@ class TestInjectContextIntoResponse:
             machine_id="machine-789",
             parent_session_id=None,  # Missing parent
             restored_summary="# Summary",
-            cli_key="key-123",
+            external_id="key-123",
         )
 
         # Should not add restored context without parent
@@ -244,7 +244,7 @@ class TestInjectContextIntoResponse:
             machine_id="machine-id-789",
             parent_session_id="old-session-uuid",
             restored_summary="# Complete Summary\n\n## Decisions\n- Used pytest\n- Added mocks",
-            cli_key="claude-code-session-key",
+            external_id="claude-code-session-key",
         )
 
         # Verify all context is present
@@ -283,7 +283,7 @@ class TestIntegration:
         restored = build_restored_context(
             session_id="sess-new",
             parent_session_id="sess-old",
-            cli_key="claude-123",
+            external_id="claude-123",
             summary_markdown="# Summary\nPrevious work done.",
         )
 
@@ -299,7 +299,7 @@ class TestIntegration:
             machine_id="machine-1",
             parent_session_id="sess-old",
             restored_summary="# Summary\nPrevious work done.",
-            cli_key="claude-123",
+            external_id="claude-123",
         )
 
         # Verify complete response

@@ -63,7 +63,7 @@ def sample_session_start_event(temp_dir: Path) -> HookEvent:
     """Create a sample session start event."""
     return HookEvent(
         event_type=HookEventType.SESSION_START,
-        session_id="test-cli-key-123",
+        session_id="test-external-id-123",
         source=SessionSource.CLAUDE,
         timestamp=datetime.utcnow(),
         data={
@@ -173,7 +173,7 @@ class TestHookManagerSessionStart:
 
         assert response.decision == "allow"
         assert response.metadata.get("session_id") is not None
-        assert response.metadata.get("cli_key") == "test-cli-key-123"
+        assert response.metadata.get("external_id") == "test-external-id-123"
 
     def test_session_start_returns_context(
         self,
@@ -207,7 +207,7 @@ class TestHookManagerSessionEnd:
         # Then end it
         end_event = HookEvent(
             event_type=HookEventType.SESSION_END,
-            session_id="test-cli-key-123",
+            session_id="test-external-id-123",
             source=SessionSource.CLAUDE,
             timestamp=datetime.utcnow(),
             data={"transcript_path": str(transcript_path)},
@@ -232,7 +232,7 @@ class TestHookManagerBeforeAgent:
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_AGENT,
-            session_id="test-cli-key-123",
+            session_id="test-external-id-123",
             source=SessionSource.CLAUDE,
             timestamp=datetime.utcnow(),
             data={"prompt": "Help me write a function"},
@@ -256,7 +256,7 @@ class TestHookManagerToolEvents:
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id="test-cli-key-123",
+            session_id="test-external-id-123",
             source=SessionSource.CLAUDE,
             timestamp=datetime.utcnow(),
             data={"tool_name": "bash", "tool_input": {"command": "ls"}},
@@ -276,7 +276,7 @@ class TestHookManagerToolEvents:
 
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
-            session_id="test-cli-key-123",
+            session_id="test-external-id-123",
             source=SessionSource.CLAUDE,
             timestamp=datetime.utcnow(),
             data={"tool_name": "bash", "tool_output": "file1.txt\nfile2.txt"},

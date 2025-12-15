@@ -35,7 +35,9 @@ class TestGetMachineId:
 
     def test_calls_get_or_create_when_no_cache(self):
         """Test that _get_or_create_machine_id is called when no cache."""
-        with patch('gobby.utils.machine_id._get_or_create_machine_id', return_value="new-machine-id") as mock:
+        with patch(
+            "gobby.utils.machine_id._get_or_create_machine_id", return_value="new-machine-id"
+        ) as mock:
             result = get_machine_id()
 
         assert result == "new-machine-id"
@@ -45,7 +47,7 @@ class TestGetMachineId:
         """Test that result is cached after first call."""
         import gobby.utils.machine_id as machine_id_module
 
-        with patch('gobby.utils.machine_id._get_or_create_machine_id', return_value="new-id"):
+        with patch("gobby.utils.machine_id._get_or_create_machine_id", return_value="new-id"):
             get_machine_id()
 
         assert machine_id_module._cached_machine_id == "new-id"
@@ -55,7 +57,9 @@ class TestGetMachineId:
 
     def test_propagates_os_error(self):
         """Test that OSError is propagated."""
-        with patch('gobby.utils.machine_id._get_or_create_machine_id', side_effect=OSError("File error")):
+        with patch(
+            "gobby.utils.machine_id._get_or_create_machine_id", side_effect=OSError("File error")
+        ):
             with pytest.raises(OSError, match="Failed to retrieve or create machine ID"):
                 get_machine_id()
 
@@ -68,7 +72,7 @@ class TestGetOrCreateMachineId:
         mock_config = MagicMock()
         mock_config.machine_id = "existing-id-from-config"
 
-        with patch('gobby.config.app.load_config', return_value=mock_config):
+        with patch("gobby.config.app.load_config", return_value=mock_config):
             result = _get_or_create_machine_id()
 
         assert result == "existing-id-from-config"
@@ -78,13 +82,15 @@ class TestGetOrCreateMachineId:
         mock_config = MagicMock()
         mock_config.machine_id = None
 
-        with patch('gobby.config.app.load_config', return_value=mock_config), \
-             patch('gobby.config.app.save_config') as mock_save, \
-             patch.dict('sys.modules', {'machineid': MagicMock(id=lambda: "hardware-id")}):
-
+        with (
+            patch("gobby.config.app.load_config", return_value=mock_config),
+            patch("gobby.config.app.save_config") as mock_save,
+            patch.dict("sys.modules", {"machineid": MagicMock(id=lambda: "hardware-id")}),
+        ):
             # Re-import to use patched module
             import importlib
             import gobby.utils.machine_id as mid
+
             importlib.reload(mid)
 
             result = mid._get_or_create_machine_id()
@@ -98,27 +104,34 @@ class TestGetOrCreateMachineId:
         mock_config = MagicMock()
         mock_config.machine_id = None
 
-        with patch('gobby.config.app.load_config', return_value=mock_config), \
-             patch('gobby.config.app.save_config'):
-
+        with (
+            patch("gobby.config.app.load_config", return_value=mock_config),
+            patch("gobby.config.app.save_config"),
+        ):
             # Import error for machineid
             import sys
-            if 'machineid' in sys.modules:
-                del sys.modules['machineid']
 
-            with patch.dict('sys.modules', {'machineid': None}):
-                # The actual function handles ImportError internally
-                # We can test by mocking the import to fail
-                pass
+            if "machineid" in sys.modules:
+                del sys.modules["machineid"]
+
+            with patch.dict("sys.modules", {"machineid": None}):
+                result = _get_or_create_machine_id()
+
+        # Should generate a UUID since machineid is unavailable
+        assert result is not None
+        assert isinstance(result, str)
+        # Verify it was saved to config
+        assert mock_config.machine_id == result
 
     def test_saves_new_id_to_config(self):
         """Test that newly generated ID is saved to config."""
         mock_config = MagicMock()
         mock_config.machine_id = None
 
-        with patch('gobby.config.app.load_config', return_value=mock_config), \
-             patch('gobby.config.app.save_config') as mock_save:
-
+        with (
+            patch("gobby.config.app.load_config", return_value=mock_config),
+            patch("gobby.config.app.save_config") as mock_save,
+        ):
             result = _get_or_create_machine_id()
 
         # Verify save was called with config that has machine_id set

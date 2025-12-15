@@ -48,7 +48,7 @@ class TestSessionManagerRegistration:
     ):
         """Test registering a new session."""
         session_id = session_mgr.register_session(
-            cli_key="test-cli-123",
+            external_id="test-cli-123",
             machine_id="machine-abc",
             source="claude",
             project_id=test_project["id"],
@@ -64,7 +64,7 @@ class TestSessionManagerRegistration:
     ):
         """Test registering session with all optional fields."""
         session_id = session_mgr.register_session(
-            cli_key="full-cli-123",
+            external_id="full-cli-123",
             machine_id="machine-xyz",
             source="gemini",
             project_id=test_project["id"],
@@ -86,9 +86,9 @@ class TestSessionManagerRegistration:
         session_mgr: SessionManager,
         test_project: dict,
     ):
-        """Test that registration caches cli_key -> session_id mapping."""
+        """Test that registration caches external_id -> session_id mapping."""
         session_id = session_mgr.register_session(
-            cli_key="cached-cli",
+            external_id="cached-cli",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -105,7 +105,7 @@ class TestSessionManagerRegistration:
     ):
         """Test git branch is set when provided."""
         session_id = session_mgr.register_session(
-            cli_key="git-test",
+            external_id="git-test",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -127,7 +127,7 @@ class TestSessionManagerLookup:
     ):
         """Test getting cached session_id."""
         session_id = session_mgr.register_session(
-            cli_key="lookup-test",
+            external_id="lookup-test",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -148,7 +148,7 @@ class TestSessionManagerLookup:
     ):
         """Test looking up session_id from database."""
         session_id = session_mgr.register_session(
-            cli_key="db-lookup",
+            external_id="db-lookup",
             machine_id="machine-1",
             source="codex",
             project_id=test_project["id"],
@@ -159,7 +159,7 @@ class TestSessionManagerLookup:
 
         # Should look up from database
         result = session_mgr.lookup_session_id(
-            cli_key="db-lookup",
+            external_id="db-lookup",
             source="codex",
             machine_id="machine-1",
         )
@@ -172,7 +172,7 @@ class TestSessionManagerLookup:
     ):
         """Test that lookup caches the result."""
         session_id = session_mgr.register_session(
-            cli_key="cache-lookup",
+            external_id="cache-lookup",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -183,7 +183,7 @@ class TestSessionManagerLookup:
 
         # Lookup
         session_mgr.lookup_session_id(
-            cli_key="cache-lookup",
+            external_id="cache-lookup",
             source="claude",
             machine_id="machine",
         )
@@ -198,7 +198,7 @@ class TestSessionManagerLookup:
     ):
         """Test getting full session data."""
         session_id = session_mgr.register_session(
-            cli_key="full-data",
+            external_id="full-data",
             machine_id="machine",
             source="gemini",
             project_id=test_project["id"],
@@ -208,7 +208,7 @@ class TestSessionManagerLookup:
         session = session_mgr.get_session(session_id)
         assert session is not None
         assert session["id"] == session_id
-        assert session["cli_key"] == "full-data"
+        assert session["external_id"] == "full-data"
         assert session["source"] == "gemini"
         assert session["title"] == "Full Data Session"
 
@@ -228,7 +228,7 @@ class TestSessionManagerStatus:
     ):
         """Test updating session status."""
         session_id = session_mgr.register_session(
-            cli_key="status-test",
+            external_id="status-test",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -248,7 +248,7 @@ class TestSessionManagerStatus:
     ):
         """Test marking session as expired."""
         session_id = session_mgr.register_session(
-            cli_key="expire-test",
+            external_id="expire-test",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -278,7 +278,7 @@ class TestSessionManagerHandoff:
         """Test finding parent session for handoff."""
         # Create and mark a session as handoff_ready
         parent_id = session_mgr.register_session(
-            cli_key="parent-cli",
+            external_id="parent-cli",
             machine_id="handoff-machine",
             source="claude",
             project_id=test_project["id"],
@@ -309,7 +309,7 @@ class TestSessionManagerHandoff:
         """Test finding parent when none marked handoff_ready."""
         # Create an active session
         session_mgr.register_session(
-            cli_key="active-session",
+            external_id="active-session",
             machine_id="test-machine",
             source="claude",
             project_id=test_project["id"],
@@ -388,7 +388,7 @@ class TestSessionManagerCaching:
         def register_session(index: int):
             try:
                 session_id = session_mgr.register_session(
-                    cli_key=f"thread-{index}",
+                    external_id=f"thread-{index}",
                     machine_id=f"machine-{index}",
                     source="claude",
                     project_id=test_project["id"],

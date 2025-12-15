@@ -73,7 +73,7 @@ class HookEvent:
 
     Attributes:
         event_type: The type of hook event (from HookEventType enum).
-        session_id: External session identifier (cli_key for Claude, thread_id for Codex).
+        session_id: External session identifier (external_id for Claude, thread_id for Codex).
         source: Which CLI originated this event.
         timestamp: When the event occurred.
         data: Event-specific payload in native format (adapter passes through).
@@ -89,7 +89,7 @@ class HookEvent:
 
     # Core required fields
     event_type: HookEventType
-    session_id: str  # cli_key / thread_id (external ID)
+    session_id: str  # external_id / thread_id (external ID)
     source: SessionSource
     timestamp: datetime
     data: dict  # Event-specific payload (native format)

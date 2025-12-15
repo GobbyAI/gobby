@@ -158,13 +158,13 @@ class SummaryGenerator:
         Returns:
             Dict with status and summary metadata
         """
-        cli_key = None
+        external_id = None
         try:
-            # Extract cli_key from input_data
-            cli_key = input_data.get("session_id")
-            if not cli_key:
-                self.logger.error(f"No cli_key in input_data for session_id={session_id}")
-                return {"status": "no_cli_key", "session_id": session_id}
+            # Extract external_id from input_data
+            external_id = input_data.get("session_id")
+            if not external_id:
+                self.logger.error(f"No external_id in input_data for session_id={session_id}")
+                return {"status": "no_external_id", "session_id": session_id}
 
             # Source is hardcoded since all hook calls are from Claude Code
             session_source = "Claude Code"
@@ -172,8 +172,8 @@ class SummaryGenerator:
             # Get transcript path
             transcript_path = input_data.get("transcript_path")
             if not transcript_path:
-                self.logger.warning(f"No transcript path found for session {cli_key}")
-                return {"status": "no_transcript", "cli_key": cli_key}
+                self.logger.warning(f"No transcript path found for session {external_id}")
+                return {"status": "no_transcript", "external_id": external_id}
 
             # Read JSONL transcript
             transcript_file = Path(transcript_path)
@@ -192,7 +192,9 @@ class SummaryGenerator:
             last_turns = self._transcript_processor.extract_turns_since_clear(turns, max_turns=50)
 
             # Get last two user<>agent message pairs
-            last_messages = self._transcript_processor.extract_last_messages(last_turns, num_pairs=2)
+            last_messages = self._transcript_processor.extract_last_messages(
+                last_turns, num_pairs=2
+            )
 
             # Extract last TodoWrite tool call
             todowrite_list = self._extract_last_todowrite(last_turns)
@@ -207,7 +209,7 @@ class SummaryGenerator:
                 last_messages=last_messages,
                 git_status=git_status,
                 file_changes=file_changes,
-                cli_key=cli_key,
+                external_id=external_id,
                 session_id=session_id,
                 session_source=session_source,
                 todowrite_list=todowrite_list,
@@ -228,11 +230,13 @@ class SummaryGenerator:
                     summary_markdown=summary_markdown,
                 )
             else:
-                self.logger.warning(f"Cannot store summary: no sessions.id for cli_key={cli_key}")
+                self.logger.warning(
+                    f"Cannot store summary: no sessions.id for external_id={external_id}"
+                )
 
             return {
                 "status": "success",
-                "cli_key": cli_key,
+                "external_id": external_id,
                 "file_written": file_result,
                 "db_updated": db_result,
                 "summary_length": len(summary_markdown),
@@ -240,12 +244,12 @@ class SummaryGenerator:
 
         except Exception as e:
             self.logger.error(f"Failed to create session summary: {e}", exc_info=True)
-            return {"status": "error", "error": str(e), "cli_key": cli_key}
+            return {"status": "error", "error": str(e), "external_id": external_id}
 
     def synthesize_title(
         self,
         session_id: str,
-        cli_key: str,
+        external_id: str,
         user_prompt: str,
         source: str = "claude",
         machine_id: str | None = None,
@@ -255,7 +259,7 @@ class SummaryGenerator:
 
         Args:
             session_id: Internal database UUID (sessions.id)
-            cli_key: External session identifier
+            external_id: External session identifier
             user_prompt: User's prompt text
             source: Session source (claude, codex, gemini)
             machine_id: Machine identifier
@@ -407,7 +411,7 @@ Respond with ONLY the title, no explanation."""
         last_messages: list[dict],
         git_status: str,
         file_changes: str,
-        cli_key: str,
+        external_id: str,
         session_id: str | None,
         session_source: str | None,
         todowrite_list: str | None = None,
@@ -420,7 +424,7 @@ Respond with ONLY the title, no explanation."""
             last_messages: List of last user<>agent message pairs
             git_status: Git status output
             file_changes: Formatted file changes
-            cli_key: Claude Code session key
+            external_id: Claude Code session key
             session_id: Internal database UUID
             session_source: Session source (e.g., "Claude Code")
             todowrite_list: Optional TodoWrite list markdown
@@ -443,7 +447,7 @@ Respond with ONLY the title, no explanation."""
             "git_status": git_status,
             "file_changes": file_changes,
             "todowrite_list": todowrite_list,
-            "cli_key": cli_key,
+            "external_id": external_id,
             "session_id": session_id,
             "session_source": session_source,
         }
@@ -466,11 +470,11 @@ Respond with ONLY the title, no explanation."""
             timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
             if session_id and session_source:
-                header = f"# Session Summary\nSession ID:     {session_id}\n{session_source} ID: {cli_key}\nGenerated:      {timestamp}\n\n"
+                header = f"# Session Summary\nSession ID:     {session_id}\n{session_source} ID: {external_id}\nGenerated:      {timestamp}\n\n"
             elif session_id:
-                header = f"# Session Summary\nSession ID:     {session_id}\nClaude Code ID: {cli_key}\nGenerated:      {timestamp}\n\n"
+                header = f"# Session Summary\nSession ID:     {session_id}\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
             else:
-                header = f"# Session Summary\nClaude Code ID: {cli_key}\nGenerated:      {timestamp}\n\n"
+                header = f"# Session Summary\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
 
             final_summary = header + llm_summary
 
@@ -494,7 +498,9 @@ Respond with ONLY the title, no explanation."""
                         parts = final_summary.split("## Next Steps", 1)
                         final_summary = f"{parts[0]}\n## Claude's Todo List\n{todowrite_list}\n\n## Next Steps{parts[1]}"
                     else:
-                        final_summary = f"{final_summary}\n\n## Claude's Todo List\n{todowrite_list}"
+                        final_summary = (
+                            f"{final_summary}\n\n## Claude's Todo List\n{todowrite_list}"
+                        )
 
             return final_summary
 
@@ -503,11 +509,11 @@ Respond with ONLY the title, no explanation."""
             timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
             if session_id and session_source:
-                error_header = f"# Session Summary\nSession ID:     {session_id}\n{session_source} ID: {cli_key}\nGenerated:      {timestamp}\n\n"
+                error_header = f"# Session Summary\nSession ID:     {session_id}\n{session_source} ID: {external_id}\nGenerated:      {timestamp}\n\n"
             elif session_id:
-                error_header = f"# Session Summary\nSession ID:     {session_id}\nClaude Code ID: {cli_key}\nGenerated:      {timestamp}\n\n"
+                error_header = f"# Session Summary\nSession ID:     {session_id}\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
             else:
-                error_header = f"# Session Summary\nClaude Code ID: {cli_key}\nGenerated:      {timestamp}\n\n"
+                error_header = f"# Session Summary\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
 
             error_summary = error_header + f"Error generating summary: {str(e)}"
 

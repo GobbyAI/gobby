@@ -49,9 +49,10 @@ class GobbyRunner:
 
         # MCP client manager
         import uuid
+
         self.mcp_manager = MCPClientManager(
             server_configs=None,
-            cli_key=str(uuid.uuid4()),
+            external_id=str(uuid.uuid4()),
             mcp_db_manager=self.mcp_db_manager,
         )
 

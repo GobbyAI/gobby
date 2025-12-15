@@ -22,7 +22,7 @@ Example:
 
     # Validate input
     input_data = SessionStartInput(
-        cli_key="abc123",
+        external_id="abc123",
         transcript_path="/path/to/transcript.jsonl",
         source="startup"
     )
@@ -177,7 +177,7 @@ class SessionStartInput(HookInput):
     and context about how the session was initiated.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     transcript_path: str = Field(
         ..., min_length=1, description="Path to conversation transcript file"
     )
@@ -204,7 +204,7 @@ class SessionStartOutput(HookOutput):
 class SessionEndInput(HookInput):
     """Input model for session-end hook."""
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     reason: SessionEndReason = Field(
         default=SessionEndReason.OTHER, description="Reason for session end"
     )
@@ -228,7 +228,7 @@ class UserPromptSubmitInput(HookInput):
     Can be used for cost estimation, content filtering, or rate limiting.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     prompt_text: str = Field(..., min_length=1, description="User's prompt text to validate")
     estimated_tokens: int | None = Field(default=None, ge=0, description="Estimated token count")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
@@ -259,7 +259,7 @@ class PreToolUseInput(HookInput):
     based on the tool being used.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     tool_name: str = Field(..., min_length=1, description="Name of tool about to be used")
     tool_input: dict[str, Any] = Field(default_factory=dict, description="Tool input parameters")
     machine_id: str | None = Field(default=None, description="Unique machine identifier")
@@ -298,7 +298,7 @@ class PostToolUseInput(HookInput):
     for future retrieval.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     tool_name: str = Field(..., min_length=1, description="Name of tool that was executed")
     tool_input: dict[str, Any] = Field(default_factory=dict, description="Tool input parameters")
     transcript_path: str | None = Field(default=None, description="Path to transcript file")
@@ -326,7 +326,7 @@ class PreCompactInput(HookInput):
     summaries or save compaction checkpoints.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     transcript_path: str = Field(..., min_length=1, description="Path to conversation transcript")
     trigger: CompactTrigger = Field(
         default=CompactTrigger.AUTO, description="Compaction trigger type"
@@ -358,7 +358,7 @@ class StopInput(HookInput):
     final state persistence.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     reason: str | None = Field(default=None, description="Reason for stopping")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     machine_id: str | None = Field(default=None, description="Unique machine identifier")
@@ -383,7 +383,7 @@ class SubagentStartInput(HookInput):
     Triggered when a subagent (spawned via Task tool) starts.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     subagent_id: str = Field(..., min_length=1, description="Unique subagent identifier")
     agent_id: str | None = Field(default=None, description="Agent ID of the subagent")
     agent_transcript_path: str | None = Field(
@@ -406,7 +406,7 @@ class SubagentStopInput(HookInput):
     Triggered when a subagent (spawned via Task tool) stops.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     subagent_id: str = Field(..., min_length=1, description="Unique subagent identifier")
     agent_id: str | None = Field(default=None, description="Agent ID of the subagent")
     agent_transcript_path: str | None = Field(
@@ -433,7 +433,7 @@ class NotificationInput(HookInput):
     Triggered for system notifications and alerts.
     """
 
-    cli_key: str = Field(..., min_length=1, description="Unique session identifier")
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
     notification_type: str = Field(..., min_length=1, description="Type of notification")
     message: str = Field(..., min_length=1, description="Notification message")
     severity: NotificationSeverity = Field(

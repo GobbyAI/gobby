@@ -31,9 +31,7 @@ def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict:
     # Create .gobby/project.json for project resolution
     gobby_dir = temp_dir / ".gobby"
     gobby_dir.mkdir()
-    (gobby_dir / "project.json").write_text(
-        f'{{"id": "{project.id}", "name": "test-project"}}'
-    )
+    (gobby_dir / "project.json").write_text(f'{{"id": "{project.id}", "name": "test-project"}}')
 
     return project.to_dict()
 
@@ -63,14 +61,14 @@ class TestSessionRegisterRequest:
     """Tests for SessionRegisterRequest model."""
 
     def test_required_fields(self):
-        """Test that cli_key is required."""
-        request = SessionRegisterRequest(cli_key="test-key")
-        assert request.cli_key == "test-key"
+        """Test that external_id is required."""
+        request = SessionRegisterRequest(external_id="test-key")
+        assert request.external_id == "test-key"
 
     def test_optional_fields(self):
         """Test all optional fields."""
         request = SessionRegisterRequest(
-            cli_key="test-key",
+            external_id="test-key",
             machine_id="machine-123",
             jsonl_path="/path/to/transcript.jsonl",
             title="Test Session",
@@ -134,7 +132,7 @@ class TestSessionEndpoints:
             response = client.post(
                 "/sessions/register",
                 json={
-                    "cli_key": "test-cli-key",
+                    "external_id": "test-cli-key",
                     "source": "claude",
                     "cwd": str(temp_dir),
                 },
@@ -143,7 +141,7 @@ class TestSessionEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "registered"
-        assert data["cli_key"] == "test-cli-key"
+        assert data["external_id"] == "test-cli-key"
         assert "id" in data
 
     def test_register_session_with_all_fields(
@@ -156,7 +154,7 @@ class TestSessionEndpoints:
         response = client.post(
             "/sessions/register",
             json={
-                "cli_key": "full-cli-key",
+                "external_id": "full-cli-key",
                 "machine_id": "custom-machine",
                 "source": "Claude Code",
                 "project_id": test_project["id"],
@@ -168,7 +166,7 @@ class TestSessionEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["cli_key"] == "full-cli-key"
+        assert data["external_id"] == "full-cli-key"
         assert data["machine_id"] == "custom-machine"
 
     def test_get_session(
@@ -180,7 +178,7 @@ class TestSessionEndpoints:
         """Test getting a session by ID."""
         # Register a session first
         session = session_storage.register(
-            cli_key="get-test",
+            external_id="get-test",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -191,7 +189,7 @@ class TestSessionEndpoints:
 
         data = response.json()
         assert data["status"] == "success"
-        assert data["session"]["cli_key"] == "get-test"
+        assert data["session"]["external_id"] == "get-test"
 
     def test_get_session_not_found(self, client: TestClient):
         """Test getting nonexistent session returns 404."""
@@ -206,7 +204,7 @@ class TestSessionEndpoints:
     ):
         """Test finding current session by composite key."""
         session = session_storage.register(
-            cli_key="find-current",
+            external_id="find-current",
             machine_id="my-machine",
             source="gemini",
             project_id=test_project["id"],
@@ -215,7 +213,7 @@ class TestSessionEndpoints:
         response = client.post(
             "/sessions/find_current",
             json={
-                "cli_key": "find-current",
+                "external_id": "find-current",
                 "machine_id": "my-machine",
                 "source": "gemini",
             },
@@ -230,7 +228,7 @@ class TestSessionEndpoints:
         response = client.post(
             "/sessions/find_current",
             json={
-                "cli_key": "nonexistent",
+                "external_id": "nonexistent",
                 "machine_id": "machine",
                 "source": "claude",
             },
@@ -244,7 +242,7 @@ class TestSessionEndpoints:
         """Test find_current with missing required fields."""
         response = client.post(
             "/sessions/find_current",
-            json={"cli_key": "test"},
+            json={"external_id": "test"},
         )
 
         assert response.status_code == 400
@@ -257,7 +255,7 @@ class TestSessionEndpoints:
     ):
         """Test finding parent session for handoff."""
         session = session_storage.register(
-            cli_key="parent-session",
+            external_id="parent-session",
             machine_id="handoff-machine",
             source="claude",
             project_id=test_project["id"],
@@ -285,7 +283,7 @@ class TestSessionEndpoints:
     ):
         """Test updating session status."""
         session = session_storage.register(
-            cli_key="status-update",
+            external_id="status-update",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -323,7 +321,7 @@ class TestSessionEndpoints:
     ):
         """Test updating session summary."""
         session = session_storage.register(
-            cli_key="summary-update",
+            external_id="summary-update",
             machine_id="machine",
             source="claude",
             project_id=test_project["id"],
@@ -434,9 +432,7 @@ class TestMCPEndpointsWithManager:
         http_server_with_mcp: HTTPServer,
     ):
         """Test MCP tools listing for unknown server."""
-        http_server_with_mcp.mcp_manager.get_client.side_effect = ValueError(
-            "Server not found"
-        )
+        http_server_with_mcp.mcp_manager.get_client.side_effect = ValueError("Server not found")
 
         response = mcp_client.get("/mcp/unknown-server/tools")
         assert response.status_code == 404

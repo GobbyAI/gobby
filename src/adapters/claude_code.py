@@ -76,7 +76,7 @@ class ClaudeCodeAdapter(BaseAdapter):  # type: ignore[misc]
         {
             "hook_type": "session-start",  # kebab-case hook name
             "input_data": {
-                "session_id": "abc123",    # Claude calls this session_id but it's cli_key
+                "session_id": "abc123",    # Claude calls this session_id but it's external_id
                 "machine_id": "...",
                 "cwd": "/path/to/project",
                 "transcript_path": "...",
@@ -97,7 +97,7 @@ class ClaudeCodeAdapter(BaseAdapter):  # type: ignore[misc]
         # Fall back to NOTIFICATION for unknown types (fail-open)
         event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
 
-        # Extract session_id (Claude calls it session_id but it's the cli_key)
+        # Extract session_id (Claude calls it session_id but it's the external_id)
         session_id = input_data.get("session_id", "")
 
         # Check for failure flag in post-tool-use-failure

@@ -34,6 +34,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, optional): Unique session identifier (UUID format). **Note**: Only available when `source` is "resume", "clear", or "compact". On initial "startup", session_id is not yet generated.
 - `transcript_path` (string, required): Path to the JSONL conversation transcript file
 - `hook_event_name` (string, required): Always "SessionStart"
@@ -47,6 +48,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ### Output Schema
 
 **Option 1: Context Injection (Recommended)**
+
 ```json
 {
   "hookSpecificOutput": {
@@ -57,6 +59,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Option 2: Simple Status**
+
 ```json
 {
   "status": "session_started"
@@ -64,10 +67,12 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `hookSpecificOutput.additionalContext` (string, optional): Markdown text to inject into Claude's context
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success (stdout added to Claude's context)
 - `1`: Error (stderr logged, hook continues)
 
@@ -89,6 +94,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, required): Session identifier that is ending
 - `hook_event_name` (string, required): Always "SessionEnd"
 - `reason` (string, required): Why session ended - one of:
@@ -107,9 +113,11 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success
 - `1`: Error (logged but ignored)
 
@@ -134,6 +142,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, required): Current session identifier
 - `prompt` (string, required): The user's submitted text
 - `transcript_path` (string, required): Path to conversation transcript
@@ -145,6 +154,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ### Output Schema
 
 **Option 1: Approve (default)**
+
 ```json
 {
   "status": "approved"
@@ -152,6 +162,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Option 2: Reject with feedback**
+
 ```json
 {
   "status": "rejected",
@@ -160,6 +171,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Option 3: Modify prompt**
+
 ```json
 {
   "status": "approved",
@@ -168,11 +180,13 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, required): Either "approved" or "rejected"
 - `message` (string, optional): Feedback message shown to user (if rejected)
 - `modified_prompt` (string, optional): Replacement prompt text
 
 **Exit Codes:**
+
 - `0`: Success, prompt approved
 - `2`: Block prompt and show stderr to user
 - `1`: Error (logged)
@@ -199,6 +213,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, required): Current session identifier
 - `tool_name` (string, required): Name of tool about to execute (e.g., "Edit", "Bash", "Read")
 - `tool_input` (object, optional): Tool parameters as key-value pairs
@@ -207,6 +222,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ### Output Schema
 
 **Option 1: Allow (default)**
+
 ```json
 {
   "status": "allowed"
@@ -214,6 +230,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Option 2: Block with reason**
+
 ```json
 {
   "status": "blocked",
@@ -222,10 +239,12 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, required): Either "allowed" or "blocked"
 - `reason` (string, optional): Explanation if blocked
 
 **Exit Codes:**
+
 - `0`: Success, tool allowed
 - `2`: Block tool execution and show stderr to user
 - `1`: Error (logged)
@@ -256,6 +275,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, required): Current session identifier
 - `tool_name` (string, required): Name of tool that executed
 - `tool_input` (object, optional): Tool parameters that were used
@@ -271,9 +291,11 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success
 - `1`: Error (logged but tool execution continues)
 
@@ -297,6 +319,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, required): Current session identifier
 - `transcript_path` (string, required): Path to conversation transcript
 - `hook_event_name` (string, required): Always "PreCompact"
@@ -315,9 +338,11 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success
 - `1`: Error (logged but compact continues)
 
@@ -339,6 +364,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, required): Session identifier being stopped
 - `reason` (string, optional): Reason for stopping
 - `metadata` (object, optional): Additional context about the stop
@@ -353,9 +379,11 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success
 - `1`: Error (logged)
 
@@ -379,7 +407,8 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
-- `session_id` (string, required): Current session identifier (stored as `cli_key` in Gobby)
+
+- `session_id` (string, required): Current session identifier (stored as `external_id` in Gobby)
 - `subagent_id` (string, required): Unique identifier for the subagent instance
 - `agent_id` (string, optional): Type/name of the subagent (e.g., "task-executor", "Explore", "Plan")
 - `agent_transcript_path` (string, optional): Path to the subagent's conversation transcript
@@ -395,13 +424,16 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success
 - `1`: Error (logged)
 
 **Use Cases:**
+
 - Track when subagents are created
 - Initialize subagent-specific state
 - Inject context into subagent's conversation
@@ -428,7 +460,8 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
-- `session_id` (string, required): Current session identifier (stored as `cli_key` in Gobby)
+
+- `session_id` (string, required): Current session identifier (stored as `external_id` in Gobby)
 - `subagent_id` (string, required): Unique identifier for the subagent instance
 - `agent_id` (string, optional): Type/name of the subagent (e.g., "task-executor", "Explore", "Plan")
 - `agent_transcript_path` (string, optional): Path to the subagent's conversation transcript
@@ -445,9 +478,11 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success
 - `1`: Error (logged)
 
@@ -471,6 +506,7 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `session_id` (string, required): Current session identifier
 - `notification_type` (string, required): Type of notification
 - `message` (string, required): Notification message text
@@ -490,9 +526,11 @@ This document defines the input and output schemas for all Claude Code hooks.
 ```
 
 **Fields:**
+
 - `status` (string, optional): Hook execution status
 
 **Exit Codes:**
+
 - `0`: Success
 - `1`: Error (logged)
 
@@ -526,6 +564,7 @@ The `additionalContext` string will be added to Claude's context window and appe
 ### Machine ID
 
 The `machine_id` field is a unique, persistent identifier for the machine running Claude Code. It's useful for:
+
 - Tracking sessions across multiple machines
 - Machine-specific configuration
 - Analytics and logging
@@ -547,6 +586,7 @@ Generated using hardware identifiers (MAC address, disk serial, etc.) and cached
 ### Error Handling
 
 Hooks should handle errors gracefully:
+
 - Log errors to stderr (will appear in hook logs)
 - Return appropriate exit code
 - Provide helpful error messages to user if needed

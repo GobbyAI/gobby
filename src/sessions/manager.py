@@ -61,14 +61,14 @@ class SessionManager:
         self._config = config
 
         # Session caches with locks
-        self._session_mapping: dict[str, str] = {}  # cli_key -> session_id
+        self._session_mapping: dict[str, str] = {}  # external_id -> session_id
         self._session_mapping_lock = threading.Lock()
         self._session_metadata: dict[str, dict] = {}  # session_id -> metadata
         self._session_metadata_lock = threading.Lock()
 
     def register_session(
         self,
-        cli_key: str,
+        external_id: str,
         machine_id: str,
         source: str,
         project_id: str,
@@ -82,7 +82,7 @@ class SessionManager:
         Register new session with local storage.
 
         Args:
-            cli_key: CLI session key (e.g., Claude Code session ID)
+            external_id: External session identifier (e.g., Claude Code session ID)
             machine_id: Machine identifier
             source: CLI source identifier (e.g., "claude", "gemini", "codex") - REQUIRED
             project_id: Project ID (required - sessions must belong to a project)
@@ -111,7 +111,7 @@ class SessionManager:
         try:
             # Register with local storage
             session = self._storage.register(
-                cli_key=cli_key,
+                external_id=external_id,
                 machine_id=machine_id,
                 source=source,
                 project_id=project_id,
@@ -125,11 +125,11 @@ class SessionManager:
 
             # Cache session mapping and metadata
             with self._session_mapping_lock:
-                self._session_mapping[cli_key] = session_id
+                self._session_mapping[external_id] = session_id
 
             with self._session_metadata_lock:
                 self._session_metadata[session_id] = {
-                    "cli_key": cli_key,
+                    "external_id": external_id,
                     "machine_id": machine_id,
                     "source": source,
                     "parent_session_id": parent_session_id,
@@ -139,7 +139,7 @@ class SessionManager:
                     "git_branch": git_branch,
                 }
 
-            self.logger.debug(f"Registered session {session_id} (cli_key={cli_key})")
+            self.logger.debug(f"Registered session {session_id} (external_id={external_id})")
             return session_id
 
         except Exception as e:
@@ -251,12 +251,12 @@ class SessionManager:
             self.logger.error(f"Failed to update session status: {e}", exc_info=True)
             return False
 
-    def lookup_session_id(self, cli_key: str, source: str, machine_id: str) -> str | None:
+    def lookup_session_id(self, external_id: str, source: str, machine_id: str) -> str | None:
         """
-        Look up session_id from database by cli_key.
+        Look up session_id from database by external_id.
 
         Args:
-            cli_key: CLI session key
+            external_id: External session identifier
             source: CLI source identifier (e.g., "claude", "gemini", "codex") - REQUIRED
             machine_id: Machine identifier
 
@@ -266,18 +266,20 @@ class SessionManager:
         try:
             # Check cache first
             with self._session_mapping_lock:
-                if cli_key in self._session_mapping:
-                    return self._session_mapping[cli_key]
+                if external_id in self._session_mapping:
+                    return self._session_mapping[external_id]
 
             # Find current session from storage
-            session = self._storage.find_current(cli_key, machine_id, source)
+            session = self._storage.find_current(external_id, machine_id, source)
 
             if session:
                 session_id: str = session.id
-                self.logger.debug(f"Looked up session_id {session_id} for cli_key {cli_key}")
+                self.logger.debug(
+                    f"Looked up session_id {session_id} for external_id {external_id}"
+                )
                 # Cache it
                 with self._session_mapping_lock:
-                    self._session_mapping[cli_key] = session_id
+                    self._session_mapping[external_id] = session_id
                 return session_id
 
             return None
@@ -316,29 +318,29 @@ class SessionManager:
 
         return None
 
-    def get_session_id(self, cli_key: str) -> str | None:
+    def get_session_id(self, external_id: str) -> str | None:
         """
-        Get cached session_id for a cli_key.
+        Get cached session_id for a external_id.
 
         Args:
-            cli_key: CLI session key
+            external_id: External session identifier
 
         Returns:
             session_id or None if not cached
         """
         with self._session_mapping_lock:
-            return self._session_mapping.get(cli_key)
+            return self._session_mapping.get(external_id)
 
-    def cache_session_mapping(self, cli_key: str, session_id: str) -> None:
+    def cache_session_mapping(self, external_id: str, session_id: str) -> None:
         """
-        Cache a cli_key -> session_id mapping.
+        Cache a external_id -> session_id mapping.
 
         Args:
-            cli_key: CLI session key
+            external_id: External session identifier
             session_id: Database session ID
         """
         with self._session_mapping_lock:
-            self._session_mapping[cli_key] = session_id
+            self._session_mapping[external_id] = session_id
 
     def get_session(self, session_id: str) -> dict | None:
         """
@@ -354,7 +356,7 @@ class SessionManager:
         if session:
             return {
                 "id": session.id,
-                "cli_key": session.cli_key,
+                "external_id": session.external_id,
                 "machine_id": session.machine_id,
                 "source": session.source,
                 "project_id": session.project_id,
