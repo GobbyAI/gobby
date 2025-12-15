@@ -363,6 +363,12 @@ gobby tasks stats
 - [ ] Implement `close()` method
 - [ ] Add unit tests for LocalTaskManager
 
+#### ID Collision Handling (Decision 1)
+- [ ] Add collision detection in `generate_task_id()` function
+- [ ] Implement retry loop with incremented salt (max 3 retries)
+- [ ] Raise `TaskIDCollisionError` if all retries fail
+- [ ] Add unit test for collision handling with mock collision
+
 ### Phase 2: Dependency Management
 
 - [ ] Create `src/storage/task_dependencies.py` with `TaskDependencyManager` class
@@ -471,6 +477,10 @@ gobby tasks stats
 - [ ] Add task-related configuration options to `config.yaml`
 - [ ] Performance testing with 1000+ tasks
 - [ ] Add `gobby tasks` to CLI help output
+
+#### Single Machine Scope (Decision 2)
+- [ ] Document in README that Gobby is single-machine focused
+- [ ] Add "Future: gobby_platform" note for fleet management
 
 ## Workflow Engine Integration (Future)
 
@@ -706,6 +716,15 @@ For large tasks, use `expand_task(id)` to break them down before starting.
 
 ---
 
+## Decisions
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | **Task ID collision handling** | Retry with random salt on collision | SHA-256 with 6 hex chars gives ~16M unique IDs. Collision unlikely for single project, but handle gracefully. |
+| 2 | **Task scope** | Single machine, single user (no multi-tenancy) | MVP focuses on making one machine work well. Multi-tenant fleet management is future (gobby_platform). |
+
+---
+
 ## Future Enhancements
 
 - **Auto-discovery from transcripts**: LLM extracts tasks from session transcripts
@@ -715,3 +734,4 @@ For large tasks, use `expand_task(id)` to break them down before starting.
 - **Multi-project dependencies**: Cross-project task relationships
 - **Task search**: Full-text search across title and description
 - **Beads import**: One-time migration from existing beads database
+- **gobby_platform**: Remote fleet management for multiple machines (post-MVP)

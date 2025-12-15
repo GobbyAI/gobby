@@ -842,6 +842,14 @@ Before building new workflow capabilities, extract the current session handoff b
 - [ ] Create `workflow_handoffs` table (migration)
 - [ ] Implement `WorkflowStateManager` for CRUD operations on state
 
+#### Workflow Inheritance (Decision 1)
+- [ ] Add `extends` field to `WorkflowDefinition` dataclass
+- [ ] Implement `resolve_inheritance(workflow_path)` in `WorkflowLoader`
+- [ ] Deep-merge parent workflow with child overrides (child wins)
+- [ ] Support inheritance chains (grandparent → parent → child)
+- [ ] Add cycle detection for circular inheritance
+- [ ] Add unit tests for inheritance resolution
+
 ### Phase 2: Core Engine
 
 - [ ] Implement `WorkflowEngine` class with phase management
@@ -855,6 +863,15 @@ Before building new workflow capabilities, extract the current session handoff b
 - [ ] Implement "Dual Write" pattern (TodoWrite + create_task)
 - [ ] Implement stuck detection (duration & attempt limits)
 - [ ] Optimize Rule Evaluator (pre-compile conditions, short-circuit, cache state)
+
+#### Approval UX (Decision 4)
+- [ ] Implement `user_approval` exit condition type
+- [ ] Inject approval prompt into context when condition is checked
+- [ ] Block tool calls until user responds with approval keyword
+- [ ] Define approval keywords: "yes", "approve", "proceed", "continue"
+- [ ] Define rejection keywords: "no", "reject", "stop", "cancel"
+- [ ] Add timeout option for approval conditions (default: no timeout)
+- [ ] Add unit tests for approval flow
 
 ### Phase 3: Hook Integration
 
@@ -893,6 +910,7 @@ Before building new workflow capabilities, extract the current session handoff b
 - [ ] Implement `restore_from_handoff` action
 - [ ] Implement `find_parent_session` action
 - [ ] Implement `mark_session_status` action
+- [ ] Ensure `generate_handoff` includes `pending_task_ids` field (Decision 3)
 
 **LLM Integration:**
 
@@ -945,6 +963,11 @@ Before building new workflow capabilities, extract the current session handoff b
 - [ ] Implement `gobby workflow handoff <notes>`
 - [ ] Implement `gobby workflow import <source>`
 
+#### Stop-Edit-Restart Versioning (Decision 6)
+- [ ] Ensure `gobby workflow reset` reloads workflow definition from disk
+- [ ] Log workflow version/hash at load time for debugging
+- [ ] Document that workflow YAML is locked at session start; changes require reset
+
 ### Phase 8: MCP Tools
 
 - [ ] Add `get_workflow_status` MCP tool
@@ -967,12 +990,15 @@ Before building new workflow capabilities, extract the current session handoff b
 
 ### Phase 10: Documentation
 
-- [ ] Document workflow YAML schema
+- [ ] Document workflow YAML schema (including `extends:` inheritance syntax - Decision 1)
 - [ ] Document built-in templates
 - [ ] Document CLI commands
 - [ ] Document MCP tools
 - [ ] Add examples for common patterns
 - [ ] Update CLAUDE.md with workflow information
+- [ ] Add section explaining lifecycle vs phase-based coexistence (Decision 2)
+- [ ] Document that workflow state resets on session end; tasks persist (Decision 3)
+- [ ] Document Codex limitations (notify hook only, app-server for full control is YAGNI) (Decision 7)
 
 ### Phase 11: Error Recovery Strategies
 
@@ -982,19 +1008,17 @@ Before building new workflow capabilities, extract the current session handoff b
 
 ---
 
-## Open Questions
+## Decisions
 
-1. **Workflow inheritance**: Should workflows be able to extend/override templates?
-
-2. **Multi-workflow support**: Can a session have multiple active workflows (e.g., coding workflow + documentation workflow)?
-
-3. **Cross-session state**: How long should workflow state persist? Per-session only, or carry across sessions?
-
-4. **Approval UX**: How should user approvals work? Inject a question? Block until explicit command?
-
-5. ~~**Escape hatches**: Should users be able to override workflow restrictions?~~ **Resolved:** Implemented via `--force`, `reset`, and `disable` CLI commands (see CLI Commands section)
-
-6. **Workflow versioning**: How to handle workflow definition changes mid-session?
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | **Workflow inheritance** | Yes - support `extends:` with property overrides | Standard pattern in YAML systems (Docker Compose, GitHub Actions). Reduces duplication. |
+| 2 | **Multi-workflow support** | One phase-based workflow per session, unlimited lifecycle workflows | Already designed this way. Phase-based workflows enforce tool restrictions; lifecycle workflows are event-driven observers. |
+| 3 | **Cross-session state** | Workflow state is session-local; persistence via task system | Ephemeral workflow state in SQLite for current session. Durable work tracked in tasks table for cross-session continuity. |
+| 4 | **Approval UX** | Inject question via context, block tool until approval | Reuse existing patterns (similar to AskUserQuestion). No new UX paradigm needed. |
+| 5 | **Escape hatches** | ✅ Resolved - `--force`, `reset`, `disable` CLI commands | See CLI Commands section. |
+| 6 | **Workflow versioning** | Stop → Edit → Restart pattern | Mid-session changes ignored (workflow locked at start). To apply changes: stop workflow, edit YAML, restart from initial phase. |
+| 7 | **Codex hook blocking** | N/A - only notify hook exists | Codex uses notify script only. Full hook control would require app-server session spawning. YAGNI for MVP. |
 
 ---
 

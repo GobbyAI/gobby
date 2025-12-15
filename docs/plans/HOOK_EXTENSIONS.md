@@ -329,6 +329,13 @@ CREATE INDEX idx_webhook_deliveries_event ON webhook_deliveries(event_type);
 - [ ] Implement payload sanitization (remove sensitive data option)
 - [ ] Add `include_payload` config option
 
+#### Client Subscription (Decision 3)
+- [ ] Define subscription message format: `{"type": "subscribe", "events": ["session_start", ...]}`
+- [ ] Add `subscriptions` dict to WebSocket connection state
+- [ ] Filter broadcasts based on client subscriptions (default: all events)
+- [ ] Add `{"type": "unsubscribe", "events": [...]}` support
+- [ ] Document subscription protocol in WebSocket event schema docs
+
 #### Configuration
 - [ ] Add `HookExtensionsConfig` to `src/config/app.py`
 - [ ] Add `WebSocketBroadcastConfig` sub-config
@@ -378,6 +385,11 @@ CREATE INDEX idx_webhook_deliveries_event ON webhook_deliveries(event_type);
 - [ ] Initialize `WebhookDispatcher` in HTTP server lifespan
 - [ ] Call dispatcher in `/hooks/execute` endpoint
 - [ ] Add webhook delivery logging (optional, if table created)
+
+#### Fire-and-Forget Delivery (Decision 4)
+- [ ] Implement async webhook dispatch (no blocking on response)
+- [ ] Add `log_deliveries: true/false` config option (default: false)
+- [ ] Document that webhook reliability is the endpoint's responsibility
 
 #### Testing
 - [ ] Unit tests for `WebhookDispatcher`
@@ -473,9 +485,15 @@ CREATE INDEX idx_webhook_deliveries_event ON webhook_deliveries(event_type);
 - [ ] Implement `gobby hooks list` - show registered handlers
 - [ ] Implement `gobby hooks test <event>` - trigger test event
 - [ ] Implement `gobby plugins list` - show loaded plugins
-- [ ] Implement `gobby plugins reload` - reload all plugins
+- [ ] Implement `gobby plugins reload [plugin_name]` - reload all or specific plugin
 - [ ] Implement `gobby webhooks list` - show configured webhooks
 - [ ] Implement `gobby webhooks test <endpoint>` - test webhook delivery
+
+#### Stateless Plugin Reload (Decision 5)
+- [ ] Call `on_unload()` on existing plugin instances before reload
+- [ ] Re-import modules and re-instantiate plugins
+- [ ] Clear and re-register all handlers from reloaded plugins
+- [ ] Document that reload clears plugin state (pytest model)
 
 #### MCP Tools
 - [ ] Add `list_hook_handlers()` MCP tool
@@ -495,25 +513,31 @@ CREATE INDEX idx_webhook_deliveries_event ON webhook_deliveries(event_type);
 
 - [ ] Update CLAUDE.md with hook extension configuration
 - [ ] Create `docs/hook-extensions.md` user guide
-- [ ] Document WebSocket event schema
+- [ ] Document WebSocket event schema (including subscription protocol)
 - [ ] Document webhook payload format
 - [ ] Document plugin interface
+
+#### Plugin Security Model (Decision 2)
+- [ ] Add "Security Model" section explaining trust model
+- [ ] Document: "Plugins run with full daemon privileges. Only enable plugins you trust."
+- [ ] Add warning message when enabling plugins via config
+- [ ] Consider `--i-trust-this-plugin` flag for explicit acknowledgment
+
+#### Examples
 - [ ] Add example plugins to `examples/plugins/`
 - [ ] Add example webhook integration (Slack notification)
 
 ---
 
-## Open Questions
+## Decisions
 
-1. **Webhook authentication**: Should we support more than just header-based auth? (OAuth, signed payloads)
-
-2. **Plugin sandboxing**: Should plugins be restricted in what they can import/access? How to implement?
-
-3. **Event filtering granularity**: Should WebSocket clients be able to subscribe to specific event types? (Currently server-side filter only)
-
-4. **Webhook delivery guarantees**: Should we persist webhook queue for at-least-once delivery? Or fire-and-forget?
-
-5. **Plugin hot-reload**: Should plugins be reloadable without daemon restart? What about state?
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | **Webhook authentication** | Header-based auth only for v1 | Covers 90% of use cases (Slack, Discord, PagerDuty). Add OAuth/signed payloads later if needed. |
+| 2 | **Plugin sandboxing** | Defer - use trust model via documentation | Plugins disabled by default, require explicit enablement. Document: "Plugins run with full daemon privileges. Only enable plugins you trust." |
+| 3 | **WebSocket client filtering** | Yes - add client-side subscription | Low-cost, high-value. Clients send `{"subscribe": ["session_start", "tool_call"]}` after connection. |
+| 4 | **Webhook delivery guarantees** | Fire-and-forget with optional logging | Delivery logging table already planned. For guaranteed delivery, users can put a queue behind their endpoint. |
+| 5 | **Plugin hot-reload** | Yes, stateless reload via CLI | Allow `gobby plugins reload` but document that plugin state is lost. This is the pytest model. |
 
 ---
 

@@ -303,6 +303,18 @@ async def refresh_server_tools(server_name: str):
 - [ ] Implement `get_top_tools(limit, min_calls)` -> most reliable tools
 - [ ] Implement `get_failing_tools(threshold)` -> tools below success rate
 
+#### Global Metrics Scope (Decision 4)
+- [ ] Store metrics in single `tool_metrics` table (no project_id column)
+- [ ] Document that metrics are machine-global, not project-scoped
+
+#### Metrics Retention (Decision 2)
+- [ ] Create `tool_metrics_daily` table for aggregated stats
+- [ ] Add `aggregate_metrics()` function to roll up raw data
+- [ ] Add daily aggregation job (run on daemon start, check last run)
+- [ ] Delete raw metrics older than 7 days after aggregation
+- [ ] Add `metrics_retention_days` config option (default: 7)
+- [ ] Ensure `get_tool_metrics()` queries both raw and aggregate tables
+
 #### Integration
 - [ ] Modify `call_tool()` in `manager.py` to record metrics
 - [ ] Capture latency using `time.perf_counter()`
@@ -365,8 +377,20 @@ async def refresh_server_tools(server_name: str):
 #### Embedding Infrastructure
 - [ ] Create `src/mcp_proxy/semantic.py` module
 - [ ] Create migration for `tool_embeddings` table
-- [ ] Choose embedding model (e.g., OpenAI `text-embedding-3-small` or local)
 - [ ] Implement `generate_embedding(text)` using LLM provider
+
+#### Cloud Embeddings with Graceful Degradation (Decision 1)
+- [ ] Use OpenAI `text-embedding-3-small` as default embedding model
+- [ ] Add `OPENAI_API_KEY` requirement documentation
+- [ ] Implement `EmbeddingUnavailable` exception class
+- [ ] Add try/catch in `recommend_tools()` that falls back to LLM-only mode
+- [ ] Log warning when falling back: "Embedding service unavailable, using LLM-only mode"
+- [ ] Add `embedding_model` config option for future local model support
+
+#### Embedding Dimensions (Decision 5)
+- [ ] Use 1536 dimensions for `tool_embeddings.embedding` BLOB
+- [ ] Document dimension size in schema comments
+- [ ] Add validation that stored embeddings match expected dimensions
 
 #### Embedding Generation
 - [ ] Implement `SemanticToolSearch` class
@@ -416,6 +440,11 @@ async def refresh_server_tools(server_name: str):
 - [ ] Include `fallback_suggestions` in error response
 - [ ] Add `include_fallbacks` parameter (default: true)
 - [ ] Add `max_fallbacks` config option (default: 3)
+
+#### Fallback UX (Decision 3)
+- [ ] Return `fallback_suggestions` as separate field in error response (not inline)
+- [ ] Document that LLM should decide whether to use fallback
+- [ ] Add example in docs showing how to handle fallback suggestions
 
 #### Automatic Retry (Optional)
 - [ ] Add `auto_retry_fallback` config option (default: false)
@@ -515,17 +544,15 @@ async def refresh_server_tools(server_name: str):
 
 ---
 
-## Open Questions
+## Decisions
 
-1. **Embedding model choice**: Use cloud API (OpenAI) or local model (sentence-transformers)? Trade-off between quality and offline capability.
-
-2. **Metrics retention**: How long to keep tool metrics? Per-session, per-day, forever?
-
-3. **Fallback UX**: Should fallback suggestions be returned inline or as a separate field? Should auto-retry be default?
-
-4. **Multi-tenant metrics**: If Gobby is used across multiple projects, should metrics be global or per-project?
-
-5. **Embedding dimensions**: What embedding size to use? Smaller = faster search, larger = better quality.
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | **Embedding model choice** | Cloud (OpenAI `text-embedding-3-small`) with graceful degradation | Cheap ($0.02/1M tokens), high quality. Fall back to LLM-only if unavailable. Add local model later if offline support needed. |
+| 2 | **Metrics retention** | Forever with daily aggregation | Keep daily aggregates permanently. Keep raw call logs for 7 days, then aggregate and delete. Gives both recent detail and historical trends. |
+| 3 | **Fallback UX** | Separate `fallback_suggestions` field, auto-retry OFF by default | Let the LLM decide whether to retry. Inline would pollute error messages. |
+| 4 | **Metrics scope** | Global (project-agnostic) | Tool reliability doesn't change per-project. Single SQLite database for single machine. Multi-tenant is future (gobby_platform). |
+| 5 | **Embedding dimensions** | 1536 (OpenAI `text-embedding-3-small` default) | Good balance of quality and performance. Don't overthink - start with defaults. |
 
 ---
 
