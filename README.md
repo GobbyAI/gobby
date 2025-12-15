@@ -2,15 +2,24 @@
 
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/GobbyAI/gobby?utm_source=oss&utm_medium=github&utm_campaign=GobbyAI%2Fgobby&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
-A local daemon that unifies Claude Code, Gemini CLI, and Codex through a hook interface for session tracking, with an MCP proxy featuring progressive tool discovery for efficient access to downstream servers.
+A local daemon that makes AI coding assistants smarter by unifying session tracking, optimizing MCP tool access, and maintaining context across sessions.
 
-## Features
+## Why Gobby?
 
-- **Multi-CLI Unification** - Single daemon handles hooks from Claude Code, Gemini CLI, and Codex
-- **Session Tracking** - Captures AI coding sessions across CLIs for context continuity
-- **MCP Proxy** - Progressive tool discovery (list → schema → execute) to reduce token usage
-- **Local-First** - All data stored in SQLite with no cloud dependency
-- **Smart Context** - Auto-detects parent sessions for seamless context handoff
+- **Multi-CLI support** — One daemon handles Claude Code, Gemini CLI, and Codex
+- **Context continuity** — Sessions don't lose context; automatic handoffs via LLM-generated summaries
+- **Intelligent MCP proxy** — Progressive tool discovery reduces token usage; connect once, access all downstream servers
+- **Local-first** — All data in SQLite, no cloud dependencies, works offline
+
+**Coming soon:** Workflow enforcement engine for deterministic AI behavior (plan → execute → validate) without relying on prompts.
+
+## CLI Support Status
+
+| CLI | Status | Notes |
+|-----|--------|-------|
+| **Claude Code** | ✅ Full | All 14 hook types supported |
+| **Gemini CLI** | ⏳ Pending | Waiting on [PR #9070](https://github.com/google-gemini/gemini-cli/pull/9070) for hook system |
+| **Codex CLI** | 🔸 Limited | Only `after_agent` notify hook currently implemented |
 
 ## Quick Start
 
@@ -287,32 +296,54 @@ uv run mypy src/
 
 ## Hook Types
 
-Gobby captures 14 hook event types across Claude Code, Gemini CLI, and Codex CLI. Events are normalized to a unified internal model.
+Gobby normalizes hook events to a unified internal model. Currently only Claude Code has full hook support.
 
-### Unified Event Types
+### Claude Code Hook Events (Full Support)
 
-| Event | Claude Code | Gemini CLI | Codex CLI | Description |
-|-------|-------------|------------|-----------|-------------|
-| `SESSION_START` | `session-start` | `SessionStart` | `thread/started` | Session begins |
-| `SESSION_END` | `session-end` | `SessionEnd` | `thread/archive` | Session ends |
-| `BEFORE_AGENT` | `user-prompt-submit` | `BeforeAgent` | `turn/started` | Before processing prompt |
-| `AFTER_AGENT` | `stop` | `AfterAgent` | `turn/completed` | Agent stops |
-| `BEFORE_TOOL` | `pre-tool-use` | `BeforeTool` | `requestApproval` | Before tool execution |
-| `AFTER_TOOL` | `post-tool-use` | `AfterTool` | `item/completed` | After tool execution |
-| `BEFORE_TOOL_SELECTION` | - | `BeforeToolSelection` | - | Before tool selection (Gemini) |
-| `BEFORE_MODEL` | - | `BeforeModel` | - | Before LLM call (Gemini) |
-| `AFTER_MODEL` | - | `AfterModel` | - | After LLM call (Gemini) |
-| `PRE_COMPACT` | `pre-compact` | `PreCompress` | - | Before context compaction |
-| `SUBAGENT_START` | `subagent-start` | - | - | Subagent spawned (Claude) |
-| `SUBAGENT_STOP` | `subagent-stop` | - | - | Subagent finished (Claude) |
-| `PERMISSION_REQUEST` | `permission-request` | - | - | Permission requested (Claude) |
-| `NOTIFICATION` | `notification` | `Notification` | - | System notification |
+| Event | Hook Name | Description |
+|-------|-----------|-------------|
+| `SESSION_START` | `session-start` | Session begins |
+| `SESSION_END` | `session-end` | Session ends |
+| `BEFORE_AGENT` | `user-prompt-submit` | Before processing prompt |
+| `AFTER_AGENT` | `stop` | Agent stops |
+| `BEFORE_TOOL` | `pre-tool-use` | Before tool execution |
+| `AFTER_TOOL` | `post-tool-use` | After tool execution |
+| `PRE_COMPACT` | `pre-compact` | Before context compaction |
+| `SUBAGENT_START` | `subagent-start` | Subagent spawned |
+| `SUBAGENT_STOP` | `subagent-stop` | Subagent finished |
+| `PERMISSION_REQUEST` | `permission-request` | Permission requested |
+| `NOTIFICATION` | `notification` | System notification |
+
+### Gemini CLI (Pending PR #9070)
+
+Gobby includes adapters for Gemini CLI's planned hook system. Once [PR #9070](https://github.com/google-gemini/gemini-cli/pull/9070) is merged, the following events will be supported: `SessionStart`, `SessionEnd`, `BeforeAgent`, `AfterAgent`, `BeforeTool`, `AfterTool`, `BeforeToolSelection`, `BeforeModel`, `AfterModel`, `PreCompress`, `Notification`.
+
+### Codex CLI (Limited)
+
+Currently only supports the `after_agent` notify hook for session-end notifications. Full hook support pending Codex CLI updates.
 
 See [docs/hooks/CLAUDE_HOOKS_SCHEMA.md](docs/hooks/CLAUDE_HOOKS_SCHEMA.md) for detailed payload schemas.
 
 ## Roadmap
 
-- **Workflow Engine** - Deterministic workflows with hook-enforced phases and tool restrictions. See [docs/plans/WORKFLOWS.md](docs/plans/WORKFLOWS.md).
+See [ROADMAP.md](ROADMAP.md) for the full implementation plan with sprint ordering and dependencies.
+
+### Planned Features
+
+| Feature | Description | Plan |
+|---------|-------------|------|
+| **Hook Extensions** | WebSocket event broadcasting, webhooks, Python plugins | [HOOK_EXTENSIONS.md](docs/plans/HOOK_EXTENSIONS.md) |
+| **Workflow Engine** | Phase-based enforcement (plan → execute → validate) | [WORKFLOWS.md](docs/plans/WORKFLOWS.md) |
+| **Task Tracking** | Persistent tasks with dependencies and git sync | [TASKS.md](docs/plans/TASKS.md) |
+| **Smart MCP Proxy** | Tool metrics, semantic search, self-healing | [MCP_PROXY_IMPROVEMENTS.md](docs/plans/MCP_PROXY_IMPROVEMENTS.md) |
+
+### Milestones
+
+1. **Observable Gobby** — WebSocket event streaming + task system
+2. **Workflow Engine** — Deterministic agent behavior without prompt engineering
+3. **Extensible Gobby** — Webhooks and Python plugin system
+4. **Smart MCP Proxy** — Intelligent tool orchestration
+5. **Production Ready** — Full integration and documentation
 
 ## License
 

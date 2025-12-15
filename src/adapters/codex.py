@@ -269,7 +269,8 @@ class CodexAppServerClient:
                 if self._process.stdin:
                     self._process.stdin.close()
                 self._process.terminate()
-                self._process.wait(timeout=5)
+                loop = asyncio.get_event_loop()
+                await asyncio.wait_for(loop.run_in_executor(None, self._process.wait), timeout=5.0)
             except Exception as e:
                 logger.warning(f"Error terminating Codex app-server: {e}")
                 self._process.kill()
@@ -1128,9 +1129,6 @@ class CodexNotifyAdapter(BaseAdapter):  # type: ignore[misc]
 
     source = SessionSource.CODEX
 
-    # Track threads we've seen to avoid re-registering
-    _seen_threads: set[str] = set()
-
     def __init__(self, hook_manager: "HookManager | None" = None):
         """Initialize the adapter.
 
@@ -1139,6 +1137,8 @@ class CodexNotifyAdapter(BaseAdapter):  # type: ignore[misc]
         """
         self._hook_manager = hook_manager
         self._machine_id: str | None = None
+        # Track threads we've seen to avoid re-registering
+        self._seen_threads: set[str] = set()
 
     def _get_machine_id(self) -> str:
         """Get or generate a machine identifier."""
@@ -1161,7 +1161,9 @@ class CodexNotifyAdapter(BaseAdapter):  # type: ignore[misc]
             return None
 
         # Search for file ending with thread-id.jsonl
-        pattern = str(CODEX_SESSIONS_DIR / "**" / f"*{thread_id}.jsonl")
+        # Escape special glob characters in thread_id
+        safe_thread_id = glob_module.escape(thread_id)
+        pattern = str(CODEX_SESSIONS_DIR / "**" / f"*{safe_thread_id}.jsonl")
         matches = glob_module.glob(pattern, recursive=True)
 
         if matches:
@@ -1269,9 +1271,7 @@ class CodexNotifyAdapter(BaseAdapter):  # type: ignore[misc]
             "decision": response.decision,
         }
 
-    def handle_native(
-        self, native_event: dict, hook_manager: "HookManager | None" = None
-    ) -> dict:
+    def handle_native(self, native_event: dict, hook_manager: HookManager | None = None) -> dict:
         """Process native Codex notify event.
 
         Args:
