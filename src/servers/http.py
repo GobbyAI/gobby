@@ -373,20 +373,23 @@ class HTTPServer:
                 ).value,
             }
 
-            # Get MCP server health status
+            # Get MCP server status - include ALL configured servers
             mcp_health = {}
             if self.mcp_manager is not None:
                 try:
-                    # Get health report from MCP manager
-                    health_report = await self.mcp_manager.get_health_report()
-                    for server_name, health_data in health_report.items():
-                        mcp_health[server_name] = {
-                            "connected": health_data.get("state") == "connected",
-                            "status": health_data.get("state"),
-                            "health": health_data.get("health"),
-                            "consecutive_failures": health_data.get("consecutive_failures"),
-                            "last_health_check": health_data.get("last_health_check"),
-                            "response_time_ms": health_data.get("response_time_ms"),
+                    # Iterate over all configured servers, not just connected ones
+                    for config in self.mcp_manager.server_configs:
+                        health = self.mcp_manager.health.get(config.name)
+                        is_connected = config.name in self.mcp_manager.connections
+                        mcp_health[config.name] = {
+                            "connected": is_connected,
+                            "status": health.state.value if health else ("connected" if is_connected else "not_started"),
+                            "enabled": config.enabled,
+                            "transport": config.transport,
+                            "health": health.health.value if health else None,
+                            "consecutive_failures": health.consecutive_failures if health else 0,
+                            "last_health_check": health.last_health_check.isoformat() if health and health.last_health_check else None,
+                            "response_time_ms": health.response_time_ms if health else None,
                         }
                 except Exception as e:
                     logger.warning(f"Failed to get MCP health: {e}")
