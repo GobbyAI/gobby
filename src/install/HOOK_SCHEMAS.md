@@ -196,6 +196,40 @@ Fired before context compaction occurs.
 }
 ```
 
+#### permission-request
+
+Fired when Claude Code requests permission for a sensitive operation. Can approve or deny the request.
+
+```json
+{
+  "hook_type": "permission-request",
+  "input_data": {
+    "session_id": "abc123-def456",
+    "resource": "file",
+    "action": "write",
+    "target": "/etc/hosts",
+    "reason": "Need to add local DNS entry"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | string | Claude Code's session identifier |
+| `resource` | string | Resource type: `file`, `directory`, or `command` |
+| `action` | string | Requested action: `read`, `write`, or `execute` |
+| `target` | string | Path or identifier of the target resource |
+| `reason` | string | (Optional) Explanation for why permission is needed |
+
+Response can deny:
+```json
+{
+  "continue": false,
+  "decision": "block",
+  "stopReason": "Access to system files not permitted"
+}
+```
+
 #### subagent-start / subagent-stop
 
 Fired when subagents (Task tool) spawn or complete.
