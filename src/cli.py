@@ -592,7 +592,7 @@ def status(ctx: click.Context) -> None:
 @cli.command()
 @click.pass_context
 def mcp_info(ctx: click.Context) -> None:
-    """Show MCP server connection information for Claude Code."""
+    """Show MCP server connection information for AI CLIs."""
     import json
     from pathlib import Path
 
@@ -629,20 +629,45 @@ def mcp_info(ctx: click.Context) -> None:
     click.echo("  Transport: HTTP\n")
 
     # Claude Code configuration
-    click.echo("Claude Code Configuration:")
-    click.echo("  Add this to your MCP settings:\n")
+    click.echo("-" * 60)
+    click.echo("Claude Code")
+    click.echo("-" * 60)
+    click.echo("Add to .claude/settings.json (or ~/.claude/settings.json):\n")
 
-    config_json = {
+    claude_config = {
         "mcpServers": {
-            "gobby-daemon": {
+            "gobby": {
                 "url": f"http://localhost:{http_port}/mcp",
                 "transport": "http",
             }
         }
     }
-
-    click.echo("  " + json.dumps(config_json, indent=2).replace("\n", "\n  "))
+    click.echo("  " + json.dumps(claude_config, indent=2).replace("\n", "\n  "))
     click.echo()
+
+    # Gemini CLI configuration
+    click.echo("-" * 60)
+    click.echo("Gemini CLI")
+    click.echo("-" * 60)
+    click.echo("Add to .gemini/settings.json (or ~/.gemini/settings.json):\n")
+
+    gemini_config = {
+        "mcpServers": {
+            "gobby": {
+                "uri": f"http://localhost:{http_port}/mcp"
+            }
+        }
+    }
+    click.echo("  " + json.dumps(gemini_config, indent=2).replace("\n", "\n  "))
+    click.echo()
+
+    # Codex CLI configuration
+    click.echo("-" * 60)
+    click.echo("Codex CLI")
+    click.echo("-" * 60)
+    click.echo("Codex uses the OpenAI Responses API, not MCP directly.")
+    click.echo("Use 'gobby install --codex' to set up the notify integration.")
+    click.echo("This enables session tracking via ~/.codex/config.toml.\n")
 
     # Try to get available tools
     try:
@@ -652,11 +677,16 @@ def mcp_info(ctx: click.Context) -> None:
         if response.status_code == 200:
             admin_data = response.json()
 
-            click.echo("\nAvailable MCP Tools:")
+            click.echo("-" * 60)
+            click.echo("Available MCP Tools")
+            click.echo("-" * 60)
             click.echo("  - status - Get daemon health and uptime")
             click.echo("  - list_mcp_servers - List downstream MCP servers")
-            click.echo("  - call_tool - Proxy calls to downstream servers")
-            click.echo("  - read_mcp_resource - Read resources from downstream servers")
+            click.echo("  - list_tools - List tools from downstream servers")
+            click.echo("  - get_tool_schema - Get full schema for a tool")
+            click.echo("  - call_tool - Execute tool on downstream server")
+            click.echo("  - add_mcp_server - Add a new MCP server")
+            click.echo("  - remove_mcp_server - Remove an MCP server")
 
             # Show downstream servers if any
             mcp_servers = admin_data.get("mcp_servers", {})
