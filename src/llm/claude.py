@@ -262,8 +262,9 @@ class ClaudeLLMProvider(LLMProvider):  # type: ignore[misc]
         prompt = prompt_template.format(code=code, context=context or "", language=language)
 
         # Determine timeout
-        # TODO: Get default timeout from config if not provided
-        actual_timeout = timeout if timeout is not None else 30
+        actual_timeout = (
+            timeout if timeout is not None else self.config.code_execution.default_timeout
+        )
 
         # Configure Claude Agent SDK
         code_exec_config = self.config.code_execution

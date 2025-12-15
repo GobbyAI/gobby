@@ -11,7 +11,6 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 # Use the dedicated MCP client logger for connection and proxy operations
@@ -601,7 +600,6 @@ class MCPClientManager:
         cli_key: str = "",
         project_path: str | None = None,
         project_id: str | None = None,
-        tools_path: Path | None = None,
         token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None = None,
         mcp_db_manager: Any | None = None,
     ):
@@ -615,7 +613,6 @@ class MCPClientManager:
             project_id: Project ID for scoped server filtering (optional).
                        When set, loads project-specific servers + global servers,
                        with project servers taking precedence on name conflicts.
-            tools_path: Path to tools directory (deprecated, tools stored in database)
             token_refresh_callback: Async function that returns new auth token
             mcp_db_manager: LocalMCPManager instance for database-backed server/tool storage
         """
@@ -657,7 +654,6 @@ class MCPClientManager:
 
         self.cli_key = cli_key
         self.project_path = project_path
-        self.tools_path = tools_path  # Deprecated, kept for backwards compatibility
         self.token_refresh_callback = token_refresh_callback
         self.mcp_db_manager = mcp_db_manager
 

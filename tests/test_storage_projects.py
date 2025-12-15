@@ -1,7 +1,8 @@
 """Tests for the LocalProjectManager storage layer."""
 
-import pytest
+import sqlite3
 
+import pytest
 from gobby.storage.projects import LocalProjectManager, Project
 
 
@@ -14,9 +15,7 @@ class TestProject:
         project = project_manager.create(name="test-project")
 
         # Fetch raw row
-        row = project_manager.db.fetchone(
-            "SELECT * FROM projects WHERE id = ?", (project.id,)
-        )
+        row = project_manager.db.fetchone("SELECT * FROM projects WHERE id = ?", (project.id,))
         assert row is not None
 
         # Create from row
@@ -70,7 +69,7 @@ class TestLocalProjectManager:
         """Test that creating a project with duplicate name raises error."""
         project_manager.create(name="unique-project")
 
-        with pytest.raises(Exception):  # sqlite3.IntegrityError
+        with pytest.raises(sqlite3.IntegrityError):
             project_manager.create(name="unique-project")
 
     def test_get_project(self, project_manager: LocalProjectManager):

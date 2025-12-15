@@ -83,16 +83,3 @@ def get_project_mcp_config_path(project_name: str) -> Path:
         Path to .mcp.json.
     """
     return get_project_mcp_dir(project_name) / ".mcp.json"
-
-
-def get_project_tools_path(project_name: str) -> Path:
-    """
-    Get the path to the project-specific tools directory.
-
-    Args:
-        project_name: Name of the project.
-
-    Returns:
-        Path to tools directory.
-    """
-    return get_project_mcp_dir(project_name) / "tools"

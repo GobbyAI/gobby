@@ -3,9 +3,7 @@
 import json
 from pathlib import Path
 
-import pytest
-
-from gobby.storage.mcp import LocalMCPManager, MCPServer, Tool
+from gobby.storage.mcp import LocalMCPManager
 
 
 class TestMCPServer:

@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "1.0.0"
+version = "0.1.0"
 description = "Gobby is a local daemon that unifies Claude Code, Gemini CLI, and Codex through a hook interface for session tracking, and provides an MCP proxy with progressive tool discovery for efficient access to downstream servers."
 requires-python = ">=3.11"
 dependencies = [
@@ -29,7 +29,6 @@ build-backend = "setuptools.build_meta"
 packages = [
     "gobby",
     "gobby.adapters",
-    "gobby.codex",
     "gobby.config",
     "gobby.hooks",
     "gobby.install",

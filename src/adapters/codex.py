@@ -30,7 +30,7 @@ from gobby.adapters.base import BaseAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
-    from gobby.codex.client import CodexAppServerClient
+    from gobby.adapters.codex_client import CodexAppServerClient
     from gobby.hooks.hook_manager import HookManager
 
 logger = logging.getLogger(__name__)

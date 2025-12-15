@@ -5,8 +5,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from gobby.utils.git import (
     get_git_branch,
     get_git_metadata,
@@ -19,7 +17,6 @@ from gobby.utils.project_context import (
     get_project_context,
     get_project_mcp_config_path,
     get_project_mcp_dir,
-    get_project_tools_path,
 )
 
 
@@ -274,12 +271,6 @@ class TestProjectContext:
         expected = Path.home() / ".gobby" / "projects" / "test-project" / ".mcp.json"
         assert result == expected
 
-    def test_get_project_tools_path(self):
-        """Test getting project tools path."""
-        result = get_project_tools_path("test-project")
-        expected = Path.home() / ".gobby" / "projects" / "test-project" / "tools"
-        assert result == expected
-
 
 class TestMigrations:
     """Tests for database migrations."""
@@ -327,9 +318,7 @@ class TestMigrations:
     def test_tables_created(self, temp_db):
         """Test that expected tables are created."""
         # Check tables exist
-        tables = temp_db.fetchall(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
+        tables = temp_db.fetchall("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         table_names = [t["name"] for t in tables]
 
         assert "schema_version" in table_names

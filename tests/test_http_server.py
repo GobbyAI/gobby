@@ -5,10 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 from gobby.servers.http import HTTPServer, SessionRegisterRequest
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import LocalSessionManager
 
@@ -479,7 +477,7 @@ class TestExceptionHandling:
         original_get = session_storage.get
         session_storage.get = MagicMock(side_effect=RuntimeError("Test error"))
 
-        client = TestClient(server.app, raise_server_exceptions=False)
+        TestClient(server.app, raise_server_exceptions=False)
 
         # This should return 200 due to global exception handler
         # (only for specific endpoints, sessions/get raises HTTPException)

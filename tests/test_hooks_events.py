@@ -2,8 +2,6 @@
 
 from datetime import datetime
 
-import pytest
-
 from gobby.hooks.events import (
     EVENT_TYPE_CLI_SUPPORT,
     HookEvent,

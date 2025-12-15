@@ -1,6 +1,5 @@
 """Tests for the LocalSessionManager storage layer."""
 
-import pytest
 
 from gobby.storage.sessions import LocalSessionManager, Session
 
