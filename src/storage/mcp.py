@@ -148,7 +148,11 @@ class LocalMCPManager:
         Add or update an MCP server.
 
         Uses upsert to handle duplicate names.
+        Server name is normalized to lowercase.
         """
+        # Normalize server name to lowercase
+        name = name.lower()
+
         server_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
@@ -189,8 +193,9 @@ class LocalMCPManager:
         return self.get_server(name)  # type: ignore
 
     def get_server(self, name: str) -> MCPServer | None:
-        """Get server by name."""
-        row = self.db.fetchone("SELECT * FROM mcp_servers WHERE name = ?", (name,))
+        """Get server by name (case-insensitive lookup)."""
+        # Normalize to lowercase for lookup
+        row = self.db.fetchone("SELECT * FROM mcp_servers WHERE name = ?", (name.lower(),))
         return MCPServer.from_row(row) if row else None
 
     def get_server_by_id(self, server_id: str) -> MCPServer | None:
@@ -242,8 +247,8 @@ class LocalMCPManager:
         return self.get_server(name)
 
     def remove_server(self, name: str) -> bool:
-        """Remove server by name (cascades to tools)."""
-        cursor = self.db.execute("DELETE FROM mcp_servers WHERE name = ?", (name,))
+        """Remove server by name (cascades to tools). Case-insensitive."""
+        cursor = self.db.execute("DELETE FROM mcp_servers WHERE name = ?", (name.lower(),))
         return cursor.rowcount > 0
 
     def cache_tools(self, server_name: str, tools: list[dict[str, Any]]) -> int:
@@ -273,6 +278,8 @@ class LocalMCPManager:
             tool_id = str(uuid.uuid4())
             # Handle both 'inputSchema' and 'args' keys (internal vs MCP standard)
             input_schema = tool.get("inputSchema") or tool.get("args")
+            # Normalize tool name to lowercase
+            tool_name = (tool.get("name") or "").lower()
             self.db.execute(
                 """
                 INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
@@ -281,7 +288,7 @@ class LocalMCPManager:
                 (
                     tool_id,
                     server.id,
-                    tool.get("name", ""),
+                    tool_name,
                     tool.get("description"),
                     json.dumps(input_schema) if input_schema else None,
                     now,

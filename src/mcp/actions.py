@@ -44,6 +44,9 @@ async def add_mcp_server(
         Result dict with success status and server info
     """
     try:
+        # Normalize server name to lowercase
+        name = name.lower()
+
         # Create configuration
         config = MCPServerConfig(
             name=name,
