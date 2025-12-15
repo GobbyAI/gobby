@@ -7,29 +7,33 @@ Transform Gobby from a passive session tracker into an **enforcement layer** for
 Key insight: **The LLM doesn't need to remember what phase it's in** - the workflow engine tracks state and hooks enforce it. The LLM sees tool blocks and injected context that guide it naturally.
 
 Inspired by:
+
 - [Parlant](https://github.com/emcie-co/parlant) - Behavioral enforcement over prompts
 - [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD) - YAML workflows with phases and agents
 
 ## Supported Patterns
 
 ### Plan-and-Execute
+
 LLM plans steps first, then executes with validation loops for adjustments.
 
-```
+```text
 plan → execute → validate ⟲ (loop on failure)
 ```
 
 ### ReAct (Reasoning + Acting)
+
 Continuous reason-observe-act cycle with implicit validation via observation.
 
-```
+```text
 reason → act → observe → reason (continuous cycle)
 ```
 
 ### Plan-Act-Reflect
+
 Adds explicit critique/validate phase before replanning, common in coding agents.
 
-```
+```text
 plan → act → reflect → replan (critique before continuing)
 ```
 
@@ -38,15 +42,18 @@ plan → act → reflect → replan (critique before continuing)
 ## Workflow Types
 
 ### Lifecycle Workflows
+
 Event-driven workflows that respond to session events without enforcing phases or tool restrictions. They execute actions based on triggers.
 
 **Use cases:**
+
 - Session handoff (current behavior)
 - Auto-save / backup
 - Logging and analytics
 - Notifications
 
 **Characteristics:**
+
 - `type: lifecycle`
 - No `phases` section
 - Only `triggers` section
@@ -54,15 +61,18 @@ Event-driven workflows that respond to session events without enforcing phases o
 - Multiple lifecycle workflows can be active
 
 ### Phase-Based Workflows
+
 State machine workflows that enforce phases with tool restrictions, transition conditions, and exit criteria.
 
 **Use cases:**
+
 - Plan-and-Execute
 - ReAct
 - Plan-Act-Reflect
 - TDD
 
 **Characteristics:**
+
 - `type: phase` (default)
 - Has `phases` section with allowed/blocked tools
 - Has `transitions` and `exit_conditions`
@@ -75,7 +85,7 @@ State machine workflows that enforce phases with tool restrictions, transition c
 
 ### Components
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                      Hook Events                             │
 │  session_start | prompt_submit | tool_call | tool_result    │
@@ -126,6 +136,10 @@ class WorkflowState:
     task_list: list[dict] | None      # Decomposed tasks with verification criteria
     current_task_index: int           # Index of current task being executed
     files_modified_this_task: int     # Track scope creep
+
+    # NOTE: Workflow state is intentionally local-only.
+    # Cross-session continuity is achieved by persisting work to the task system (tasks.jsonl),
+    # not by syncing ephemeral workflow state.
 ```
 
 ---
@@ -143,6 +157,9 @@ version: "1.0"
 settings:
   reflect_after_actions: 5        # Trigger reflection after N actions
   max_actions_per_phase: 20       # Safety limit
+  stuck_detection:
+    max_phase_duration_minutes: 30 # Auto-transition to reflect if stuck
+    max_verification_attempts: 3   # Auto-proceed after N failed verifications
   require_plan_approval: true     # User must approve plan before acting
 
 # Variable definitions (can be overridden per-project)
@@ -395,21 +412,27 @@ async def evaluate_workflow(event: HookEvent) -> HookResponse:
 ## Built-in Templates
 
 ### 1. plan-execute.yaml
+
 Basic planning enforcement. Plan phase restricts to read-only tools until user approves.
 
 ### 2. react.yaml
+
 ReAct loop with observation capture. Each action's result is captured and injected into reasoning context.
 
 ### 3. plan-act-reflect.yaml
+
 Full reflection workflow. Automatically enters reflection phase after N actions or on errors.
 
 ### 4. architect.yaml
+
 BMAD-inspired development workflow. Phases: requirements → design → implementation → review.
 
 ### 5. test-driven.yaml
+
 TDD workflow. Phases: write-test → implement → refactor. Blocks implementation until test exists.
 
 ### 6. plan-to-tasks.yaml
+
 Task decomposition workflow. Takes a completed plan and breaks it into atomic, sequential tasks with verification criteria. Executes tasks one at a time with verification gates.
 
 ```yaml
@@ -445,7 +468,12 @@ phases:
           Output as JSON: {"tasks": [{"id": 1, "description": "...", "verification": "..."}]}
         output_as: task_list
 
-      - action: write_todos
+      - action: persist_tasks
+        source: task_list.tasks
+        create_dependencies: sequential
+        link_to_session: true
+
+      - action: write_todos  # Mirror to Claude Code UI
         source: task_list.tasks
 
       - action: inject_message
@@ -556,18 +584,21 @@ phases:
 ```
 
 **Flow:**
-```
+
+```text
 decompose → execute → verify ⟲ (loop until all tasks done) → complete
            ↑__________|
 ```
 
 **Key features:**
+
 - LLM-powered task decomposition with verification criteria
 - TodoWrite integration for task tracking
 - Verification gate between tasks
 - Prevents scope creep with file modification warnings
 
 ### 7. session-handoff.yaml (Lifecycle Workflow)
+
 Extracts the current session summary and handoff system as a workflow. This is a **lifecycle workflow** (no phases, just event responses) rather than a **phase-based workflow**.
 
 ```yaml
@@ -614,6 +645,7 @@ triggers:
 ```
 
 This demonstrates that:
+
 1. **Lifecycle workflows** respond to events without enforcing phases
 2. **Phase-based workflows** (plan-act-reflect, etc.) enforce tool restrictions and transitions
 3. Both types can be active simultaneously on a session
@@ -729,6 +761,11 @@ gobby workflow handoff "Notes about current state"
 # Import workflow from URL or file
 gobby workflow import https://example.com/workflow.yaml
 gobby workflow import ./my-workflow.yaml
+
+# Escape Hatches & Debugging
+gobby workflow phase <name> --force     # Skip exit conditions
+gobby workflow reset                    # Return to initial phase
+gobby workflow disable                  # Temporarily suspend enforcement
 ```
 
 ---
@@ -815,6 +852,9 @@ Before building new workflow capabilities, extract the current session handoff b
 - [ ] Implement rule evaluation for inline phase rules
 - [ ] Implement transition evaluation and execution
 - [ ] Implement exit condition checking
+- [ ] Implement "Dual Write" pattern (TodoWrite + create_task)
+- [ ] Implement stuck detection (duration & attempt limits)
+- [ ] Optimize Rule Evaluator (pre-compile conditions, short-circuit, cache state)
 
 ### Phase 3: Hook Integration
 
@@ -830,34 +870,48 @@ Before building new workflow capabilities, extract the current session handoff b
 ### Phase 4: Actions
 
 **Context & Messaging:**
+
 - [ ] Implement `inject_context` action
 - [ ] Implement `inject_message` action
 - [ ] Implement `switch_mode` action (for Claude Code plan mode)
 
 **Artifacts:**
+
 - [ ] Implement `capture_artifact` action
 - [ ] Implement `read_artifact` action (load file content into variable)
 
 **State Management:**
+
 - [ ] Implement `load_workflow_state` action
 - [ ] Implement `save_workflow_state` action
 - [ ] Implement `set_variable` action
 - [ ] Implement `increment_variable` action
 
 **Handoff:**
+
 - [ ] Implement `generate_handoff` action
 - [ ] Implement `restore_from_handoff` action
 - [ ] Implement `find_parent_session` action
 - [ ] Implement `mark_session_status` action
 
 **LLM Integration:**
+
 - [ ] Implement `call_llm` action (invoke LLM with prompt template)
 - [ ] Implement `generate_summary` action
 - [ ] Implement `synthesize_title` action
 
 **TodoWrite Integration:**
+
 - [ ] Implement `write_todos` action (populate TodoWrite from task list)
 - [ ] Implement `mark_todo_complete` action
+
+**Task System Integration:**
+
+- [ ] Implement `persist_tasks` action (create tasks with dependencies, session linking)
+
+**MCP Tool Invocation:**
+
+- [ ] Implement `call_mcp_tool` action (invoke any gobby MCP tool by name)
 
 ### Phase 5: Context Sources
 
@@ -920,6 +974,12 @@ Before building new workflow capabilities, extract the current session handoff b
 - [ ] Add examples for common patterns
 - [ ] Update CLAUDE.md with workflow information
 
+### Phase 11: Error Recovery Strategies
+
+- [ ] Implement Daemon Crash Recovery (restore state from SQLite on restart)
+- [ ] Implement Tool Timeout Handling (auto-transition to 'reflect' on persistent timeouts)
+- [ ] Implement "Escape Hatch" commands (`--force`, `reset`, `disable`)
+
 ---
 
 ## Open Questions
@@ -932,7 +992,7 @@ Before building new workflow capabilities, extract the current session handoff b
 
 4. **Approval UX**: How should user approvals work? Inject a question? Block until explicit command?
 
-5. **Escape hatches**: Should users be able to override workflow restrictions? (e.g., `--force` flag)
+5. ~~**Escape hatches**: Should users be able to override workflow restrictions?~~ **Resolved:** Implemented via `--force`, `reset`, and `disable` CLI commands (see CLI Commands section)
 
 6. **Workflow versioning**: How to handle workflow definition changes mid-session?
 

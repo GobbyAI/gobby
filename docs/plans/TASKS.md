@@ -4,7 +4,19 @@
 
 A beads-inspired task tracking system native to gobby, providing agents with persistent task management across sessions. Unlike beads, this integrates directly with gobby's session/project model and supports multi-CLI workflows (Claude Code, Gemini, Codex).
 
-**Inspiration:** https://github.com/steveyegge/beads
+**Inspiration:** <https://github.com/steveyegge/beads>
+
+## Build Order
+
+```text
+Phases 1-10: Core task system (self-contained, build first)
+    ↓
+Workflow Engine (Phases 1-10 in WORKFLOWS.md) - Can be built parallel to Tasks
+    ↓
+Phases 11-13: Integration + LLM expansion (Requires both Core Tasks and Workflow Engine)
+```
+
+The core task system provides immediate value without workflows. Agents can use task MCP tools directly with guidance from CLAUDE.md instructions.
 
 ## Core Design Principles
 
@@ -91,6 +103,7 @@ CREATE INDEX idx_session_tasks_task ON session_tasks(task_id);
 ## Hash-Based ID Generation
 
 IDs use the format `gt-{hash}` where hash is 6 hex characters derived from:
+
 - Timestamp (milliseconds)
 - Random bytes
 - Project ID
@@ -134,7 +147,7 @@ LIMIT ?;
 
 ### File Structure
 
-```
+```text
 .gobby/
 ├── tasks.jsonl           # Canonical task data
 ├── tasks_meta.json       # Sync metadata (last_export, hash)
@@ -152,12 +165,14 @@ Each line is a complete task record with embedded dependencies:
 ### Sync Behavior
 
 **Export (SQLite → JSONL):**
+
 - Triggered after task mutations (create/update/delete)
 - 5-second debounce to batch rapid changes
 - Writes to `.gobby/tasks.jsonl`
 - Updates `.gobby/tasks_meta.json` with export timestamp and content hash
 
 **Import (JSONL → SQLite):**
+
 - Triggered on daemon start
 - Triggered after `git pull` (via hook or manual)
 - Merges JSONL records into SQLite
@@ -457,6 +472,240 @@ gobby tasks stats
 - [ ] Performance testing with 1000+ tasks
 - [ ] Add `gobby tasks` to CLI help output
 
+## Workflow Engine Integration (Future)
+
+> **Dependency:** Phases 11-13 require the Workflow Engine (see `docs/plans/WORKFLOWS.md`) to be built first. The core task system (Phases 1-10) is self-contained and should be implemented first.
+
+Once workflows exist, the task system integrates with the Workflow Engine to provide persistent task tracking across sessions while workflows handle ephemeral execution state.
+
+### Relationship Model
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 Workflow Engine (Ephemeral)                 │
+│  - Phase state (plan → execute → verify)                    │
+│  - Current task index                                       │
+│  - Tool restrictions per phase                              │
+│  - Transition triggers                                      │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ persists to / reads from
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Task System (Persistent)                    │
+│  - Task records with dependencies                           │
+│  - Status tracking (open → in_progress → closed)            │
+│  - Session linkage (discovered_in, worked_on)               │
+│  - Git sync for cross-machine sharing                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Integration Points
+
+| Workflow Action | Task System Behavior |
+|-----------------|---------------------|
+| `call_llm` (decompose) | Creates tasks with `blocks` dependencies based on order |
+| `write_todos` | Also persists to tasks table with session linkage |
+| `mark_todo_complete` | Updates task status to `closed` |
+| `enter_phase(execute)` | Marks current task as `in_progress` |
+| `enter_phase(verify)` | Prepares task for status update |
+| Workflow handoff | Includes pending task IDs for next session |
+
+### Workflow-Aware Task Creation
+
+When the `plan-to-tasks.yaml` workflow decomposes a plan:
+
+1. LLM generates ordered task list with verification criteria
+2. Tasks are persisted to `tasks` table with:
+   - `discovered_in_session_id` set to current session
+   - Sequential `blocks` dependencies (task 2 blocks on task 1)
+   - `verification` stored in description or labels
+3. WorkflowState references task IDs (not ephemeral list)
+4. On session end, incomplete tasks remain in database
+5. Next session can query `list_ready_tasks()` to continue
+
+### Schema Addition for Workflow Link
+
+```sql
+-- Add to tasks table
+ALTER TABLE tasks ADD COLUMN workflow_name TEXT;        -- Which workflow created this
+ALTER TABLE tasks ADD COLUMN verification TEXT;         -- Verification criteria from decomposition
+ALTER TABLE tasks ADD COLUMN sequence_order INTEGER;    -- Order within parent epic
+```
+
+---
+
+## LLM-Powered Task Expansion
+
+Unlike beads (which is purely a tracking system), gobby provides LLM-powered task decomposition as a first-class feature.
+
+### Expansion Strategies
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `checklist` | Break into sequential subtasks | Simple features |
+| `parallel` | Independent subtasks (no dependencies) | Refactoring multiple files |
+| `epic` | Create epic with child tasks | Large features |
+| `tdd` | Test task → implementation task pairs | Test-driven development |
+
+### MCP Tools for Expansion
+
+```python
+@mcp.tool()
+def expand_task(
+    task_id: str,
+    strategy: str = "checklist",  # checklist, parallel, epic, tdd
+    max_subtasks: int = 10,
+) -> dict:
+    """
+    Use LLM to decompose a task into subtasks.
+
+    Reads task title/description, generates child tasks with:
+    - Appropriate dependencies based on strategy
+    - Verification criteria for each subtask
+    - Priority inherited from parent
+
+    Returns created subtask IDs.
+    """
+
+@mcp.tool()
+def expand_from_spec(
+    spec_content: str,
+    spec_type: str = "prd",  # prd, user_story, bug_report, rfc
+    parent_task_id: str | None = None,
+    strategy: str = "epic",
+) -> dict:
+    """
+    Parse a specification and generate a task tree.
+
+    For PRDs: Creates epic with feature tasks
+    For user stories: Creates acceptance criteria as subtasks
+    For bug reports: Creates investigation → fix → verify tasks
+    For RFCs: Creates research → design → implement tasks
+
+    Returns root task ID and full task tree.
+    """
+
+@mcp.tool()
+def suggest_next_task(
+    context: str | None = None,
+) -> dict:
+    """
+    LLM analyzes current session context and suggests which ready task to work on.
+
+    Considers:
+    - Files already read/modified in session
+    - Recent task activity
+    - Priority and dependencies
+
+    Returns recommended task with reasoning.
+    """
+```
+
+### Expansion Prompt Template
+
+```python
+EXPAND_TASK_PROMPT = """
+Break down this task into atomic, actionable subtasks.
+
+Task: {title}
+Description: {description}
+Strategy: {strategy}
+
+Requirements:
+- Each subtask should be completable in a single focused session
+- Each subtask should have clear verification criteria
+- Order subtasks by dependency (what must be done first)
+- For '{strategy}' strategy: {strategy_guidance}
+
+Output as JSON:
+{{
+  "subtasks": [
+    {{
+      "title": "...",
+      "description": "...",
+      "verification": "How to verify this is complete",
+      "depends_on_index": null | 0 | 1 | ...  // Index of blocking subtask
+    }}
+  ]
+}}
+"""
+```
+
+### Agent Instructions for Task Management
+
+Add to project's `CLAUDE.md` or inject via workflow:
+
+```markdown
+## Task Management
+
+This project uses gobby's task system for persistent work tracking.
+
+### When to Create Tasks
+- When you discover work items during implementation
+- When you identify blockers or prerequisites
+- When scope expands beyond the current task
+- When you find bugs while working on features
+
+### When to Query Tasks
+- At session start: `list_ready_tasks()` to see unblocked work
+- Before starting work: `get_task(id)` for context
+- When blocked: `list_blocked_tasks()` to understand dependencies
+
+### Task Lifecycle
+1. `list_ready_tasks()` → find work
+2. `update_task(id, status="in_progress")` → claim it
+3. Work on the task
+4. `close_task(id, reason="...")` → mark complete
+5. File discovered work with `create_task(..., discovered_from=current_task_id)`
+
+### Decomposition
+For large tasks, use `expand_task(id)` to break them down before starting.
+```
+
+---
+
+## Implementation Checklist Updates
+
+### Phase 11: Workflow Integration
+
+- [ ] Add `workflow_name` column to tasks table (migration)
+- [ ] Add `verification` column to tasks table (migration)
+- [ ] Add `sequence_order` column to tasks table (migration)
+- [ ] Create `src/workflows/task_actions.py` for workflow-task bridge
+- [ ] Implement `persist_decomposed_tasks()` action
+- [ ] Implement `update_task_from_workflow()` action
+- [ ] Implement `get_workflow_tasks()` to retrieve tasks for workflow state
+- [ ] Update `plan-to-tasks.yaml` to use persistent tasks
+- [ ] Add task IDs to workflow handoff data
+- [ ] Update workflow `on_session_start` to load pending tasks
+- [ ] Implement ID mapping in `persist_decomposed_tasks` (map temp indices 1,2.. to gt-{hash})
+- [ ] Add unit tests for workflow-task integration
+
+### Phase 12: LLM-Powered Expansion
+
+- [ ] Create `src/tasks/expansion.py` with `TaskExpander` class
+- [ ] Implement expansion prompt templates per strategy
+- [ ] Implement `expand_task()` method
+- [ ] Implement `expand_from_spec()` method
+- [ ] Implement `suggest_next_task()` method
+- [ ] Add `expand_task` MCP tool
+- [ ] Add `expand_from_spec` MCP tool
+- [ ] Add `suggest_next_task` MCP tool
+- [ ] Add `gobby tasks expand TASK_ID [--strategy S]` CLI command
+- [ ] Add `gobby tasks import-spec FILE [--type T]` CLI command
+- [ ] Add unit tests for TaskExpander
+- [ ] Add integration tests with mock LLM
+
+### Phase 13: Agent Instructions
+
+- [ ] Create `templates/task-instructions.md` for CLAUDE.md injection
+- [ ] Add `gobby tasks instructions` command to output template
+- [ ] Document task management patterns for agents
+- [ ] Add examples of discovery-during-work pattern
+- [ ] Add examples of decomposition pattern
+
+---
+
 ## Future Enhancements
 
 - **Auto-discovery from transcripts**: LLM extracts tasks from session transcripts
@@ -465,3 +714,4 @@ gobby tasks stats
 - **Task notifications**: WebSocket events when tasks change
 - **Multi-project dependencies**: Cross-project task relationships
 - **Task search**: Full-text search across title and description
+- **Beads import**: One-time migration from existing beads database

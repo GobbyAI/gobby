@@ -1007,7 +1007,7 @@ class HTTPServer:
 
                 # Select adapter based on source
                 from gobby.adapters.claude_code import ClaudeCodeAdapter
-                from gobby.adapters.codex_notify import CodexNotifyAdapter
+                from gobby.adapters.codex import CodexNotifyAdapter
                 from gobby.adapters.gemini import GeminiAdapter
 
                 if source == "claude":

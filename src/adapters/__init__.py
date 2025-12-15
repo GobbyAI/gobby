@@ -17,14 +17,14 @@ Adapters:
 
 from gobby.adapters.base import BaseAdapter
 from gobby.adapters.claude_code import ClaudeCodeAdapter
-from gobby.adapters.codex import CodexAdapter
-from gobby.adapters.codex_notify import CodexNotifyAdapter
+from gobby.adapters.codex import CodexAdapter, CodexAppServerClient, CodexNotifyAdapter
 from gobby.adapters.gemini import GeminiAdapter
 
 __all__ = [
     "BaseAdapter",
     "ClaudeCodeAdapter",
     "CodexAdapter",
+    "CodexAppServerClient",
     "CodexNotifyAdapter",
     "GeminiAdapter",
 ]

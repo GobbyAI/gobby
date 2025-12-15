@@ -1147,15 +1147,15 @@ def _install_codex_notify() -> dict[str, Any]:
     }
 
     install_dir = _get_install_dir()
-    source_notify = install_dir / "codex" / "notify.py"
+    source_notify = install_dir / "codex" / "hooks" / "hook_dispatcher.py"
     if not source_notify.exists():
         result["error"] = f"Missing source file: {source_notify}"
         return result
 
-    # Install notify script to ~/.gobby/hooks/codex/notify.py
+    # Install hook dispatcher to ~/.gobby/hooks/codex/hook_dispatcher.py
     notify_dir = Path.home() / ".gobby" / "hooks" / "codex"
     notify_dir.mkdir(parents=True, exist_ok=True)
-    target_notify = notify_dir / "notify.py"
+    target_notify = notify_dir / "hook_dispatcher.py"
 
     if target_notify.exists():
         target_notify.unlink()
@@ -1220,8 +1220,8 @@ def _uninstall_codex_notify() -> dict[str, Any]:
         "error": None,
     }
 
-    # Remove notify script from ~/.gobby/hooks/codex/notify.py
-    notify_file = Path.home() / ".gobby" / "hooks" / "codex" / "notify.py"
+    # Remove hook dispatcher from ~/.gobby/hooks/codex/hook_dispatcher.py
+    notify_file = Path.home() / ".gobby" / "hooks" / "codex" / "hook_dispatcher.py"
     if notify_file.exists():
         notify_file.unlink()
         files_removed.append(str(notify_file))
@@ -1491,7 +1491,7 @@ def uninstall(uninstall_claude: bool, uninstall_gemini: bool, uninstall_codex: b
         # Check which CLIs have hooks installed
         claude_settings = project_path / ".claude" / "settings.json"
         gemini_settings = project_path / ".gemini" / "settings.json"
-        codex_notify = Path.home() / ".gobby" / "hooks" / "codex" / "notify.py"
+        codex_notify = Path.home() / ".gobby" / "hooks" / "codex" / "hook_dispatcher.py"
 
         if claude_settings.exists():
             clis_to_uninstall.append("claude")
