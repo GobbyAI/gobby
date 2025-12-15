@@ -6,7 +6,7 @@
           {
             "name": "gobby-session-start",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=SessionStart",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=SessionStart",
             "timeout": 30000
           }
         ]
@@ -18,7 +18,7 @@
           {
             "name": "gobby-session-end",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=SessionEnd",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=SessionEnd",
             "timeout": 30000
           }
         ]
@@ -30,7 +30,7 @@
           {
             "name": "gobby-before-agent",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=BeforeAgent",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=BeforeAgent",
             "timeout": 30000
           }
         ]
@@ -42,7 +42,7 @@
           {
             "name": "gobby-after-agent",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=AfterAgent",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=AfterAgent",
             "timeout": 30000
           }
         ]
@@ -55,7 +55,7 @@
           {
             "name": "gobby-before-tool",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=BeforeTool",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=BeforeTool",
             "timeout": 30000
           }
         ]
@@ -68,7 +68,7 @@
           {
             "name": "gobby-after-tool",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=AfterTool",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=AfterTool",
             "timeout": 30000
           }
         ]
@@ -80,7 +80,7 @@
           {
             "name": "gobby-before-tool-selection",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=BeforeToolSelection",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=BeforeToolSelection",
             "timeout": 30000
           }
         ]
@@ -92,7 +92,7 @@
           {
             "name": "gobby-before-model",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=BeforeModel",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=BeforeModel",
             "timeout": 30000
           }
         ]
@@ -104,7 +104,7 @@
           {
             "name": "gobby-after-model",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=AfterModel",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=AfterModel",
             "timeout": 30000
           }
         ]
@@ -116,7 +116,7 @@
           {
             "name": "gobby-pre-compress",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=PreCompress",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=PreCompress",
             "timeout": 30000
           }
         ]
@@ -128,7 +128,7 @@
           {
             "name": "gobby-notification",
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook-dispatcher.py\" --type=Notification",
+            "command": "uv run python \"$PROJECT_PATH/.gemini/hooks/hook_dispatcher.py\" --type=Notification",
             "timeout": 30000
           }
         ]

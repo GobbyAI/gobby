@@ -78,13 +78,13 @@ def main() -> int:
 
         # Check command uses dispatcher
         command = config["hooks"][0].get("command", "")
-        if "hook-dispatcher.py" not in command:
+        if "hook_dispatcher.py" not in command:
             print(f"⚠️  Warning: {hook_type} not using dispatcher pattern")
 
     print(f"✅ All {len(required_hooks)} required hook types configured")
 
     # Validate dispatcher exists
-    dispatcher = claude_dir / "hooks" / "hook-dispatcher.py"
+    dispatcher = claude_dir / "hooks" / "hook_dispatcher.py"
     if not dispatcher.exists():
         print(f"❌ Dispatcher not found: {dispatcher}")
         return 1

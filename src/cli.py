@@ -731,8 +731,8 @@ def _install_claude_hooks(project_path: Path) -> dict[str, Any]:
 
     # Hook files to copy
     hook_files = {
-        "hook-dispatcher.py": True,  # Make executable
-        "validate-settings.py": True,  # Make executable
+        "hook_dispatcher.py": True,  # Make executable
+        "validate_settings.py": True,  # Make executable
         "README.md": False,
         "HOOK_SCHEMAS.md": False,
     }
@@ -853,7 +853,7 @@ def _install_gemini_hooks(project_path: Path) -> dict[str, Any]:
     source_hooks_template = gemini_install_dir / "hooks-template.json"
 
     # Verify source files exist
-    dispatcher_file = install_hooks_dir / "hook-dispatcher.py"
+    dispatcher_file = install_hooks_dir / "hook_dispatcher.py"
     if not dispatcher_file.exists():
         result["error"] = f"Missing hook dispatcher: {dispatcher_file}"
         return result
@@ -863,7 +863,7 @@ def _install_gemini_hooks(project_path: Path) -> dict[str, Any]:
         return result
 
     # Copy hook dispatcher
-    target_dispatcher = hooks_dir / "hook-dispatcher.py"
+    target_dispatcher = hooks_dir / "hook_dispatcher.py"
     if target_dispatcher.exists():
         target_dispatcher.unlink()
     copy2(dispatcher_file, target_dispatcher)
@@ -1005,8 +1005,8 @@ def _uninstall_claude_hooks(project_path: Path) -> dict[str, Any]:
 
     # Remove hook files
     hook_files = [
-        "hook-dispatcher.py",
-        "validate-settings.py",
+        "hook_dispatcher.py",
+        "validate_settings.py",
         "README.md",
         "HOOK_SCHEMAS.md",
     ]
@@ -1107,10 +1107,10 @@ def _uninstall_gemini_hooks(project_path: Path) -> dict[str, Any]:
             json.dump(settings, f, indent=2)
 
     # Remove hook dispatcher
-    dispatcher_file = hooks_dir / "hook-dispatcher.py"
+    dispatcher_file = hooks_dir / "hook_dispatcher.py"
     if dispatcher_file.exists():
         dispatcher_file.unlink()
-        files_removed.append("hook-dispatcher.py")
+        files_removed.append("hook_dispatcher.py")
 
     # Attempt to remove empty hooks directory
     try:

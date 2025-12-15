@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=session-start"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=session-start"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=session-end"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=session-end"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=user-prompt-submit"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=user-prompt-submit"
           }
         ]
       }
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=pre-tool-use"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=pre-tool-use"
           }
         ]
       }
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=post-tool-use"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=post-tool-use"
           }
         ]
       }
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=pre-compact"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=pre-compact"
           }
         ]
       }
@@ -69,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=notification"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=notification"
           }
         ]
       }
@@ -79,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=stop"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=stop"
           }
         ]
       }
@@ -89,7 +89,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=subagent-start"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=subagent-start"
           }
         ]
       }
@@ -99,7 +99,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=subagent-stop"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=subagent-stop"
           }
         ]
       }
@@ -110,7 +110,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook-dispatcher.py\" --type=permission-request"
+            "command": "uv run python \"$PROJECT_PATH/.claude/hooks/hook_dispatcher.py\" --type=permission-request"
           }
         ]
       }

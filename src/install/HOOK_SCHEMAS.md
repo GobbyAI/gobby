@@ -231,7 +231,7 @@ System notifications (e.g., waiting for user input).
 
 ### Request Format
 
-Gemini CLI hooks use this wrapper format (via hook-dispatcher.py):
+Gemini CLI hooks use this wrapper format (via hook_dispatcher.py):
 
 ```json
 {
@@ -576,7 +576,7 @@ class HookResponse:
 
 ### Claude Code Hook Dispatcher
 
-Location: `~/.claude/hooks/hook-dispatcher.py`
+Location: `~/.claude/hooks/hook_dispatcher.py`
 
 ```python
 #!/usr/bin/env python3
@@ -605,7 +605,7 @@ if __name__ == "__main__":
 
 ### Gemini CLI Hook Dispatcher
 
-Location: `~/.gemini/hooks/hook-dispatcher.py`
+Location: `~/.gemini/hooks/hook_dispatcher.py`
 
 ```python
 #!/usr/bin/env python3

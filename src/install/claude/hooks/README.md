@@ -5,7 +5,7 @@ This directory contains the hook dispatcher for the Gobby Platform, providing li
 ## 📚 Documentation
 
 - **[HOOK_SCHEMAS.md](./HOOK_SCHEMAS.md)** - Complete input/output schemas for all hook types
-- **[hook-dispatcher.py](./hook-dispatcher.py)** - Central dispatcher that routes all hooks to the daemon
+- **[hook_dispatcher.py](./hook_dispatcher.py)** - Central dispatcher that routes all hooks to the daemon
 
 ## Quick Start
 
@@ -24,7 +24,7 @@ gobby install --codex
 ```
 
 This will:
-1. Copy `hook-dispatcher.py` and other hooks to `~/.claude/hooks/`
+1. Copy `hook_dispatcher.py` and other hooks to `~/.claude/hooks/`
 2. Copy skills to `~/.claude/skills/`
 3. Back up your existing `settings.json`
 4. Install hook configurations for all hook types
@@ -48,15 +48,15 @@ Test the dispatcher manually with sample input:
 ```bash
 # Test SessionStart hook
 echo '{"session_id": "test-123", "transcript_path": "/tmp/test.jsonl", "hook_event_name": "SessionStart", "source": "startup"}' | \
-  uv run python .claude/hooks/hook-dispatcher.py --type session-start
+  uv run python .claude/hooks/hook_dispatcher.py --type session-start
 
 # Test UserPromptSubmit hook
 echo '{"session_id": "test-123", "prompt": "Hello", "hook_event_name": "UserPromptSubmit"}' | \
-  uv run python .claude/hooks/hook-dispatcher.py --type user-prompt-submit
+  uv run python .claude/hooks/hook_dispatcher.py --type user-prompt-submit
 
 # Enable debug logging
 echo '{"session_id": "test-123"}' | \
-  uv run python .claude/hooks/hook-dispatcher.py --type session-end --debug
+  uv run python .claude/hooks/hook_dispatcher.py --type session-end --debug
 ```
 
 ### Viewing Hook Logs
@@ -74,7 +74,7 @@ tail -f ~/.gobby/logs/*.log
 
 ## Hook Types
 
-All hooks are routed through `hook-dispatcher.py` to the daemon's `HookManager`.
+All hooks are routed through `hook_dispatcher.py` to the daemon's `HookManager`.
 
 ### Session Lifecycle
 
@@ -111,7 +111,7 @@ All hooks are routed through `hook-dispatcher.py` to the daemon's `HookManager`.
 ```
 Claude Code Session
        ↓ (hook fires)
-hook-dispatcher.py
+hook_dispatcher.py
        ↓ (HTTP POST to localhost:8765/hooks/execute)
 Gobby Daemon (HookManager)
        ↓ (processes hook)
@@ -152,7 +152,7 @@ Hook logic is implemented in `src/gobby/hooks/hook_manager.py`. To modify hook b
 2. Restart the daemon: `gobby restart`
 3. Test with the dispatcher
 
-Do not modify `hook-dispatcher.py` - it's just a router.
+Do not modify `hook_dispatcher.py` - it's just a router.
 
 ## Troubleshooting
 
@@ -170,14 +170,14 @@ tail -f ~/.gobby/logs/hook-manager.log
 
 # 4. Test dispatcher manually
 echo '{"session_id": "test-123"}' | \
-  uv run python ~/.claude/hooks/hook-dispatcher.py --type session-start --debug
+  uv run python ~/.claude/hooks/hook_dispatcher.py --type session-start --debug
 ```
 
 ### Validate Settings
 
 ```bash
 # Verify settings.json is correct
-uv run python .claude/hooks/validate-settings.py
+uv run python .claude/hooks/validate_settings.py
 ```
 
 ### Common Issues
@@ -191,9 +191,9 @@ uv run python .claude/hooks/validate-settings.py
 ## Resources
 
 - **Schemas**: [HOOK_SCHEMAS.md](./HOOK_SCHEMAS.md)
-- **Dispatcher**: [hook-dispatcher.py](./hook-dispatcher.py)
+- **Dispatcher**: [hook_dispatcher.py](./hook_dispatcher.py)
 - **Hook Manager**: `src/gobby/hooks/hook_manager.py`
-- **Validation**: [validate-settings.py](./validate-settings.py)
+- **Validation**: [validate_settings.py](./validate_settings.py)
 - **Official Docs**: https://docs.claude.com/en/docs/claude-code/hooks
 
 ---

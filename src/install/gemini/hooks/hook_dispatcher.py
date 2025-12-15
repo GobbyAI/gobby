@@ -15,8 +15,8 @@ Gemini CLI invokes hooks with JSON input on stdin and expects JSON output
 on stdout. Exit codes: 0 = allow, 2 = deny.
 
 Usage:
-    hook-dispatcher.py --type SessionStart < input.json > output.json
-    hook-dispatcher.py --type BeforeTool --debug < input.json > output.json
+    hook_dispatcher.py --type SessionStart < input.json > output.json
+    hook_dispatcher.py --type BeforeTool --debug < input.json > output.json
 
 Exit Codes:
     0 - Success / Allow

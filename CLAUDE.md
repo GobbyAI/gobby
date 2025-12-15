@@ -75,8 +75,8 @@ uv run mypy src/
 
 - `src/hooks/hook_manager.py` - Central coordinator that delegates to subsystems
 - `src/hooks/events.py` - HookEvent and HookEventType definitions
-- `src/install/claude/hooks/hook-dispatcher.py` - Claude Code hook dispatcher script
-- `src/install/gemini/hooks/hook-dispatcher.py` - Gemini CLI hook dispatcher script
+- `src/install/claude/hooks/hook_dispatcher.py` - Claude Code hook dispatcher script
+- `src/install/gemini/hooks/hook_dispatcher.py` - Gemini CLI hook dispatcher script
 
 **Session Management:**
 

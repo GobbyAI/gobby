@@ -5,8 +5,8 @@ This is a thin wrapper script that receives hook calls from Claude Code
 and routes them to the appropriate handler via HookManager.
 
 Usage:
-    hook-dispatcher.py --type session-start < input.json > output.json
-    hook-dispatcher.py --type pre-tool-use --debug < input.json > output.json
+    hook_dispatcher.py --type session-start < input.json > output.json
+    hook_dispatcher.py --type pre-tool-use --debug < input.json > output.json
 
 Exit Codes:
     0 - Success

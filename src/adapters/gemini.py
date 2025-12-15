@@ -147,7 +147,7 @@ class GeminiAdapter(BaseAdapter):  # type: ignore[misc]
             # ... other hook-specific fields
         }
 
-        Note: The hook-dispatcher.py wraps this in:
+        Note: The hook_dispatcher.py wraps this in:
         {
             "source": "gemini",
             "hook_type": "SessionStart",
@@ -155,7 +155,7 @@ class GeminiAdapter(BaseAdapter):  # type: ignore[misc]
         }
 
         Args:
-            native_event: Raw payload from Gemini CLI's hook-dispatcher.py
+            native_event: Raw payload from Gemini CLI's hook_dispatcher.py
 
         Returns:
             Unified HookEvent with normalized fields.
@@ -279,7 +279,7 @@ class GeminiAdapter(BaseAdapter):  # type: ignore[misc]
         and returns response in Gemini's expected format.
 
         Args:
-            native_event: Raw payload from Gemini CLI's hook-dispatcher.py
+            native_event: Raw payload from Gemini CLI's hook_dispatcher.py
 
         Returns:
             Response dict in Gemini CLI's expected format.

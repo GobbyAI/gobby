@@ -85,7 +85,7 @@ class ClaudeCodeAdapter(BaseAdapter):  # type: ignore[misc]
         }
 
         Args:
-            native_event: Raw payload from Claude Code's hook-dispatcher.py
+            native_event: Raw payload from Claude Code's hook_dispatcher.py
 
         Returns:
             Unified HookEvent with normalized fields.
@@ -204,7 +204,7 @@ class ClaudeCodeAdapter(BaseAdapter):  # type: ignore[misc]
         when handle() is implemented as async.
 
         Args:
-            native_event: Raw payload from Claude Code's hook-dispatcher.py
+            native_event: Raw payload from Claude Code's hook_dispatcher.py
 
         Returns:
             Response dict in Claude Code's expected format.
