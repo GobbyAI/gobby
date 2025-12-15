@@ -753,8 +753,8 @@ class MCPClientManager:
             # Persist to database if mcp_db_manager is available
             if self.mcp_db_manager is not None:
                 try:
-                    # Add server to database
-                    self.mcp_db_manager.add_server(
+                    # Upsert server to database
+                    self.mcp_db_manager.upsert(
                         name=config.name,
                         transport=config.transport,
                         url=config.url,

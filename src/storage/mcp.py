@@ -132,7 +132,7 @@ class LocalMCPManager:
         """Initialize with database connection."""
         self.db = db
 
-    def add_server(
+    def upsert(
         self,
         name: str,
         transport: str,
@@ -145,9 +145,8 @@ class LocalMCPManager:
         description: str | None = None,
     ) -> MCPServer:
         """
-        Add or update an MCP server.
+        Insert or update an MCP server in the database.
 
-        Uses upsert to handle duplicate names.
         Server name is normalized to lowercase.
         """
         # Normalize server name to lowercase
@@ -345,7 +344,7 @@ class LocalMCPManager:
                     continue
 
                 transport = config.get("transport", "stdio")
-                self.add_server(
+                self.upsert(
                     name=name,
                     transport=transport,
                     url=config.get("url"),
@@ -362,7 +361,7 @@ class LocalMCPManager:
         elif "mcpServers" in data and isinstance(data["mcpServers"], dict):
             for name, config in data["mcpServers"].items():
                 transport = config.get("transport", "stdio")
-                self.add_server(
+                self.upsert(
                     name=name,
                     transport=transport,
                     url=config.get("url"),
