@@ -134,3 +134,8 @@ Tests use pytest with asyncio support. Key test configuration in `pyproject.toml
 - `asyncio_mode = "auto"` - Automatic async test detection
 - Coverage threshold: 80%
 - Markers: `slow`, `integration`, `e2e`
+
+
+**Note**: This project uses [bd (beads)](https://github.com/steveyegge/beads)
+for issue tracking. Use `bd` commands instead of markdown TODOs.
+See AGENTS.md for workflow details.
