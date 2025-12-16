@@ -1,0 +1,16 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "content_hash": {
+            "type": "string",
+            "description": "SHA256 hash of the tasks.jsonl file content for change detection"
+        },
+        "last_exported": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the last export"
+        }
+    },
+    "required": ["content_hash", "last_exported"]
+}

@@ -27,6 +27,7 @@ Example:
     ```
 """
 
+import asyncio
 import logging
 import threading
 from logging.handlers import RotatingFileHandler
@@ -74,6 +75,7 @@ class HookManager:
         log_file: str | None = None,
         log_max_bytes: int = 10 * 1024 * 1024,  # 10MB
         log_backup_count: int = 5,
+        broadcaster: Any | None = None,
     ):
         """
         Initialize HookManager with subsystems.
@@ -86,6 +88,7 @@ class HookManager:
             log_file: Full path to log file (default: ~/.gobby/logs/hook-manager.log)
             log_max_bytes: Max log file size before rotation
             log_backup_count: Number of backup log files
+            broadcaster: Optional HookEventBroadcaster instance
         """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -93,6 +96,13 @@ class HookManager:
         self.log_file = log_file or str(Path.home() / ".gobby" / "logs" / "hook-manager.log")
         self.log_max_bytes = log_max_bytes
         self.log_backup_count = log_backup_count
+        self.broadcaster = broadcaster
+
+        # Capture event loop for thread-safe broadcasting (if running in async context)
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
         # Setup logging first
         self.logger = self._setup_logging()
@@ -387,7 +397,29 @@ class HookManager:
 
         # Execute handler
         try:
-            return handler(event)
+            response = handler(event)
+
+            # Broadcast event (fire-and-forget)
+            if self.broadcaster:
+                try:
+                    # Case 1: Running in an event loop (e.g. from app-server client)
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.broadcaster.broadcast_event(event, response))
+                except RuntimeError:
+                    # Case 2: Running in a thread (e.g. from HTTP endpoint via to_thread)
+                    if self._loop:
+                        try:
+                            # Use the main loop captured at init
+                            asyncio.run_coroutine_threadsafe(
+                                self.broadcaster.broadcast_event(event, response),
+                                self._loop,
+                            )
+                        except Exception as e:
+                            self.logger.warning(f"Failed to schedule broadcast threadsafe: {e}")
+                    else:
+                        self.logger.debug("No event loop available for broadcasting")
+
+            return response
         except Exception as e:
             self.logger.error(f"Event handler {event.event_type} failed: {e}", exc_info=True)
             # Fail-open on handler errors

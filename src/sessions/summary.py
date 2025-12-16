@@ -23,7 +23,9 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.llm.service import LLMService
+    from gobby.llm.service import LLMService
     from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.session_tasks import SessionTaskManager
 
 # Backward-compatible alias
 TranscriptProcessor = ClaudeTranscriptParser
@@ -199,6 +201,25 @@ class SummaryGenerator:
             # Extract last TodoWrite tool call
             todowrite_list = self._extract_last_todowrite(last_turns)
 
+            # Get tasks associated with this session
+            session_tasks_str = None
+            if session_id:
+                try:
+                    task_manager = SessionTaskManager(self._storage.db)
+                    tasks = task_manager.get_session_tasks(session_id)
+                    if tasks:
+                        task_lines = []
+                        for item in tasks:
+                            task = item["task"]
+                            action = item["action"]
+                            icon = "[x]" if task.status == "closed" else "[ ]"
+                            task_lines.append(
+                                f"- {icon} **{task.title}** ({task.status}) - *{action}*"
+                            )
+                        session_tasks_str = "\n".join(task_lines)
+                except Exception as e:
+                    self.logger.warning(f"Failed to fetch session tasks: {e}")
+
             # Get git status and file changes
             git_status = self._get_git_status()
             file_changes = self._get_file_changes()
@@ -213,6 +234,7 @@ class SummaryGenerator:
                 session_id=session_id,
                 session_source=session_source,
                 todowrite_list=todowrite_list,
+                session_tasks_str=session_tasks_str,
             )
 
             # Store summary in multiple locations
@@ -415,6 +437,7 @@ Respond with ONLY the title, no explanation."""
         session_id: str | None,
         session_source: str | None,
         todowrite_list: str | None = None,
+        session_tasks_str: str | None = None,
     ) -> str:
         """
         Generate session summary using LLM provider.
@@ -428,6 +451,7 @@ Respond with ONLY the title, no explanation."""
             session_id: Internal database UUID
             session_source: Session source (e.g., "Claude Code")
             todowrite_list: Optional TodoWrite list markdown
+            session_tasks_str: Optional formatted session tasks list
 
         Returns:
             Formatted markdown summary
@@ -447,6 +471,7 @@ Respond with ONLY the title, no explanation."""
             "git_status": git_status,
             "file_changes": file_changes,
             "todowrite_list": todowrite_list,
+            "session_tasks": session_tasks_str,
             "external_id": external_id,
             "session_id": session_id,
             "session_source": session_source,
@@ -501,6 +526,10 @@ Respond with ONLY the title, no explanation."""
                         final_summary = (
                             f"{final_summary}\n\n## Claude's Todo List\n{todowrite_list}"
                         )
+
+            # Insert Session Tasks if available
+            if session_tasks_str:
+                final_summary += f"\n\n## Tasks Activity\n{session_tasks_str}"
 
             return final_summary
 

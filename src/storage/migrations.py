@@ -207,6 +207,53 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         PRAGMA foreign_keys = ON;
         """,
     ),
+    (
+        9,
+        "Create task system tables (tasks, dependencies, session linkages)",
+        """
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            parent_task_id TEXT REFERENCES tasks(id),
+            discovered_in_session_id TEXT REFERENCES sessions(id),
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'open',
+            priority INTEGER DEFAULT 2,
+            type TEXT DEFAULT 'task',
+            assignee TEXT,
+            labels TEXT,
+            closed_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+        CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
+
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            depends_on TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            dep_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(task_id, depends_on, dep_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_deps_task ON task_dependencies(task_id);
+        CREATE INDEX IF NOT EXISTS idx_deps_depends_on ON task_dependencies(depends_on);
+
+        CREATE TABLE IF NOT EXISTS session_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            action TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(session_id, task_id, action)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_tasks_session ON session_tasks(session_id);
+        CREATE INDEX IF NOT EXISTS idx_session_tasks_task ON session_tasks(task_id);
+        """,
+    ),
 ]
 
 
@@ -231,6 +278,7 @@ def run_migrations(db: LocalDatabase) -> int:
     """
     current_version = get_current_version(db)
     applied = 0
+    last_version = current_version
 
     for version, description, sql in MIGRATIONS:
         if version > current_version:
@@ -248,11 +296,12 @@ def run_migrations(db: LocalDatabase) -> int:
                     (version,),
                 )
                 applied += 1
+                last_version = version
             except Exception as e:
                 logger.error(f"Migration {version} failed: {e}")
                 raise
 
     if applied > 0:
-        logger.debug(f"Applied {applied} migration(s), now at version {version}")
+        logger.debug(f"Applied {applied} migration(s), now at version {last_version}")
 
     return applied

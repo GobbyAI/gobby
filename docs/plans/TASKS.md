@@ -350,44 +350,45 @@ gobby tasks stats
 
 ### Phase 1: Storage Layer
 
-- [ ] Create database migration for tasks table
-- [ ] Create database migration for task_dependencies table
-- [ ] Create database migration for session_tasks table
-- [ ] Implement hash-based ID generation utility
-- [ ] Create `src/storage/tasks.py` with `LocalTaskManager` class
-- [ ] Implement `create()` method
-- [ ] Implement `get()` method
-- [ ] Implement `update()` method
-- [ ] Implement `delete()` method with cascade option
-- [ ] Implement `list()` method with filters
-- [ ] Implement `close()` method
-- [ ] Add unit tests for LocalTaskManager
+- [x] Create database migration for tasks table
+- [x] Create database migration for task_dependencies table
+- [x] Create database migration for session_tasks table
+- [x] Implement hash-based ID generation utility
+- [x] Create `src/storage/tasks.py` with `LocalTaskManager` class
+- [x] Implement `create()` method
+- [x] Implement `get()` method
+- [x] Implement `update()` method
+- [x] Implement `delete()` method with cascade option
+- [x] Implement `list()` method with filters
+- [x] Implement `close()` method
+- [x] Add unit tests for LocalTaskManager
 
 #### ID Collision Handling (Decision 1)
-- [ ] Add collision detection in `generate_task_id()` function
-- [ ] Implement retry loop with incremented salt (max 3 retries)
-- [ ] Raise `TaskIDCollisionError` if all retries fail
-- [ ] Add unit test for collision handling with mock collision
+
+- [x] Add collision detection in `generate_task_id()` function
+- [x] Implement retry loop with incremented salt (max 3 retries)
+- [x] Raise `TaskIDCollisionError` if all retries fail
+- [x] Add unit test for collision handling with mock collision
 
 ### Phase 2: Dependency Management
 
-- [ ] Create `src/storage/task_dependencies.py` with `TaskDependencyManager` class
-- [ ] Implement `add_dependency()` method
-- [ ] Implement `remove_dependency()` method
-- [ ] Implement `get_blockers()` method (what blocks this task)
-- [ ] Implement `get_blocking()` method (what this task blocks)
-- [ ] Implement `get_dependency_tree()` method with recursive traversal
-- [ ] Implement `check_cycles()` using DFS cycle detection
-- [ ] Add validation to prevent self-dependencies
-- [ ] Add unit tests for TaskDependencyManager
+- [x] Create `src/storage/task_dependencies.py` with `TaskDependencyManager` class
+- [x] Implement `add_dependency()` method
+- [x] Implement `remove_dependency()` method
+- [x] Implement `get_blockers()` method (what blocks this task)
+- [x] Implement `get_blocking()` method (what this task blocks)
+- [x] Implement `get_dependency_tree()` method with recursive traversal
+- [x] Implement `check_cycles()` using DFS cycle detection
+- [x] Add validation to prevent self-dependencies
+- [x] Add unit tests for TaskDependencyManager
 
 ### Phase 3: Ready Work Detection
 
-- [ ] Implement `list_ready_tasks()` query in LocalTaskManager
-- [ ] Implement `list_blocked_tasks()` query with blocker details
-- [ ] Add priority-based sorting to ready tasks
-- [ ] Add assignee filtering to ready tasks
-- [ ] Add unit tests for ready work queries
+- [x] Implement `list_ready_tasks()` query in LocalTaskManager
+- [x] Implement `list_blocked_tasks()` query with blocker details
+- [x] Add priority-based sorting to ready tasks
+- [x] Add assignee filtering to ready tasks
+- [x] Add unit tests for ready work queries
 
 ### Phase 4: Session Integration
 
@@ -479,6 +480,7 @@ gobby tasks stats
 - [ ] Add `gobby tasks` to CLI help output
 
 #### Single Machine Scope (Decision 2)
+
 - [ ] Document in README that Gobby is single-machine focused
 - [ ] Add "Future: gobby_platform" note for fleet management
 
