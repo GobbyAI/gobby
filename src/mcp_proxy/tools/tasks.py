@@ -193,7 +193,11 @@ def create_task_registry(
             "properties": {
                 "task_id": {"type": "string", "description": "Task ID"},
                 "title": {"type": "string", "description": "New title", "default": None},
-                "description": {"type": "string", "description": "New description", "default": None},
+                "description": {
+                    "type": "string",
+                    "description": "New description",
+                    "default": None,
+                },
                 "status": {
                     "type": "string",
                     "description": "New status (open, in_progress, closed)",
@@ -211,6 +215,48 @@ def create_task_registry(
             "required": ["task_id"],
         },
         func=update_task,
+    )
+
+    def add_label(task_id: str, label: str) -> dict[str, Any]:
+        """Add a label to a task."""
+        task = task_manager.add_label(task_id, label)
+        if not task:
+            return {"error": f"Task {task_id} not found"}
+        return task.to_dict()
+
+    registry.register(
+        name="add_label",
+        description="Add a label to a task.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "label": {"type": "string", "description": "Label to add"},
+            },
+            "required": ["task_id", "label"],
+        },
+        func=add_label,
+    )
+
+    def remove_label(task_id: str, label: str) -> dict[str, Any]:
+        """Remove a label from a task."""
+        task = task_manager.remove_label(task_id, label)
+        if not task:
+            return {"error": f"Task {task_id} not found"}
+        return task.to_dict()
+
+    registry.register(
+        name="remove_label",
+        description="Remove a label from a task.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "label": {"type": "string", "description": "Label to remove"},
+            },
+            "required": ["task_id", "label"],
+        },
+        func=remove_label,
     )
 
     def close_task(task_id: str, reason: str = "completed") -> dict[str, Any]:
@@ -291,11 +337,31 @@ def create_task_registry(
             "type": "object",
             "properties": {
                 "status": {"type": "string", "description": "Filter by status", "default": None},
-                "priority": {"type": "integer", "description": "Filter by priority", "default": None},
-                "task_type": {"type": "string", "description": "Filter by task type", "default": None},
-                "assignee": {"type": "string", "description": "Filter by assignee", "default": None},
-                "label": {"type": "string", "description": "Filter by label presence", "default": None},
-                "parent_task_id": {"type": "string", "description": "Filter by parent task", "default": None},
+                "priority": {
+                    "type": "integer",
+                    "description": "Filter by priority",
+                    "default": None,
+                },
+                "task_type": {
+                    "type": "string",
+                    "description": "Filter by task type",
+                    "default": None,
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "Filter by assignee",
+                    "default": None,
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Filter by label presence",
+                    "default": None,
+                },
+                "parent_task_id": {
+                    "type": "string",
+                    "description": "Filter by parent task",
+                    "default": None,
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Max number of tasks to return",
@@ -422,9 +488,17 @@ def create_task_registry(
         input_schema={
             "type": "object",
             "properties": {
-                "priority": {"type": "integer", "description": "Filter by priority", "default": None},
+                "priority": {
+                    "type": "integer",
+                    "description": "Filter by priority",
+                    "default": None,
+                },
                 "task_type": {"type": "string", "description": "Filter by type", "default": None},
-                "assignee": {"type": "string", "description": "Filter by assignee", "default": None},
+                "assignee": {
+                    "type": "string",
+                    "description": "Filter by assignee",
+                    "default": None,
+                },
                 "limit": {"type": "integer", "description": "Max results", "default": 10},
             },
         },

@@ -5,7 +5,8 @@ Task management commands.
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+from pathlib import Path
 
 import click
 from gobby.storage.database import LocalDatabase
@@ -25,7 +26,21 @@ def get_task_manager() -> LocalTaskManager:
 def get_sync_manager() -> TaskSyncManager:
     """Get initialized sync manager."""
     manager = get_task_manager()
-    return TaskSyncManager(manager)
+
+    # Check for stealth mode in project config
+    project_ctx = get_project_context()
+    export_path = ".gobby/tasks.jsonl"
+
+    if project_ctx and project_ctx.get("tasks_stealth"):
+        # Use home directory storage for stealth mode
+        project_id = project_ctx.get("id")
+        if project_id:
+            home = Path.home()
+            stealth_dir = home / ".gobby" / "stealth_tasks"
+            stealth_dir.mkdir(parents=True, exist_ok=True)
+            export_path = str(stealth_dir / f"{project_id}.jsonl")
+
+    return TaskSyncManager(manager, export_path=export_path)
 
 
 def format_task_row(task: Task) -> str:
@@ -224,3 +239,266 @@ def sync_tasks(direction: str) -> None:
         manager.export_to_jsonl()
 
     click.echo("Sync completed")
+
+
+@tasks.group("compact")
+def compact_cmd() -> None:
+    """Task compaction commands."""
+    pass
+
+
+@compact_cmd.command("analyze")
+@click.option("--days", type=int, default=30, help="Days blocked threshold")
+def compact_analyze(days: int) -> None:
+    """Find tasks eligible for compaction."""
+    manager = get_task_manager()
+    from gobby.storage.compaction import TaskCompactor
+
+    compactor = TaskCompactor(manager)
+    candidates = compactor.find_candidates(days_closed=days)
+
+    if not candidates:
+        click.echo("No compaction candidates found.")
+        return
+
+    click.echo(f"Found {len(candidates)} candidates closed > {days} days:")
+    for task in candidates:
+        click.echo(f"  {task['id']}: {task['title']} (Updated: {task['updated_at']})")
+
+
+@compact_cmd.command("apply")
+@click.option("--id", "task_id", required=True, help="Task ID to compact")
+@click.option("--summary", required=True, help="Summary text or file path (@path)")
+def compact_apply(task_id: str, summary: str) -> None:
+    """Compact a task with a summary."""
+    manager = get_task_manager()
+    from gobby.storage.compaction import TaskCompactor
+
+    # Handle file input for summary
+    if summary.startswith("@"):
+        path = summary[1:]
+        try:
+            with open(path, "r") as f:
+                summary_content = f.read()
+        except Exception as e:
+            click.echo(f"Error reading summary file: {e}", err=True)
+            return
+    else:
+        summary_content = summary
+
+    compactor = TaskCompactor(manager)
+    try:
+        compactor.compact_task(task_id, summary_content)
+        click.echo(f"Compacted task {task_id}.")
+    except Exception as e:
+        click.echo(f"Error compacting task: {e}", err=True)
+
+
+@compact_cmd.command("stats")
+def compact_stats() -> None:
+    """Show compaction statistics."""
+    manager = get_task_manager()
+    from gobby.storage.compaction import TaskCompactor
+
+    compactor = TaskCompactor(manager)
+    stats = compactor.get_stats()
+
+    click.echo("Compaction Statistics:")
+    click.echo(f"  Total Closed: {stats['total_closed']}")
+    click.echo(f"  Compacted:    {stats['compacted']}")
+    click.echo(f"  Rate:         {stats['rate']}%")
+
+
+@tasks.group("label")
+def label_cmd() -> None:
+    """Manage task labels."""
+    pass
+
+
+@label_cmd.command("add")
+@click.argument("task_id")
+@click.argument("label")
+def add_label(task_id: str, label: str) -> None:
+    """Add a label to a task."""
+    manager = get_task_manager()
+    resolved = resolve_task_id(manager, task_id)
+    if not resolved:
+        return
+
+    manager.add_label(resolved.id, label)
+    click.echo(f"Added label '{label}' to task {resolved.id}")
+
+
+@label_cmd.command("remove")
+@click.argument("task_id")
+@click.argument("label")
+def remove_label(task_id: str, label: str) -> None:
+    """Remove a label from a task."""
+    manager = get_task_manager()
+    resolved = resolve_task_id(manager, task_id)
+    if not resolved:
+        return
+
+    manager.remove_label(resolved.id, label)
+    click.echo(f"Removed label '{label}' from task {resolved.id}")
+
+
+@tasks.group("import")
+def import_cmd() -> None:
+    """Import tasks from external sources."""
+    pass
+
+
+@import_cmd.command("github")
+@click.argument("url")
+@click.option("--limit", default=50, help="Max issues to import")
+def import_github(url: str, limit: int) -> None:
+    """Import open issues from GitHub."""
+    import asyncio
+
+    manager = get_sync_manager()
+
+    # We need to run async method
+    async def run():
+        return await manager.import_from_github_issues(url, limit=limit)
+
+    try:
+        result = asyncio.run(run())
+
+        if result["success"]:
+            click.echo(result["message"])
+            for issue_id in result["imported"]:
+                click.echo(f"  Imported {issue_id}")
+        else:
+            click.echo(f"Error: {result['error']}", err=True)
+    except Exception as e:
+        click.echo(f"Failed to run import: {e}", err=True)
+
+
+@tasks.command("stealth")
+@click.option("--enable/--disable", default=None, help="Enable or disable stealth mode")
+def stealth_cmd(enable: bool | None) -> None:
+    """
+    Manage stealth mode (store tasks outside repo).
+
+    When enabled, tasks are stored in ~/.gobby/stealth_tasks/ instead of .gobby/tasks.jsonl.
+    This prevents task updates from creating Git changes.
+    """
+    import json
+    from pathlib import Path
+
+    ctx = get_project_context()
+    if not ctx or "project_path" not in ctx:
+        click.echo("Error: Not in a gobby project.", err=True)
+        return
+
+    project_root = Path(ctx["project_path"])
+    config_path = project_root / ".gobby" / "project.json"
+
+    if not config_path.exists():
+        click.echo("Error: project.json not found.", err=True)
+        return
+
+    # Read current config
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+    except Exception as e:
+        click.echo(f"Error reading project config: {e}", err=True)
+        return
+
+    current_state = config.get("tasks_stealth", False)
+
+    if enable is None:
+        # Show status
+        status = "ENABLED" if current_state else "DISABLED"
+        click.echo(f"Stealth mode is currently {status}")
+        if current_state:
+            click.echo(f"Tasks stored in ~/.gobby/stealth_tasks/{ctx.get('id')}.jsonl")
+        else:
+            click.echo("Tasks stored in .gobby/tasks.jsonl")
+        return
+
+    if enable == current_state:
+        click.echo(f"Stealth mode is already {'enabled' if enable else 'disabled'}.")
+        return
+
+    # Update config
+    config["tasks_stealth"] = enable
+    try:
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+            # Add newline at end of file
+            f.write("\n")
+
+        click.echo(f"Stealth mode {'enabled' if enable else 'disabled'}.")
+        if enable:
+            click.echo("Future tasks will be synced to ~/.gobby/stealth_tasks/")
+            click.echo(
+                "Note: Existing tasks in .gobby/tasks.jsonl remain there but won't be updated."
+            )
+        else:
+            click.echo("Future tasks will be synced to .gobby/tasks.jsonl")
+
+    except Exception as e:
+        click.echo(f"Failed to update config: {e}", err=True)
+
+
+@tasks.command("doctor")
+def doctor_cmd() -> None:
+    """Validate task data integrity."""
+    manager = get_task_manager()
+    from gobby.utils.validation import TaskValidator
+
+    validator = TaskValidator(manager)
+    results = validator.validate_all()
+
+    issues_found = False
+
+    orphans = results["orphan_dependencies"]
+    if orphans:
+        issues_found = True
+        click.echo(f"Found {len(orphans)} orphan dependencies:", err=True)
+        for d in orphans:
+            click.echo(f"  Dependency {d['id']}: {d['task_id']} -> {d['depends_on']}", err=True)
+    else:
+        click.echo("✓ No orphan dependencies")
+
+    invalid_projects = results["invalid_projects"]
+    if invalid_projects:
+        issues_found = True
+        click.echo(f"Found {len(invalid_projects)} tasks with invalid projects:", err=True)
+        for t in invalid_projects:
+            click.echo(f"  Task {t['id']}: {t['title']} (Project: {t['project_id']})", err=True)
+    else:
+        click.echo("✓ No invalid projects")
+
+    cycles = results["cycles"]
+    if cycles:
+        issues_found = True
+        click.echo(f"Found {len(cycles)} dependency cycles:", err=True)
+        for cycle in cycles:
+            click.echo(f"  Cycle: {' -> '.join(cycle)}", err=True)
+    else:
+        click.echo("✓ No dependency cycles")
+
+    if issues_found:
+        click.echo("\nIssues found. Run 'gobby tasks clean' to fix fixable issues.")
+        # Exit with error code if issues found
+        # (Click handles exit code but we can explicitly exit if needed, usually just return is fine unless we want non-zero)
+
+
+@tasks.command("clean")
+@click.confirmation_option(prompt="This will remove orphaned dependencies. Are you sure?")
+def clean_cmd() -> None:
+    """Fix data integrity issues (remove orphans)."""
+    manager = get_task_manager()
+    from gobby.utils.validation import TaskValidator
+
+    validator = TaskValidator(manager)
+    count = validator.clean_orphans()
+
+    if count > 0:
+        click.echo(f"Removed {count} orphan dependencies.")
+    else:
+        click.echo("No orphan dependencies found.")

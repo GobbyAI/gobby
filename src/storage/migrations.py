@@ -263,6 +263,14 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON tasks(platform_id) WHERE platform_id IS NOT NULL;
         """,
     ),
+    (
+        11,
+        "Add compaction columns to tasks",
+        """
+        ALTER TABLE tasks ADD COLUMN compacted_at TEXT;
+        ALTER TABLE tasks ADD COLUMN summary TEXT;
+        """,
+    ),
 ]
 
 

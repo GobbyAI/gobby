@@ -258,6 +258,154 @@ class TaskSyncManager:
         self._debounce_timer = threading.Timer(self._debounce_interval, self.export_to_jsonl)
         self._debounce_timer.start()
 
+    async def import_from_github_issues(
+        self, repo_url: str, project_id: str | None = None, limit: int = 50
+    ) -> dict[str, Any]:
+        """
+        Import open issues from a GitHub repository as tasks.
+        Uses Claude Agent SDK to fetch and extract issues.
+
+        Args:
+            repo_url: URL of the GitHub repository (e.g., https://github.com/owner/repo)
+            limit: Max issues to import
+
+        Returns:
+            Review of what would be imported
+        """
+        try:
+            from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
+
+            # Simple validation
+            if "github.com" not in repo_url:
+                return {"success": False, "error": "Invalid GitHub URL"}
+
+            # Build prompt
+            prompt = f"""Fetch the open issues from this GitHub repository: {repo_url}/issues
+            
+            Please extract up to {limit} open issues. For each issue, provide:
+            - Title
+            - Description (summary)
+            - Issue Number
+            - Labels (if any)
+            - Created At date
+            
+            Return the result as a JSON object with a list of "issues".
+            Each issue object should have: title, description, issue_number, labels, created_at.
+            """
+
+            # Minimal options
+            options = ClaudeAgentOptions(
+                system_prompt="You are a data extraction assistant. Output ONLY valid JSON.",
+                max_turns=5,
+                model="claude-3-5-sonnet-latest",  # Use capable model
+                allowed_tools=["WebFetch"],
+                permission_mode="default",
+            )
+
+            result_text = ""
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            result_text += block.text
+
+            # Parse JSON
+            # Try to find JSON block
+            import re
+
+            json_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", result_text)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Try raw JSON finding
+                json_match = re.search(r"\{[\s\S]*\}", result_text)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    return {
+                        "success": False,
+                        "error": "Could not extract JSON from agent response",
+                        "raw": result_text,
+                    }
+
+            data = json.loads(json_str)
+            issues = data.get("issues", [])
+
+            if not issues:
+                return {"success": False, "error": "No issues found in parsed data"}
+
+            # Import into DB
+            # We prefix ID with 'gh-{issue_number}' to avoid collision and allow tracking
+
+            project_id = (
+                None  # This needs to be passed in or resolved. For now, assume None and resolve.
+            )
+            # Resolve project ID if not provided
+            if not project_id:
+                # Try to find project by github_url
+                row = self.db.fetchone("SELECT id FROM projects WHERE github_url = ?", (repo_url,))
+                if row:
+                    project_id = row["id"]
+
+            if not project_id:
+                # Fallback to _orphaned project if exists, or error
+                # Ideally caller provides it.
+                return {
+                    "success": False,
+                    "error": "Could not determine project ID. Please run from within a project or provide explicit project context.",
+                }
+
+            imported = []
+            imported_count = 0
+
+            with self.db.transaction() as conn:
+                for issue in issues:
+                    issue_num = issue.get("issue_number")
+                    if not issue_num:
+                        continue
+
+                    task_id = f"gh-{issue_num}"
+                    title = issue.get("title", "Untitled Issue")
+                    desc = issue.get("description", "")
+                    # Add link to original issue in description
+                    desc += f"\n\nSource: {repo_url}/issues/{issue_num}"
+
+                    created_at = issue.get("created_at", datetime.now(timezone.utc).isoformat())
+                    updated_at = datetime.now(timezone.utc).isoformat()
+
+                    # Check if exists
+                    exists = self.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task_id,))
+                    if exists:
+                        # Update?
+                        conn.execute(
+                            "UPDATE tasks SET title=?, description=?, updated_at=? WHERE id=?",
+                            (title, desc, updated_at, task_id),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            INSERT INTO tasks (
+                                id, project_id, title, description, status, type, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, 'open', 'issue', ?, ?)
+                            """,
+                            (task_id, project_id, title, desc, created_at, updated_at),
+                        )
+                        imported_count += 1
+
+                    imported.append(task_id)
+
+            return {
+                "success": True,
+                "issues": issues,
+                "imported": imported,
+                "count": imported_count,
+                "message": f"Successfully imported {imported_count} issues from GitHub.",
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to import from GitHub: {e}")
+            return {"success": False, "error": str(e)}
+
     def stop(self) -> None:
         """Stop any pending timers."""
         if self._debounce_timer:
