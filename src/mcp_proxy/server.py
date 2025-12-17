@@ -130,15 +130,20 @@ def create_mcp_server(
                 pass
         return None
 
-    # ===== TASK SYSTEM TOOLS =====
+    # ===== INTERNAL TOOL REGISTRIES =====
+    # Internal tools are accessed via call_tool(server="internal-*", ...) for progressive disclosure
+
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+
+    internal_manager = InternalRegistryManager()
 
     if task_manager and task_sync_manager:
         try:
-            from gobby.mcp_proxy.tools.tasks import register_task_tools
+            from gobby.mcp_proxy.tools.tasks import create_task_registry
 
-            register_task_tools(mcp, task_manager, task_sync_manager)
+            internal_manager.add_registry(create_task_registry(task_manager, task_sync_manager))
         except Exception as e:
-            logger.error(f"Failed to register task tools: {e}")
+            logger.error(f"Failed to create task registry: {e}")
 
     # ===== STATUS & MONITORING TOOLS =====
 
@@ -230,34 +235,84 @@ def create_mcp_server(
             server_name: str, tool_name: str, arguments: dict[str, Any] | None = None
         ) -> dict[str, Any]:
             """
-            Call a tool on a DOWNSTREAM/PROXIED MCP server (NOT for gobby-daemon's own tools).
+            Execute a tool on a connected MCP server.
 
-            IMPORTANT: This is ONLY for calling tools on downstream MCP servers like:
-            - context7 (library documentation)
-            - supabase (database queries)
-            - playwright (browser automation)
-            - serena (code analysis)
-
-            DO NOT use this for gobby-daemon's own tools like:
-            - execute_code (use directly)
-            - process_large_dataset (use directly)
-            - status (use directly)
-            - add_mcp_server (use directly)
-
-            Use this tool to proxy calls to external MCP servers, not for gobby-daemon's tools.
+            This is the primary way to interact with MCP servers (Supabase, memory, etc.)
+            through the Gobby daemon.
 
             Args:
-                server_name: Name of the downstream MCP server (e.g., "context7", "supabase")
-                tool_name: Name of the tool to invoke on that server
-                arguments: Tool arguments (optional)
+                server_name: Name of the MCP server
+                    Examples: "supabase", "gobby-memory", "context7"
+                    Internal servers: "internal-tasks", "internal-hooks"
+                tool_name: Name of the specific tool to execute
+                    Example: "list_tables", "search_memory_nodes", "get-library-docs"
+                arguments: Dictionary of arguments required by the tool (optional)
+                    Example: {"schema": "public"} or {"query": "react hooks"}
+
+            Example usage:
+            1. List Supabase tables:
+               call_tool("supabase", "list_tables", {"schemas": ["public"]})
+
+            2. Search memory:
+               call_tool("gobby-memory", "search_memory_nodes", {"query": "authentication"})
+
+            3. Get library docs:
+               call_tool("context7", "get-library-docs", {"libraryId": "/react/react"})
+
+            4. Create a task (internal):
+               call_tool("internal-tasks", "create_task", {"title": "My task"})
+
+            Workflow:
+            1. Use list_tools(server_name) to see available tools
+            2. Review tool parameters and requirements
+            3. Call call_tool() with appropriate arguments
+
+            Requires:
+            - Daemon must be running
+            - MCP server must be configured and enabled
+            - Tool must exist on the specified server
 
             Returns:
-                Tool execution result
-
-            Raises:
-                ValueError: If server not found or not connected
-                Exception: If tool execution fails
+                Dictionary with success status and tool execution result
             """
+            # Route internal tools (internal-tasks, internal-hooks, etc.)
+            if internal_manager.is_internal(server_name):
+                registry = internal_manager.get_registry(server_name)
+                if not registry:
+                    available = ", ".join(r.name for r in internal_manager.get_all_registries())
+                    return {
+                        "success": False,
+                        "server": server_name,
+                        "error": f"Internal server '{server_name}' not found",
+                        "available_internal_servers": available,
+                    }
+                try:
+                    result = await registry.call(tool_name, arguments or {})
+                    return {
+                        "success": True,
+                        "server": server_name,
+                        "tool": tool_name,
+                        "result": result,
+                    }
+                except ValueError as e:
+                    return {
+                        "success": False,
+                        "server": server_name,
+                        "tool": tool_name,
+                        "error": str(e),
+                        "error_type": "ValueError",
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to call internal tool {tool_name}: {e}")
+                    return {
+                        "success": False,
+                        "server": server_name,
+                        "tool": tool_name,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    }
+
+            # Route to downstream MCP servers
             try:
                 # Use MCPClientManager's call_tool which handles validation
                 # Pass tool_timeout from config for MCP tool calls
@@ -512,22 +567,12 @@ def create_mcp_server(
             IMPORTANT: This lists tools from downstream MCP servers like context7, supabase,
             playwright, serena. It does NOT list gobby-daemon's own tools.
 
-            Gobby-daemon's own tools (already available to you directly):
-            - execute_code - Execute Python code in sandbox
-            - process_large_dataset - Token-optimized dataset processing
-            - status - Get daemon status
-            - add_mcp_server - Add new MCP server
-            - remove_mcp_server - Remove MCP server
-            - call_tool - Call downstream server tools
-            - list_tools - This tool (lists downstream server tools)
-            - get_tool_schema - Get tool schema from downstream servers
-            - recommend_tools - Get AI-powered tool recommendations
-
             Use this to discover tools available on downstream servers.
 
             Args:
                 server: Optional downstream server name (e.g., "context7", "supabase").
                        If not provided, returns tools from all downstream servers.
+                       Internal servers: "internal-tasks", "internal-hooks", etc.
 
             Returns:
                 Dict with tool listings from downstream servers:
@@ -542,30 +587,59 @@ def create_mcp_server(
                     {"name": "resolve-library-id", "brief": "Find library ID from name"}
                   ]}
 
-                # List all tools across all downstream servers
+                # List internal task tools
+                list_tools(server="internal-tasks")
+                > {"server": "internal-tasks", "tools": [
+                    {"name": "create_task", "brief": "Create a new task in the current project."},
+                    {"name": "list_tasks", "brief": "List tasks with optional filters."}
+                  ]}
+
+                # List all tools across all servers
                 list_tools()
                 > {"servers": [
+                    {"name": "internal-tasks", "tools": [...]},
                     {"name": "context7", "tools": [...]},
                     {"name": "supabase", "tools": [...]}
                   ]}
             """
             try:
-                # Read from in-memory config (loaded from .mcp.json)
                 if server:
-                    # Find specific server
+                    # Handle internal servers (internal-tasks, internal-hooks, etc.)
+                    if internal_manager.is_internal(server):
+                        registry = internal_manager.get_registry(server)
+                        if not registry:
+                            available_internal = ", ".join(
+                                r.name for r in internal_manager.get_all_registries()
+                            )
+                            return {
+                                "success": False,
+                                "error": f"Internal server '{server}' not found",
+                                "available_internal_servers": available_internal,
+                            }
+                        return {
+                            "success": True,
+                            "server": server,
+                            "project_id": "",
+                            "tools": registry.list_tools(),
+                        }
+
+                    # Find specific downstream server
                     server_config = next(
                         (s for s in mcp_manager.server_configs if s.name == server), None
                     )
 
                     if not server_config:
-                        available = ", ".join(s.name for s in mcp_manager.server_configs)
+                        # Build combined available list
+                        internal_names = [r.name for r in internal_manager.get_all_registries()]
+                        downstream_names = [s.name for s in mcp_manager.server_configs]
+                        available = ", ".join(internal_names + downstream_names)
                         return {
                             "success": False,
                             "error": f"Server '{server}' not found",
                             "available_servers": available,
                         }
 
-                    # Return tools for this server
+                    # Return tools for this downstream server
                     tools_list = []
                     if server_config.tools:
                         for tool in server_config.tools:
@@ -583,8 +657,20 @@ def create_mcp_server(
                         "tools": tools_list,
                     }
                 else:
-                    # Return all servers with their tools
+                    # Return all servers with their tools (internal + downstream)
                     servers_list = []
+
+                    # Add internal servers first
+                    for registry in internal_manager.get_all_registries():
+                        servers_list.append(
+                            {
+                                "name": registry.name,
+                                "project_id": "",
+                                "tools": registry.list_tools(),
+                            }
+                        )
+
+                    # Add downstream servers
                     for server_config in mcp_manager.server_configs:
                         tools_list = []
                         if server_config.tools:
@@ -631,6 +717,7 @@ def create_mcp_server(
 
             Args:
                 server_name: Name of the MCP server (e.g., "context7", "supabase")
+                    Internal servers: "internal-tasks", "internal-hooks"
                 tool_name: Name of the tool (e.g., "get-library-docs", "list_tables")
 
             Returns:
@@ -657,15 +744,49 @@ def create_mcp_server(
 
                 # Then get full schema
                 get_tool_schema(server_name="context7", tool_name="get-library-docs")
+
+                # Or for internal tools
+                get_tool_schema(server_name="internal-tasks", tool_name="create_task")
             """
             try:
-                # Check if server exists in config
+                # Handle internal servers (internal-tasks, internal-hooks, etc.)
+                if internal_manager.is_internal(server_name):
+                    registry = internal_manager.get_registry(server_name)
+                    if not registry:
+                        available_internal = ", ".join(
+                            r.name for r in internal_manager.get_all_registries()
+                        )
+                        return {
+                            "success": False,
+                            "error": f"Internal server '{server_name}' not found",
+                            "available_internal_servers": available_internal,
+                        }
+
+                    schema = registry.get_schema(tool_name)
+                    if not schema:
+                        available_tools = [t["name"] for t in registry.list_tools()]
+                        return {
+                            "success": False,
+                            "error": f"Tool '{tool_name}' not found on '{server_name}'",
+                            "available_tools": available_tools,
+                        }
+
+                    return {
+                        "success": True,
+                        "server": server_name,
+                        "tool": schema,
+                    }
+
+                # Check if downstream server exists in config
                 server_config = next(
                     (s for s in mcp_manager.server_configs if s.name == server_name), None
                 )
 
                 if not server_config:
-                    available = ", ".join(s.name for s in mcp_manager.server_configs)
+                    # Build combined available list
+                    internal_names = [r.name for r in internal_manager.get_all_registries()]
+                    downstream_names = [s.name for s in mcp_manager.server_configs]
+                    available = ", ".join(internal_names + downstream_names)
                     return {
                         "success": False,
                         "error": f"Server '{server_name}' not found",

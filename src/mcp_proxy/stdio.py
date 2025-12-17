@@ -19,7 +19,8 @@ from typing import Any, cast
 import httpx
 from fastmcp import FastMCP
 from gobby.config.app import load_config
-from gobby.mcp_proxy.tools.tasks import register_task_tools
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.database import LocalDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
@@ -343,8 +344,10 @@ def create_stdio_mcp_server() -> FastMCP:
     # We'll add the HTTP proxy tools below if daemon is running
     mcp = FastMCP(name="Gobby Daemon (Stdio)")
 
-    # Initialize task managers locally for stdio access
+    # Initialize internal tool registries locally for stdio access
     # This allows direct DB access for tasks without proxying through HTTP
+    internal_manager = InternalRegistryManager()
+
     try:
         db = LocalDatabase()
         task_manager = LocalTaskManager(db)
@@ -353,11 +356,11 @@ def create_stdio_mcp_server() -> FastMCP:
         # Wire up change listener for automatic export in this process too
         task_manager.add_change_listener(sync_manager.trigger_export)
 
-        # Register task tools
-        register_task_tools(mcp, task_manager, sync_manager)
-        logger.debug("✅ Registered task tools in stdio server")
+        # Create task registry for internal tools
+        internal_manager.add_registry(create_task_registry(task_manager, sync_manager))
+        logger.debug("✅ Created internal task registry in stdio server")
     except Exception as e:
-        logger.error(f"Failed to register task tools: {e}")
+        logger.error(f"Failed to create task registry: {e}")
 
     # ===== DAEMON LIFECYCLE TOOLS =====
 
@@ -605,6 +608,7 @@ def create_stdio_mcp_server() -> FastMCP:
         Args:
             server_name: Name of the MCP server
                 Examples: "supabase", "gobby-memory", "context7"
+                Internal servers: "internal-tasks", "internal-hooks"
             tool_name: Name of the specific tool to execute
                 Example: "list_tables", "search_memory_nodes", "get-library-docs"
             arguments: Dictionary of arguments required by the tool (optional)
@@ -620,19 +624,60 @@ def create_stdio_mcp_server() -> FastMCP:
         3. Get library docs:
            call_tool("context7", "get-library-docs", {"libraryId": "/react/react"})
 
+        4. Create a task (internal):
+           call_tool("internal-tasks", "create_task", {"title": "My task"})
+
         Workflow:
         1. Use list_tools(server_name) to see available tools
         2. Review tool parameters and requirements
         3. Call call_tool() with appropriate arguments
 
         Requires:
-        - Daemon must be running
+        - Daemon must be running (for external servers)
         - MCP server must be configured and enabled
         - Tool must exist on the specified server
 
         Returns:
             Dictionary with success status and tool execution result
         """
+        # Route internal tools locally (no HTTP round-trip)
+        if internal_manager.is_internal(server_name):
+            registry = internal_manager.get_registry(server_name)
+            if not registry:
+                available = ", ".join(r.name for r in internal_manager.get_all_registries())
+                return {
+                    "success": False,
+                    "server": server_name,
+                    "error": f"Internal server '{server_name}' not found",
+                    "available_internal_servers": available,
+                }
+            try:
+                result = await registry.call(tool_name, arguments or {})
+                return {
+                    "success": True,
+                    "server": server_name,
+                    "tool": tool_name,
+                    "result": result,
+                }
+            except ValueError as e:
+                return {
+                    "success": False,
+                    "server": server_name,
+                    "tool": tool_name,
+                    "error": str(e),
+                    "error_type": "ValueError",
+                }
+            except Exception as e:
+                logger.error(f"Failed to call internal tool {tool_name}: {e}")
+                return {
+                    "success": False,
+                    "server": server_name,
+                    "tool": tool_name,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+
+        # Route external tools through HTTP daemon
         return await _call_daemon_tool(
             daemon_port=daemon_port,
             tool_name="call_tool",
@@ -880,37 +925,55 @@ def create_stdio_mcp_server() -> FastMCP:
     @mcp.tool
     async def list_tools(server: str | None = None) -> dict[str, Any]:
         """
-        List tools from DOWNSTREAM/PROXIED MCP servers (NOT gobby-daemon's own tools).
+        List tools from MCP servers.
 
-        IMPORTANT: This lists tools from downstream MCP servers like context7, supabase,
-        playwright, serena. It does NOT list gobby-daemon's own tools.
-
-        Use this to discover tools available on downstream servers.
+        Use this to discover tools available on servers.
 
         Args:
-            server: Optional downstream server name (e.g., "context7", "supabase").
-                   If not provided, returns tools from all downstream servers.
+            server: Optional server name (e.g., "context7", "supabase").
+                   If not provided, returns tools from all servers.
+                   Internal servers: "internal-tasks", "internal-hooks", etc.
 
         Returns:
-            Dict with tool listings from downstream servers:
+            Dict with tool listings:
             - If server specified: {"server": "context7", "tools": [{name, brief}, ...]}
-            - If no server: {"servers": [{name, tool_count, tools: [{name, brief}]}, ...]}
+            - If no server: {"servers": [{name, tools: [{name, brief}]}, ...]}
 
         Example:
-            # List tools for specific downstream server
-            list_tools(server="context7")
-            > {"server": "context7", "tools": [
-                {"name": "get-library-docs", "brief": "Fetch documentation for a library"},
-                {"name": "resolve-library-id", "brief": "Find library ID from name"}
+            # List internal task tools
+            list_tools(server="internal-tasks")
+            > {"server": "internal-tasks", "tools": [
+                {"name": "create_task", "brief": "Create a new task in the current project."},
+                {"name": "list_tasks", "brief": "List tasks with optional filters."}
               ]}
 
-            # List all tools across all downstream servers
+            # List all tools across all servers
             list_tools()
             > {"servers": [
-                {"name": "context7", "tool_count": 2, "tools": [...]},
-                {"name": "supabase", "tool_count": 5, "tools": [...]}
+                {"name": "internal-tasks", "tools": [...]},
+                {"name": "context7", "tools": [...]},
+                {"name": "supabase", "tools": [...]}
               ]}
         """
+        # Handle internal servers locally
+        if server and internal_manager.is_internal(server):
+            registry = internal_manager.get_registry(server)
+            if not registry:
+                available = ", ".join(r.name for r in internal_manager.get_all_registries())
+                return {
+                    "success": False,
+                    "error": f"Internal server '{server}' not found",
+                    "available_internal_servers": available,
+                }
+            return {
+                "success": True,
+                "server": server,
+                "project_id": "",
+                "tools": registry.list_tools(),
+            }
+
+        # For external servers or listing all, proxy to daemon
+        # The daemon will include internal servers in its response
         arguments = {"server": server} if server else {}
         return await _call_daemon_tool(
             daemon_port=daemon_port,
@@ -950,15 +1013,15 @@ def create_stdio_mcp_server() -> FastMCP:
         """
         Get full schema (inputSchema) for a specific MCP tool.
 
-        Reads the complete tool definition including the detailed inputSchema
-        from the local filesystem (~/.gobby/tools/). This provides fast, offline
-        access to tool schemas without querying the live MCP server.
+        Reads the complete tool definition including the detailed inputSchema.
+        This provides fast, offline access to tool schemas.
 
         Use list_tools() first to discover available tools, then use this to get
         full details before calling the tool.
 
         Args:
             server_name: Name of the MCP server (e.g., "context7", "supabase")
+                Internal servers: "internal-tasks", "internal-hooks"
             tool_name: Name of the tool (e.g., "get-library-docs", "list_tables")
 
         Returns:
@@ -985,7 +1048,37 @@ def create_stdio_mcp_server() -> FastMCP:
 
             # Then get full schema
             get_tool_schema(server_name="context7", tool_name="get-library-docs")
+
+            # Or for internal tools
+            get_tool_schema(server_name="internal-tasks", tool_name="create_task")
         """
+        # Handle internal servers locally
+        if internal_manager.is_internal(server_name):
+            registry = internal_manager.get_registry(server_name)
+            if not registry:
+                available = ", ".join(r.name for r in internal_manager.get_all_registries())
+                return {
+                    "success": False,
+                    "error": f"Internal server '{server_name}' not found",
+                    "available_internal_servers": available,
+                }
+
+            schema = registry.get_schema(tool_name)
+            if not schema:
+                available_tools = [t["name"] for t in registry.list_tools()]
+                return {
+                    "success": False,
+                    "error": f"Tool '{tool_name}' not found on '{server_name}'",
+                    "available_tools": available_tools,
+                }
+
+            return {
+                "success": True,
+                "server": server_name,
+                "tool": schema,
+            }
+
+        # Route to HTTP daemon for external servers
         return await _call_daemon_tool(
             daemon_port=daemon_port,
             tool_name="get_tool_schema",

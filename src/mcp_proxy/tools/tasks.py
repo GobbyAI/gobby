@@ -7,40 +7,49 @@ Exposes functionality for:
 - Ready Work (ready lists, blocked lists)
 - Session Integration (link, get)
 - Git Sync (trigger sync, status)
+
+These tools are registered with the InternalToolRegistry and accessed
+via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
 from typing import Any
 
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.sync.tasks import TaskSyncManager
-from fastmcp import FastMCP
 
 from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import initialize_project
 
+from .internal import InternalToolRegistry
 
-def register_task_tools(
-    mcp: FastMCP,
+
+def create_task_registry(
     task_manager: LocalTaskManager,
     sync_manager: TaskSyncManager,
-) -> None:
+) -> InternalToolRegistry:
     """
-    Register task-related tools with the MCP server to expose them to agents.
+    Create a task tool registry with all task-related tools.
 
     Args:
-        mcp: FastMCP application instance
         task_manager: LocalTaskManager instance
         sync_manager: TaskSyncManager instance
+
+    Returns:
+        InternalToolRegistry with all task tools registered
     """
-    # Helpers
+    registry = InternalToolRegistry(
+        name="internal-tasks",
+        description="Task management - CRUD, dependencies, sync",
+    )
+
+    # Helper managers
     dep_manager = TaskDependencyManager(task_manager.db)
     session_task_manager = SessionTaskManager(task_manager.db)
 
     # --- Task CRUD ---
 
-    @mcp.tool()
     def create_task(
         title: str,
         description: str | None = None,
@@ -50,25 +59,12 @@ def register_task_tools(
         blocks: list[str] | None = None,
         labels: list[str] | None = None,
     ) -> dict[str, Any]:
-        """
-        Create a new task in the current project.
-
-        Args:
-            title: Task title
-            description: Detailed description
-            priority: Priority level (1=High, 2=Medium, 3=Low)
-            task_type: Task type (task, bug, feature, epic)
-            parent_task_id: Optional parent task ID
-            blocks: List of task IDs that this new task blocks (optional)
-            labels: List of labels (optional)
-        """
+        """Create a new task in the current project."""
         # Get current project context which is required for task creation
-        # Try lightweight read first
         ctx = get_project_context()
         if ctx and ctx.get("id"):
             project_id = ctx["id"]
         else:
-            # Fallback to full initialization if not found
             init_result = initialize_project()
             project_id = init_result.project_id
 
@@ -89,14 +85,53 @@ def register_task_tools(
 
         return task.to_dict()
 
-    @mcp.tool()
-    def get_task(task_id: str) -> dict[str, Any]:
-        """
-        Get task details including dependencies.
+    registry.register(
+        name="create_task",
+        description="Create a new task in the current project.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Task title"},
+                "description": {
+                    "type": "string",
+                    "description": "Detailed description",
+                    "default": None,
+                },
+                "priority": {
+                    "type": "integer",
+                    "description": "Priority level (1=High, 2=Medium, 3=Low)",
+                    "default": 2,
+                },
+                "task_type": {
+                    "type": "string",
+                    "description": "Task type (task, bug, feature, epic)",
+                    "default": "task",
+                },
+                "parent_task_id": {
+                    "type": "string",
+                    "description": "Optional parent task ID",
+                    "default": None,
+                },
+                "blocks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of task IDs that this new task blocks (optional)",
+                    "default": None,
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of labels (optional)",
+                    "default": None,
+                },
+            },
+            "required": ["title"],
+        },
+        func=create_task,
+    )
 
-        Args:
-            task_id: The ID of the task to retrieve
-        """
+    def get_task(task_id: str) -> dict[str, Any]:
+        """Get task details including dependencies."""
         task = task_manager.get_task(task_id)
         if not task:
             return {"error": f"Task {task_id} not found", "found": False}
@@ -114,7 +149,19 @@ def register_task_tools(
 
         return result
 
-    @mcp.tool()
+    registry.register(
+        name="get_task",
+        description="Get task details including dependencies.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The ID of the task to retrieve"},
+            },
+            "required": ["task_id"],
+        },
+        func=get_task,
+    )
+
     def update_task(
         task_id: str,
         title: str | None = None,
@@ -124,18 +171,7 @@ def register_task_tools(
         assignee: str | None = None,
         labels: list[str] | None = None,
     ) -> dict[str, Any]:
-        """
-        Update task fields.
-
-        Args:
-            task_id: Task ID
-            title: New title
-            description: New description
-            status: New status (open, in_progress, closed)
-            priority: New priority
-            assignee: New assignee
-            labels: New labels list
-        """
+        """Update task fields."""
         task = task_manager.update_task(
             task_id,
             title=title,
@@ -149,42 +185,84 @@ def register_task_tools(
             return {"error": f"Task {task_id} not found"}
         return task.to_dict()
 
-    @mcp.tool()
+    registry.register(
+        name="update_task",
+        description="Update task fields.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "title": {"type": "string", "description": "New title", "default": None},
+                "description": {"type": "string", "description": "New description", "default": None},
+                "status": {
+                    "type": "string",
+                    "description": "New status (open, in_progress, closed)",
+                    "default": None,
+                },
+                "priority": {"type": "integer", "description": "New priority", "default": None},
+                "assignee": {"type": "string", "description": "New assignee", "default": None},
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "New labels list",
+                    "default": None,
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=update_task,
+    )
+
     def close_task(task_id: str, reason: str = "completed") -> dict[str, Any]:
-        """
-        Close a task with a reason.
-
-        Args:
-            task_id: Task ID
-            reason: Reason for closing (e.g., "completed", "wont_fix", "duplicate")
-        """
-        if reason not in ["completed", "wont_fix", "duplicate"]:
-            # Just a soft validation, can accept any string really but good to hint
-            pass
-
+        """Close a task with a reason."""
         task = task_manager.close_task(task_id)
         if not task:
             return {"error": f"Task {task_id} not found"}
-
-        # If closing, maybe update description or add a comment log?
-        # For now just update status via close_task method which handles it
         return task.to_dict()
 
-    @mcp.tool()
-    def delete_task(task_id: str, cascade: bool = False) -> dict[str, Any]:
-        """
-        Delete a task.
+    registry.register(
+        name="close_task",
+        description="Close a task with a reason.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "reason": {
+                    "type": "string",
+                    "description": 'Reason for closing (e.g., "completed", "wont_fix", "duplicate")',
+                    "default": "completed",
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=close_task,
+    )
 
-        Args:
-            task_id: Task ID
-            cascade: If True, delete all child tasks as well.
-        """
+    def delete_task(task_id: str, cascade: bool = False) -> dict[str, Any]:
+        """Delete a task."""
         success = task_manager.delete_task(task_id, cascade=cascade)
         if not success:
             return {"error": f"Task {task_id} not found"}
         return {"success": True, "message": f"Task {task_id} deleted"}
 
-    @mcp.tool()
+    registry.register(
+        name="delete_task",
+        description="Delete a task.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "cascade": {
+                    "type": "boolean",
+                    "description": "If True, delete all child tasks as well.",
+                    "default": False,
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=delete_task,
+    )
+
     def list_tasks(
         status: str | None = None,
         priority: int | None = None,
@@ -194,18 +272,7 @@ def register_task_tools(
         parent_task_id: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        """
-        List tasks with optional filters.
-
-        Args:
-            status: Filter by status
-            priority: Filter by priority
-            task_type: Filter by task type
-            assignee: Filter by assignee
-            label: Filter by label presence
-            parent_task_id: Filter by parent task
-            limit: Max number of tasks to return
-        """
+        """List tasks with optional filters."""
         tasks = task_manager.list_tasks(
             status=status,
             priority=priority,
@@ -217,49 +284,82 @@ def register_task_tools(
         )
         return {"tasks": [t.to_dict() for t in tasks], "count": len(tasks)}
 
+    registry.register(
+        name="list_tasks",
+        description="List tasks with optional filters.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Filter by status", "default": None},
+                "priority": {"type": "integer", "description": "Filter by priority", "default": None},
+                "task_type": {"type": "string", "description": "Filter by task type", "default": None},
+                "assignee": {"type": "string", "description": "Filter by assignee", "default": None},
+                "label": {"type": "string", "description": "Filter by label presence", "default": None},
+                "parent_task_id": {"type": "string", "description": "Filter by parent task", "default": None},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of tasks to return",
+                    "default": 50,
+                },
+            },
+        },
+        func=list_tasks,
+    )
+
     # --- Dependencies ---
 
-    @mcp.tool()
     def add_dependency(
         task_id: str,
         depends_on: str,
         dep_type: str = "blocks",
     ) -> dict[str, Any]:
-        """
-        Add a dependency between tasks.
-
-        Args:
-            task_id: The dependent task (e.g., Task B)
-            depends_on: The blocker task (e.g., Task A)
-            dep_type: Dependency type (default: "blocks")
-        """
+        """Add a dependency between tasks."""
         try:
             dep_manager.add_dependency(task_id, depends_on, dep_type)
             return {"success": True, "message": f"Task {task_id} {dep_type} by {depends_on}"}
         except ValueError as e:
             return {"error": str(e)}
 
-    @mcp.tool()
-    def remove_dependency(task_id: str, depends_on: str) -> dict[str, Any]:
-        """
-        Remove a dependency.
+    registry.register(
+        name="add_dependency",
+        description="Add a dependency between tasks.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The dependent task (e.g., Task B)"},
+                "depends_on": {"type": "string", "description": "The blocker task (e.g., Task A)"},
+                "dep_type": {
+                    "type": "string",
+                    "description": 'Dependency type (default: "blocks")',
+                    "default": "blocks",
+                },
+            },
+            "required": ["task_id", "depends_on"],
+        },
+        func=add_dependency,
+    )
 
-        Args:
-            task_id: The dependent task
-            depends_on: The blocker task
-        """
+    def remove_dependency(task_id: str, depends_on: str) -> dict[str, Any]:
+        """Remove a dependency."""
         dep_manager.remove_dependency(task_id, depends_on)
         return {"success": True, "message": "Dependency removed"}
 
-    @mcp.tool()
-    def get_dependency_tree(task_id: str, direction: str = "both") -> dict[str, Any]:
-        """
-        Get dependency tree.
+    registry.register(
+        name="remove_dependency",
+        description="Remove a dependency.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The dependent task"},
+                "depends_on": {"type": "string", "description": "The blocker task"},
+            },
+            "required": ["task_id", "depends_on"],
+        },
+        func=remove_dependency,
+    )
 
-        Args:
-            task_id: Root task ID
-            direction: "blockers" (upstream), "blocking" (downstream), or "both"
-        """
+    def get_dependency_tree(task_id: str, direction: str = "both") -> dict[str, Any]:
+        """Get dependency tree."""
         tree = dep_manager.get_dependency_tree(task_id)
         if direction == "blockers":
             return {"blockers": tree.get("blockers", [])}
@@ -267,34 +367,47 @@ def register_task_tools(
             return {"blocking": tree.get("blocking", [])}
         return tree
 
-    @mcp.tool()
+    registry.register(
+        name="get_dependency_tree",
+        description="Get dependency tree.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Root task ID"},
+                "direction": {
+                    "type": "string",
+                    "description": '"blockers" (upstream), "blocking" (downstream), or "both"',
+                    "default": "both",
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=get_dependency_tree,
+    )
+
     def check_dependency_cycles() -> dict[str, Any]:
-        """
-        Detect circular dependencies in the project.
-        """
+        """Detect circular dependencies in the project."""
         cycles = dep_manager.check_cycles()
         if cycles:
             return {"has_cycles": True, "cycles": cycles}
         return {"has_cycles": False}
 
+    registry.register(
+        name="check_dependency_cycles",
+        description="Detect circular dependencies in the project.",
+        input_schema={"type": "object", "properties": {}},
+        func=check_dependency_cycles,
+    )
+
     # --- Ready Work ---
 
-    @mcp.tool()
     def list_ready_tasks(
         priority: int | None = None,
         task_type: str | None = None,
         assignee: str | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
-        """
-        List tasks that are open and have no unresolved blocking dependencies.
-
-        Args:
-            priority: Filter by priority
-            task_type: Filter by type
-            assignee: Filter by assignee
-            limit: Max results
-        """
+        """List tasks that are open and have no unresolved blocking dependencies."""
         tasks = task_manager.list_ready_tasks(
             priority=priority,
             task_type=task_type,
@@ -303,38 +416,47 @@ def register_task_tools(
         )
         return {"tasks": [t.to_dict() for t in tasks], "count": len(tasks)}
 
-    @mcp.tool()
-    def list_blocked_tasks(limit: int = 20) -> dict[str, Any]:
-        """
-        List tasks that are currently blocked, including what blocks them.
+    registry.register(
+        name="list_ready_tasks",
+        description="List tasks that are open and have no unresolved blocking dependencies.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "priority": {"type": "integer", "description": "Filter by priority", "default": None},
+                "task_type": {"type": "string", "description": "Filter by type", "default": None},
+                "assignee": {"type": "string", "description": "Filter by assignee", "default": None},
+                "limit": {"type": "integer", "description": "Max results", "default": 10},
+            },
+        },
+        func=list_ready_tasks,
+    )
 
-        Args:
-            limit: Max results
-        """
-        # This requires a method in LocalTaskManager that joins with dependencies
-        # Since we implemented list_blocked_tasks in Phase 3, we can use it.
+    def list_blocked_tasks(limit: int = 20) -> dict[str, Any]:
+        """List tasks that are currently blocked, including what blocks them."""
         blocked_items = task_manager.list_blocked_tasks(limit=limit)
         return {"blocked_tasks": blocked_items}
 
+    registry.register(
+        name="list_blocked_tasks",
+        description="List tasks that are currently blocked, including what blocks them.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max results", "default": 20},
+            },
+        },
+        func=list_blocked_tasks,
+    )
+
     # --- Session Integration ---
 
-    @mcp.tool()
     def link_task_to_session(
         task_id: str,
         session_id: str | None = None,
         action: str = "worked_on",
     ) -> dict[str, Any]:
-        """
-        Link a task to a session.
-
-        Args:
-            task_id: Task ID
-            session_id: Session ID (optional, defaults to linking context if available, but here must be explicit or derived)
-            action: Relationship type (worked_on, discovered, mentioned, closed)
-        """
+        """Link a task to a session."""
         if not session_id:
-            # In a real agent context, we might infer this from the MCP request context
-            # For now, we require it or return error if we can't get it.
             return {"error": "session_id is required"}
 
         try:
@@ -343,38 +465,69 @@ def register_task_tools(
         except ValueError as e:
             return {"error": str(e)}
 
-    @mcp.tool()
-    def get_session_tasks(session_id: str) -> dict[str, Any]:
-        """
-        Get all tasks associated with a session.
+    registry.register(
+        name="link_task_to_session",
+        description="Link a task to a session.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID (optional, defaults to linking context if available)",
+                    "default": None,
+                },
+                "action": {
+                    "type": "string",
+                    "description": "Relationship type (worked_on, discovered, mentioned, closed)",
+                    "default": "worked_on",
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=link_task_to_session,
+    )
 
-        Args:
-            session_id: Session ID
-        """
+    def get_session_tasks(session_id: str) -> dict[str, Any]:
+        """Get all tasks associated with a session."""
         tasks = session_task_manager.get_session_tasks(session_id)
         return {"session_id": session_id, "tasks": tasks}
 
-    @mcp.tool()
-    def get_task_sessions(task_id: str) -> dict[str, Any]:
-        """
-        Get all sessions that touched a task.
+    registry.register(
+        name="get_session_tasks",
+        description="Get all tasks associated with a session.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+            },
+            "required": ["session_id"],
+        },
+        func=get_session_tasks,
+    )
 
-        Args:
-            task_id: Task ID
-        """
+    def get_task_sessions(task_id: str) -> dict[str, Any]:
+        """Get all sessions that touched a task."""
         sessions = session_task_manager.get_task_sessions(task_id)
         return {"task_id": task_id, "sessions": sessions}
 
+    registry.register(
+        name="get_task_sessions",
+        description="Get all sessions that touched a task.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID"},
+            },
+            "required": ["task_id"],
+        },
+        func=get_task_sessions,
+    )
+
     # --- Git Sync ---
 
-    @mcp.tool()
     def sync_tasks(direction: str = "both") -> dict[str, Any]:
-        """
-        Manually trigger task synchronization.
-
-        Args:
-            direction: "import", "export", or "both"
-        """
+        """Manually trigger task synchronization."""
         result = {}
         if direction in ["import", "both"]:
             sync_manager.import_from_jsonl()
@@ -386,9 +539,31 @@ def register_task_tools(
 
         return result
 
-    @mcp.tool()
+    registry.register(
+        name="sync_tasks",
+        description="Manually trigger task synchronization.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "description": '"import", "export", or "both"',
+                    "default": "both",
+                },
+            },
+        },
+        func=sync_tasks,
+    )
+
     def get_sync_status() -> dict[str, Any]:
-        """
-        Get current synchronization status.
-        """
+        """Get current synchronization status."""
         return sync_manager.get_sync_status()
+
+    registry.register(
+        name="get_sync_status",
+        description="Get current synchronization status.",
+        input_schema={"type": "object", "properties": {}},
+        func=get_sync_status,
+    )
+
+    return registry

@@ -28,7 +28,7 @@ class TestLocalTaskManager:
             title="Fix bug",
             description="Fix the critical bug",
             priority=1,
-            type="bug",
+            task_type="bug",
             labels=["urgent", "backend"],
         )
 
@@ -37,7 +37,7 @@ class TestLocalTaskManager:
         assert task.status == "open"
         assert task.labels == ["urgent", "backend"]
         assert task.priority == 1
-        assert task.type == "bug"
+        assert task.task_type == "bug"
         assert task.id.startswith("gt-")
         assert task.created_at is not None
         assert task.updated_at is not None
