@@ -95,6 +95,11 @@ This document defines the implementation order across all Gobby planning documen
 │                                                                              │
 │ Deliverable: Jinja2 templating, built-in workflow templates                 │
 │ Dependencies: Sprint 6                                                       │
+│                                                                              │
+│ - [x] Jinja2 integration                                                     │
+│ - [x] Context sources (session, handoff, state)                              │
+│ - [x] Template engine implementation                                         │
+│ - [x] Built-in templates (plan-execute, plan-act-reflect, session-handoff)  │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════

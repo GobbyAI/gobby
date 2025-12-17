@@ -652,6 +652,84 @@ This demonstrates that:
 
 ---
 
+## generate_handoff Action Specification
+
+The `generate_handoff` action generates an LLM-powered session summary and stores it for the next session to consume.
+
+### YAML Syntax
+
+```yaml
+- action: generate_handoff
+  when: "event.data.get('prompt', '').strip().lower() in ['/clear', '/exit']"
+  include:
+    - artifacts
+    - pending_tasks
+  template: |
+    Analyze this Claude Code session transcript and create a comprehensive summary.
+
+    ## Transcript (last 50 turns):
+    {transcript_summary}
+
+    ## Last Messages:
+    {last_messages}
+
+    ## Git Status:
+    {git_status}
+
+    ## Files Changed:
+    {file_changes}
+
+    Create a markdown summary with sections:
+    ## Overview
+    ## Key Decisions
+    ## Important Lessons Learned
+    ## Next Steps
+```
+
+### Action Behavior
+
+1. **Read `template:` kwarg** - LLM prompt for summary generation
+2. **Get `transcript_path`** from `event.data`
+3. **Parse transcript** - Extract last 50 turns (or since /clear)
+4. **Gather context variables:**
+   - `{transcript_summary}` - Formatted turns for LLM
+   - `{last_messages}` - Last 2 user/agent message pairs
+   - `{git_status}` - Output of `git status --short`
+   - `{file_changes}` - Output of `git diff HEAD --name-status`
+   - `{todowrite_list}` - Last TodoWrite tool call contents
+   - `{session_tasks}` - Tasks linked to this session
+5. **Call LLM** with rendered template
+6. **Write to `sessions.summary_markdown`** via `session_manager.update_summary()`
+7. **Mark status** as `handoff_ready`
+
+### ActionContext Requirements
+
+The action requires additional services beyond the current ActionContext:
+
+```python
+@dataclass
+class ActionContext:
+    session_id: str
+    state: WorkflowState
+    db: LocalDatabase
+    session_manager: LocalSessionManager
+    template_engine: TemplateEngine
+    # Required for generate_handoff:
+    event: HookEvent | None = None              # For transcript_path
+    transcript_processor: Any | None = None      # ClaudeTranscriptParser
+    llm_service: Any | None = None               # LLMService for LLM calls
+    config: Any | None = None                    # DaemonConfig for model settings
+    session_task_manager: Any | None = None      # SessionTaskManager for tasks
+```
+
+### Storage Location
+
+- **Writes to:** `sessions.summary_markdown` column
+- **Does NOT write to:** `workflow_handoffs` table (deprecated)
+- **Does NOT write to:** `~/.gobby/session_summaries/` (separate backup system)
+
+---
+
 ## Context Injection
 
 ### Sources
@@ -713,9 +791,12 @@ CREATE TABLE workflow_states (
 );
 ```
 
-### Handoff Table
+### Handoff Table (DEPRECATED - Strangler Fig Migration)
+
+> **Note:** The `workflow_handoffs` table is temporary scaffolding for the strangler fig migration pattern. After validation, `generate_handoff` will write directly to `sessions.summary_markdown` and this table will be dropped.
 
 ```sql
+-- TEMPORARY: Will be removed after strangler fig validation
 CREATE TABLE workflow_handoffs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL,
@@ -731,6 +812,20 @@ CREATE TABLE workflow_handoffs (
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 ```
+
+### Permanent Storage (Post-Migration)
+
+Session handoff data is stored in the existing `sessions` table:
+
+```sql
+-- sessions table columns used for handoff:
+summary_markdown TEXT,      -- LLM-generated session summary
+summary_path TEXT,          -- Path to backup file (separate system)
+status TEXT,                -- 'handoff_ready' when summary is generated
+parent_session_id TEXT,     -- Links to previous session
+```
+
+File backups to `~/.gobby/session_summaries/` are handled by a **separate backup system**, not by workflow actions.
 
 ---
 
@@ -908,11 +1003,12 @@ Before building new workflow capabilities, extract the current session handoff b
 
 **Handoff:**
 
-- [x] Implement `generate_handoff` action
+- [ ] Rewrite `generate_handoff` action to write to `sessions.summary_markdown` (see Decision 8)
 - [ ] Implement `restore_from_handoff` action
 - [ ] Implement `find_parent_session` action
 - [ ] Implement `mark_session_status` action
 - [ ] Ensure `generate_handoff` includes `pending_task_ids` field (Decision 3)
+- [ ] Drop `workflow_handoffs` table after strangler fig validation
 
 **LLM Integration:**
 
@@ -1022,6 +1118,7 @@ Before building new workflow capabilities, extract the current session handoff b
 | 5 | **Escape hatches** | ✅ Resolved - `--force`, `reset`, `disable` CLI commands | See CLI Commands section. |
 | 6 | **Workflow versioning** | Stop → Edit → Restart pattern | Mid-session changes ignored (workflow locked at start). To apply changes: stop workflow, edit YAML, restart from initial phase. |
 | 7 | **Codex hook blocking** | N/A - only notify hook exists | Codex uses notify script only. Full hook control would require app-server session spawning. YAGNI for MVP. |
+| 8 | **generate_handoff storage** | Write to `sessions.summary_markdown`, not `workflow_handoffs` | `workflow_handoffs` is temporary strangler fig scaffolding. The existing `sessions` table already has summary storage. File backups (`~/.gobby/session_summaries/`) are a separate system. |
 
 ---
 

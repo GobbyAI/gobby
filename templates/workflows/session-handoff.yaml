@@ -1,0 +1,29 @@
+name: session-handoff
+description: "Session summary generation and context handoff between sessions"
+type: lifecycle
+
+triggers:
+  on_session_start:
+    - action: inject_context
+      source: previous_session_summary
+      template: |
+        ## Previous Session Context
+        {{ summary }}
+
+    - action: inject_context
+      source: handoff
+      template: |
+        ## Handoff Notes
+        {{ handoff.notes }}
+        
+        ## Pending Tasks
+        {% for task in handoff.pending_tasks %}
+        - {{ task }}
+        {% endfor %}
+
+  on_before_agent:
+    - action: generate_handoff
+      when: "event.data.get('prompt', '').strip().lower() in ['/clear', '/exit']"
+      include:
+        - artifacts
+        - pending_tasks

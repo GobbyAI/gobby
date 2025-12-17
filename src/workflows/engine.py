@@ -8,7 +8,7 @@ from .evaluator import ConditionEvaluator
 from .loader import WorkflowLoader
 from .state_manager import WorkflowStateManager
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .actions import ActionExecutor
@@ -187,6 +187,7 @@ class WorkflowEngine:
             state=state,
             db=self.action_executor.db,
             session_manager=self.action_executor.session_manager,
+            template_engine=self.action_executor.template_engine,
         )
 
         for action_def in actions:
@@ -199,3 +200,95 @@ class WorkflowEngine:
             if result and "inject_context" in result:
                 # Log context injection for now
                 logger.info(f"Context injected: {result['inject_context'][:50]}...")
+
+    async def evaluate_lifecycle_triggers(
+        self, workflow_name: str, event: HookEvent, context_data: dict[str, Any] | None = None
+    ) -> HookResponse:
+        """
+        Evaluate triggers for a specific lifecycle workflow (e.g. session-handoff).
+        Does not require an active session state.
+        """
+        workflow = self.loader.load_workflow(workflow_name)
+        if not workflow:
+            return HookResponse(decision="allow")
+
+        # Map hook event to trigger name
+        # TODO: Move this mapping to a shared constant or config
+        trigger_name = f"on_{event.event_type.name.lower()}"  # e.g. on_session_start
+
+        triggers = workflow.triggers.get(trigger_name) if workflow.triggers else []
+        if not triggers:
+            return HookResponse(decision="allow")
+
+        logger.info(f"Executing lifecycle triggers for '{workflow_name}' on '{trigger_name}'")
+
+        # Create a temporary/ephemeral context for execution
+        from .actions import ActionContext
+        from .definitions import WorkflowState
+
+        # Create a dummy state for context - lifecycle workflows shouldn't depend on phase state
+        # but actions might need access to 'state.artifacts' or similar if provided
+        session_id = event.metadata.get("_platform_session_id") or "global"
+
+        state = WorkflowState(
+            session_id=session_id,
+            workflow_name=workflow_name,
+            phase="global",
+            phase_entered_at=datetime.now(UTC),
+            phase_action_count=0,
+            total_action_count=0,
+            artifacts=event.data.get("artifacts", {}),  # Pass artifacts if available
+            observations=[],
+            reflection_pending=False,
+            context_injected=False,
+            variables=context_data or {},  # Pass extra context as variables
+            task_list=None,
+            current_task_index=0,
+            files_modified_this_task=0,
+        )
+
+        action_ctx = ActionContext(
+            session_id=session_id,
+            state=state,
+            db=self.action_executor.db,
+            session_manager=self.action_executor.session_manager,
+            template_engine=self.action_executor.template_engine,
+        )
+
+        injected_context = []
+
+        for trigger in triggers:
+            # Check 'when' condition if present
+            when_condition = trigger.get("when")
+            if when_condition:
+                # Simple eval context
+                eval_ctx = {"event": event, "workflow_state": state, "handoff": context_data or {}}
+                if not self.evaluator.evaluate(when_condition, eval_ctx):
+                    continue
+
+            # Execute action
+            action_type = trigger.get("action")
+            if not action_type:
+                continue
+
+            try:
+                # Pass triggers definition as kwargs
+                kwargs = trigger.copy()
+                kwargs.pop("action", None)
+                kwargs.pop("when", None)
+
+                result = await self.action_executor.execute(action_type, action_ctx, **kwargs)
+
+                if result and "inject_context" in result:
+                    injected_context.append(result["inject_context"])
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to execute lifecycle action '{action_type}': {e}", exc_info=True
+                )
+
+        response = HookResponse(decision="allow")
+        if injected_context:
+            response.context = "\n\n".join(injected_context)
+
+        return response

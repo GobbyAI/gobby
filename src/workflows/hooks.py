@@ -71,3 +71,33 @@ class WorkflowHookHandler:
         except Exception as e:
             logger.error(f"Error handling workflow hook: {e}", exc_info=True)
             return HookResponse(decision="allow")
+
+    def handle_lifecycle(
+        self, workflow_name: str, event: HookEvent, context_data: dict | None = None
+    ) -> HookResponse:
+        """
+        Handle a lifecycle workflow event.
+        """
+        try:
+            if self._loop and self._loop.is_running():
+                if threading.current_thread() is threading.main_thread():
+                    # See comment in handle() about blocking main thread loop
+                    return HookResponse(decision="allow")
+                else:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.engine.evaluate_lifecycle_triggers(workflow_name, event, context_data),
+                        self._loop,
+                    )
+                    return future.result(timeout=10.0)
+
+            try:
+                return asyncio.run(
+                    self.engine.evaluate_lifecycle_triggers(workflow_name, event, context_data)
+                )
+            except RuntimeError:
+                logger.warning("Could not run workflow engine: Event loop is already running.")
+                return HookResponse(decision="allow")
+
+        except Exception as e:
+            logger.error(f"Error handling lifecycle workflow: {e}", exc_info=True)
+            return HookResponse(decision="allow")

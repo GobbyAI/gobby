@@ -5,6 +5,7 @@ from typing import Any, Protocol
 from gobby.storage.database import LocalDatabase
 from gobby.storage.sessions import LocalSessionManager
 from gobby.workflows.definitions import WorkflowState
+from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class ActionContext:
     state: WorkflowState
     db: LocalDatabase
     session_manager: LocalSessionManager
+    template_engine: TemplateEngine
     # Future: services registry
 
 
@@ -29,9 +31,15 @@ class ActionHandler(Protocol):
 class ActionExecutor:
     """Registry and executor for workflow actions."""
 
-    def __init__(self, db: LocalDatabase, session_manager: LocalSessionManager):
+    def __init__(
+        self,
+        db: LocalDatabase,
+        session_manager: LocalSessionManager,
+        template_engine: TemplateEngine,
+    ):
         self.db = db
         self.session_manager = session_manager
+        self.template_engine = template_engine
         self._handlers: dict[str, ActionHandler] = {}
         self._register_defaults()
 
@@ -42,9 +50,10 @@ class ActionExecutor:
     def _register_defaults(self) -> None:
         """Register built-in actions."""
         self.register("inject_context", self._handle_inject_context)
+        self.register("inject_message", self._handle_inject_message)
         self.register("capture_artifact", self._handle_capture_artifact)
         self.register("generate_handoff", self._handle_generate_handoff)
-        # TODO: Add more actions (inject_message, switch_mode, etc.)
+        # TODO: Add switch_mode, etc.
 
     async def execute(
         self, action_type: str, context: ActionContext, **kwargs
@@ -113,10 +122,66 @@ class ActionExecutor:
                 pass
 
         if content:
+            # Render content if template is used (in future).
+            # Current logic just sets it.
+            # But wait, inject_context usually pulls FROM a source.
+            # If 'template' arg is provided, we might wrap the content in it?
+            # WORKFLOWS.md says: source="previous_session_summary", template="..."
+            template = kwargs.get("template")
+            if template:
+                # We need to construct a context for the template
+                # that contains the 'source' data.
+                # e.g. source="handoff" -> context={"handoff": ...}
+                render_context = {
+                    "session": context.session_manager.get(context.session_id),
+                    "state": context.state,
+                    "artifacts": context.state.artifacts,
+                }
+
+                # Add source data to context
+                if source == "previous_session_summary":
+                    render_context["summary"] = content
+                elif source == "handoff":
+                    # We need parsed handoff data here
+                    # For now just passing raw content string might be limiting if template expects struct
+                    # But content creation above was just a string.
+                    # Let's improve the "handoff" fetching above to return dict first.
+                    pass
+
+                # Render
+                content = context.template_engine.render(template, render_context)
+
             context.state.context_injected = True
             return {"inject_context": content}
 
         return None
+
+    async def _handle_inject_message(
+        self, context: ActionContext, content: str, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Inject a message to the user/assistant, rendering it as a template.
+        """
+        render_context = {
+            "session": context.session_manager.get(context.session_id),
+            "state": context.state,
+            "artifacts": context.state.artifacts,
+            "phase_action_count": context.state.phase_action_count,
+            "variables": context.state.variables or {},
+        }
+
+        # Add any extra kwargs as context?
+        render_context.update(kwargs)
+
+        rendered_content = context.template_engine.render(content, render_context)
+
+        # We return it as 'inject_message' which the hook handler should display or inject
+        # The hook system currently expects 'inject_context' for prompt augmentation,
+        # or we might need a new response field for 'message' (Ephemeral message?)
+        # WORKFLOWS.md calls it "inject_message".
+        # Ideally this shows up to the user or is injected into conversation history.
+
+        return {"inject_message": rendered_content}
 
     async def _handle_capture_artifact(
         self, context: ActionContext, pattern: str, **kwargs

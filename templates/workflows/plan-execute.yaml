@@ -1,0 +1,48 @@
+name: plan-execute
+description: "Basic planning enforcement: Plan -> Execute"
+version: "1.0"
+
+phases:
+  - name: plan
+    description: "Analyze requirements and create implementation plan"
+    
+    on_enter:
+      - action: inject_message
+        content: |
+          You are in PLANNING mode. Analyze the request and create a plan.
+          Do not modify any files until the plan is approved.
+
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - WebSearch
+      - WebFetch
+      - AskUserQuestion
+      - TodoWrite
+      
+    blocked_tools:
+      - Edit
+      - Write
+      - Bash
+      - NotebookEdit
+
+    exit_conditions:
+      - type: user_approval
+        prompt: "Plan complete. Ready to implement?"
+
+  - name: execute
+    description: "Implement the plan"
+    
+    on_enter:
+      - action: inject_message
+        content: |
+          You are now in IMPLEMENTATION mode. Execute the plan.
+
+    allowed_tools: all
+
+triggers:
+  on_session_start:
+    - action: enter_phase
+      phase: plan
+      when: "not workflow_state.phase"

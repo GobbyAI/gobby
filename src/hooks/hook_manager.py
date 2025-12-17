@@ -153,11 +153,30 @@ class HookManager:
         self._session_task_manager = SessionTaskManager(self._database)
 
         # Initialize Workflow Engine (Phase 0-2 + 3 Integration)
+        # Initialize Workflow Engine (Phase 0-2 + 3 Integration)
         from gobby.workflows.actions import ActionExecutor
+        from gobby.workflows.templates import TemplateEngine
 
-        self._workflow_loader = WorkflowLoader(workflow_dirs=[Path.home() / ".gobby" / "workflows"])
+        # Load order: Project > User Global
+        # Templates are treated as examples and not loaded automatically.
+        # Users must copy them to one of these directories to activate them.
+        workflow_dirs = [Path.cwd() / ".gobby" / "workflows", Path.home() / ".gobby" / "workflows"]
+
+        self._workflow_loader = WorkflowLoader(workflow_dirs=workflow_dirs)
         self._workflow_state_manager = WorkflowStateManager(self._database)
-        self._action_executor = ActionExecutor(self._database, self._session_storage)
+
+        # Initialize Template Engine
+        # We can pass template directory from package templates or user templates
+        # For now, let's include the built-in templates dir if we can find it
+        # Assuming templates are in package 'gobby.templates.workflows'?
+        # Or just use the one we are about to create in project root?
+        # Ideally, we should look for templates in typical locations.
+        # But 'TemplateEngine' constructor takes optional dirs.
+        self._template_engine = TemplateEngine()
+
+        self._action_executor = ActionExecutor(
+            self._database, self._session_storage, self._template_engine
+        )
         self._workflow_engine = WorkflowEngine(
             loader=self._workflow_loader,
             state_manager=self._workflow_state_manager,
@@ -668,9 +687,34 @@ class HookManager:
         if parent_session_id:
             context_parts.append(f"Parent session: {parent_session_id}")
             context_parts.append("Handoff completed successfully.")
+
+        # Original hardcoded context injection (Failover)
         if restored_context:
-            context_parts.append("\n## Previous Session Context\n")
-            context_parts.append(restored_context)
+            # Try to use workflow template first
+            try:
+                # Also query handoff table if we have parent_session_id?
+                # For now, just pass summary as 'summary' and 'handoff'
+                # The template uses {{ summary }} and {{ handoff.notes }}
+
+                wf_response = self._workflow_handler.handle_lifecycle(
+                    "session-handoff",
+                    event,
+                    context_data={
+                        "summary": restored_context,
+                        "handoff": {"notes": "Restored summary", "pending_tasks": []},
+                    },
+                )
+
+                if wf_response.context:
+                    context_parts.append(wf_response.context)
+                else:
+                    # Fallback if workflow didn't return anything (e.g. template missing)
+                    context_parts.append("\n## Previous Session Context\n")
+                    context_parts.append(restored_context)
+            except Exception as e:
+                self.logger.warning(f"Failed to execute session-handoff workflow: {e}")
+                context_parts.append("\n## Previous Session Context\n")
+                context_parts.append(restored_context)
 
         # Inject Active Task Context
         if event.task_id:
@@ -708,12 +752,7 @@ class HookManager:
         Handle SESSION_END event.
 
         Generates session summary and marks session as handoff_ready.
-
-        Args:
-            event: HookEvent with session data
-
-        Returns:
-            HookResponse (always allow)
+        Available triggers: on_session_end
         """
         external_id = event.session_id
         input_data = event.data
@@ -802,17 +841,32 @@ class HookManager:
                     self.logger.warning(f"Failed to update session status: {e}")
 
             # Handle /clear command - prepare handoff
-            if prompt_lower == "/clear" and transcript_path:
-                self.logger.debug("Detected /clear command - preparing session handoff")
+            if prompt_lower in ("/clear", "/exit") and transcript_path:
+                self.logger.debug(f"Detected {prompt_lower} command - handling session handoff")
+
+                # Execute session-handoff workflow triggers (e.g. generate_handoff)
+                try:
+                    self._workflow_handler.handle_lifecycle("session-handoff", event)
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to execute session-handoff workflow on {prompt_lower}: {e}",
+                        exc_info=True,
+                    )
+
+                # Original logic for summary generation (if not covered by workflow yet)
+                # The workflow 'generate_handoff' action creates the DB record
+                # But SummaryGenerator creates the actual text summary file
                 try:
                     summary_result = self._summary_generator.generate_session_summary(
                         session_id=session_id,
                         input_data={"session_id": external_id, "transcript_path": transcript_path},
                     )
                     if summary_result.get("status") == "success":
-                        self.logger.debug("Session summary generated for /clear handoff")
+                        self.logger.debug(f"Session summary generated for {prompt_lower} handoff")
                 except Exception as e:
-                    self.logger.error(f"Failed to prepare /clear handoff: {e}", exc_info=True)
+                    self.logger.error(
+                        f"Failed to prepare {prompt_lower} handoff: {e}", exc_info=True
+                    )
 
         return HookResponse(decision="allow")
 
