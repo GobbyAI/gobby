@@ -166,6 +166,8 @@ def show_task(task_id: str) -> None:
     click.echo(f"Updated: {task.updated_at}")
     if task.assignee:
         click.echo(f"Assignee: {task.assignee}")
+    if task.labels:
+        click.echo(f"Labels: {', '.join(task.labels)}")
     if task.description:
         click.echo(f"\n{task.description}")
 

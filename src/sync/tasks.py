@@ -263,83 +263,58 @@ class TaskSyncManager:
     ) -> dict[str, Any]:
         """
         Import open issues from a GitHub repository as tasks.
-        Uses Claude Agent SDK to fetch and extract issues.
+        Uses GitHub CLI (gh) for reliable API access.
 
         Args:
             repo_url: URL of the GitHub repository (e.g., https://github.com/owner/repo)
+            project_id: Optional project ID (auto-detected from context if not provided)
             limit: Max issues to import
 
         Returns:
-            Review of what would be imported
+            Result with imported issue IDs
         """
+        import re
+        import subprocess
+
         try:
-            from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
+            # Parse repo from URL
+            match = re.match(r"https?://github\.com/([^/]+)/([^/]+)/?", repo_url)
+            if not match:
+                return {"success": False, "error": "Invalid GitHub URL. Expected: https://github.com/owner/repo"}
 
-            # Simple validation
-            if "github.com" not in repo_url:
-                return {"success": False, "error": "Invalid GitHub URL"}
+            owner, repo = match.groups()
+            repo = repo.rstrip(".git")  # Handle .git suffix
 
-            # Build prompt
-            prompt = f"""Fetch the open issues from this GitHub repository: {repo_url}/issues
-            
-            Please extract up to {limit} open issues. For each issue, provide:
-            - Title
-            - Description (summary)
-            - Issue Number
-            - Labels (if any)
-            - Created At date
-            
-            Return the result as a JSON object with a list of "issues".
-            Each issue object should have: title, description, issue_number, labels, created_at.
-            """
+            # Check if gh CLI is available
+            try:
+                subprocess.run(["gh", "--version"], capture_output=True, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                return {
+                    "success": False,
+                    "error": "GitHub CLI (gh) not found. Install from https://cli.github.com/",
+                }
 
-            # Minimal options
-            options = ClaudeAgentOptions(
-                system_prompt="You are a data extraction assistant. Output ONLY valid JSON.",
-                max_turns=5,
-                model="claude-3-5-sonnet-latest",  # Use capable model
-                allowed_tools=["WebFetch"],
-                permission_mode="default",
-            )
+            # Fetch issues using gh CLI
+            cmd = [
+                "gh", "issue", "list",
+                "--repo", f"{owner}/{repo}",
+                "--state", "open",
+                "--limit", str(limit),
+                "--json", "number,title,body,labels,createdAt",
+            ]
 
-            result_text = ""
-            async for message in query(prompt=prompt, options=options):
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            result_text += block.text
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"gh command failed: {result.stderr}",
+                }
 
-            # Parse JSON
-            # Try to find JSON block
-            import re
-
-            json_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", result_text)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Try raw JSON finding
-                json_match = re.search(r"\{[\s\S]*\}", result_text)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    return {
-                        "success": False,
-                        "error": "Could not extract JSON from agent response",
-                        "raw": result_text,
-                    }
-
-            data = json.loads(json_str)
-            issues = data.get("issues", [])
+            issues = json.loads(result.stdout)
 
             if not issues:
-                return {"success": False, "error": "No issues found in parsed data"}
+                return {"success": True, "message": "No open issues found", "imported": [], "count": 0}
 
-            # Import into DB
-            # We prefix ID with 'gh-{issue_number}' to avoid collision and allow tracking
-
-            project_id = (
-                None  # This needs to be passed in or resolved. For now, assume None and resolve.
-            )
             # Resolve project ID if not provided
             if not project_id:
                 # Try to find project by github_url
@@ -348,11 +323,17 @@ class TaskSyncManager:
                     project_id = row["id"]
 
             if not project_id:
-                # Fallback to _orphaned project if exists, or error
-                # Ideally caller provides it.
+                # Try current project context
+                from gobby.utils.project_context import get_project_context
+
+                ctx = get_project_context()
+                if ctx and ctx.get("id"):
+                    project_id = ctx["id"]
+
+            if not project_id:
                 return {
                     "success": False,
-                    "error": "Could not determine project ID. Please run from within a project or provide explicit project context.",
+                    "error": "Could not determine project ID. Run from within a gobby project.",
                 }
 
             imported = []
@@ -360,35 +341,41 @@ class TaskSyncManager:
 
             with self.db.transaction() as conn:
                 for issue in issues:
-                    issue_num = issue.get("issue_number")
+                    issue_num = issue.get("number")
                     if not issue_num:
                         continue
 
                     task_id = f"gh-{issue_num}"
                     title = issue.get("title", "Untitled Issue")
-                    desc = issue.get("description", "")
-                    # Add link to original issue in description
-                    desc += f"\n\nSource: {repo_url}/issues/{issue_num}"
+                    body = issue.get("body") or ""
+                    # Add link to original issue
+                    desc = f"{body}\n\nSource: {repo_url}/issues/{issue_num}".strip()
 
-                    created_at = issue.get("created_at", datetime.now(timezone.utc).isoformat())
+                    # Extract label names
+                    labels = [lbl.get("name") for lbl in issue.get("labels", []) if lbl.get("name")]
+                    labels_json = json.dumps(labels) if labels else None
+
+                    created_at = issue.get("createdAt", datetime.now(timezone.utc).isoformat())
                     updated_at = datetime.now(timezone.utc).isoformat()
 
                     # Check if exists
                     exists = self.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task_id,))
                     if exists:
-                        # Update?
+                        # Update existing
                         conn.execute(
-                            "UPDATE tasks SET title=?, description=?, updated_at=? WHERE id=?",
-                            (title, desc, updated_at, task_id),
+                            "UPDATE tasks SET title=?, description=?, labels=?, updated_at=? WHERE id=?",
+                            (title, desc, labels_json, updated_at, task_id),
                         )
                     else:
+                        # Insert new
                         conn.execute(
                             """
                             INSERT INTO tasks (
-                                id, project_id, title, description, status, type, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, 'open', 'issue', ?, ?)
+                                id, project_id, title, description, status, type,
+                                labels, created_at, updated_at, platform_id
+                            ) VALUES (?, ?, ?, ?, 'open', 'issue', ?, ?, ?, ?)
                             """,
-                            (task_id, project_id, title, desc, created_at, updated_at),
+                            (task_id, project_id, title, desc, labels_json, created_at, updated_at, f"github:{issue_num}"),
                         )
                         imported_count += 1
 
@@ -396,12 +383,14 @@ class TaskSyncManager:
 
             return {
                 "success": True,
-                "issues": issues,
                 "imported": imported,
                 "count": imported_count,
-                "message": f"Successfully imported {imported_count} issues from GitHub.",
+                "message": f"Imported {imported_count} new issues, updated {len(imported) - imported_count} existing.",
             }
 
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse gh output: {e}")
+            return {"success": False, "error": f"Failed to parse GitHub response: {e}"}
         except Exception as e:
             logger.error(f"Failed to import from GitHub: {e}")
             return {"success": False, "error": str(e)}
