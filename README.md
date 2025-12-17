@@ -377,6 +377,7 @@ See [ROADMAP.md](ROADMAP.md) for the full implementation plan with sprint orderi
 
 | Feature | Description | Plan |
 |---------|-------------|------|
+| **Persistent Memory** | Cross-session memory and skill learning | [MEMORY.md](docs/plans/MEMORY.md) |
 | **Hook Extensions** | WebSocket event broadcasting, webhooks, Python plugins | [HOOK_EXTENSIONS.md](docs/plans/HOOK_EXTENSIONS.md) |
 | **Workflow Engine** | Phase-based enforcement (plan → execute → validate) | [WORKFLOWS.md](docs/plans/WORKFLOWS.md) |
 | **Smart MCP Proxy** | Tool metrics, semantic search, self-healing | [MCP_PROXY_IMPROVEMENTS.md](docs/plans/MCP_PROXY_IMPROVEMENTS.md) |
@@ -385,9 +386,10 @@ See [ROADMAP.md](ROADMAP.md) for the full implementation plan with sprint orderi
 
 1. **Observable Gobby** — WebSocket event streaming + task system
 2. **Workflow Engine** — Deterministic agent behavior without prompt engineering
-3. **Extensible Gobby** — Webhooks and Python plugin system
-4. **Smart MCP Proxy** — Intelligent tool orchestration
-5. **Production Ready** — Full integration and documentation
+3. **Memory-First Agents** — Persistent memory and skill learning across sessions
+4. **Extensible Gobby** — Webhooks and Python plugin system
+5. **Smart MCP Proxy** — Intelligent tool orchestration
+6. **Production Ready** — Full integration and documentation
 
 ## License
 

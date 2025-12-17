@@ -11,6 +11,7 @@ This document defines the implementation order across all Gobby planning documen
 | HOOK_EXTENSIONS | `docs/plans/HOOK_EXTENSIONS.md` | WebSocket events, webhooks, plugins |
 | WORKFLOWS | `docs/plans/WORKFLOWS.md` | Phase-based workflow enforcement |
 | TASKS | `docs/plans/TASKS.md` | Persistent task tracking system |
+| MEMORY | `docs/plans/MEMORY.md` | Persistent memory and skill learning |
 | MCP_PROXY_IMPROVEMENTS | `docs/plans/MCP_PROXY_IMPROVEMENTS.md` | Tool metrics, semantic search, self-healing |
 
 ---
@@ -94,6 +95,45 @@ This document defines the implementation order across all Gobby planning documen
 │                                                                              │
 │ Deliverable: Jinja2 templating, built-in workflow templates                 │
 │ Dependencies: Sprint 6                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+                            MEMORY-FIRST AGENTS
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Sprint 7.5: Memory Storage & Operations                                      │
+│ MEMORY Phases 1-2                                                            │
+│                                                                              │
+│ Deliverable: Memory storage layer, remember/recall/forget operations        │
+│ Dependencies: None (can start in parallel with workflow sprints)            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Sprint 7.6: Skill Learning                                                   │
+│ MEMORY Phases 3-4                                                            │
+│                                                                              │
+│ Deliverable: Skill extraction from sessions, trigger matching, hook inject  │
+│ Dependencies: Sprint 7.5                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Sprint 7.7: Memory MCP Tools & CLI                                           │
+│ MEMORY Phases 5-6                                                            │
+│                                                                              │
+│ Deliverable: Full MCP tool suite, CLI commands for memory/skill management  │
+│ Dependencies: Sprint 7.6                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Sprint 7.8: Memory Git Sync & Enhancements                                   │
+│ MEMORY Phases 7-10                                                           │
+│                                                                              │
+│ Deliverable: JSONL sync, semantic search, auto-extraction, documentation    │
+│ Dependencies: Sprint 7.7                                                     │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -219,6 +259,10 @@ This document defines the implementation order across all Gobby planning documen
 | 5 | Workflow Hooks | WORKFLOWS Phase 3 | Sprint 4 | Pending |
 | 6 | Workflow Actions | WORKFLOWS Phase 4 | Sprint 5 | Pending |
 | 7 | Context & Templates | WORKFLOWS Phases 5-6 | Sprint 6 | Pending |
+| 7.5 | Memory Storage & Operations | MEMORY Phases 1-2 | None | Pending |
+| 7.6 | Skill Learning | MEMORY Phases 3-4 | Sprint 7.5 | Pending |
+| 7.7 | Memory MCP/CLI | MEMORY Phases 5-6 | Sprint 7.6 | Pending |
+| 7.8 | Memory Sync & Enhancements | MEMORY Phases 7-10 | Sprint 7.7 | Pending |
 | 8 | Webhooks | HOOK_EXTENSIONS Phase 2 | Sprint 1 | Pending |
 | 9 | Python Plugins | HOOK_EXTENSIONS Phase 3 | Sprint 1 | Pending |
 | 10 | Workflow CLI/MCP | WORKFLOWS Phases 7-8 | Sprint 7 | Pending |
@@ -253,6 +297,10 @@ Sprints 1 → 8 → 9 → 16 (joins Track A at Sprint 7)
 
 Sprints 12 → 13 → 14 → 15 (independent, can run anytime)
 
+### Track E: Memory System
+
+Sprints 7.5 → 7.6 → 7.7 → 7.8 (independent, can run anytime after session tracking exists)
+
 ---
 
 ## Milestones
@@ -270,20 +318,28 @@ Sprints 12 → 13 → 14 → 15 (independent, can run anytime)
 - Built-in templates
 - **Value**: Deterministic agent behavior without prompt engineering
 
-### Milestone 3: "Extensible Gobby" (Sprints 8-9)
+### Milestone 3: "Memory-First Agents" (Sprints 7.5-7.8)
+
+- Persistent memory across sessions
+- Skill learning from trajectories
+- Automatic context injection
+- Cross-CLI memory sharing
+- **Value**: Agents that learn and remember like coworkers, not contractors
+
+### Milestone 4: "Extensible Gobby" (Sprints 8-9)
 
 - Webhook integrations
 - Python plugin system
 - **Value**: Infinite customization without forking
 
-### Milestone 4: "Smart MCP Proxy" (Sprints 12-15)
+### Milestone 5: "Smart MCP Proxy" (Sprints 12-15)
 
 - Tool metrics and recommendations
 - Semantic search
 - Self-healing fallbacks
 - **Value**: Intelligent tool orchestration across MCP servers
 
-### Milestone 5: "Production Ready" (Sprints 16-18)
+### Milestone 6: "Production Ready" (Sprints 16-18)
 
 - Full integration
 - Comprehensive testing
@@ -299,5 +355,7 @@ Sprints 12 → 13 → 14 → 15 (independent, can run anytime)
 **If you want agent productivity**: Start with Sprints 2-3 (Task system) - agents can track and manage work.
 
 **If you want deterministic agents**: Start with Sprints 4-7 (Workflow engine) - enforce plan-act-reflect patterns.
+
+**If you want learning agents**: Start with Sprints 7.5-7.8 (Memory system) - agents that remember and improve.
 
 **If you have performance issues**: Start with Sprints 12-13 (Tool metrics + lazy init) - faster startup, better tool selection.
