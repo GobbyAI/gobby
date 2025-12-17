@@ -211,7 +211,6 @@ __marimo__/
 .gemini/
 .codex/
 .gobby/*
-!.gobby/project.json
 !.gobby/tasks.jsonl
 !.gobby/tasks_meta.json
 .agent/
