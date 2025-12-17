@@ -1,0 +1,73 @@
+import asyncio
+import logging
+import threading
+from typing import Optional
+
+from gobby.hooks.events import HookEvent, HookResponse
+from .engine import WorkflowEngine
+
+logger = logging.getLogger(__name__)
+
+
+class WorkflowHookHandler:
+    """
+    Integrates WorkflowEngine into the HookManager.
+    Wraps the async engine to be callable from synchronous hooks.
+    """
+
+    def __init__(self, engine: WorkflowEngine, loop: Optional[asyncio.AbstractEventLoop] = None):
+        self.engine = engine
+        self._loop = loop
+
+        # If no loop provided, try to get one or create one for this thread
+        if not self._loop:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+
+    def handle(self, event: HookEvent) -> HookResponse:
+        """
+        Handle a hook event by delegating to the workflow engine.
+        Handles the sync/async bridge.
+        """
+        try:
+            # We need to run the async self.engine.handle_event(event) synchronously
+
+            # Case 1: We have a captured loop (main loop) and we are likely in a thread
+            # This is the common case for FastAPI sync endpoints
+            if self._loop and self._loop.is_running():
+                if threading.current_thread() is threading.main_thread():
+                    # We are on the main thread and the loop is running.
+                    # We cannot block here without deadlock if we use run_until_complete.
+                    # But HookManager.handle is synchronous, so this is a tricky spot.
+                    # Ideally, HookManager should await, but it's not async.
+                    # For now, we return allow and log a warning if we can't run.
+                    # OR we create a task and return allow (fire and forget), but we need the result.
+
+                    # Actually, if we are here, we are blocking the event loop!
+                    # This implementation assumes HookManager.handle is run in a threadpool (def handle vs async def handle).
+                    # Pydantic/FastAPI runs sync def routes in threadpool.
+                    pass
+                else:
+                    # We are in a thread, loop is in another thread.
+                    # Safe to block this thread waiting for loop.
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.engine.handle_event(event), self._loop
+                    )
+                    return future.result(timeout=10.0)  # 10s timeout
+
+            # Case 2: No loop running, or we just want to run it.
+            # Create a new loop or use asyncio.run if appropriate
+            try:
+                return asyncio.run(self.engine.handle_event(event))
+            except RuntimeError:
+                # Loop likely already running
+                logger.warning(
+                    "Could not run workflow engine: Event loop is already running and we are blocking it."
+                )
+                return HookResponse(decision="allow")
+
+        except Exception as e:
+            logger.error(f"Error handling workflow hook: {e}", exc_info=True)
+            return HookResponse(decision="allow")

@@ -43,6 +43,11 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.utils.daemon_client import DaemonClient
+from gobby.workflows.engine import WorkflowEngine
+from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.loader import WorkflowLoader
+from gobby.workflows.state_manager import WorkflowStateManager
+
 
 # Backward-compatible alias
 TranscriptProcessor = ClaudeTranscriptParser
@@ -146,6 +151,14 @@ class HookManager:
         run_migrations(self._database)
         self._session_storage = LocalSessionManager(self._database)
         self._session_task_manager = SessionTaskManager(self._database)
+
+        # Initialize Workflow Engine (Phase 0-2 + 3 Integration)
+        self._workflow_loader = WorkflowLoader(workflow_dirs=[Path.home() / ".gobby" / "workflows"])
+        self._workflow_state_manager = WorkflowStateManager(self._database)
+        self._workflow_engine = WorkflowEngine(
+            loader=self._workflow_loader, state_manager=self._workflow_state_manager
+        )
+        self._workflow_handler = WorkflowHookHandler(engine=self._workflow_engine, loop=self._loop)
 
         # Session manager handles registration, lookup, and status updates
         # Note: source is passed explicitly per call (Phase 2C+), not stored in manager
@@ -413,9 +426,36 @@ class HookManager:
             self.logger.warning(f"No handler for event type: {event.event_type}")
             return HookResponse(decision="allow")  # Fail-open for unknown events
 
+        # --- Workflow Engine Evaluation (Phase 3) ---
+        # Evalute workflow rules before executing specific handlers
+        workflow_context = None
+        try:
+            workflow_response = self._workflow_handler.handle(event)
+
+            # If workflow blocks or asks, return immediately
+            if workflow_response.decision != "allow":
+                self.logger.info(f"Workflow blocked/modified event: {workflow_response.decision}")
+                return workflow_response
+
+            # Capture context to merge later
+            if workflow_response.context:
+                workflow_context = workflow_response.context
+
+        except Exception as e:
+            self.logger.error(f"Workflow evaluation failed: {e}", exc_info=True)
+            # Fail-open for workflow errors
+        # --------------------------------------------
+
         # Execute handler
         try:
             response = handler(event)
+
+            # Merge workflow context if present
+            if workflow_context:
+                if response.context:
+                    response.context = f"{response.context}\n\n{workflow_context}"
+                else:
+                    response.context = workflow_context
 
             # Broadcast event (fire-and-forget)
             if self.broadcaster:
