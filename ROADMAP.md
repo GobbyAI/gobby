@@ -47,6 +47,15 @@ This document defines the implementation order across all Gobby planning documen
 │ Deliverable: Task management via MCP tools and CLI + internal-* proxy       │
 │ Dependencies: Sprint 2                                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Sprint 3.5: Task Extensions                                                  │
+│ TASKS Phases 9.5-9.9                                                         │
+│                                                                              │
+│ Deliverable: Compaction, Labels, Maintenance, Import, Stealth Mode          │
+│ Dependencies: Sprint 3                                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════
                               WORKFLOW ENGINE
@@ -205,6 +214,7 @@ This document defines the implementation order across all Gobby planning documen
 | 1 | WebSocket Broadcasting | HOOK_EXTENSIONS Phase 1 | None | Pending |
 | 2 | Core Task System | TASKS Phases 1-6 | None | ✅ Completed |
 | 3 | Task MCP/CLI | TASKS Phases 7-10 | Sprint 2 | ✅ Completed |
+| 3.5 | Task Extensions | TASKS Phases 9.5-9.9 | Sprint 3 | Pending |
 | 4 | Workflow Foundation | WORKFLOWS Phases 0-2 | None | Pending |
 | 5 | Workflow Hooks | WORKFLOWS Phase 3 | Sprint 4 | Pending |
 | 6 | Workflow Actions | WORKFLOWS Phase 4 | Sprint 5 | Pending |
@@ -233,7 +243,7 @@ Sprints 1 → 4 → 5 → 6 → 7 → 10 → 17
 
 ### Track B: Task System
 
-Sprints 2 → 3 → 11 (joins Track A at Sprint 7)
+Sprints 2 → 3 → 3.5 → 11 (joins Track A at Sprint 7)
 
 ### Track C: Hook Extensions
 

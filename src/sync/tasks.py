@@ -258,6 +258,143 @@ class TaskSyncManager:
         self._debounce_timer = threading.Timer(self._debounce_interval, self.export_to_jsonl)
         self._debounce_timer.start()
 
+    async def import_from_github_issues(
+        self, repo_url: str, project_id: str | None = None, limit: int = 50
+    ) -> dict[str, Any]:
+        """
+        Import open issues from a GitHub repository as tasks.
+        Uses GitHub CLI (gh) for reliable API access.
+
+        Args:
+            repo_url: URL of the GitHub repository (e.g., https://github.com/owner/repo)
+            project_id: Optional project ID (auto-detected from context if not provided)
+            limit: Max issues to import
+
+        Returns:
+            Result with imported issue IDs
+        """
+        import re
+        import subprocess
+
+        try:
+            # Parse repo from URL
+            match = re.match(r"https?://github\.com/([^/]+)/([^/]+)/?", repo_url)
+            if not match:
+                return {"success": False, "error": "Invalid GitHub URL. Expected: https://github.com/owner/repo"}
+
+            owner, repo = match.groups()
+            repo = repo.rstrip(".git")  # Handle .git suffix
+
+            # Check if gh CLI is available
+            try:
+                subprocess.run(["gh", "--version"], capture_output=True, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                return {
+                    "success": False,
+                    "error": "GitHub CLI (gh) not found. Install from https://cli.github.com/",
+                }
+
+            # Fetch issues using gh CLI
+            cmd = [
+                "gh", "issue", "list",
+                "--repo", f"{owner}/{repo}",
+                "--state", "open",
+                "--limit", str(limit),
+                "--json", "number,title,body,labels,createdAt",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"gh command failed: {result.stderr}",
+                }
+
+            issues = json.loads(result.stdout)
+
+            if not issues:
+                return {"success": True, "message": "No open issues found", "imported": [], "count": 0}
+
+            # Resolve project ID if not provided
+            if not project_id:
+                # Try to find project by github_url
+                row = self.db.fetchone("SELECT id FROM projects WHERE github_url = ?", (repo_url,))
+                if row:
+                    project_id = row["id"]
+
+            if not project_id:
+                # Try current project context
+                from gobby.utils.project_context import get_project_context
+
+                ctx = get_project_context()
+                if ctx and ctx.get("id"):
+                    project_id = ctx["id"]
+
+            if not project_id:
+                return {
+                    "success": False,
+                    "error": "Could not determine project ID. Run from within a gobby project.",
+                }
+
+            imported = []
+            imported_count = 0
+
+            with self.db.transaction() as conn:
+                for issue in issues:
+                    issue_num = issue.get("number")
+                    if not issue_num:
+                        continue
+
+                    task_id = f"gh-{issue_num}"
+                    title = issue.get("title", "Untitled Issue")
+                    body = issue.get("body") or ""
+                    # Add link to original issue
+                    desc = f"{body}\n\nSource: {repo_url}/issues/{issue_num}".strip()
+
+                    # Extract label names
+                    labels = [lbl.get("name") for lbl in issue.get("labels", []) if lbl.get("name")]
+                    labels_json = json.dumps(labels) if labels else None
+
+                    created_at = issue.get("createdAt", datetime.now(timezone.utc).isoformat())
+                    updated_at = datetime.now(timezone.utc).isoformat()
+
+                    # Check if exists
+                    exists = self.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task_id,))
+                    if exists:
+                        # Update existing
+                        conn.execute(
+                            "UPDATE tasks SET title=?, description=?, labels=?, updated_at=? WHERE id=?",
+                            (title, desc, labels_json, updated_at, task_id),
+                        )
+                    else:
+                        # Insert new
+                        conn.execute(
+                            """
+                            INSERT INTO tasks (
+                                id, project_id, title, description, status, type,
+                                labels, created_at, updated_at, platform_id
+                            ) VALUES (?, ?, ?, ?, 'open', 'issue', ?, ?, ?, ?)
+                            """,
+                            (task_id, project_id, title, desc, labels_json, created_at, updated_at, f"github:{issue_num}"),
+                        )
+                        imported_count += 1
+
+                    imported.append(task_id)
+
+            return {
+                "success": True,
+                "imported": imported,
+                "count": imported_count,
+                "message": f"Imported {imported_count} new issues, updated {len(imported) - imported_count} existing.",
+            }
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse gh output: {e}")
+            return {"success": False, "error": f"Failed to parse GitHub response: {e}"}
+        except Exception as e:
+            logger.error(f"Failed to import from GitHub: {e}")
+            return {"success": False, "error": str(e)}
+
     def stop(self) -> None:
         """Stop any pending timers."""
         if self._debounce_timer:

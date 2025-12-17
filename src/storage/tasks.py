@@ -279,6 +279,24 @@ class LocalTaskManager:
         self._notify_listeners()
         return self.get_task(task_id)
 
+    def add_label(self, task_id: str, label: str) -> Task:
+        """Add a label to a task if not present."""
+        task = self.get_task(task_id)
+        labels = task.labels or []
+        if label not in labels:
+            labels.append(label)
+            return self.update_task(task_id, labels=labels)
+        return task
+
+    def remove_label(self, task_id: str, label: str) -> Task:
+        """Remove a label from a task if present."""
+        task = self.get_task(task_id)
+        labels = task.labels or []
+        if label in labels:
+            labels.remove(label)
+            return self.update_task(task_id, labels=labels)
+        return task
+
     def delete_task(self, task_id: str, cascade: bool = False) -> bool:
         """Delete a task. If cascade is True, delete children recursively.
 

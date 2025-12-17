@@ -265,6 +265,14 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     ),
     (
         11,
+        "Add compaction columns to tasks",
+        """
+        ALTER TABLE tasks ADD COLUMN compacted_at TEXT;
+        ALTER TABLE tasks ADD COLUMN summary TEXT;
+        """,
+    ),
+    (
+        12,
         "Create workflow state and handoff tables",
         """
         CREATE TABLE IF NOT EXISTS workflow_states (

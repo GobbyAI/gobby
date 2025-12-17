@@ -572,58 +572,58 @@ gobby tasks stats
 
 > Reduces old closed tasks to summaries, preventing unbounded growth.
 
-- [ ] Add `compacted_at` and `summary` columns to tasks table (migration)
-- [ ] Implement `TaskCompactor` class in `src/tasks/compaction.py`
-- [ ] Implement `analyze_compaction_candidates()` - find closed tasks older than threshold
-- [ ] Implement `compact_task()` - replace description with LLM summary, mark compacted
-- [ ] Implement `get_compaction_stats()` - count candidates, compacted, space saved
-- [ ] Add `compact_tasks` MCP tool with `--analyze`, `--apply`, `--days` options
-- [ ] Add `gobby tasks compact` CLI command
+- [x] Add `compacted_at` and `summary` columns to tasks table (migration)
+- [x] Implement `TaskCompactor` class in `src/tasks/compaction.py`
+- [x] Implement `analyze_compaction_candidates()` - find closed tasks older than threshold
+- [x] Implement `compact_task()` - replace description with LLM summary, mark compacted
+- [x] Implement `get_compaction_stats()` - count candidates, compacted, space saved
+- [x] Add `compact_tasks` MCP tool with `--analyze`, `--apply`, `--days` options
+- [x] Add `gobby tasks compact` CLI command
   - `gobby tasks compact --analyze` - list candidates
   - `gobby tasks compact --apply --id TASK --summary FILE` - apply summary
   - `gobby tasks compact --stats` - show compaction statistics
-- [ ] Add configurable threshold (default: 30 days closed)
-- [ ] Add unit tests for compaction
+- [x] Add configurable threshold (default: 30 days closed)
+- [x] Add unit tests for compaction
 
 ### Phase 9.6: Label Management
 
-- [ ] Add `add_label` MCP tool (append label to existing)
-- [ ] Add `remove_label` MCP tool (remove specific label)
-- [ ] Add `gobby tasks label add TASK LABEL` CLI command
-- [ ] Add `gobby tasks label remove TASK LABEL` CLI command
-- [ ] Add `gobby tasks label list` CLI command (list all labels in project)
+- [x] Add `add_label` MCP tool (append label to existing)
+- [x] Add `remove_label` MCP tool (remove specific label)
+- [x] Add `gobby tasks label add TASK LABEL` CLI command
+- [x] Add `gobby tasks label remove TASK LABEL` CLI command
+- [x] Add `gobby tasks label list` CLI command (list all labels in project)
 
 ### Phase 9.7: Maintenance Tools
 
-- [ ] Implement `TaskValidator` class for data integrity checks
-- [ ] Add `gobby tasks doctor` CLI command
+- [x] Implement `TaskValidator` class for data integrity checks
+- [x] Add `gobby tasks doctor` CLI command
   - Check database schema version
   - Validate foreign key integrity
   - Check for orphaned dependencies
   - Verify short_ref uniqueness per project
-- [ ] Add `gobby tasks validate` CLI command (validate JSONL integrity)
-- [ ] Add `gobby tasks clean` CLI command
+- [x] Add `gobby tasks validate` CLI command (validate JSONL integrity)
+- [x] Add `gobby tasks clean` CLI command
   - Remove orphaned dependencies
   - Compact SQLite database
   - Clear stale sync metadata
-- [ ] Add `validate_tasks` and `clean_tasks` MCP tools
+- [x] Add `validate_tasks` and `clean_tasks` MCP tools
 
 ### Phase 9.8: Import Tools
 
-- [ ] Implement `TaskImporter` class in `src/tasks/import.py`
-- [ ] Add markdown import (parse `- [ ] task` format)
-- [ ] Add bulk JSONL import from file
-- [ ] Add `import_tasks` MCP tool
-- [ ] Add `gobby tasks import FILE [--format md|jsonl]` CLI command
-- [ ] Add `gobby tasks import --from-beads` for beads migration
+- [x] Implement `TaskImporter` class in `src/tasks/import.py`
+- [x] Add markdown import (parse `- [ ] task` format)
+- [x] Add bulk JSONL import from file
+- [x] Add `import_tasks` MCP tool
+- [x] Add `gobby tasks import FILE [--format md|jsonl]` CLI command
+- [x] Add `gobby tasks import --from-beads` for beads migration
 
 ### Phase 9.9: Stealth Mode
 
-- [ ] Add `tasks_stealth` boolean to project config schema
-- [ ] Update `TaskSyncManager` to check stealth setting
-- [ ] If stealth: export to `~/.gobby/tasks/{project_id}.jsonl` instead of `.gobby/tasks.jsonl`
-- [ ] Add `gobby tasks config --stealth [on|off]` CLI command
-- [ ] Document stealth mode in README
+- [x] Add `tasks_stealth` boolean to project config schema
+- [x] Update `TaskSyncManager` to check stealth setting
+- [x] If stealth: export to `~/.gobby/tasks/{project_id}.jsonl` instead of `.gobby/tasks.jsonl`
+- [x] Add `gobby tasks config --stealth [on|off]` CLI command
+- [x] Document stealth mode in README
 
 ### Phase 10: Documentation & Polish
 
