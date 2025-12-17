@@ -25,14 +25,14 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from ..hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from .base import BaseAdapter
+from gobby.adapters.base import BaseAdapter
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
-    from ..hooks.hook_manager import HookManager
+    from gobby.hooks.hook_manager import HookManager
 
 
-class GeminiAdapter(BaseAdapter):  # type: ignore[misc]
+class GeminiAdapter(BaseAdapter):
     """Adapter for Gemini CLI hook translation.
 
     This adapter:

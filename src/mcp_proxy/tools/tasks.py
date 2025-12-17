@@ -12,17 +12,15 @@ These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
-from typing import Any
+from typing import Any, Literal
 
-from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.task_dependencies import TaskDependencyManager
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.session_tasks import SessionTaskManager
+from gobby.storage.task_dependencies import TaskDependencyManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
-
 from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import initialize_project
-
-from .internal import InternalToolRegistry
 
 
 def create_task_registry(
@@ -83,7 +81,8 @@ def create_task_registry(
             for blocked_id in blocks:
                 dep_manager.add_dependency(task.id, blocked_id, "blocks")
 
-        return task.to_dict()
+        result: dict[str, Any] = task.to_dict()
+        return result
 
     registry.register(
         name="create_task",
@@ -136,7 +135,7 @@ def create_task_registry(
         if not task:
             return {"error": f"Task {task_id} not found", "found": False}
 
-        result = task.to_dict()
+        result: dict[str, Any] = task.to_dict()
 
         # Enrich with dependency info
         blockers = dep_manager.get_blockers(task_id)
@@ -183,7 +182,8 @@ def create_task_registry(
         )
         if not task:
             return {"error": f"Task {task_id} not found"}
-        return task.to_dict()
+        result: dict[str, Any] = task.to_dict()
+        return result
 
     registry.register(
         name="update_task",
@@ -222,7 +222,8 @@ def create_task_registry(
         task = task_manager.add_label(task_id, label)
         if not task:
             return {"error": f"Task {task_id} not found"}
-        return task.to_dict()
+        result: dict[str, Any] = task.to_dict()
+        return result
 
     registry.register(
         name="add_label",
@@ -243,7 +244,8 @@ def create_task_registry(
         task = task_manager.remove_label(task_id, label)
         if not task:
             return {"error": f"Task {task_id} not found"}
-        return task.to_dict()
+        result: dict[str, Any] = task.to_dict()
+        return result
 
     registry.register(
         name="remove_label",
@@ -264,7 +266,8 @@ def create_task_registry(
         task = task_manager.close_task(task_id)
         if not task:
             return {"error": f"Task {task_id} not found"}
-        return task.to_dict()
+        result: dict[str, Any] = task.to_dict()
+        return result
 
     registry.register(
         name="close_task",
@@ -316,6 +319,7 @@ def create_task_registry(
         assignee: str | None = None,
         label: str | None = None,
         parent_task_id: str | None = None,
+        title_like: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         """List tasks with optional filters."""
@@ -326,6 +330,7 @@ def create_task_registry(
             assignee=assignee,
             label=label,
             parent_task_id=parent_task_id,
+            title_like=title_like,
             limit=limit,
         )
         return {"tasks": [t.to_dict() for t in tasks], "count": len(tasks)}
@@ -362,6 +367,11 @@ def create_task_registry(
                     "description": "Filter by parent task",
                     "default": None,
                 },
+                "title_like": {
+                    "type": "string",
+                    "description": "Filter by title (fuzzy match)",
+                    "default": None,
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Max number of tasks to return",
@@ -377,7 +387,7 @@ def create_task_registry(
     def add_dependency(
         task_id: str,
         depends_on: str,
-        dep_type: str = "blocks",
+        dep_type: Literal["blocks", "discovered-from", "related"] = "blocks",
     ) -> dict[str, Any]:
         """Add a dependency between tasks."""
         try:
@@ -426,7 +436,7 @@ def create_task_registry(
 
     def get_dependency_tree(task_id: str, direction: str = "both") -> dict[str, Any]:
         """Get dependency tree."""
-        tree = dep_manager.get_dependency_tree(task_id)
+        tree: dict[str, Any] = dep_manager.get_dependency_tree(task_id)
         if direction == "blockers":
             return {"blockers": tree.get("blockers", [])}
         elif direction == "blocking":
@@ -631,7 +641,8 @@ def create_task_registry(
 
     def get_sync_status() -> dict[str, Any]:
         """Get current synchronization status."""
-        return sync_manager.get_sync_status()
+        result: dict[str, Any] = sync_manager.get_sync_status()
+        return result
 
     registry.register(
         name="get_sync_status",

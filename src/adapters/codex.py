@@ -47,11 +47,11 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from ..hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from .base import BaseAdapter
+from gobby.adapters.base import BaseAdapter
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
-    from ..hooks.hook_manager import HookManager
+    from gobby.hooks.hook_manager import HookManager
 
 logger = logging.getLogger(__name__)
 
@@ -750,7 +750,7 @@ def is_codex_available() -> bool:
 # =============================================================================
 
 
-class CodexAdapter(BaseAdapter):  # type: ignore[misc]
+class CodexAdapter(BaseAdapter):
     """Adapter for Codex CLI session tracking via app-server events.
 
     This adapter translates Codex app-server events to unified HookEvent
@@ -796,7 +796,7 @@ class CodexAdapter(BaseAdapter):  # type: ignore[misc]
         "item/completed",
     ]
 
-    def __init__(self, hook_manager: "HookManager | None" = None):
+    def __init__(self, hook_manager: HookManager | None = None):
         """Initialize the Codex adapter.
 
         Args:
@@ -1115,7 +1115,7 @@ class CodexAdapter(BaseAdapter):  # type: ignore[misc]
 # =============================================================================
 
 
-class CodexNotifyAdapter(BaseAdapter):  # type: ignore[misc]
+class CodexNotifyAdapter(BaseAdapter):
     """Adapter for Codex CLI notify events.
 
     Translates notify payloads to unified HookEvent format.
@@ -1129,7 +1129,7 @@ class CodexNotifyAdapter(BaseAdapter):  # type: ignore[misc]
 
     source = SessionSource.CODEX
 
-    def __init__(self, hook_manager: "HookManager | None" = None):
+    def __init__(self, hook_manager: HookManager | None = None):
         """Initialize the adapter.
 
         Args:
@@ -1271,7 +1271,7 @@ class CodexNotifyAdapter(BaseAdapter):  # type: ignore[misc]
             "decision": response.decision,
         }
 
-    def handle_native(self, native_event: dict, hook_manager: "HookManager") -> dict:
+    def handle_native(self, native_event: dict, hook_manager: HookManager) -> dict:
         """Process native Codex notify event.
 
         Args:

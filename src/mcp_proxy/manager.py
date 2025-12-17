@@ -676,7 +676,7 @@ class MCPClientManager:
 
         Returns lightweight tool metadata for MCPServerConfig.tools field.
         """
-        from ..tools.filesystem import generate_brief
+        from gobby.tools.filesystem import generate_brief
 
         try:
             tools = mcp_db_manager.get_cached_tools(server_name, project_id=project_id)
@@ -831,8 +831,8 @@ class MCPClientManager:
             full_tool_schemas = []
             if connection.is_connected and connection._session:
                 try:
-                    from ..tools.filesystem import generate_brief
-                    from ..tools.summarizer import summarize_tools
+                    from gobby.tools.filesystem import generate_brief
+                    from gobby.tools.summarizer import summarize_tools
 
                     tools_result = await connection._session.list_tools()
                     # Use intelligent summarization for tool descriptions

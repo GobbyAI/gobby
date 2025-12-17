@@ -16,16 +16,16 @@ Claude Code Hook Types (12 total):
 """
 
 from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from .base import BaseAdapter
+from gobby.adapters.base import BaseAdapter
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
-    from ..hooks.hook_manager import HookManager
+    from gobby.hooks.hook_manager import HookManager
 
 
-class ClaudeCodeAdapter(BaseAdapter):  # type: ignore[misc]
+class ClaudeCodeAdapter(BaseAdapter):
     """Adapter for Claude Code CLI hook translation.
 
     This adapter:
