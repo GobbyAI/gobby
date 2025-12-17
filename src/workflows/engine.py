@@ -8,6 +8,11 @@ from .evaluator import ConditionEvaluator
 from .loader import WorkflowLoader
 from .state_manager import WorkflowStateManager
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .actions import ActionExecutor
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,10 +25,12 @@ class WorkflowEngine:
         self,
         loader: WorkflowLoader,
         state_manager: WorkflowStateManager,
+        action_executor: "ActionExecutor",
         evaluator: ConditionEvaluator | None = None,
     ):
         self.loader = loader
         self.state_manager = state_manager
+        self.action_executor = action_executor
         self.evaluator = evaluator or ConditionEvaluator()
 
     async def handle_event(self, event: HookEvent) -> HookResponse:
@@ -160,7 +167,7 @@ class WorkflowEngine:
 
         # Update state
         state.phase = new_phase_name
-        state.phase_entered_at = datetime.utcnow()
+        state.phase_entered_at = datetime.now(UTC)
         state.phase_action_count = 0
         state.context_injected = False  # Reset for new phase context
 
@@ -173,8 +180,22 @@ class WorkflowEngine:
         """
         Execute a list of actions.
         """
+        from .actions import ActionContext
+
+        context = ActionContext(
+            session_id=state.session_id,
+            state=state,
+            db=self.action_executor.db,
+            session_manager=self.action_executor.session_manager,
+        )
+
         for action_def in actions:
             action_type = action_def.get("action")
-            # Dispatch to action handler (Phase 4 scope, but good to have placeholder)
-            logger.debug(f"Executing action: {action_type} for session {state.session_id}")
-            # Implementation of actions will be in Phase 4
+            if not action_type:
+                continue
+
+            result = await self.action_executor.execute(action_type, context, **action_def)
+
+            if result and "inject_context" in result:
+                # Log context injection for now
+                logger.info(f"Context injected: {result['inject_context'][:50]}...")

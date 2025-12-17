@@ -153,10 +153,15 @@ class HookManager:
         self._session_task_manager = SessionTaskManager(self._database)
 
         # Initialize Workflow Engine (Phase 0-2 + 3 Integration)
+        from gobby.workflows.actions import ActionExecutor
+
         self._workflow_loader = WorkflowLoader(workflow_dirs=[Path.home() / ".gobby" / "workflows"])
         self._workflow_state_manager = WorkflowStateManager(self._database)
+        self._action_executor = ActionExecutor(self._database, self._session_storage)
         self._workflow_engine = WorkflowEngine(
-            loader=self._workflow_loader, state_manager=self._workflow_state_manager
+            loader=self._workflow_loader,
+            state_manager=self._workflow_state_manager,
+            action_executor=self._action_executor,
         )
         self._workflow_handler = WorkflowHookHandler(engine=self._workflow_engine, loop=self._loop)
 

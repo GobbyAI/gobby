@@ -890,13 +890,13 @@ Before building new workflow capabilities, extract the current session handoff b
 
 **Context & Messaging:**
 
-- [ ] Implement `inject_context` action
+- [x] Implement `inject_context` action
 - [ ] Implement `inject_message` action
 - [ ] Implement `switch_mode` action (for Claude Code plan mode)
 
 **Artifacts:**
 
-- [ ] Implement `capture_artifact` action
+- [x] Implement `capture_artifact` action
 - [ ] Implement `read_artifact` action (load file content into variable)
 
 **State Management:**
@@ -908,7 +908,7 @@ Before building new workflow capabilities, extract the current session handoff b
 
 **Handoff:**
 
-- [ ] Implement `generate_handoff` action
+- [x] Implement `generate_handoff` action
 - [ ] Implement `restore_from_handoff` action
 - [ ] Implement `find_parent_session` action
 - [ ] Implement `mark_session_status` action
