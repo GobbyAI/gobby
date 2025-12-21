@@ -626,7 +626,7 @@ class HookManager:
 
         if trigger_source == "clear":
             self.logger.debug("Checking for session handoff...")
-            parent_session = self._session_manager.find_parent(
+            parent_session = self._session_manager.find_parent_session(
                 machine_id=machine_id, source=cli_source, project_id=project_id
             )
 
