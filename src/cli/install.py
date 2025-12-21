@@ -168,6 +168,7 @@ def _install_gemini_hooks(project_path: Path) -> dict[str, Any]:
     install_dir = get_install_dir()
     gemini_install_dir = install_dir / "gemini"
     install_hooks_dir = gemini_install_dir / "hooks"
+    install_skills_dir = gemini_install_dir / "skills"
     source_hooks_template = gemini_install_dir / "hooks-template.json"
 
     # Verify source files exist
@@ -186,6 +187,20 @@ def _install_gemini_hooks(project_path: Path) -> dict[str, Any]:
         target_dispatcher.unlink()
     copy2(dispatcher_file, target_dispatcher)
     target_dispatcher.chmod(0o755)
+
+    # Copy skills
+    import shutil
+
+    skills_installed = []
+    if install_skills_dir.exists():
+        for skill_dir in install_skills_dir.iterdir():
+            if skill_dir.is_dir():
+                target_skill_dir = gemini_path / "skills" / skill_dir.name
+                target_skill_dir.parent.mkdir(parents=True, exist_ok=True)
+                if target_skill_dir.exists():
+                    shutil.rmtree(target_skill_dir)
+                copytree(skill_dir, target_skill_dir)
+                skills_installed.append(skill_dir.name)
 
     # Backup existing settings.json if it exists
     if settings_file.exists():
@@ -247,6 +262,7 @@ def _install_gemini_hooks(project_path: Path) -> dict[str, Any]:
     with open(settings_file, "w") as f:
         json.dump(existing_settings, f, indent=2)
 
+    result["skills_installed"] = skills_installed
     result["success"] = True
     return result
 
@@ -281,8 +297,28 @@ def _install_codex_notify() -> dict[str, Any]:
     target_notify.chmod(0o755)
     files_installed.append(str(target_notify))
 
+    # Install skills
+    codex_home = Path.home() / ".codex"
+    install_skills_dir = install_dir / "codex" / "skills"
+    skills_installed: list[str] = []
+
+    if install_skills_dir.exists():
+        skills_target_dir = codex_home / "skills"
+        skills_target_dir.mkdir(parents=True, exist_ok=True)
+        import shutil
+
+        for skill_dir in install_skills_dir.iterdir():
+            if skill_dir.is_dir():
+                target_skill_dir = skills_target_dir / skill_dir.name
+                if target_skill_dir.exists():
+                    shutil.rmtree(target_skill_dir)
+                copytree(skill_dir, target_skill_dir)
+                skills_installed.append(skill_dir.name)
+        result["skills_installed"] = skills_installed
+
     # Update ~/.codex/config.toml
-    codex_config_dir = Path.home() / ".codex"
+    codex_config_dir = codex_home
+
     codex_config_dir.mkdir(parents=True, exist_ok=True)
     codex_config_path = codex_config_dir / "config.toml"
 
@@ -593,6 +629,122 @@ def _install_git_hooks(project_path: Path) -> dict[str, Any]:
     return {"success": True, "installed": installed}
 
 
+def _install_antigravity_hooks(project_path: Path) -> dict[str, Any]:
+    """Install Antigravity agent hooks to a project."""
+    hooks_installed: list[str] = []
+    skills_installed: list[str] = []
+    result: dict[str, Any] = {
+        "success": False,
+        "hooks_installed": hooks_installed,
+        "skills_installed": skills_installed,
+        "error": None,
+    }
+
+    antigravity_path = project_path / ".antigravity"
+    settings_file = antigravity_path / "settings.json"
+
+    # Ensure .antigravity subdirectories exist
+    antigravity_path.mkdir(parents=True, exist_ok=True)
+    hooks_dir = antigravity_path / "hooks"
+    skills_dir = antigravity_path / "skills"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get source files
+    install_dir = get_install_dir()
+    antigravity_install_dir = install_dir / "antigravity"
+    install_hooks_dir = antigravity_install_dir / "hooks"
+    install_skills_dir = antigravity_install_dir / "skills"
+    source_hooks_template = antigravity_install_dir / "hooks-template.json"
+
+    # Verify source files exist
+    dispatcher_file = install_hooks_dir / "hook_dispatcher.py"
+    if not dispatcher_file.exists():
+        result["error"] = f"Missing hook dispatcher: {dispatcher_file}"
+        return result
+
+    if not source_hooks_template.exists():
+        result["error"] = f"Missing hooks template: {source_hooks_template}"
+        return result
+
+    # Copy hook dispatcher
+    target_dispatcher = hooks_dir / "hook_dispatcher.py"
+    if target_dispatcher.exists():
+        target_dispatcher.unlink()
+    copy2(dispatcher_file, target_dispatcher)
+    target_dispatcher.chmod(0o755)
+
+    # Copy skills
+    if install_skills_dir.exists():
+        import shutil
+
+        for skill_dir in install_skills_dir.iterdir():
+            if skill_dir.is_dir():
+                target_skill_dir = skills_dir / skill_dir.name
+                if target_skill_dir.exists():
+                    shutil.rmtree(target_skill_dir)
+                copytree(skill_dir, target_skill_dir)
+                skills_installed.append(skill_dir.name)
+
+    # Backup existing settings.json if it exists
+    if settings_file.exists():
+        timestamp = int(time.time())
+        backup_file = antigravity_path / f"settings.json.{timestamp}.backup"
+        copy2(settings_file, backup_file)
+
+    # Load existing settings or create empty
+    if settings_file.exists():
+        try:
+            with open(settings_file) as f:
+                existing_settings = json.load(f)
+        except json.JSONDecodeError:
+            existing_settings = {}
+    else:
+        existing_settings = {}
+
+    # Load Gobby hooks from template
+    with open(source_hooks_template) as f:
+        gobby_settings_str = f.read()
+
+    # Resolve uv path
+    from shutil import which
+
+    uv_path = which("uv")
+    if not uv_path:
+        uv_path = "uv"
+
+    abs_project_path = str(project_path.resolve())
+
+    # Replace variables
+    gobby_settings_str = gobby_settings_str.replace("$PROJECT_PATH", abs_project_path)
+    if uv_path != "uv":
+        gobby_settings_str = gobby_settings_str.replace("uv run python", f"{uv_path} run python")
+
+    gobby_settings = json.loads(gobby_settings_str)
+
+    # Ensure hooks section exists
+    if "hooks" not in existing_settings:
+        existing_settings["hooks"] = {}
+
+    # Merge Gobby hooks
+    gobby_hooks = gobby_settings.get("hooks", {})
+    for hook_type, hook_config in gobby_hooks.items():
+        existing_settings["hooks"][hook_type] = hook_config
+        hooks_installed.append(hook_type)
+
+    # Enable hooks
+    if "general" not in existing_settings:
+        existing_settings["general"] = {}
+    existing_settings["general"]["enableHooks"] = True
+
+    # Write settings
+    with open(settings_file, "w") as f:
+        json.dump(existing_settings, f, indent=2)
+
+    result["success"] = True
+    return result
+
+
 @click.command("install")
 @click.option(
     "--claude",
@@ -625,12 +777,19 @@ def _install_git_hooks(project_path: Path) -> dict[str, Any]:
     default=False,
     help="Install hooks for all detected CLIs (default behavior when no flags specified)",
 )
+@click.option(
+    "--antigravity",
+    "install_antigravity",
+    is_flag=True,
+    help="Install Antigravity agent hooks (internal)",
+)
 def install(
     install_claude: bool,
     install_gemini: bool,
     install_codex: bool,
     install_hooks: bool,
     install_all: bool,
+    install_antigravity: bool,
 ) -> None:
     """Install Gobby hooks to AI coding CLIs and Git.
 
@@ -655,6 +814,7 @@ def install(
         and not install_codex
         and not install_hooks
         and not install_all
+        and not install_antigravity
     ):
         install_all = True
 
@@ -694,6 +854,8 @@ def install(
             clis_to_install.append("gemini")
         if install_codex:
             clis_to_install.append("codex")
+        if install_antigravity:
+            clis_to_install.append("antigravity")
 
     # Get install directory info
     install_dir = get_install_dir()
@@ -751,6 +913,10 @@ def install(
             click.echo(f"Installed {len(result['hooks_installed'])} hooks")
             for hook in result["hooks_installed"]:
                 click.echo(f"  - {hook}")
+            if result.get("skills_installed"):
+                click.echo(f"Installed {len(result['skills_installed'])} skills")
+                for skill in result["skills_installed"]:
+                    click.echo(f"  - {skill}")
             click.echo(f"Configuration: {project_path / '.gemini' / 'settings.json'}")
         else:
             click.echo(f"Failed: {result['error']}", err=True)
@@ -779,6 +945,11 @@ def install(
                     click.echo("Updated: ~/.codex/config.toml (set `notify = ...`)")
                 else:
                     click.echo("~/.codex/config.toml already configured")
+
+                if result.get("skills_installed"):
+                    click.echo(f"Installed {len(result['skills_installed'])} skills")
+                    for skill in result["skills_installed"]:
+                        click.echo(f"  - {skill}")
             else:
                 click.echo(f"Failed: {result['error']}", err=True)
         click.echo("")
@@ -798,9 +969,32 @@ def install(
                 for hook in result["installed"]:
                     click.echo(f"  - {hook}")
             else:
-                click.echo("Git hooks already up to date.")
+                click.echo("Git hooks already installed")
         else:
-            click.echo(f"Failed: {result.get('error')}", err=True)
+            click.echo(f"Failed: {result['error']}", err=True)
+        click.echo("")
+
+    # Install Antigravity hooks
+    # Note: Antigravity is an internal configuration, so we treat it similarly to Gemini
+    if "antigravity" in clis_to_install:
+        click.echo("-" * 40)
+        click.echo("Antigravity Agent")
+        click.echo("-" * 40)
+
+        result = _install_antigravity_hooks(project_path)
+        results["antigravity"] = result
+
+        if result["success"]:
+            click.echo(f"Installed {len(result['hooks_installed'])} hooks")
+            for hook in result["hooks_installed"]:
+                click.echo(f"  - {hook}")
+            if result["skills_installed"]:
+                click.echo(f"Installed {len(result['skills_installed'])} skills")
+                for skill in result["skills_installed"]:
+                    click.echo(f"  - {skill}")
+            click.echo(f"Configuration: {project_path / '.antigravity' / 'settings.json'}")
+        else:
+            click.echo(f"Failed: {result['error']}", err=True)
         click.echo("")
 
     # Summary

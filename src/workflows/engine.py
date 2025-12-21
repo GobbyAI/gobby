@@ -188,6 +188,9 @@ class WorkflowEngine:
             db=self.action_executor.db,
             session_manager=self.action_executor.session_manager,
             template_engine=self.action_executor.template_engine,
+            llm_service=self.action_executor.llm_service,
+            transcript_processor=self.action_executor.transcript_processor,
+            config=self.action_executor.config,
         )
 
         for action_def in actions:
@@ -253,6 +256,9 @@ class WorkflowEngine:
             db=self.action_executor.db,
             session_manager=self.action_executor.session_manager,
             template_engine=self.action_executor.template_engine,
+            llm_service=self.action_executor.llm_service,
+            transcript_processor=self.action_executor.transcript_processor,
+            config=self.action_executor.config,
         )
 
         injected_context = []

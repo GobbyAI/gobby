@@ -2,13 +2,31 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 from gobby.workflows.actions import ActionExecutor, ActionContext
 from gobby.workflows.definitions import WorkflowState
+from gobby.workflows.templates import TemplateEngine
 from gobby.storage.sessions import Session
 from datetime import datetime, UTC
 
 
 @pytest.fixture
-def action_executor(temp_db, session_manager):
-    return ActionExecutor(temp_db, session_manager)
+def mock_services():
+    return {
+        "template_engine": MagicMock(spec=TemplateEngine),
+        "llm_service": AsyncMock(),
+        "transcript_processor": MagicMock(),
+        "config": MagicMock(),
+    }
+
+
+@pytest.fixture
+def action_executor(temp_db, session_manager, mock_services):
+    return ActionExecutor(
+        temp_db,
+        session_manager,
+        mock_services["template_engine"],
+        llm_service=mock_services["llm_service"],
+        transcript_processor=mock_services["transcript_processor"],
+        config=mock_services["config"],
+    )
 
 
 @pytest.fixture
@@ -25,6 +43,7 @@ def action_context(temp_db, session_manager, workflow_state):
         state=workflow_state,
         db=temp_db,
         session_manager=session_manager,
+        template_engine=MagicMock(spec=TemplateEngine),
     )
 
 
@@ -89,34 +108,42 @@ async def test_capture_artifact(action_executor, action_context, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generate_handoff(action_executor, action_context, session_manager, sample_project):
+async def test_generate_handoff(
+    action_executor, action_context, session_manager, sample_project, mock_services
+):
     # Setup session
     session = session_manager.register(
         external_id="handoff-ext",
         machine_id="test-machine",
         source="test-source",
         project_id=sample_project["id"],
+        jsonl_path="/path/to/transcript.jsonl",
     )
     action_context.session_id = session.id
 
-    # Add some artifacts
-    action_context.state.artifacts["plan"] = "/path/to/plan.md"
+    # Setup mocks
+    transcript = [{"role": "user", "content": "hello"}]
+    mock_services["transcript_processor"].parse.return_value = transcript
+    mock_services["transcript_processor"].format_for_llm.return_value = "User: hello"
+    mock_services["template_engine"].render.return_value = "Summarize: User: hello"
+    mock_services["llm_service"].generate.return_value = "Session Summary."
 
-    result = await action_executor.execute(
-        "generate_handoff", action_context, include=["artifacts"]
-    )
+    # Update context services manually since ActionContext fixture doesn't use the mock_services
+    # In a real app, engine handles this. Here we manually patch.
+    action_context.llm_service = mock_services["llm_service"]
+    action_context.transcript_processor = mock_services["transcript_processor"]
+    action_context.template_engine = mock_services["template_engine"]
+
+    result = await action_executor.execute("generate_handoff", action_context)
 
     assert result is not None
     assert result["handoff_created"] is True
+    assert result["summary_length"] == 16
 
-    # Verify DB record
-    row = action_context.db.fetchone(
-        "SELECT * FROM workflow_handoffs WHERE from_session_id = ?", (session.id,)
-    )
-    assert row is not None
-    assert row["workflow_name"] == "test-workflow"
-    assert "plan.md" in row["artifacts"]
-
-    # Verify session status
+    # Verify session summary updated
     updated_session = session_manager.get(session.id)
+    assert updated_session.summary_markdown == "Session Summary."
     assert updated_session.status == "handoff_ready"
+
+    # Verify LLM called
+    mock_services["llm_service"].generate.assert_called_once()

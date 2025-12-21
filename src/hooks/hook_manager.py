@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.sessions.manager import SessionManager
-from gobby.sessions.summary import SummaryGenerator
+
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -175,7 +175,12 @@ class HookManager:
         self._template_engine = TemplateEngine()
 
         self._action_executor = ActionExecutor(
-            self._database, self._session_storage, self._template_engine
+            db=self._database,
+            session_manager=self._session_storage,
+            template_engine=self._template_engine,
+            llm_service=self._llm_service,
+            transcript_processor=self._transcript_processor,
+            config=self._config,
         )
         self._workflow_engine = WorkflowEngine(
             loader=self._workflow_loader,
@@ -190,19 +195,6 @@ class HookManager:
             session_storage=self._session_storage,
             logger_instance=self.logger,
             config=self._config,
-        )
-
-        self._summary_generator = SummaryGenerator(
-            session_storage=self._session_storage,
-            transcript_processor=self._transcript_processor,
-            summary_file_path=summary_file_path,
-            logger_instance=self.logger,
-            llm_service=llm_service,
-            config=self._config,
-        )
-        # Set the ensure_session_callback to use SessionManager
-        self._summary_generator._ensure_session_callback = (
-            lambda session_id: self._session_manager.ensure_session_registered(session_id)
         )
 
         # Session registration tracking (to avoid noisy logs)
@@ -636,12 +628,13 @@ class HookManager:
 
         if trigger_source == "clear":
             self.logger.debug("Checking for session handoff...")
-            handoff_result = self._session_manager.find_parent_session(
+            parent_session = self._session_manager.find_parent(
                 machine_id=machine_id, source=cli_source, project_id=project_id
             )
 
-            if handoff_result:
-                parent_session_id, db_summary = handoff_result
+            if parent_session:
+                parent_session_id = parent_session.id
+                db_summary = parent_session.summary_markdown
                 self.logger.debug(f"Found parent session: {parent_session_id}")
 
                 # Step 2: Restore context (database first, file failover)
@@ -774,24 +767,6 @@ class HookManager:
                 external_id, source=event.source.value, machine_id=machine_id
             )
 
-        if session_id and transcript_path:
-            self.logger.debug(f"Preparing session handoff for session {session_id}")
-            try:
-                summary_result = self._summary_generator.generate_session_summary(
-                    session_id=session_id,
-                    input_data={"session_id": external_id, "transcript_path": transcript_path},
-                )
-                if summary_result.get("status") == "success":
-                    summary_length = summary_result.get("summary_length", 0)
-                    self.logger.debug(f"Session summary generated ({summary_length} chars)")
-                    self._session_manager.update_session_status(session_id, "handoff_ready")
-                else:
-                    self.logger.warning(
-                        f"Summary generation returned: {summary_result.get('status')}"
-                    )
-            except Exception as e:
-                self.logger.error(f"Failed to prepare session handoff: {e}", exc_info=True)
-
         return HookResponse(decision="allow")
 
     def _handle_event_before_agent(self, event: HookEvent) -> HookResponse:
@@ -817,20 +792,7 @@ class HookManager:
             self.logger.debug(f"   Prompt: {prompt[:100]}...")
 
             # Synthesize title if null
-            if external_id:
-                try:
-                    machine_id = event.machine_id or self.get_machine_id()
-                    title_result = self._summary_generator.synthesize_title(
-                        session_id=session_id,
-                        external_id=external_id,
-                        user_prompt=prompt,
-                        source=event.source.value,
-                        machine_id=machine_id,
-                    )
-                    if title_result.get("status") == "success":
-                        self.logger.debug(f"📝 Session title set: '{title_result.get('title')}'")
-                except Exception as e:
-                    self.logger.warning(f"Failed to synthesize session title: {e}")
+            # (Features moved to workflows or removed in legacy cleanup)
 
             # Update status to active (unless /clear or /exit)
             prompt_lower = prompt.strip().lower()
@@ -855,18 +817,7 @@ class HookManager:
 
                 # Original logic for summary generation (if not covered by workflow yet)
                 # The workflow 'generate_handoff' action creates the DB record
-                # But SummaryGenerator creates the actual text summary file
-                try:
-                    summary_result = self._summary_generator.generate_session_summary(
-                        session_id=session_id,
-                        input_data={"session_id": external_id, "transcript_path": transcript_path},
-                    )
-                    if summary_result.get("status") == "success":
-                        self.logger.debug(f"Session summary generated for {prompt_lower} handoff")
-                except Exception as e:
-                    self.logger.error(
-                        f"Failed to prepare {prompt_lower} handoff: {e}", exc_info=True
-                    )
+                # Legacy SummaryGenerator removed.
 
         return HookResponse(decision="allow")
 
@@ -895,20 +846,7 @@ class HookManager:
                 self.logger.warning(f"Failed to update session status: {e}")
 
             # Synthesize title on first event if prompt is available (for Codex)
-            is_first_event = event.data.get("is_first_event", False)
-            prompt = event.data.get("prompt")
-            if is_first_event and prompt and external_id:
-                try:
-                    machine_id = event.machine_id or self.get_machine_id()
-                    self._summary_generator.synthesize_title(
-                        session_id=session_id,
-                        external_id=external_id,
-                        user_prompt=prompt,
-                        source=cli_source,
-                        machine_id=machine_id,
-                    )
-                except Exception as e:
-                    self.logger.warning(f"Failed to synthesize title: {e}")
+            # (Features moved to workflows or removed in legacy cleanup)
         else:
             self.logger.debug(f"🛑 Agent stop: cli={cli_source}")
 

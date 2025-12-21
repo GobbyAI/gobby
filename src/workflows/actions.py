@@ -19,7 +19,9 @@ class ActionContext:
     db: LocalDatabase
     session_manager: LocalSessionManager
     template_engine: TemplateEngine
-    # Future: services registry
+    llm_service: Any | None = None
+    transcript_processor: Any | None = None
+    config: Any | None = None
 
 
 class ActionHandler(Protocol):
@@ -36,10 +38,16 @@ class ActionExecutor:
         db: LocalDatabase,
         session_manager: LocalSessionManager,
         template_engine: TemplateEngine,
+        llm_service: Any | None = None,
+        transcript_processor: Any | None = None,
+        config: Any | None = None,
     ):
         self.db = db
         self.session_manager = session_manager
         self.template_engine = template_engine
+        self.llm_service = llm_service
+        self.transcript_processor = transcript_processor
+        self.config = config
         self._handlers: dict[str, ActionHandler] = {}
         self._register_defaults()
 
@@ -99,28 +107,6 @@ class ActionExecutor:
                 # WORKFLOWS.md says: source="previous_session_summary"
                 pass
 
-        elif source == "handoff":
-            # Query workflow_handoffs table
-            # We need to find the specific handoff consumed by this session or ready for it
-            # For MVP, let's look for handoff where consumed_by_session = this session
-            row = context.db.fetchone(
-                """
-                 SELECT * FROM workflow_handoffs 
-                 WHERE consumed_by_session = ?
-                 """,
-                (context.session_id,),
-            )
-            if row:
-                # TODO: Format handoff data
-                content = f"Handoff Notes: {row['notes']}\n"
-                if row["pending_tasks"]:
-                    content += f"Pending Tasks: {row['pending_tasks']}\n"
-            else:
-                # Maybe look for unconsumed handoff?
-                # Ideally, 'restore_from_handoff' action handles the claiming.
-                # 'inject_context' just reads.
-                pass
-
         if content:
             # Render content if template is used (in future).
             # Current logic just sets it.
@@ -141,12 +127,6 @@ class ActionExecutor:
                 # Add source data to context
                 if source == "previous_session_summary":
                     render_context["summary"] = content
-                elif source == "handoff":
-                    # We need parsed handoff data here
-                    # For now just passing raw content string might be limiting if template expects struct
-                    # But content creation above was just a string.
-                    # Let's improve the "handoff" fetching above to return dict first.
-                    pass
 
                 # Render
                 content = context.template_engine.render(template, render_context)
@@ -222,41 +202,94 @@ class ActionExecutor:
         self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """
-        Generate a handoff record.
+        Generate a handoff record by summarizing the session and saving to sessions.summary_markdown.
         """
-        include = kwargs.get("include", [])
+        # We need LLM service and transcript processor
+        if not context.llm_service or not context.transcript_processor:
+            logger.warning("generate_handoff: Missing LLM service or transcript processor")
+            return {"error": "Missing services"}
 
         current_session = context.session_manager.get(context.session_id)
         if not current_session:
-            return None
+            return {"error": "Session not found"}
 
-        # Extract data
-        artifacts = context.state.artifacts if "artifacts" in include else {}
-        pending_tasks = []  # TODO: Query task system for open tasks
+        # Get transcript path (from context or session?)
+        # Session object usually has the transcript path if registered.
+        # But we might need to get it from the event if this is triggered dynamically?
+        # Actually Event usually has transcript_path.
+        # But ActionContext doesn't have Event directly unless we pass it.
+        # We assume `current_session.jsonl_path` is valid if we registered it.
+        transcript_path = getattr(current_session, "jsonl_path", None)
+        if not transcript_path:
+            # Try to get it from kwargs if passed (e.g. from event data)
+            # But arguments to action come from YAML.
+            logger.warning(f"generate_handoff: No transcript path for session {context.session_id}")
+            return {"error": "No transcript path"}
 
-        # Notes? Maybe from an argument?
-        notes = "Auto-generated handoff"
+        # Use SummaryGenerator Logic (but reimplemented here or call it?)
+        # THe plan says: "Use context.llm_service to generate summary"
+        # We should emulate SummaryGenerator._generate_recursive or similar.
+        # Or, since we want to migrate, maybe we should just instantiate SummaryGenerator here?
+        # No, that defeats the purpose of decoupling.
+        # Let's use the template provided in YAML and the LLM service directly.
 
-        # Create record
-        context.db.execute(
-            """
-            INSERT INTO workflow_handoffs (
-                project_id, workflow_name, from_session_id, 
-                phase, artifacts, pending_tasks, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                current_session.project_id,
-                context.state.workflow_name,
-                context.session_id,
-                context.state.phase,
-                str(artifacts),  # JSON serialization needed
-                str(pending_tasks),  # JSON serialization needed
-                notes,
-            ),
-        )
+        template = kwargs.get("template")
+        if not template:
+            # Fallback to a default prompt if none in YAML
+            template = (
+                "Summarize this session, focusing on what was accomplished, "
+                "key decisions, and what is left to do.\n\n"
+                "Transcript:\n{transcript_summary}"
+            )
 
-        # Mark session as handoff ready
+        # 1. Process Transcript
+        try:
+            # processor.parse returns list of turns or dict?
+            # ClaudeTranscriptParser.parse(path) -> List[Dict] usually
+            turns = context.transcript_processor.parse(transcript_path)
+            # Simple summarization of turns for now (last 50?)
+            # Validated strangler fig logic:
+            recent_turns = turns[-50:] if len(turns) > 50 else turns
+            transcript_summary = context.transcript_processor.format_for_llm(recent_turns)
+        except Exception as e:
+            logger.error(f"Failed to process transcript: {e}")
+            return {"error": str(e)}
+
+        # 2. Gather Context Variables for Template
+        render_context = {
+            "transcript_summary": transcript_summary,
+            "session": current_session,
+            "state": context.state,
+            "last_messages": "",  # TODO: extract from turns
+            "git_status": "",  # TODO: run git status
+            "file_changes": "",  # TODO: run git diff
+        }
+
+        # 3. Render Prompt
+        prompt = context.template_engine.render(template, render_context)
+
+        # 4. Call LLM
+        try:
+            # Assume llm_service.generate(prompt) -> str
+            # We might need to specify model etc via config
+            model = "claude-3-5-sonnet-20241022"  # Default
+            if context.config and hasattr(context.config, "llm_model"):
+                model = context.config.llm_model
+
+            summary_content = await context.llm_service.generate(
+                prompt=prompt,
+                model=model,
+                system="You are a helpful assistant generating session summaries.",
+            )
+        except Exception as e:
+            logger.error(f"LLM generation failed: {e}")
+            return {"error": f"LLM error: {e}"}
+
+        # 5. Save to Production Location (sessions table)
+        context.session_manager.update_summary(context.session_id, summary_markdown=summary_content)
+
+        # 6. Mark Session Status
         context.session_manager.update_status(context.session_id, "handoff_ready")
 
-        return {"handoff_created": True}
+        logger.info(f"Generated handoff summary for session {context.session_id}")
+        return {"handoff_created": True, "summary_length": len(summary_content)}

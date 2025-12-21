@@ -50,6 +50,7 @@ gobby = [
     "install/claude/**/*",
     "install/gemini/**/*",
     "install/codex/**/*",
+    "install/antigravity/**/*",
 ]
 
 [tool.pytest.ini_options]

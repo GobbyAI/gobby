@@ -312,6 +312,13 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_workflow_handoffs_consumed ON workflow_handoffs(consumed_at);
         """,
     ),
+    (
+        13,
+        "Drop workflow_handoffs table (replaced by sessions.summary_markdown)",
+        """
+        DROP TABLE IF EXISTS workflow_handoffs;
+        """,
+    ),
 ]
 
 
