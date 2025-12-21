@@ -269,13 +269,21 @@ class ActionExecutor:
             return {"error": str(e)}
 
         # 2. Gather Context Variables for Template
+        # Extract last messages (last 2 user/assistant pairs)
+        last_messages = context.transcript_processor.extract_last_messages(recent_turns, num_pairs=2)
+        last_messages_str = self._format_turns_for_llm(last_messages) if last_messages else ""
+
+        # Get git status and file changes
+        git_status = self._get_git_status()
+        file_changes = self._get_file_changes()
+
         render_context = {
             "transcript_summary": transcript_summary,
             "session": current_session,
             "state": context.state,
-            "last_messages": "",  # TODO: extract from turns
-            "git_status": "",  # TODO: run git status
-            "file_changes": "",  # TODO: run git diff
+            "last_messages": last_messages_str,
+            "git_status": git_status,
+            "file_changes": file_changes,
         }
 
         # 3. Render Prompt
@@ -339,3 +347,54 @@ class ActionExecutor:
             formatted.append(f"[Turn {i + 1} - {role}]: {content}")
 
         return "\n\n".join(formatted)
+
+    def _get_git_status(self) -> str:
+        """Get git status for current directory."""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "status", "--short"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.stdout.strip() or "No changes"
+        except Exception:
+            return "Not a git repository or git not available"
+
+    def _get_file_changes(self) -> str:
+        """Get detailed file changes from git."""
+        import subprocess
+
+        try:
+            # Get changed files with status
+            diff_result = subprocess.run(
+                ["git", "diff", "HEAD", "--name-status"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            # Get untracked files
+            untracked_result = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            # Combine results
+            changes = []
+            if diff_result.stdout.strip():
+                changes.append("Modified/Deleted:")
+                changes.append(diff_result.stdout.strip())
+
+            if untracked_result.stdout.strip():
+                changes.append("\nUntracked:")
+                changes.append(untracked_result.stdout.strip())
+
+            return "\n".join(changes) if changes else "No changes"
+
+        except Exception:
+            return "Unable to determine file changes"
