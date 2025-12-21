@@ -283,13 +283,14 @@ class ActionExecutor:
 
         # 4. Call LLM
         try:
-            # Use the LLM service's generate_summary method
+            # Get provider from LLM service and call generate_summary
             llm_context = {
                 "turns": recent_turns,
                 "transcript_summary": transcript_summary,
                 "session": current_session,
             }
-            summary_content = await context.llm_service.generate_summary(
+            provider = context.llm_service.get_default_provider()
+            summary_content = await provider.generate_summary(
                 context=llm_context,
                 prompt_template=template,
             )
