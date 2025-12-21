@@ -28,9 +28,9 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 TranscriptProcessor = ClaudeTranscriptParser
 
 __all__ = [
-    # Backward compatibility exports
+    # Core exports
     "SessionManager",
-    "SummaryGenerator",
+    "SummaryGenerator",  # File backup + title synthesis (workflow uses generate_handoff for DB)
     "TranscriptProcessor",
     "ClaudeTranscriptParser",
     # Unified hook event models

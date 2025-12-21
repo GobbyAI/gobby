@@ -1012,12 +1012,12 @@ Before building new workflow capabilities, extract the current session handoff b
 
 **Handoff:**
 
-- [ ] Rewrite `generate_handoff` action to write to `sessions.summary_markdown` (see Decision 8)
+- [x] Rewrite `generate_handoff` action to write to `sessions.summary_markdown` (see Decision 8)
 - [ ] Implement `restore_from_handoff` action
 - [ ] Implement `find_parent_session` action
 - [ ] Implement `mark_session_status` action
 - [ ] Ensure `generate_handoff` includes `pending_task_ids` field (Decision 3)
-- [ ] Drop `workflow_handoffs` table after strangler fig validation
+- [x] Drop `workflow_handoffs` table after strangler fig validation (Migration 13)
 
 **LLM Integration:**
 

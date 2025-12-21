@@ -7,9 +7,9 @@ God Object with a ~300-line routing layer.
 
 Architecture:
     HookManager creates and coordinates subsystems:
-    - Session-agnostic: DaemonClient, TranscriptProcessor, EmbeddingService,
-                       SummaryGenerator
+    - Session-agnostic: DaemonClient, TranscriptProcessor
     - Session-scoped: SessionManager
+    - Workflow-driven: WorkflowEngine handles session handoff via generate_handoff action
 
 Example:
     ```python
@@ -62,7 +62,7 @@ class HookManager:
     Delegates all work to subsystems:
     - DaemonClient: HTTP communication with Gobby daemon
     - TranscriptProcessor: JSONL parsing and analysis
-    - SummaryGenerator: LLM-powered session summaries
+    - WorkflowEngine: Handles session handoff and LLM-powered summaries
 
     Attributes:
         daemon_host: Host for daemon communication
