@@ -764,6 +764,15 @@ class HookManager:
                 external_id, source=event.source.value, machine_id=machine_id
             )
 
+        # Execute session-handoff workflow triggers (e.g. generate_handoff on /clear)
+        try:
+            self._workflow_handler.handle_lifecycle("session-handoff", event)
+        except Exception as e:
+            self.logger.error(
+                f"Failed to execute session-handoff workflow on session_end: {e}",
+                exc_info=True,
+            )
+
         return HookResponse(decision="allow")
 
     def _handle_event_before_agent(self, event: HookEvent) -> HookResponse:

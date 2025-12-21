@@ -3,9 +3,9 @@ description: "Session summary generation and context handoff between sessions"
 type: lifecycle
 
 triggers:
-  on_before_agent:
+  on_session_end:
     - action: generate_handoff
-      when: "event.data.get('prompt', '').strip().lower() in ['/clear', '/exit']"
+      when: "event.data.get('reason') == 'clear'"
       include:
         - artifacts
         - pending_tasks
