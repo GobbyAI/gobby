@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.sessions.manager import SessionManager
 
+from gobby.sessions.summary import SummaryFileGenerator
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -190,6 +191,14 @@ class HookManager:
 
         self._workflow_handler = WorkflowHookHandler(
             engine=self._workflow_engine, loop=self._loop, timeout=workflow_timeout
+        )
+
+        # Initialize Failover Summary Generator
+        self._summary_file_generator = SummaryFileGenerator(
+            transcript_processor=self._transcript_processor,
+            logger_instance=self.logger,
+            llm_service=self._llm_service,
+            config=self._config,
         )
 
         # Session manager handles registration, lookup, and status updates
@@ -710,6 +719,28 @@ class HookManager:
                 exc_info=True,
             )
 
+        # FAILOVER: Generate independent session summary file
+        # This acts as a flight recorder, independent of workflow success/failure
+        self.logger.debug("Executing failover session summary generation")
+        try:
+            # We construct input data for SummaryFileGenerator
+            summary_input = {
+                "session_id": external_id,
+                "transcript_path": event.data.get("transcript_path"),
+            }
+            summary_result = self._summary_file_generator.generate_session_summary(
+                session_id=session_id or external_id,
+                input_data=summary_input,
+            )
+            if summary_result.get("status") == "success":
+                self.logger.info(
+                    f"💾 Failover summary created: {summary_result.get('file_written')}"
+                )
+            else:
+                self.logger.warning(f"Failover summary skipped/failed: {summary_result}")
+        except Exception as e:
+            self.logger.error(f"Failed to generate failover summary: {e}")
+
         return HookResponse(decision="allow")
 
     def _handle_event_before_agent(self, event: HookEvent) -> HookResponse:
@@ -758,9 +789,8 @@ class HookManager:
                         exc_info=True,
                     )
 
-                # Original logic for summary generation (if not covered by workflow yet)
-                # The workflow 'generate_handoff' action creates the DB record
-                # Legacy SummaryGenerator removed.
+                # The workflow 'generate_handoff' action creates the DB record.
+                # SummaryFileGenerator (failover) is called in _handle_event_session_end.
 
         return HookResponse(decision="allow")
 

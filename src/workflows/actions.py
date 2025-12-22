@@ -228,12 +228,9 @@ class ActionExecutor:
             logger.warning(f"generate_handoff: No transcript path for session {context.session_id}")
             return {"error": "No transcript path"}
 
-        # Use SummaryGenerator Logic (but reimplemented here or call it?)
-        # THe plan says: "Use context.llm_service to generate summary"
-        # We should emulate SummaryGenerator._generate_recursive or similar.
-        # Or, since we want to migrate, maybe we should just instantiate SummaryGenerator here?
-        # No, that defeats the purpose of decoupling.
-        # Let's use the template provided in YAML and the LLM service directly.
+        # Use Template + LLM Service directly (Workflow Engine Native Logic)
+        # Note: SummaryFileGenerator is a separate failover mechanism in HookManager.
+        # Here we only generate content for the database record.
 
         template = kwargs.get("template")
         if not template:
@@ -333,7 +330,9 @@ class ActionExecutor:
             logger.warning(f"find_parent_session: Current session {context.session_id} not found")
             return {"parent_session_found": False}
 
-        logger.info(f"find_parent_session: machine_id={current_session.machine_id}, project_id={current_session.project_id}")
+        logger.info(
+            f"find_parent_session: machine_id={current_session.machine_id}, project_id={current_session.project_id}"
+        )
 
         # Logic matches SessionManager.find_parent_session but uses storage directly
         parent = context.session_manager.find_parent(

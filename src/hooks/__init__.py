@@ -21,7 +21,7 @@ from gobby.hooks.events import (
     SessionSource,
 )
 from gobby.sessions.manager import SessionManager
-from gobby.sessions.summary import SummaryGenerator
+from gobby.sessions.summary import SummaryFileGenerator
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 
 # Backward-compatible alias
@@ -30,7 +30,7 @@ TranscriptProcessor = ClaudeTranscriptParser
 __all__ = [
     # Core exports
     "SessionManager",
-    "SummaryGenerator",  # File backup + title synthesis (workflow uses generate_handoff for DB)
+    "SummaryFileGenerator",  # File backup + title synthesis (workflow uses generate_handoff for DB)
     "TranscriptProcessor",
     "ClaudeTranscriptParser",
     # Unified hook event models

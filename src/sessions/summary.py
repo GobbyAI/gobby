@@ -1,10 +1,9 @@
 """
-Summary Generator for session summaries and title synthesis (local-first).
+Summary File Generator for session summaries (failover).
 
 Handles:
 - Session summary generation from JSONL transcripts using LLM synthesis
-- Session title synthesis from user prompts
-- Storage in database and markdown files
+- Storage in markdown files (independent of database/workflow)
 """
 
 import json
@@ -23,28 +22,23 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.llm.service import LLMService
-    from gobby.storage.sessions import LocalSessionManager
-from gobby.storage.session_tasks import SessionTaskManager
 
 # Backward-compatible alias
 TranscriptProcessor = ClaudeTranscriptParser
 
 
-class SummaryGenerator:
+class SummaryFileGenerator:
     """
-    Generates session summaries using LLM synthesis (local-first).
+    Generates session summaries to files using LLM synthesis (failover).
 
     Handles:
-    - Comprehensive session summary generation from JSONL transcripts
-    - Session title synthesis from first user prompt
-    - Summary storage in database and markdown files
-    - Git status and file change tracking
-    - TodoWrite list extraction and inclusion
+    - Independent summary generation from JSONL transcripts
+    - File storage in ~/.gobby/session_summaries (strictly file-based)
+    - Configuration check (session_summary.enabled)
     """
 
     def __init__(
         self,
-        session_storage: "LocalSessionManager",
         transcript_processor: ClaudeTranscriptParser,
         summary_file_path: str = "~/.gobby/session_summaries",
         logger_instance: logging.Logger | None = None,
@@ -52,17 +46,15 @@ class SummaryGenerator:
         config: "DaemonConfig | None" = None,
     ) -> None:
         """
-        Initialize SummaryGenerator.
+        Initialize SummaryFileGenerator.
 
         Args:
-            session_storage: LocalSessionManager for SQLite operations
             transcript_processor: Processor for JSONL transcript parsing
             summary_file_path: Directory path for session summary files
             logger_instance: Optional logger instance
             llm_service: Optional LLMService for multi-provider support
             config: Optional DaemonConfig instance for feature configuration
         """
-        self._storage = session_storage
         self._transcript_processor = transcript_processor
         self._summary_file_path = summary_file_path
         self.logger = logger_instance or logging.getLogger(__name__)
@@ -76,7 +68,7 @@ class SummaryGenerator:
             try:
                 self.llm_provider = llm_service.get_default_provider()
                 self.logger.debug(
-                    f"Using '{self.llm_provider.provider_name}' provider for SummaryGenerator"
+                    f"Using '{self.llm_provider.provider_name}' provider for SummaryFileGenerator"
                 )
             except ValueError as e:
                 self.logger.warning(f"LLMService has no providers: {e}")
@@ -89,7 +81,7 @@ class SummaryGenerator:
                 config = config or load_config()
                 self._config = config
                 self.llm_provider = ClaudeLLMProvider(config)
-                self.logger.debug("Initialized default ClaudeLLMProvider for SummaryGenerator")
+                self.logger.debug("Initialized default ClaudeLLMProvider for SummaryFileGenerator")
             except Exception as e:
                 self.logger.error(f"Failed to initialize default LLM provider: {e}")
 
@@ -100,7 +92,7 @@ class SummaryGenerator:
         Get LLM provider and prompt for a specific feature.
 
         Args:
-            feature_name: Feature name (e.g., "session_summary", "title_synthesis")
+            feature_name: Feature name (e.g., "session_summary")
 
         Returns:
             Tuple of (provider, prompt) where prompt is from feature config.
@@ -113,8 +105,6 @@ class SummaryGenerator:
         try:
             if feature_name == "session_summary":
                 feature_config = self._config.session_summary
-            elif feature_name == "title_synthesis":
-                feature_config = self._config.title_synthesis
             else:
                 return self.llm_provider, None
 
@@ -150,17 +140,25 @@ class SummaryGenerator:
         self, session_id: str, input_data: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Generate comprehensive LLM-powered session summary from JSONL transcript.
+        Generate comprehensive LLM-powered session summary file from JSONL transcript.
 
         Args:
             session_id: Internal database UUID (sessions.id), not cli_key
             input_data: Session end input data containing cli_key and transcript_path
 
         Returns:
-            Dict with status and summary metadata
+            Dict with status and file path
         """
         external_id = None
         try:
+            # Check if feature is enabled via config
+            if self._config and self._config.session_summary:
+                if not self._config.session_summary.enabled:
+                    self.logger.info("Session summary file generation disabled in config")
+                    return {"status": "disabled"}
+                # Update path from config if available
+                self._summary_file_path = self._config.session_summary.summary_file_path
+
             # Extract external_id from input_data
             external_id = input_data.get("session_id")
             if not external_id:
@@ -200,25 +198,6 @@ class SummaryGenerator:
             # Extract last TodoWrite tool call
             todowrite_list = self._extract_last_todowrite(last_turns)
 
-            # Get tasks associated with this session
-            session_tasks_str = None
-            if session_id:
-                try:
-                    task_manager = SessionTaskManager(self._storage.db)
-                    tasks = task_manager.get_session_tasks(session_id)
-                    if tasks:
-                        task_lines = []
-                        for item in tasks:
-                            task = item["task"]
-                            action = item["action"]
-                            icon = "[x]" if task.status == "closed" else "[ ]"
-                            task_lines.append(
-                                f"- {icon} **{task.title}** ({task.status}) - *{action}*"
-                            )
-                        session_tasks_str = "\n".join(task_lines)
-                except Exception as e:
-                    self.logger.warning(f"Failed to fetch session tasks: {e}")
-
             # Get git status and file changes
             git_status = self._get_git_status()
             file_changes = self._get_file_changes()
@@ -233,143 +212,29 @@ class SummaryGenerator:
                 session_id=session_id,
                 session_source=session_source,
                 todowrite_list=todowrite_list,
-                session_tasks_str=session_tasks_str,
+                session_tasks_str=None,  # Task integration removed for failover simplicity
             )
 
-            # Store summary in multiple locations
-            file_result = None
-            db_result = None
-
-            if session_id:
-                # ALWAYS write to file (for file-based restore)
-                file_result = self.write_summary_to_file(session_id, summary_markdown)
-
-                # ALWAYS update database (store both path and markdown content)
-                db_result = self.update_summary_in_database(
-                    session_id,
-                    summary_path=file_result,
-                    summary_markdown=summary_markdown,
-                )
-            else:
-                self.logger.warning(
-                    f"Cannot store summary: no sessions.id for external_id={external_id}"
-                )
+            # Write summary to file (FAILOVER ONLY)
+            file_result = self.write_summary_to_file(session_id, summary_markdown)
 
             return {
                 "status": "success",
                 "external_id": external_id,
                 "file_written": file_result,
-                "db_updated": db_result,
                 "summary_length": len(summary_markdown),
             }
 
         except Exception as e:
-            self.logger.error(f"Failed to create session summary: {e}", exc_info=True)
+            self.logger.error(f"Failed to create session summary file: {e}", exc_info=True)
             return {"status": "error", "error": str(e), "external_id": external_id}
-
-    def synthesize_title(
-        self,
-        session_id: str,
-        external_id: str,
-        user_prompt: str,
-        source: str = "claude",
-        machine_id: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Synthesize session title and update in database if title is null.
-
-        Args:
-            session_id: Internal database UUID (sessions.id)
-            external_id: External session identifier
-            user_prompt: User's prompt text
-            source: Session source (claude, codex, gemini)
-            machine_id: Machine identifier
-
-        Returns:
-            Dict with status and title
-        """
-        try:
-            # Fetch current session to check if title is null
-            session = self._storage.get(session_id)
-            if not session:
-                self.logger.error(f"Session {session_id} not found")
-                return {"status": "error", "title": None}
-
-            # If title already exists, skip synthesis
-            if session.title:
-                self.logger.debug(f"Session {session_id} already has title: '{session.title}'")
-                return {"status": "already_set", "title": session.title}
-
-            # Get feature-specific provider and prompt
-            provider, config_prompt = self._get_provider_for_feature("title_synthesis")
-
-            if not provider:
-                self.logger.warning("LLM provider not available - skipping title synthesis")
-                return {"status": "llm_unavailable", "title": None}
-
-            self.logger.debug(f"Synthesizing title for session {session_id}")
-
-            # Use config prompt template if available
-            if config_prompt:
-                prompt_template = config_prompt
-            else:
-                prompt_template = """Generate a concise 3-6 word title summarizing the user's intent.
-
-User's first message: {user_prompt}
-
-Requirements:
-- Use title case
-- Be specific and descriptive
-- 3-6 words maximum
-- Focus on the task/goal
-
-Examples:
-- "Fix JWT Authentication Bug"
-- "Implement User Dashboard"
-- "Debug Database Connection Issue"
-- "Refactor Payment Processing"
-
-Respond with ONLY the title, no explanation."""
-
-            synthesized_title: str | None = None
-            try:
-
-                async def _run_title() -> str | None:
-                    result: str | None = await provider.synthesize_title(
-                        user_prompt=user_prompt,
-                        prompt_template=prompt_template,
-                    )
-                    return result
-
-                synthesized_title = anyio.run(_run_title)
-            except Exception as e:
-                self.logger.error(f"Failed to synthesize title with LLM provider: {e}")
-                return {"status": "synthesis_failed", "title": None}
-
-            if not synthesized_title:
-                self.logger.warning(f"Title synthesis failed for session {session_id}")
-                return {"status": "synthesis_failed", "title": None}
-
-            self.logger.debug(f"Synthesized session title: '{synthesized_title}'")
-
-            # Update title in database
-            updated_session = self._storage.update_title(session_id, synthesized_title)
-            if updated_session:
-                return {"status": "success", "title": synthesized_title}
-            else:
-                self.logger.error(f"Failed to update title in database for session {session_id}")
-                return {"status": "update_failed", "title": synthesized_title}
-
-        except Exception as e:
-            self.logger.exception(f"Failed to synthesize/update title: {e}")
-            return {"status": "error", "title": None}
 
     def write_summary_to_file(self, session_id: str, summary: str) -> str | None:
         """
         Write session summary to markdown file.
 
         Args:
-            session_id: Internal database UUID (sessions.id)
+            session_id: Internal database UUID (sessions.id) or external_id
             summary: Markdown summary content
 
         Returns:
@@ -385,46 +250,12 @@ Respond with ONLY the title, no explanation."""
             summary_file = summary_dir / f"session_{timestamp}_{session_id}.md"
             summary_file.write_text(summary, encoding="utf-8")
 
-            self.logger.debug(f"Session summary written to: {summary_file}")
+            self.logger.info(f"💾 FAILBACK: Session summary written to: {summary_file}")
             return str(summary_file)
 
         except Exception as e:
             self.logger.exception(f"Failed to write summary file: {e}")
             return None
-
-    def update_summary_in_database(
-        self,
-        session_id: str,
-        summary_path: str | None = None,
-        summary_markdown: str | None = None,
-    ) -> bool:
-        """
-        Update session summary in database.
-
-        Args:
-            session_id: Internal database UUID (sessions.id)
-            summary_path: Path to summary file
-            summary_markdown: Summary markdown content
-
-        Returns:
-            True if updated successfully, False otherwise
-        """
-        try:
-            session = self._storage.update_summary(
-                session_id,
-                summary_path=summary_path,
-                summary_markdown=summary_markdown,
-            )
-            if session:
-                self.logger.debug(f"Session summary updated in database: {session_id}")
-                return True
-            else:
-                self.logger.error("Failed to update summary in database: session not found")
-                return False
-
-        except Exception as e:
-            self.logger.exception(f"Failed to update summary in database: {e}")
-            return False
 
     def _generate_summary_with_llm(
         self,
@@ -494,11 +325,11 @@ Respond with ONLY the title, no explanation."""
             timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
             if session_id and session_source:
-                header = f"# Session Summary\nSession ID:     {session_id}\n{session_source} ID: {external_id}\nGenerated:      {timestamp}\n\n"
+                header = f"# Session Summary (Failover)\nSession ID:     {session_id}\n{session_source} ID: {external_id}\nGenerated:      {timestamp}\n\n"
             elif session_id:
-                header = f"# Session Summary\nSession ID:     {session_id}\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
+                header = f"# Session Summary (Failover)\nSession ID:     {session_id}\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
             else:
-                header = f"# Session Summary\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
+                header = f"# Session Summary (Failover)\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
 
             final_summary = header + llm_summary
 
@@ -526,10 +357,6 @@ Respond with ONLY the title, no explanation."""
                             f"{final_summary}\n\n## Claude's Todo List\n{todowrite_list}"
                         )
 
-            # Insert Session Tasks if available
-            if session_tasks_str:
-                final_summary += f"\n\n## Tasks Activity\n{session_tasks_str}"
-
             return final_summary
 
         except Exception as e:
@@ -537,11 +364,11 @@ Respond with ONLY the title, no explanation."""
             timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
             if session_id and session_source:
-                error_header = f"# Session Summary\nSession ID:     {session_id}\n{session_source} ID: {external_id}\nGenerated:      {timestamp}\n\n"
+                error_header = f"# Session Summary (Error)\nSession ID:     {session_id}\n{session_source} ID: {external_id}\nGenerated:      {timestamp}\n\n"
             elif session_id:
-                error_header = f"# Session Summary\nSession ID:     {session_id}\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
+                error_header = f"# Session Summary (Error)\nSession ID:     {session_id}\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
             else:
-                error_header = f"# Session Summary\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
+                error_header = f"# Session Summary (Error)\nClaude Code ID: {external_id}\nGenerated:      {timestamp}\n\n"
 
             error_summary = error_header + f"Error generating summary: {str(e)}"
 
