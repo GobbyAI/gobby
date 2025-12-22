@@ -725,11 +725,13 @@ class ActionContext:
 ### Storage Location (Strangler Fig Phases)
 
 **Phase A (Validation):** Write to `workflow_handoffs.notes` column
+
 - Both legacy SummaryGenerator and workflow action run in parallel
 - Compare outputs to validate workflow produces equivalent results
 - Legacy writes to `sessions.summary_markdown`, workflow writes to `workflow_handoffs.notes`
 
 **Phase B (Migration):** Switch to `sessions.summary_markdown` column
+
 - After validation passes, update action to write to production location
 - Use `session_manager.update_summary(session_id, summary_markdown=content)`
 
@@ -979,23 +981,23 @@ Before building new workflow capabilities, extract the current session handoff b
 - [ ] Add timeout option for approval conditions (default: no timeout)
 - [ ] Add unit tests for approval flow
 
-### Phase 3: Hook Integration
+### Phase 3: Hook Integration (Partial - Session Lifecycle Done)
 
-- [ ] Create `WorkflowHookHandler` that wraps existing hook system
-- [ ] Integrate workflow evaluation into `on_session_start` hook
+- [x] Create `WorkflowHookHandler` that wraps existing hook system
+- [x] Integrate workflow evaluation into `on_session_start` hook
+- [x] Integrate workflow evaluation into `on_session_end` hook
+- [x] Implement `HookResponse` with block/modify/continue actions
+- [x] Add context injection to hook responses
 - [ ] Integrate workflow evaluation into `on_prompt_submit` hook
 - [ ] Integrate workflow evaluation into `on_tool_call` hook
 - [ ] Integrate workflow evaluation into `on_tool_result` hook
-- [ ] Integrate workflow evaluation into `on_session_end` hook
-- [ ] Implement `HookResponse` with block/modify/continue actions
-- [ ] Add context injection to hook responses
 
-### Phase 4: Actions
+### Phase 4: Actions (Partial - Handoff Actions Done)
 
 **Context & Messaging:**
 
 - [x] Implement `inject_context` action
-- [ ] Implement `inject_message` action
+- [x] Implement `inject_message` action
 - [ ] Implement `switch_mode` action (for Claude Code plan mode)
 
 **Artifacts:**
@@ -1013,11 +1015,11 @@ Before building new workflow capabilities, extract the current session handoff b
 **Handoff:**
 
 - [x] Rewrite `generate_handoff` action to write to `sessions.summary_markdown` (see Decision 8)
-- [ ] Implement `restore_from_handoff` action
-- [ ] Implement `find_parent_session` action
-- [ ] Implement `mark_session_status` action
-- [ ] Ensure `generate_handoff` includes `pending_task_ids` field (Decision 3)
+- [x] Implement `restore_from_handoff` action (via `restore_context`)
+- [x] Implement `find_parent_session` action
+- [x] Implement `mark_session_status` action
 - [x] Drop `workflow_handoffs` table after strangler fig validation (Migration 13)
+- [ ] Ensure `generate_handoff` includes `pending_task_ids` field (Decision 3)
 
 **LLM Integration:**
 

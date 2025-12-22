@@ -374,19 +374,20 @@ See [ROADMAP.md](ROADMAP.md) for the full implementation plan with sprint orderi
 |---------|-------------|---------|
 | **Task Tracking** | Persistent tasks with dependencies and git sync | [TASKS.md](docs/plans/TASKS.md) |
 | **Workflow Engine** | YAML-defined workflows with lifecycle triggers, phase enforcement, and LLM actions | [WORKFLOWS.md](docs/plans/WORKFLOWS.md) |
+| **WebSocket Broadcasting** | Real-time hook event streaming to connected clients | [HOOK_EXTENSIONS.md](docs/plans/HOOK_EXTENSIONS.md) |
 
 ### Planned Features
 
 | Feature | Description | Plan |
 |---------|-------------|------|
 | **Persistent Memory** | Cross-session memory and skill learning | [MEMORY.md](docs/plans/MEMORY.md) |
-| **Hook Extensions** | WebSocket event broadcasting, webhooks, Python plugins | [HOOK_EXTENSIONS.md](docs/plans/HOOK_EXTENSIONS.md) |
+| **Webhooks & Plugins** | HTTP callouts, Python plugin system | [HOOK_EXTENSIONS.md](docs/plans/HOOK_EXTENSIONS.md) |
 | **Smart MCP Proxy** | Tool metrics, semantic search, self-healing | [MCP_PROXY_IMPROVEMENTS.md](docs/plans/MCP_PROXY_IMPROVEMENTS.md) |
 
 ### Milestones
 
-1. **Observable Gobby** — WebSocket event streaming + task system
-2. **Workflow Engine** — ✅ YAML-defined workflows with lifecycle triggers and LLM-powered actions
+1. **Observable Gobby** — ✅ WebSocket event streaming + task system
+2. **Workflow Engine** — 🔶 Session handoff complete; phase-based enforcement pending
 3. **Memory-First Agents** — Persistent memory and skill learning across sessions
 4. **Extensible Gobby** — Webhooks and Python plugin system
 5. **Smart MCP Proxy** — Intelligent tool orchestration

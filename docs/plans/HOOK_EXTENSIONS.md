@@ -315,19 +315,19 @@ CREATE INDEX idx_webhook_deliveries_event ON webhook_deliveries(event_type);
 
 ## Implementation Checklist
 
-### Phase 1: WebSocket Event Broadcasting
+### Phase 1: WebSocket Event Broadcasting (Core Done, Tests Pending)
 
 #### Infrastructure Setup
-- [ ] Add `websocket_server` reference to HTTPServer class (`src/servers/http.py`)
-- [ ] Modify `GobbyRunner` to pass WebSocket server to HTTP server after init
-- [ ] Create `src/hooks/broadcaster.py` module
+- [x] Add `websocket_server` reference to HTTPServer class (`src/servers/http.py`)
+- [x] Modify `GobbyRunner` to pass WebSocket server to HTTP server after init
+- [x] Create `src/hooks/broadcaster.py` module
 
 #### Broadcaster Implementation
-- [ ] Create `HookEventBroadcaster` class
-- [ ] Implement `broadcast_hook_event(event: HookEvent, response: HookResponse)` method
-- [ ] Implement event filtering based on config `broadcast_events` list
-- [ ] Implement payload sanitization (remove sensitive data option)
-- [ ] Add `include_payload` config option
+- [x] Create `HookEventBroadcaster` class
+- [x] Implement `broadcast_hook_event(event: HookEvent, response: HookResponse)` method
+- [x] Implement event filtering based on config `broadcast_events` list
+- [x] Implement payload sanitization (remove sensitive data option)
+- [x] Add `include_payload` config option
 
 #### Client Subscription (Decision 3)
 - [ ] Define subscription message format: `{"type": "subscribe", "events": ["session_start", ...]}`
@@ -337,14 +337,14 @@ CREATE INDEX idx_webhook_deliveries_event ON webhook_deliveries(event_type);
 - [ ] Document subscription protocol in WebSocket event schema docs
 
 #### Configuration
-- [ ] Add `HookExtensionsConfig` to `src/config/app.py`
-- [ ] Add `WebSocketBroadcastConfig` sub-config
-- [ ] Add default config values
+- [x] Add `HookExtensionsConfig` to `src/config/app.py`
+- [x] Add `WebSocketBroadcastConfig` sub-config
+- [x] Add default config values
 
 #### Integration
-- [ ] Call broadcaster in `/hooks/execute` endpoint after handler returns
-- [ ] Add broadcast to `HookManager.handle()` for direct calls
-- [ ] Handle broadcast errors gracefully (log, don't fail)
+- [x] Call broadcaster in `/hooks/execute` endpoint after handler returns
+- [x] Add broadcast to `HookManager.handle()` for direct calls
+- [x] Handle broadcast errors gracefully (log, don't fail)
 
 #### Testing
 - [ ] Unit tests for `HookEventBroadcaster`

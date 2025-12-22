@@ -25,7 +25,7 @@ This document defines the implementation order across all Gobby planning documen
 ═══════════════════════════════════════════════════════════════════════════════
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Sprint 1: Hook Event Broadcasting                                            │
+│ Sprint 1: Hook Event Broadcasting ✅ COMPLETED                               │
 │ HOOK_EXTENSIONS Phase 1                                                      │
 │                                                                              │
 │ Deliverable: Real-time hook events via WebSocket                            │
@@ -73,36 +73,39 @@ This document defines the implementation order across all Gobby planning documen
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Sprint 5: Workflow Hook Integration                                          │
+│ Sprint 5: Workflow Hook Integration 🔶 PARTIAL                               │
 │ WORKFLOWS Phase 3                                                            │
 │                                                                              │
 │ Deliverable: Workflows evaluate on hook events, tool blocking               │
 │ Dependencies: Sprint 4                                                       │
+│ Done: session_start, session_end hooks. Pending: prompt_submit, tool hooks  │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Sprint 6: Workflow Actions                                                   │
+│ Sprint 6: Workflow Actions 🔶 PARTIAL                                        │
 │ WORKFLOWS Phase 4                                                            │
 │                                                                              │
 │ Deliverable: inject_context, capture_artifact, generate_handoff, etc.       │
 │ Dependencies: Sprint 5                                                       │
+│ Done: handoff actions. Pending: state mgmt, LLM, TodoWrite actions          │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Sprint 7: Context Sources & Templates                                        │
+│ Sprint 7: Context Sources & Templates 🔶 PARTIAL                             │
 │ WORKFLOWS Phases 5-6                                                         │
 │                                                                              │
 │ Deliverable: Jinja2 templating, built-in workflow templates                 │
 │ Dependencies: Sprint 6                                                       │
 │                                                                              │
-│ - [ ] Jinja2 integration                                                     │
-│ - [ ] Context sources (session, handoff, state)                              │
-│ - [ ] Template engine implementation                                         │
-│ - [ ] Built-in templates (plan-execute, plan-act-reflect, session-handoff)  │
-│ - [ ] LLM-powered generate_handoff action                                    │
-│ - [ ] Git status and file changes context gathering                          │
+│ - [x] Jinja2 integration                                                     │
+│ - [x] Template engine implementation                                         │
+│ - [x] Built-in templates (session-handoff only)                              │
+│ - [x] LLM-powered generate_handoff action                                    │
+│ - [x] Git status and file changes context gathering                          │
+│ - [ ] Context sources (observations, workflow_state)                         │
+│ - [ ] Additional templates (plan-execute, react, plan-act-reflect)           │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -298,14 +301,14 @@ This document defines the implementation order across all Gobby planning documen
 
 | Sprint | Focus | Plan Reference | Dependencies | Status |
 |--------|-------|----------------|--------------|--------|
-| 1 | WebSocket Broadcasting | HOOK_EXTENSIONS Phase 1 | None | Pending |
+| 1 | WebSocket Broadcasting | HOOK_EXTENSIONS Phase 1 | None | ✅ Completed |
 | 2 | Core Task System | TASKS Phases 1-6 | None | ✅ Completed |
 | 3 | Task MCP/CLI | TASKS Phases 7-10 | Sprint 2 | ✅ Completed |
 | 3.5 | Task Extensions | TASKS Phases 9.5-9.9 | Sprint 3 | ✅ Completed |
 | 4 | Workflow Foundation | WORKFLOWS Phases 0-2 | None | ✅ Completed |
-| 5 | Workflow Hooks | WORKFLOWS Phase 3 | Sprint 4 | Pending |
-| 6 | Workflow Actions | WORKFLOWS Phase 4 | Sprint 5 | Pending |
-| 7 | Context & Templates | WORKFLOWS Phases 5-6 | Sprint 6 | Pending |
+| 5 | Workflow Hooks | WORKFLOWS Phase 3 | Sprint 4 | 🔶 Partial (session lifecycle) |
+| 6 | Workflow Actions | WORKFLOWS Phase 4 | Sprint 5 | 🔶 Partial (handoff actions) |
+| 7 | Context & Templates | WORKFLOWS Phases 5-6 | Sprint 6 | 🔶 Partial (session-handoff) |
 | 7.1 | Session Message Foundation | SESSION_TRACKING Phase 1 | None | Pending |
 | 7.2 | Async Message Processor | SESSION_TRACKING Phase 2 | Sprint 7.1 | Pending |
 | 7.3 | Session Tracking Integration | SESSION_TRACKING Phases 3-4 | Sprint 7.2 | Pending |
@@ -356,18 +359,22 @@ Sprints 7.1 → 7.2 → 7.3 → 7.4 → 7.5 → 7.6 → 7.7 → 7.8 (Session Tra
 
 ## Milestones
 
-### Milestone 1: "Observable Gobby" (Sprints 1-3)
+### Milestone 1: "Observable Gobby" (Sprints 1-3) ✅ COMPLETE
 
 - WebSocket event streaming
 - Full task system with CLI
 - **Value**: External tools can monitor sessions, agents can track work
 
-### Milestone 2: "Workflow Engine" (Sprints 4-7)
+### Milestone 2: "Workflow Engine" (Sprints 4-7) 🔶 PARTIAL
 
-- Phase-based workflow enforcement
-- Tool restrictions and transitions
-- Built-in templates
-- **Value**: Deterministic agent behavior without prompt engineering
+- [x] Workflow foundation (loader, state manager, engine)
+- [x] Session lifecycle hooks (session_start, session_end)
+- [x] Handoff actions (find_parent, restore_context, generate_handoff)
+- [x] LLM-powered session summaries with context handoff
+- [ ] Tool hooks (prompt_submit, tool_call, tool_result)
+- [ ] Phase-based tool restrictions and transitions
+- [ ] Additional templates (plan-execute, react, plan-act-reflect)
+- **Value**: Session handoff working; full workflow enforcement pending
 
 ### Milestone 2.5: "Session Recording" (Sprints 7.1-7.4)
 
