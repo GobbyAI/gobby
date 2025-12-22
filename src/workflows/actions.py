@@ -61,7 +61,9 @@ class ActionExecutor:
         self.register("inject_message", self._handle_inject_message)
         self.register("capture_artifact", self._handle_capture_artifact)
         self.register("generate_handoff", self._handle_generate_handoff)
-        # TODO: Add switch_mode, etc.
+        self.register("find_parent_session", self._handle_find_parent_session)
+        self.register("restore_context", self._handle_restore_context)
+        self.register("mark_session_status", self._handle_mark_session_status)
 
     async def execute(
         self, action_type: str, context: ActionContext, **kwargs
@@ -260,7 +262,9 @@ class ActionExecutor:
                         turns.append(json.loads(line))
 
             # Get turns since last /clear (up to 50 turns)
-            recent_turns = context.transcript_processor.extract_turns_since_clear(turns, max_turns=50)
+            recent_turns = context.transcript_processor.extract_turns_since_clear(
+                turns, max_turns=50
+            )
 
             # Format turns for LLM
             transcript_summary = self._format_turns_for_llm(recent_turns)
@@ -270,7 +274,9 @@ class ActionExecutor:
 
         # 2. Gather Context Variables for Template
         # Extract last messages (last 2 user/assistant pairs)
-        last_messages = context.transcript_processor.extract_last_messages(recent_turns, num_pairs=2)
+        last_messages = context.transcript_processor.extract_last_messages(
+            recent_turns, num_pairs=2
+        )
         last_messages_str = self._format_turns_for_llm(last_messages) if last_messages else ""
 
         # Get git status and file changes
@@ -314,6 +320,81 @@ class ActionExecutor:
 
         logger.info(f"Generated handoff summary for session {context.session_id}")
         return {"handoff_created": True, "summary_length": len(summary_content)}
+
+    async def _handle_find_parent_session(
+        self, context: ActionContext, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Find and link a parent session for handoff.
+        """
+        current_session = context.session_manager.get(context.session_id)
+        if not current_session:
+            logger.warning(f"find_parent_session: Current session {context.session_id} not found")
+            return {"parent_session_found": False}
+
+        # Logic matches SessionManager.find_parent_session but uses storage directly
+        parent = context.session_manager.find_parent(
+            machine_id=current_session.machine_id,
+            project_id=current_session.project_id,
+            status="handoff_ready",
+        )
+
+        if parent:
+            # Link it
+            context.session_manager.update_parent_session_id(context.session_id, parent.id)
+            return {
+                "parent_session_found": True,
+                "parent_session_id": parent.id,
+            }
+
+        return {"parent_session_found": False}
+
+    async def _handle_restore_context(
+        self, context: ActionContext, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Restore context from linked parent session.
+        """
+        current_session = context.session_manager.get(context.session_id)
+        if not current_session or not current_session.parent_session_id:
+            return None
+
+        parent = context.session_manager.get(current_session.parent_session_id)
+        if not parent or not parent.summary_markdown:
+            return None
+
+        content = parent.summary_markdown
+        template = kwargs.get("template")
+
+        if template:
+            render_context = {
+                "summary": content,
+                "handoff": {"notes": "Restored summary"},
+                "session": current_session,
+                "state": context.state,
+            }
+            content = context.template_engine.render(template, render_context)
+
+        return {"inject_context": content}
+
+    async def _handle_mark_session_status(
+        self, context: ActionContext, status: str, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Mark a session status (current or parent).
+        """
+        target = kwargs.get("target", "current_session")
+
+        session_id = context.session_id
+        if target == "parent_session":
+            current_session = context.session_manager.get(context.session_id)
+            if current_session and current_session.parent_session_id:
+                session_id = current_session.parent_session_id
+            else:
+                return {"error": "No parent session linked"}
+
+        context.session_manager.update_status(session_id, status)
+        return {"status_updated": True, "session_id": session_id, "status": status}
 
     def _format_turns_for_llm(self, turns: list[dict]) -> str:
         """

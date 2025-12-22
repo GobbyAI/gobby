@@ -422,6 +422,27 @@ class HookExtensionsConfig(BaseModel):
     )
 
 
+class WorkflowConfig(BaseModel):
+    """Workflow engine configuration."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable workflow engine",
+    )
+    timeout: float = Field(
+        default=30.0,
+        description="Default timeout in seconds for workflow execution (e.g. LLM calls)",
+    )
+
+    @field_validator("timeout")
+    @classmethod
+    def validate_timeout(cls, v: float) -> float:
+        """Validate timeout is positive."""
+        if v <= 0:
+            raise ValueError("Timeout must be positive")
+        return v
+
+
 class DaemonConfig(BaseModel):
     """
     Main configuration for Gobby daemon.
@@ -496,6 +517,10 @@ class DaemonConfig(BaseModel):
     hook_extensions: HookExtensionsConfig = Field(
         default_factory=HookExtensionsConfig,
         description="Hook extensions configuration",
+    )
+    workflow: WorkflowConfig = Field(
+        default_factory=WorkflowConfig,
+        description="Workflow engine configuration",
     )
 
     def get_code_execution_config(self) -> CodeExecutionConfig:
@@ -635,6 +660,10 @@ def generate_default_config(config_file: str) -> None:
             "level": "info",
             "max_size_mb": 10,
             "backup_count": 5,
+        },
+        "workflow": {
+            "enabled": True,
+            "timeout": 30.0,
         },
     }
 

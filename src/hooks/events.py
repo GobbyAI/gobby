@@ -124,7 +124,7 @@ class HookResponse:
         metadata: Extensible key-value store for adapter-specific data.
     """
 
-    decision: Literal["allow", "deny", "ask"] = "allow"
+    decision: Literal["allow", "deny", "ask", "block", "modify"] = "allow"
     context: str | None = None  # Inject into agent context (AI-only)
     system_message: str | None = None  # User-visible message (e.g., handoff notification)
     reason: str | None = None  # Explanation for decision

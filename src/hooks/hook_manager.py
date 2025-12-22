@@ -132,10 +132,9 @@ class HookManager:
         # Extract config values
         if self._config:
             health_check_interval = self._config.daemon_health_check_interval
-            summary_file_path = self._config.session_summary.summary_file_path
+
         else:
             health_check_interval = 10.0
-            summary_file_path = "~/.gobby/session_summaries"
 
         # Create session-agnostic subsystems (shared across all sessions)
         self._daemon_client = DaemonClient(
@@ -185,7 +184,13 @@ class HookManager:
             state_manager=self._workflow_state_manager,
             action_executor=self._action_executor,
         )
-        self._workflow_handler = WorkflowHookHandler(engine=self._workflow_engine, loop=self._loop)
+        workflow_timeout = 30.0
+        if self._config:
+            workflow_timeout = self._config.workflow.timeout
+
+        self._workflow_handler = WorkflowHookHandler(
+            engine=self._workflow_engine, loop=self._loop, timeout=workflow_timeout
+        )
 
         # Session manager handles registration, lookup, and status updates
         # Note: source is passed explicitly per call (Phase 2C+), not stored in manager
@@ -579,90 +584,37 @@ class HookManager:
     def _handle_event_session_start(self, event: HookEvent) -> HookResponse:
         """
         Handle SESSION_START event.
-
-        Flow:
-        1. Extract session metadata from event.data
-        2. Resolve project_id from cwd if not provided
-        3. If source == "clear", check for parent session marked 'handoff_ready'
-        4. Restore context from database summary_markdown or file failover
-        5. Register new session with parent_session_id
-        6. Mark parent as 'expired'
-        7. Return context in HookResponse
-
-        Args:
-            event: HookEvent with session_id (cli_key), source, and data
-
-        Returns:
-            HookResponse with restored context in the context field
+        Register session and execute session-handoff workflow.
         """
         external_id = event.session_id
         input_data = event.data
         transcript_path = input_data.get("transcript_path")
-        trigger_source = input_data.get("source", "unknown")  # startup/clear/resume trigger
-        cli_source = event.source.value  # claude/codex/gemini
+        cli_source = event.source.value
         cwd = input_data.get("cwd")
 
-        # Resolve project_id from cwd (auto-creates project if needed)
+        # Resolve project_id (auto-creates if needed)
         project_id = self._resolve_project_id(input_data.get("project_id"), cwd)
 
-        # Get session_id early for logging
-        session_id_check = self._session_manager.get_session_id(external_id)
-
-        if session_id_check:
-            self.logger.debug(
-                f"🟢 Session start: session {session_id_check}, cli={cli_source}, trigger={trigger_source}"
-            )
-        else:
-            self.logger.debug(
-                f"🟢 Session start: cli={cli_source}, trigger={trigger_source} (new session)"
-            )
-
-        # Get machine ID (from event or generate)
+        # Get machine ID
         machine_id = event.machine_id or self.get_machine_id()
 
-        # Step 1: Check for parent session if trigger_source == "clear"
-        parent_session_id = None
-        restored_context = None
+        self.logger.debug(
+            f"🟢 Session start: cli={cli_source}, project={project_id}, source={input_data.get('source')}"
+        )
 
-        if trigger_source == "clear":
-            self.logger.debug("Checking for session handoff...")
-            handoff_result = self._session_manager.find_parent_session(
-                machine_id=machine_id, source=cli_source, project_id=project_id
-            )
-
-            if handoff_result:
-                parent_session_id, db_summary = handoff_result
-                self.logger.debug(f"Found parent session: {parent_session_id}")
-
-                # Step 2: Restore context (database first, file failover)
-                if db_summary:
-                    self.logger.debug("Using summary from database")
-                    restored_context = db_summary
-                else:
-                    self.logger.warning("No database summary, trying file failover")
-                    restored_context = self._session_manager.read_summary_file(parent_session_id)
-
-                if restored_context:
-                    self.logger.debug(f"Restored context ({len(restored_context)} chars)")
-                else:
-                    self.logger.warning("No context restored (no summary found)")
-
-        # Step 3: Register new session (pass source for multi-CLI support)
+        # Step 1: Register new session (no parent initially)
+        # The workflow will handle finding and linking parent via 'find_parent_session' action
         session_id = self._session_manager.register_session(
             external_id=external_id,
             machine_id=machine_id,
             project_id=project_id,
-            parent_session_id=parent_session_id,
+            parent_session_id=None,
             jsonl_path=transcript_path,
             source=cli_source,
             project_path=cwd,
         )
 
-        # Step 4: Mark parent as expired if handoff succeeded
-        if parent_session_id and restored_context:
-            self._session_manager.mark_session_expired(parent_session_id)
-
-        # Step 5: Track registered session
+        # Step 2: Track registered session
         if transcript_path:
             try:
                 with self._registered_sessions_lock:
@@ -670,68 +622,52 @@ class HookManager:
             except Exception as e:
                 self.logger.error(f"Failed to setup session tracking: {e}", exc_info=True)
 
-        # Step 6: Build context to inject
-        # Build context string from session info and restored summary
+        # Step 3: Update event metadata with the newly registered session_id
+        # This is required so the workflow engine can access the session correctly
+        event.metadata["_platform_session_id"] = session_id
+
+        # Step 4: Execute session-handoff workflow
+        # This handles: find_parent_session, restore_context, mark_session_status
+        wf_response = self._workflow_handler.handle_lifecycle("session-handoff", event)
+
+        # Step 5: Build response with context and system message
         context_parts = []
         context_parts.append(f"Session registered: {session_id}")
-        if parent_session_id:
-            context_parts.append(f"Parent session: {parent_session_id}")
+        system_message = None
+
+        # Reload session to check if workflow linked a parent
+        current_session = self._session_storage.get(session_id)
+        if current_session and current_session.parent_session_id:
+            context_parts.append(f"Parent session: {current_session.parent_session_id}")
             context_parts.append("Handoff completed successfully.")
 
-        # Original hardcoded context injection (Failover)
-        if restored_context:
-            # Try to use workflow template first
-            try:
-                # Also query handoff table if we have parent_session_id?
-                # For now, just pass summary as 'summary' and 'handoff'
-                # The template uses {{ summary }} and {{ handoff.notes }}
+            if wf_response.context:
+                context_parts.append(wf_response.context)
 
-                wf_response = self._workflow_handler.handle_lifecycle(
-                    "session-handoff",
-                    event,
-                    context_data={
-                        "summary": restored_context,
-                        "handoff": {"notes": "Restored summary", "pending_tasks": []},
-                    },
-                )
+            system_message = (
+                f"⏺ Context restored from previous session.\n"
+                f"  Session ID: {session_id[0:8]}...\n"
+                f"  Parent ID: {current_session.parent_session_id[0:8]}...\n"
+                f"  Project: {project_id}"
+            )
+        else:
+            # Include any workflow context even if no parent linked (e.g. greeting)
+            if wf_response.context:
+                context_parts.append(wf_response.context)
 
-                if wf_response.context:
-                    context_parts.append(wf_response.context)
-                else:
-                    # Fallback if workflow didn't return anything (e.g. template missing)
-                    context_parts.append("\n## Previous Session Context\n")
-                    context_parts.append(restored_context)
-            except Exception as e:
-                self.logger.warning(f"Failed to execute session-handoff workflow: {e}")
-                context_parts.append("\n## Previous Session Context\n")
-                context_parts.append(restored_context)
-
-        # Inject Active Task Context
+        # Inject active task context if available
         if event.task_id:
             task_title = event.metadata.get("_task_title", "Unknown Task")
             context_parts.append("\n## Active Task Context\n")
             context_parts.append(f"You are working on task: {task_title} ({event.task_id})")
 
-        context_str = "\n".join(context_parts) if context_parts else None
-
-        # Step 7: Build user-visible message for handoff notification
-        system_message = None
-        if parent_session_id and restored_context:
-            system_message = (
-                f"⏺ Context restored from previous session.\n"
-                f"  Session ID: {session_id}\n"
-                f"  Parent ID: {parent_session_id}\n"
-                f"  Claude Code ID: {external_id}"
-            )
-
         return HookResponse(
             decision="allow",
-            context=context_str,
+            context="\n".join(context_parts) if context_parts else None,
             system_message=system_message,
             metadata={
                 "session_id": session_id,
                 "machine_id": machine_id,
-                "parent_session_id": parent_session_id,
                 "external_id": external_id,
                 "task_id": event.task_id,
             },
@@ -745,8 +681,7 @@ class HookManager:
         Available triggers: on_session_end
         """
         external_id = event.session_id
-        input_data = event.data
-        transcript_path = input_data.get("transcript_path")
+
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
@@ -791,7 +726,7 @@ class HookManager:
         """
         input_data = event.data
         prompt = input_data.get("prompt", "")
-        external_id = event.session_id
+
         transcript_path = input_data.get("transcript_path")
         session_id = event.metadata.get("_platform_session_id")
 
@@ -844,7 +779,6 @@ class HookManager:
         """
         session_id = event.metadata.get("_platform_session_id")
         cli_source = event.source.value
-        external_id = event.session_id
 
         if session_id:
             self.logger.debug(f"🛑 Agent stop: session {session_id}, cli={cli_source}")

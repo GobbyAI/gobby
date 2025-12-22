@@ -15,9 +15,15 @@ class WorkflowHookHandler:
     Wraps the async engine to be callable from synchronous hooks.
     """
 
-    def __init__(self, engine: WorkflowEngine, loop: asyncio.AbstractEventLoop | None = None):
+    def __init__(
+        self,
+        engine: WorkflowEngine,
+        loop: asyncio.AbstractEventLoop | None = None,
+        timeout: float = 30.0,
+    ):
         self.engine = engine
         self._loop = loop
+        self.timeout = timeout
 
         # If no loop provided, try to get one or create one for this thread
         if not self._loop:
@@ -55,7 +61,7 @@ class WorkflowHookHandler:
                     future = asyncio.run_coroutine_threadsafe(
                         self.engine.handle_event(event), self._loop
                     )
-                    return future.result(timeout=10.0)  # 10s timeout
+                    return future.result(timeout=self.timeout)
 
             # Case 2: No loop running, or we just want to run it.
             # Create a new loop or use asyncio.run if appropriate
@@ -78,7 +84,9 @@ class WorkflowHookHandler:
         """
         Handle a lifecycle workflow event.
         """
-        logger.debug(f"handle_lifecycle called: workflow={workflow_name}, event_type={event.event_type}")
+        logger.debug(
+            f"handle_lifecycle called: workflow={workflow_name}, event_type={event.event_type}"
+        )
         try:
             if self._loop and self._loop.is_running():
                 if threading.current_thread() is threading.main_thread():
@@ -89,7 +97,7 @@ class WorkflowHookHandler:
                         self.engine.evaluate_lifecycle_triggers(workflow_name, event, context_data),
                         self._loop,
                     )
-                    return future.result(timeout=10.0)
+                    return future.result(timeout=self.timeout)
 
             try:
                 return asyncio.run(

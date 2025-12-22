@@ -272,6 +272,8 @@ class WorkflowEngine:
             if when_condition:
                 # Simple eval context
                 eval_ctx = {"event": event, "workflow_state": state, "handoff": context_data or {}}
+                if context_data:
+                    eval_ctx.update(context_data)
                 if not self.evaluator.evaluate(when_condition, eval_ctx):
                     continue
 
@@ -288,8 +290,16 @@ class WorkflowEngine:
 
                 result = await self.action_executor.execute(action_type, action_ctx, **kwargs)
 
-                if result and "inject_context" in result:
-                    injected_context.append(result["inject_context"])
+                if result:
+                    # Update context for subsequent actions
+                    if isinstance(result, dict):
+                        if context_data is None:
+                            context_data = {}
+                        context_data.update(result)
+                        state.variables.update(result)
+
+                    if "inject_context" in result:
+                        injected_context.append(result["inject_context"])
 
             except Exception as e:
                 logger.error(

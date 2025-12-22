@@ -168,25 +168,32 @@ class LocalSessionManager:
     def find_parent(
         self,
         machine_id: str,
-        source: str,
         project_id: str,
+        source: str | None = None,
         status: str = "handoff_ready",
     ) -> Session | None:
         """
-        Find parent session for handoff.
+        Find most recent parent session with specific status.
 
-        Finds the most recent session with handoff_ready status
-        on the same machine, source, and project.
+        Args:
+            machine_id: Machine identifier
+            project_id: Project identifier
+            source: Optional source identifier to filter by
+            status: Status to filter by (default: handoff_ready)
+
+        Returns:
+            Session object or None
         """
-        row = self.db.fetchone(
-            """
-            SELECT * FROM sessions
-            WHERE machine_id = ? AND source = ? AND status = ? AND project_id = ?
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (machine_id, source, status, project_id),
-        )
+        query = "SELECT * FROM sessions WHERE machine_id = ? AND status = ? AND project_id = ?"
+        params: list[Any] = [machine_id, status, project_id]
+
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+
+        query += " ORDER BY updated_at DESC LIMIT 1"
+
+        row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
 
     def update_status(self, session_id: str, status: str) -> Session | None:
@@ -224,6 +231,15 @@ class LocalSessionManager:
             WHERE id = ?
             """,
             (summary_path, summary_markdown, now, session_id),
+        )
+        return self.get(session_id)
+
+    def update_parent_session_id(self, session_id: str, parent_session_id: str) -> Session | None:
+        """Update parent session ID."""
+        now = datetime.utcnow().isoformat()
+        self.db.execute(
+            "UPDATE sessions SET parent_session_id = ?, updated_at = ? WHERE id = ?",
+            (parent_session_id, now, session_id),
         )
         return self.get(session_id)
 
