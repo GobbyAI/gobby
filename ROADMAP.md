@@ -83,12 +83,12 @@ This document defines the implementation order across all Gobby planning documen
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Sprint 6: Workflow Actions 🔶 PARTIAL                                        │
+│ Sprint 6: Workflow Actions ✅ COMPLETED                                      │
 │ WORKFLOWS Phase 4                                                            │
 │                                                                              │
 │ Deliverable: inject_context, capture_artifact, generate_handoff, etc.       │
 │ Dependencies: Sprint 5                                                       │
-│ Done: handoff actions. Pending: state mgmt, LLM, TodoWrite actions          │
+│ Done: All scheduled actions (handoff, state, LLM, todo, mcp)                │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼

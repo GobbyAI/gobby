@@ -81,6 +81,7 @@ class HookManager:
         log_max_bytes: int = 10 * 1024 * 1024,  # 10MB
         log_backup_count: int = 5,
         broadcaster: Any | None = None,
+        mcp_manager: Any | None = None,
     ):
         """
         Initialize HookManager with subsystems.
@@ -94,6 +95,7 @@ class HookManager:
             log_max_bytes: Max log file size before rotation
             log_backup_count: Number of backup log files
             broadcaster: Optional HookEventBroadcaster instance
+            mcp_manager: Optional MCPClientManager instance
         """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -102,6 +104,7 @@ class HookManager:
         self.log_max_bytes = log_max_bytes
         self.log_backup_count = log_backup_count
         self.broadcaster = broadcaster
+        self.mcp_manager = mcp_manager
 
         # Capture event loop for thread-safe broadcasting (if running in async context)
         self._loop: asyncio.AbstractEventLoop | None
@@ -178,6 +181,7 @@ class HookManager:
             llm_service=self._llm_service,
             transcript_processor=self._transcript_processor,
             config=self._config,
+            mcp_manager=self.mcp_manager,
         )
         self._workflow_engine = WorkflowEngine(
             loader=self._workflow_loader,
@@ -782,7 +786,9 @@ class HookManager:
             # Note: The lifecycle workflows will handle this via on_before_agent triggers
             # with appropriate 'when' conditions (e.g., prompt == '/clear')
             if prompt_lower in ("/clear", "/exit") and transcript_path:
-                self.logger.debug(f"Detected {prompt_lower} command - lifecycle workflows will handle handoff")
+                self.logger.debug(
+                    f"Detected {prompt_lower} command - lifecycle workflows will handle handoff"
+                )
 
         # Execute all lifecycle workflow triggers for on_before_agent / on_prompt_submit
         # This allows workflows to inject phase context, handle /clear, check pending reflection, etc.
@@ -865,7 +871,9 @@ class HookManager:
                 context_parts.append(wf_response.context)
             # If workflow blocks or modifies, return immediately
             if wf_response.decision != "allow":
-                self.logger.info(f"Workflow {wf_response.decision} tool '{tool_name}': {wf_response.reason}")
+                self.logger.info(
+                    f"Workflow {wf_response.decision} tool '{tool_name}': {wf_response.reason}"
+                )
                 return wf_response
         except Exception as e:
             self.logger.error(

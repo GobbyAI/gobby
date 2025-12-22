@@ -2,10 +2,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from gobby.storage.database import LocalDatabase
-from gobby.storage.sessions import LocalSessionManager
-from gobby.workflows.definitions import WorkflowState
-from gobby.workflows.templates import TemplateEngine
+from ..storage.database import LocalDatabase
+from ..storage.sessions import LocalSessionManager
+from ..storage.tasks import LocalTaskManager  # noqa: F401
+from .definitions import WorkflowState
+from .templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class ActionContext:
     llm_service: Any | None = None
     transcript_processor: Any | None = None
     config: Any | None = None
+    mcp_manager: Any | None = None
 
 
 class ActionHandler(Protocol):
@@ -41,6 +43,7 @@ class ActionExecutor:
         llm_service: Any | None = None,
         transcript_processor: Any | None = None,
         config: Any | None = None,
+        mcp_manager: Any | None = None,
     ):
         self.db = db
         self.session_manager = session_manager
@@ -48,6 +51,7 @@ class ActionExecutor:
         self.llm_service = llm_service
         self.transcript_processor = transcript_processor
         self.config = config
+        self.mcp_manager = mcp_manager
         self._handlers: dict[str, ActionHandler] = {}
         self._register_defaults()
 
@@ -64,6 +68,18 @@ class ActionExecutor:
         self.register("find_parent_session", self._handle_find_parent_session)
         self.register("restore_context", self._handle_restore_context)
         self.register("mark_session_status", self._handle_mark_session_status)
+        self.register("switch_mode", self._handle_switch_mode)
+        self.register("read_artifact", self._handle_read_artifact)
+        self.register("load_workflow_state", self._handle_load_workflow_state)
+        self.register("save_workflow_state", self._handle_save_workflow_state)
+        self.register("set_variable", self._handle_set_variable)
+        self.register("increment_variable", self._handle_increment_variable)
+        self.register("call_llm", self._handle_call_llm)
+        self.register("synthesize_title", self._handle_synthesize_title)
+        self.register("write_todos", self._handle_write_todos)
+        self.register("mark_todo_complete", self._handle_mark_todo_complete)
+        self.register("persist_tasks", self._handle_persist_tasks)
+        self.register("call_mcp_tool", self._handle_call_mcp_tool)
 
     async def execute(
         self, action_type: str, context: ActionContext, **kwargs
@@ -200,6 +216,343 @@ class ActionExecutor:
 
         return {"captured": filepath}
 
+    async def _handle_read_artifact(
+        self, context: ActionContext, pattern: str, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Read an artifact's content into a workflow variable.
+        """
+        import glob
+        import os
+
+        variable_name = kwargs.get("as")
+        if not variable_name:
+            logger.warning("read_artifact: 'as' argument missing")
+            return None
+
+        # Check if pattern matches an existing artifact key first
+        filepath = context.state.artifacts.get(pattern)
+
+        if not filepath:
+            # Try as glob pattern
+            matches = glob.glob(pattern, recursive=True)
+            if matches:
+                filepath = os.path.abspath(matches[0])
+
+        if not filepath or not os.path.exists(filepath):
+            logger.warning(f"read_artifact: File not found for pattern '{pattern}'")
+            return None
+
+        try:
+            with open(filepath, "r") as f:
+                content = f.read()
+
+            # Initialize variables dict if None
+            if context.state.variables is None:
+                context.state.variables = {}
+
+            context.state.variables[variable_name] = content
+            return {"read_artifact": True, "variable": variable_name, "length": len(content)}
+        except Exception as e:
+            logger.error(f"read_artifact: Failed to read {filepath}: {e}")
+            return None
+
+            logger.error(f"read_artifact: Failed to read {filepath}: {e}")
+            return None
+
+    async def _handle_load_workflow_state(
+        self, context: ActionContext, **kwargs
+    ) -> dict[str, Any] | None:
+        """Load workflow state from DB."""
+        from .state_manager import WorkflowStateManager
+
+        state_manager = WorkflowStateManager(context.db)
+        loaded_state = state_manager.get_state(context.session_id)
+
+        if loaded_state:
+            # We should probably copy attributes to the existing object
+            # so references remain valid if shared.
+            # But dataclasses are mutable.
+
+            # For now, let's update attributes manualy or via __dict__?
+            # Safe way:
+            for field in loaded_state.__dataclass_fields__:
+                val = getattr(loaded_state, field)
+                setattr(context.state, field, val)
+
+            return {"state_loaded": True}
+
+        return {"state_loaded": False}
+
+    async def _handle_save_workflow_state(
+        self, context: ActionContext, **kwargs
+    ) -> dict[str, Any] | None:
+        """Save workflow state to DB."""
+        from .state_manager import WorkflowStateManager
+
+        state_manager = WorkflowStateManager(context.db)
+        state_manager.save_state(context.state)
+        return {"state_saved": True}
+
+    async def _handle_set_variable(
+        self, context: ActionContext, name: str, value: Any, **kwargs
+    ) -> dict[str, Any] | None:
+        """Set a workflow variable."""
+        if context.state.variables is None:
+            context.state.variables = {}
+
+        context.state.variables[name] = value
+        return {"variable_set": name, "value": value}
+
+    async def _handle_increment_variable(
+        self, context: ActionContext, name: str, amount: int = 1, **kwargs
+    ) -> dict[str, Any] | None:
+        """Increment a numeric workflow variable."""
+        if context.state.variables is None:
+            context.state.variables = {}
+
+        current = context.state.variables.get(name, 0)
+        if not isinstance(current, (int, float)):
+            logger.warning(f"increment_variable: Variable {name} is not numeric: {current}")
+            current = 0
+
+        new_value = current + amount
+        context.state.variables[name] = new_value
+        return {"variable_incremented": name, "value": new_value}
+
+        context.state.variables[name] = new_value
+        return {"variable_incremented": name, "value": new_value}
+
+    async def _handle_call_llm(
+        self, context: ActionContext, prompt: str, output_as: str, **kwargs
+    ) -> dict[str, Any] | None:
+        """Call LLM with a prompt template and store result in variable."""
+        if not context.llm_service:
+            logger.warning("call_llm: Missing LLM service")
+            return {"error": "Missing LLM service"}
+
+        # Render prompt template
+        render_context = {
+            "session": context.session_manager.get(context.session_id),
+            "state": context.state,
+            "variables": context.state.variables or {},
+        }
+        # Add kwargs to context
+        render_context.update(kwargs)
+
+        rendered_prompt = context.template_engine.render(prompt, render_context)
+
+        try:
+            # Use default provider
+            provider = context.llm_service.get_default_provider()
+
+            # Use generate_text or similar (provider interface varies, assuming generic generate)
+            # WORKFLOWS.md doesn't specify provider interface details, but ActionContext.llm_service implies it.
+            # Assuming provider has generate(prompt) or similar.
+            # Reusing generate_summary pattern which took (context, prompt_template).
+            # But here we pre-rendered the prompt.
+            # Let's assume a generate_text method exists.
+
+            # If provider methods are strictly typed, we might need to check.
+            # `generate_summary` was used in `generate_handoff`.
+            # Let's try `generate_text` or `complete`.
+            response = await provider.generate_text(rendered_prompt)
+
+            # Store result
+            if context.state.variables is None:
+                context.state.variables = {}
+            context.state.variables[output_as] = response
+
+            return {"llm_called": True, "output_variable": output_as}
+        except Exception as e:
+            logger.error(f"call_llm: Failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_synthesize_title(
+        self, context: ActionContext, **kwargs
+    ) -> dict[str, Any] | None:
+        """Synthesize and set a session title."""
+        if not context.llm_service or not context.transcript_processor:
+            return {"error": "Missing services"}
+
+        current_session = context.session_manager.get(context.session_id)
+        if not current_session:
+            return {"error": "Session not found"}
+
+        # Get summary-worthy transcript (first 20 turns?)
+        transcript_path = getattr(current_session, "jsonl_path", None)
+        if not transcript_path:
+            return {"error": "No transcript path"}
+
+        try:
+            import json
+            from pathlib import Path
+
+            # Read enough turns to get context
+            turns = []
+            path = Path(transcript_path)
+            if path.exists():
+                with open(path) as f:
+                    for i, line in enumerate(f):
+                        if i > 20:
+                            break
+                        if line.strip():
+                            turns.append(json.loads(line))
+
+            if not turns:
+                return {"error": "Empty transcript"}
+
+            formatted_turns = self._format_turns_for_llm(turns)
+
+            template = kwargs.get(
+                "template",
+                "Create a short, concise title (3-6 words) for this coding session based on the transcript.\n\nTranscript:\n{{ transcript }}",
+            )
+
+            prompt = context.template_engine.render(template, {"transcript": formatted_turns})
+
+            provider = context.llm_service.get_default_provider()
+            title = await provider.generate_text(prompt)
+
+            # clean title (remove quotes, etc)
+            title = title.strip().strip('"').strip("'")
+
+            context.session_manager.update_title(context.session_id, title)
+            return {"title_synthesized": title}
+
+        except Exception as e:
+            logger.error(f"synthesize_title: Failed: {e}")
+            return {"error": str(e)}
+
+            logger.error(f"synthesize_title: Failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_write_todos(
+        self, context: ActionContext, todos: list[str], **kwargs
+    ) -> dict[str, Any] | None:
+        """Write todos to a file (default TODO.md)."""
+        import os
+
+        filename = kwargs.get("filename", "TODO.md")
+
+        # Security: Allow only relative paths?
+        # Assuming filename is just a name.
+
+        try:
+            # Overwrite or append? 'write' implies overwrite often, but for todos maybe append?
+            # WORKFLOWS.md doesn't specify. Assuming overwrite if not specified.
+            mode = kwargs.get("mode", "w")
+            formatted_todos = [f"- [ ] {todo}" for todo in todos]
+
+            if mode == "append" and os.path.exists(filename):
+                with open(filename, "a") as f:
+                    f.write("\n" + "\n".join(formatted_todos) + "\n")
+            else:
+                with open(filename, "w") as f:
+                    f.write("# TODOs\n\n" + "\n".join(formatted_todos) + "\n")
+
+            return {"todos_written": len(todos), "file": filename}
+        except Exception as e:
+            logger.error(f"write_todos: Failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_mark_todo_complete(
+        self, context: ActionContext, todo_text: str, **kwargs
+    ) -> dict[str, Any] | None:
+        """Mark a todo as complete in TODO.md."""
+        import os
+
+        filename = kwargs.get("filename", "TODO.md")
+
+        if not os.path.exists(filename):
+            return {"error": "File not found"}
+
+        try:
+            with open(filename, "r") as f:
+                lines = f.readlines()
+
+            updated = False
+            new_lines = []
+            for line in lines:
+                if todo_text in line and "- [ ]" in line:
+                    new_lines.append(line.replace("- [ ]", "- [x]"))
+                    updated = True
+                else:
+                    new_lines.append(line)
+
+            if updated:
+                with open(filename, "w") as f:
+                    f.writelines(new_lines)
+
+            return {"todo_completed": updated, "text": todo_text}
+        except Exception as e:
+            logger.error(f"mark_todo_complete: Failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_persist_tasks(
+        self, context: ActionContext, tasks: list[dict[str, Any]], **kwargs
+    ) -> dict[str, Any] | None:
+        """Persist a list of task dicts to Gobby task system."""
+        try:
+            from ..storage.tasks import LocalTaskManager
+
+            task_manager = LocalTaskManager(context.db)
+
+            current_session = context.session_manager.get(context.session_id)
+            project_id = current_session.project_id if current_session else "default"
+
+            created_count = 0
+            ids = []
+
+            for task_data in tasks:
+                # Basic validation/defaulting
+                title = task_data.get("title")
+                if not title:
+                    continue
+
+                # task_data might have: description, priority, type, labels
+                t = task_manager.create_task(
+                    project_id=project_id,
+                    title=title,
+                    description=task_data.get("description"),
+                    priority=task_data.get("priority", 2),
+                    task_type=task_data.get("type", "task"),
+                    labels=task_data.get("labels"),
+                    discovered_in_session_id=context.session_id,
+                )
+                ids.append(t.id)
+                created_count += 1
+
+            return {"tasks_persisted": created_count, "ids": ids}
+        except Exception as e:
+            logger.error(f"persist_tasks: Failed: {e}")
+            return {"error": str(e)}
+
+    async def _handle_call_mcp_tool(
+        self,
+        context: ActionContext,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        **kwargs,
+    ) -> dict[str, Any] | None:
+        """Call an MCP tool on a connected server."""
+        if not context.mcp_manager:
+            logger.warning("call_mcp_tool: MCP manager not available")
+            return {"error": "MCP manager not available"}
+
+        try:
+            # Check connection
+            if server_name not in context.mcp_manager.connections:
+                return {"error": f"Server {server_name} not connected"}
+
+            # Call tool
+            result = await context.mcp_manager.call_tool(server_name, tool_name, arguments)
+            return {"result": result}
+        except Exception as e:
+            logger.error(f"call_mcp_tool: Failed: {e}")
+            return {"error": str(e)}
+
     async def _handle_generate_handoff(
         self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
@@ -290,7 +643,8 @@ class ActionExecutor:
         }
 
         # 3. Render Prompt
-        prompt = context.template_engine.render(template, render_context)
+        # 3. Render Prompt (skipped, provider handles it)
+        # prompt = context.template_engine.render(template, render_context)
 
         # 4. Call LLM
         try:
@@ -400,6 +754,23 @@ class ActionExecutor:
 
         context.session_manager.update_status(session_id, status)
         return {"status_updated": True, "session_id": session_id, "status": status}
+
+    async def _handle_switch_mode(
+        self, context: ActionContext, mode: str, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Signal the agent to switch modes (e.g., PLAN, ACT).
+        """
+        # For now, we inject a strong system instruction
+        message = (
+            f"SYSTEM: SWITCH MODE TO {mode.upper()}\n"
+            f"You are now in {mode.upper()} mode. Adjust your behavior accordingly."
+        )
+
+        # If we had agent-specific adapters in the context, we could call them here.
+        # e.g. context.agent_adapter.set_mode(mode)
+
+        return {"inject_context": message, "mode_switch": mode}
 
     def _format_turns_for_llm(self, turns: list[dict]) -> str:
         """

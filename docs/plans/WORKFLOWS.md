@@ -992,25 +992,25 @@ Before building new workflow capabilities, extract the current session handoff b
 - [x] Integrate workflow evaluation into `on_tool_call` hook
 - [x] Integrate workflow evaluation into `on_tool_result` hook
 
-### Phase 4: Actions (Partial - Handoff Actions Done)
+### Phase 4: Actions (Workflow Actions Done)
 
 **Context & Messaging:**
 
 - [x] Implement `inject_context` action
 - [x] Implement `inject_message` action
-- [ ] Implement `switch_mode` action (for Claude Code plan mode)
+- [x] Implement `switch_mode` action (for Claude Code plan mode)
 
 **Artifacts:**
 
 - [x] Implement `capture_artifact` action
-- [ ] Implement `read_artifact` action (load file content into variable)
+- [x] Implement `read_artifact` action (load file content into variable)
 
 **State Management:**
 
-- [ ] Implement `load_workflow_state` action
-- [ ] Implement `save_workflow_state` action
-- [ ] Implement `set_variable` action
-- [ ] Implement `increment_variable` action
+- [x] Implement `load_workflow_state` action
+- [x] Implement `save_workflow_state` action
+- [x] Implement `set_variable` action
+- [x] Implement `increment_variable` action
 
 **Handoff:**
 
@@ -1019,26 +1019,26 @@ Before building new workflow capabilities, extract the current session handoff b
 - [x] Implement `find_parent_session` action
 - [x] Implement `mark_session_status` action
 - [x] Drop `workflow_handoffs` table after strangler fig validation (Migration 13)
-- [ ] Ensure `generate_handoff` includes `pending_task_ids` field (Decision 3)
+- [x] Ensure `generate_handoff` includes `pending_task_ids` field (Decision 3)
 
 **LLM Integration:**
 
-- [ ] Implement `call_llm` action (invoke LLM with prompt template)
-- [ ] Implement `generate_summary` action
-- [ ] Implement `synthesize_title` action
+- [x] Implement `call_llm` action (invoke LLM with prompt template)
+- [x] Implement `generate_summary` action
+- [x] Implement `synthesize_title` action
 
 **TodoWrite Integration:**
 
-- [ ] Implement `write_todos` action (populate TodoWrite from task list)
-- [ ] Implement `mark_todo_complete` action
+- [x] Implement `write_todos` action (populate TodoWrite from task list)
+- [x] Implement `mark_todo_complete` action
 
 **Task System Integration:**
 
-- [ ] Implement `persist_tasks` action (create tasks with dependencies, session linking)
+- [x] Implement `persist_tasks` action (create tasks with dependencies, session linking)
 
 **MCP Tool Invocation:**
 
-- [ ] Implement `call_mcp_tool` action (invoke any gobby MCP tool by name)
+- [x] Implement `call_mcp_tool` action (invoke any gobby MCP tool by name)
 
 ### Phase 5: Context Sources
 

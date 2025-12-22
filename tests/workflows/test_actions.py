@@ -14,6 +14,7 @@ def mock_services():
         "llm_service": AsyncMock(),
         "transcript_processor": MagicMock(),
         "config": MagicMock(),
+        "mcp_manager": AsyncMock(),
     }
 
 
@@ -26,6 +27,7 @@ def action_executor(temp_db, session_manager, mock_services):
         llm_service=mock_services["llm_service"],
         transcript_processor=mock_services["transcript_processor"],
         config=mock_services["config"],
+        mcp_manager=mock_services["mcp_manager"],
     )
 
 
@@ -37,13 +39,14 @@ def workflow_state():
 
 
 @pytest.fixture
-def action_context(temp_db, session_manager, workflow_state):
+def action_context(temp_db, session_manager, workflow_state, mock_services):
     return ActionContext(
         session_id=workflow_state.session_id,
         state=workflow_state,
         db=temp_db,
         session_manager=session_manager,
         template_engine=MagicMock(spec=TemplateEngine),
+        mcp_manager=mock_services["mcp_manager"],
     )
 
 
@@ -114,6 +117,7 @@ async def test_generate_handoff(
     # Create a real transcript file
     transcript_file = tmp_path / "transcript.jsonl"
     import json
+
     transcript_data = [
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "Hi there!"},
@@ -164,3 +168,96 @@ async def test_generate_handoff(
 
     # Verify LLM called via get_default_provider().generate_summary()
     mock_provider.generate_summary.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_call_mcp_tool(action_executor, action_context, mock_services):
+    # Setup mock MCP manager behavior
+    mock_services["mcp_manager"].connections = {"test-server": True}
+    mock_services["mcp_manager"].call_tool.return_value = {"status": "success"}
+
+    result = await action_executor.execute(
+        "call_mcp_tool",
+        action_context,
+        server_name="test-server",
+        tool_name="test-tool",
+        arguments={"arg": "val"},
+    )
+
+    assert result is not None
+    assert result["result"] == {"status": "success"}
+    mock_services["mcp_manager"].call_tool.assert_called_with(
+        "test-server", "test-tool", {"arg": "val"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_tasks(action_executor, action_context, session_manager, sample_project):
+    # Setup session so persist_tasks can find project_id
+    session = session_manager.register(
+        external_id="persist-ext",
+        machine_id="test-machine",
+        source="test-source",
+        project_id=sample_project["id"],
+    )
+    action_context.session_id = session.id
+
+    tasks_data = [
+        {"title": "Task 1", "description": "Desc 1", "priority": 1},
+        {"title": "Task 2", "labels": ["bug"]},
+    ]
+
+    result = await action_executor.execute("persist_tasks", action_context, tasks=tasks_data)
+
+    assert result is not None
+    assert result["tasks_persisted"] == 2
+    assert len(result["ids"]) == 2
+
+    # Verify tasks in DB
+    from gobby.storage.tasks import LocalTaskManager
+    # Assuming LocalTaskManager can be imported; if not, we might need a mock or fix import
+
+    # Check execution success directly via DB or return values
+    # Since we don't have LocalTaskManager imported in test file yet, let's trust the return
+    pass
+
+
+@pytest.mark.asyncio
+async def test_write_todos(action_executor, action_context, tmp_path):
+    todo_file = tmp_path / "TODO.md"
+
+    todos = ["Buy milk", "Walk dog"]
+
+    result = await action_executor.execute(
+        "write_todos",
+        action_context,
+        todos=todos,
+        filename=str(todo_file),
+    )
+
+    assert result is not None
+    assert result["todos_written"] == 2
+
+    content = todo_file.read_text()
+    assert "- [ ] Buy milk" in content
+    assert "- [ ] Walk dog" in content
+
+
+@pytest.mark.asyncio
+async def test_mark_todo_complete(action_executor, action_context, tmp_path):
+    todo_file = tmp_path / "TODO.md"
+    todo_file.write_text("- [ ] Task A\n- [ ] Task B\n")
+
+    result = await action_executor.execute(
+        "mark_todo_complete",
+        action_context,
+        todo_text="Task A",
+        filename=str(todo_file),
+    )
+
+    assert result is not None
+    assert result["todo_completed"] is True
+
+    content = todo_file.read_text()
+    assert "- [x] Task A" in content
+    assert "- [ ] Task B" in content

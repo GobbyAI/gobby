@@ -213,6 +213,7 @@ class HTTPServer:
                 "llm_service": self.llm_service,
                 "config": self.config,
                 "broadcaster": self.broadcaster,
+                "mcp_manager": self.mcp_manager,
             }
             if self.config:
                 # Pass full log file path from config
