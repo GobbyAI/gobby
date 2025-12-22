@@ -244,7 +244,7 @@ class ActionExecutor:
             return None
 
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 content = f.read()
 
             # Initialize variables dict if None
@@ -254,9 +254,6 @@ class ActionExecutor:
             context.state.variables[variable_name] = content
             return {"read_artifact": True, "variable": variable_name, "length": len(content)}
         except Exception as e:
-            logger.error(f"read_artifact: Failed to read {filepath}: {e}")
-            return None
-
             logger.error(f"read_artifact: Failed to read {filepath}: {e}")
             return None
 
@@ -317,9 +314,6 @@ class ActionExecutor:
             current = 0
 
         new_value = current + amount
-        context.state.variables[name] = new_value
-        return {"variable_incremented": name, "value": new_value}
-
         context.state.variables[name] = new_value
         return {"variable_incremented": name, "value": new_value}
 
@@ -424,9 +418,6 @@ class ActionExecutor:
             logger.error(f"synthesize_title: Failed: {e}")
             return {"error": str(e)}
 
-            logger.error(f"synthesize_title: Failed: {e}")
-            return {"error": str(e)}
-
     async def _handle_write_todos(
         self, context: ActionContext, todos: list[str], **kwargs
     ) -> dict[str, Any] | None:
@@ -468,7 +459,7 @@ class ActionExecutor:
             return {"error": "File not found"}
 
         try:
-            with open(filename, "r") as f:
+            with open(filename) as f:
                 lines = f.readlines()
 
             updated = False
@@ -622,7 +613,7 @@ class ActionExecutor:
             logger.error(f"Failed to process transcript: {e}")
             return {"error": str(e)}
 
-        # 2. Gather Context Variables for Template
+        # 2. Gather context variables for template
         # Extract last messages (last 2 user/assistant pairs)
         last_messages = context.transcript_processor.extract_last_messages(
             recent_turns, num_pairs=2
@@ -633,26 +624,16 @@ class ActionExecutor:
         git_status = self._get_git_status()
         file_changes = self._get_file_changes()
 
-        render_context = {
-            "transcript_summary": transcript_summary,
-            "session": current_session,
-            "state": context.state,
-            "last_messages": last_messages_str,
-            "git_status": git_status,
-            "file_changes": file_changes,
-        }
-
-        # 3. Render Prompt
-        # 3. Render Prompt (skipped, provider handles it)
-        # prompt = context.template_engine.render(template, render_context)
-
-        # 4. Call LLM
+        # 3. Call LLM
         try:
             # Get provider from LLM service and call generate_summary
             llm_context = {
                 "turns": recent_turns,
                 "transcript_summary": transcript_summary,
                 "session": current_session,
+                "last_messages": last_messages_str,
+                "git_status": git_status,
+                "file_changes": file_changes,
             }
             provider = context.llm_service.get_default_provider()
             summary_content = await provider.generate_summary(
@@ -705,7 +686,7 @@ class ActionExecutor:
                 "parent_session_id": parent.id,
             }
 
-        logger.warning(f"find_parent_session: No parent found with status=handoff_ready")
+        logger.warning("find_parent_session: No parent found with status=handoff_ready")
         return {"parent_session_found": False}
 
     async def _handle_restore_context(

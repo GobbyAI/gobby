@@ -7,11 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-from gobby.cli import (
+from gobby.cli import cli
+from gobby.cli.install import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
     _is_gemini_cli_installed,
-    cli,
+)
+from gobby.cli.utils import (
     format_uptime,
     is_port_available,
     wait_for_port_available,
@@ -313,9 +315,9 @@ class TestInstallCommand:
         """Create a CLI test runner."""
         return CliRunner()
 
-    @patch("gobby.cli._is_claude_code_installed")
-    @patch("gobby.cli._is_gemini_cli_installed")
-    @patch("gobby.cli._is_codex_cli_installed")
+    @patch("gobby.cli.install._is_claude_code_installed")
+    @patch("gobby.cli.install._is_gemini_cli_installed")
+    @patch("gobby.cli.install._is_codex_cli_installed")
     @patch("gobby.cli.load_config")
     def test_install_no_clis_detected(
         self,
