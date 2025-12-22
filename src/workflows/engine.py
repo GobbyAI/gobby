@@ -32,6 +32,13 @@ class WorkflowEngine:
         self.action_executor = action_executor
         self.evaluator = evaluator or ConditionEvaluator()
 
+    # Maps canonical trigger names to their legacy aliases for backward compatibility.
+    TRIGGER_ALIASES: dict[str, list[str]] = {
+        "on_before_agent": ["on_prompt_submit"],
+        "on_before_tool": ["on_tool_call"],
+        "on_after_tool": ["on_tool_result"],
+    }
+
     async def handle_event(self, event: HookEvent) -> HookResponse:
         """
         Main entry point for hook events.
@@ -202,14 +209,6 @@ class WorkflowEngine:
             if result and "inject_context" in result:
                 # Log context injection for now
                 logger.info(f"Context injected: {result['inject_context'][:50]}...")
-
-    # Trigger name aliases for backward compatibility with WORKFLOWS.md naming
-    # Maps alternative names to canonical event type names
-    TRIGGER_ALIASES: dict[str, list[str]] = {
-        "on_before_agent": ["on_prompt_submit"],
-        "on_before_tool": ["on_tool_call"],
-        "on_after_tool": ["on_tool_result"],
-    }
 
     # Maximum iterations to prevent infinite loops
     MAX_TRIGGER_ITERATIONS = 10
