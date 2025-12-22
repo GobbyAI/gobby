@@ -654,8 +654,8 @@ class HookManager:
 
             system_message = (
                 f"⏺ Context restored from previous session.\n"
-                f"  Session ID: {session_id[0:8]}...\n"
-                f"  Parent ID: {current_session.parent_session_id[0:8]}...\n"
+                f"  Session ID: {session_id}\n"
+                f"  Parent ID: {current_session.parent_session_id}\n"
                 f"  Project: {project_id}"
             )
         else:
