@@ -1,0 +1,166 @@
+name: test-phase-actions
+description: "Test workflow exercising all phase/general actions"
+type: phased
+version: "1.0"
+
+settings:
+  priority: 999
+  test_mode: true
+
+phases:
+  - name: init
+    description: "Initialize workflow state"
+
+    on_enter:
+      # 1. Switch mode
+      - action: switch_mode
+        mode: init
+
+      # 2. Inject message
+      - action: inject_message
+        content: |
+          TEST PHASE: init
+          Setting up workflow variables...
+
+      # 3. Set variables
+      - action: set_variable
+        name: counter
+        value: 0
+
+      - action: set_variable
+        name: test_list
+        value: []
+
+      - action: set_variable
+        name: plan_file
+        value: null
+
+    exit_conditions:
+      - type: auto
+        after_actions: true
+
+  - name: capture
+    description: "Test artifact capture and reading"
+
+    on_enter:
+      - action: switch_mode
+        mode: capture
+
+      - action: inject_message
+        content: "TEST PHASE: capture - Looking for plan files..."
+
+      # 4. Capture artifact
+      - action: capture_artifact
+        pattern: "**/*.plan.md"
+        as: plan_file
+
+      # 5. Read artifact (if captured)
+      - action: read_artifact
+        pattern: "{{ plan_file }}"
+        as: plan_content
+        when: "state.variables.get('plan_file')"
+
+      # 6. Increment counter
+      - action: increment_variable
+        name: counter
+        amount: 1
+
+    exit_conditions:
+      - type: auto
+        after_actions: true
+
+  - name: llm_test
+    description: "Test LLM and MCP actions"
+
+    on_enter:
+      - action: switch_mode
+        mode: llm_test
+
+      - action: inject_message
+        content: "TEST PHASE: llm_test - Calling LLM and MCP tools..."
+
+      # 7. Call LLM
+      - action: call_llm
+        prompt: |
+          You are a test. Respond with exactly: "LLM_TEST_OK"
+        output_as: llm_response
+
+      # 8. Call MCP tool (gobby-tasks internal tool)
+      - action: call_mcp_tool
+        server_name: gobby-tasks
+        tool_name: list_tasks
+        arguments:
+          status: pending
+        output_as: task_list
+
+      # 9. Increment counter again
+      - action: increment_variable
+        name: counter
+        amount: 1
+
+    exit_conditions:
+      - type: auto
+        after_actions: true
+
+  - name: tasks_test
+    description: "Test task and todo actions"
+
+    on_enter:
+      - action: switch_mode
+        mode: tasks_test
+
+      - action: inject_message
+        content: "TEST PHASE: tasks_test - Writing todos and persisting tasks..."
+
+      # 10. Write todos to file
+      - action: write_todos
+        todos:
+          - "Test todo item 1"
+          - "Test todo item 2"
+          - "Test todo item 3"
+        filename: "TEST_TODO.md"
+
+      # 11. Mark todo complete
+      - action: mark_todo_complete
+        todo_text: "Test todo item 1"
+        filename: "TEST_TODO.md"
+
+      # 12. Persist tasks (from a variable)
+      - action: set_variable
+        name: test_tasks
+        value:
+          - title: "Test Task A"
+            description: "First test task"
+            status: pending
+          - title: "Test Task B"
+            description: "Second test task"
+            status: pending
+
+      - action: persist_tasks
+        source: test_tasks
+
+      # Final increment
+      - action: increment_variable
+        name: counter
+        amount: 1
+
+    on_exit:
+      - action: inject_message
+        content: |
+          TEST COMPLETE
+          Counter value: {{ state.variables.counter }}
+          All phase actions tested successfully.
+
+    exit_conditions:
+      - type: user_approval
+        prompt: "Phase action tests complete. Finish?"
+
+triggers:
+  on_session_start:
+    - action: load_workflow_state
+    - action: enter_phase
+      phase: init
+      when: "not workflow_state.phase"
+
+  on_session_end:
+    - action: save_workflow_state

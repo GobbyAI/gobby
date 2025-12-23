@@ -884,6 +884,37 @@ Expose workflow controls as MCP tools so the LLM can interact with workflows:
 
 ```python
 @mcp.tool()
+async def list_workflows() -> dict:
+    """List available workflow definitions (from project and global dirs)."""
+
+@mcp.tool()
+async def activate_workflow(name: str, initial_phase: str | None = None) -> dict:
+    """
+    Activate a phase-based workflow for the current session.
+
+    Args:
+        name: Workflow name (e.g., "plan-act-reflect", "tdd")
+        initial_phase: Optional starting phase (defaults to first phase)
+
+    Returns:
+        Success status, workflow info, and current phase.
+
+    Errors if:
+        - Another phase-based workflow is currently active (must complete or end it first)
+        - Workflow not found
+        - Workflow is lifecycle type (those auto-run, not manually activated)
+    """
+
+@mcp.tool()
+async def end_workflow(reason: str | None = None) -> dict:
+    """
+    End the currently active phase-based workflow.
+
+    Allows starting a different workflow afterward.
+    Does not affect lifecycle workflows (they continue running).
+    """
+
+@mcp.tool()
 async def get_workflow_status() -> dict:
     """Get current workflow phase and state."""
 
@@ -1080,6 +1111,9 @@ Before building new workflow capabilities, extract the current session handoff b
 
 ### Phase 8: MCP Tools
 
+- [ ] Add `list_workflows` MCP tool (discover available workflows)
+- [ ] Add `activate_workflow` MCP tool (start a phase-based workflow)
+- [ ] Add `end_workflow` MCP tool (complete/terminate active workflow)
 - [ ] Add `get_workflow_status` MCP tool
 - [ ] Add `request_phase_transition` MCP tool
 - [ ] Add `create_handoff` MCP tool
@@ -1123,11 +1157,11 @@ Before building new workflow capabilities, extract the current session handoff b
 | # | Question | Decision | Rationale |
 |---|----------|----------|-----------|
 | 1 | **Workflow inheritance** | Yes - support `extends:` with property overrides | Standard pattern in YAML systems (Docker Compose, GitHub Actions). Reduces duplication. |
-| 2 | **Multi-workflow support** | One phase-based workflow per session, unlimited lifecycle workflows | Already designed this way. Phase-based workflows enforce tool restrictions; lifecycle workflows are event-driven observers. |
+| 2 | **Multi-workflow support** | One phase-based workflow *active at a time*, unlimited lifecycle workflows | Phase-based workflows enforce tool restrictions; lifecycle workflows are event-driven observers. A phase workflow can complete (terminal phase or explicit end), allowing another to be activated via MCP tool or CLI. |
 | 3 | **Cross-session state** | Workflow state is session-local; persistence via task system | Ephemeral workflow state in SQLite for current session. Durable work tracked in tasks table for cross-session continuity. |
 | 4 | **Approval UX** | Inject question via context, block tool until approval | Reuse existing patterns (similar to AskUserQuestion). No new UX paradigm needed. |
 | 5 | **Escape hatches** | ✅ Resolved - `--force`, `reset`, `disable` CLI commands | See CLI Commands section. |
-| 6 | **Workflow versioning** | Stop → Edit → Restart pattern | Mid-session changes ignored (workflow locked at start). To apply changes: stop workflow, edit YAML, restart from initial phase. |
+| 6 | **Workflow versioning** | Stop → Edit → Restart pattern | Mid-workflow changes ignored (YAML locked when activated). To apply changes: end workflow, edit YAML, activate again. |
 | 7 | **Codex hook blocking** | N/A - only notify hook exists | Codex uses notify script only. Full hook control would require app-server session spawning. YAGNI for MVP. |
 | 8 | **generate_handoff storage** | Write to `sessions.summary_markdown`, not `workflow_handoffs` | `workflow_handoffs` is temporary strangler fig scaffolding. The existing `sessions` table already has summary storage. File backups (`~/.gobby/session_summaries/`) are a separate system. |
 
