@@ -108,7 +108,7 @@ class ActionExecutor:
         """
         content = ""
 
-        if source == "previous_session_summary":
+        if source in ["previous_session_summary", "handoff"]:
             # 1. Find current session to get external/machine/project info to find parent
             current_session = context.session_manager.get(context.session_id)
             if not current_session:
@@ -116,36 +116,61 @@ class ActionExecutor:
                 return None
 
             # Find parent manually if not linked
-            # For now, just check if parent_session_id is set
             if current_session.parent_session_id:
                 parent = context.session_manager.get(current_session.parent_session_id)
                 if parent and parent.summary_markdown:
                     content = parent.summary_markdown
-            else:
-                # Try to find recent session? Move usage of find_parent to "find_parent_session" action?
-                # WORKFLOWS.md says: source="previous_session_summary"
-                pass
+
+        elif source == "artifacts":
+            # List captured artifacts
+            if context.state.artifacts:
+                lines = ["## Captured Artifacts"]
+                for name, path in context.state.artifacts.items():
+                    lines.append(f"- {name}: {path}")
+                content = "\n".join(lines)
+
+        elif source == "observations":
+            # Format observations
+            if context.state.observations:
+                import json
+
+                content = "## Observations\n" + json.dumps(context.state.observations, indent=2)
+
+        elif source == "workflow_state":
+            # Format workflow state
+            # Try model_dump (v2) or dict (v1)
+            try:
+                state_dict = context.state.model_dump(exclude={"observations", "artifacts"})
+            except AttributeError:
+                state_dict = context.state.dict(exclude={"observations", "artifacts"})
+
+            import json
+
+            content = "## Workflow State\n" + json.dumps(state_dict, indent=2, default=str)
 
         if content:
-            # Render content if template is used (in future).
-            # Current logic just sets it.
-            # But wait, inject_context usually pulls FROM a source.
-            # If 'template' arg is provided, we might wrap the content in it?
-            # WORKFLOWS.md says: source="previous_session_summary", template="..."
+            # Render content if template is used
             template = kwargs.get("template")
             if template:
-                # We need to construct a context for the template
-                # that contains the 'source' data.
-                # e.g. source="handoff" -> context={"handoff": ...}
                 render_context = {
                     "session": context.session_manager.get(context.session_id),
                     "state": context.state,
                     "artifacts": context.state.artifacts,
+                    "observations": context.state.observations,
                 }
 
                 # Add source data to context
-                if source == "previous_session_summary":
+                if source in ["previous_session_summary", "handoff"]:
                     render_context["summary"] = content
+                    # Handoff implies structured access, but we only have text summary for now.
+                    # We can shim it.
+                    render_context["handoff"] = {"notes": content}
+                elif source == "artifacts":
+                    render_context["artifacts_list"] = content
+                elif source == "observations":
+                    render_context["observations_text"] = content
+                elif source == "workflow_state":
+                    render_context["workflow_state_text"] = content
 
                 # Render
                 content = context.template_engine.render(template, render_context)

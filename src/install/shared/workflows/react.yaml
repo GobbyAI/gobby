@@ -1,0 +1,33 @@
+name: react
+description: "Reason-Act loop: Continuous reasoning and action"
+version: "1.0"
+
+phases:
+  - name: loop
+    description: "Reason -> Act -> Observe loop"
+    
+    on_enter:
+      - action: inject_message
+        content: |
+          You are in ReAct mode (Reason -> Act -> Observe).
+          
+          For each step:
+          1. REASON: Think about what to do next.
+          2. ACT: Call a tool.
+          3. OBSERVE: Analyze the tool output.
+          
+    allowed_tools: all
+    
+    # Simple rule: if tool error, suggest checking observation
+    transitions:
+      - to: loop
+        when: "tool_result.is_error"
+        on_transition:
+          - action: inject_message
+            content: "Tool error occurred. Review the error message and reason about the next step."
+
+triggers:
+  on_session_start:
+    - action: enter_phase
+      phase: loop
+      when: "not workflow_state.phase"
