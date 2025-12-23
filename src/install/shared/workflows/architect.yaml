@@ -1,0 +1,166 @@
+name: architect
+description: "BMAD-inspired development: requirements -> design -> implement -> review"
+type: phased
+version: "1.0"
+
+phases:
+  - name: requirements
+    description: "Gather and clarify requirements"
+
+    on_enter:
+      - action: switch_mode
+        mode: plan
+      - action: inject_message
+        content: |
+          REQUIREMENTS PHASE
+
+          Gather and clarify requirements before designing a solution.
+          - Ask clarifying questions
+          - Identify constraints and edge cases
+          - Document acceptance criteria
+
+          No implementation yet. Say "ready to design" when requirements are clear.
+
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - WebSearch
+      - WebFetch
+      - AskUserQuestion
+      - TodoWrite
+
+    blocked_tools:
+      - Edit
+      - Write
+      - Bash
+      - NotebookEdit
+
+    transitions:
+      - to: design
+        when: "user_says('design') or user_says('ready to design')"
+
+  - name: design
+    description: "Design the solution architecture"
+
+    on_enter:
+      - action: inject_message
+        content: |
+          DESIGN PHASE
+
+          Design the solution based on gathered requirements.
+          - Identify components and their responsibilities
+          - Define interfaces and data flow
+          - Consider error handling and edge cases
+          - Document the approach
+
+          Create a design document or plan file. Say "ready to implement" when done.
+
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - Write
+      - TodoWrite
+      - AskUserQuestion
+
+    blocked_tools:
+      - Bash
+      - NotebookEdit
+
+    exit_conditions:
+      - type: artifact_exists
+        pattern: "**/*.plan.md"
+
+    transitions:
+      - to: implement
+        when: "user_says('implement') or user_says('ready to implement')"
+
+    on_exit:
+      - action: capture_artifact
+        pattern: "**/*.plan.md"
+        as: design_doc
+
+  - name: implement
+    description: "Implement the design"
+
+    on_enter:
+      - action: switch_mode
+        mode: act
+      - action: inject_context
+        source: artifacts
+      - action: inject_message
+        content: |
+          IMPLEMENTATION PHASE
+
+          Implement the design. Follow the plan.
+          - Write code incrementally
+          - Add tests as you go
+          - Keep changes focused
+
+          Say "ready for review" when implementation is complete.
+
+    allowed_tools: all
+
+    transitions:
+      - to: review
+        when: "user_says('review') or user_says('ready for review')"
+
+  - name: review
+    description: "Review implementation against requirements"
+
+    on_enter:
+      - action: switch_mode
+        mode: reflect
+      - action: inject_message
+        content: |
+          REVIEW PHASE
+
+          Review the implementation against requirements.
+          - Run tests
+          - Check edge cases
+          - Verify acceptance criteria
+
+          Options:
+          - "approved" - Complete the workflow
+          - "revise" - Go back to implement
+          - "redesign" - Go back to design
+
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - Bash
+      - TodoWrite
+
+    blocked_tools:
+      - Edit
+      - Write
+
+    transitions:
+      - to: complete
+        when: "user_says('approved') or user_says('done') or user_says('complete')"
+      - to: implement
+        when: "user_says('revise') or user_says('fix')"
+      - to: design
+        when: "user_says('redesign')"
+
+  - name: complete
+    description: "Workflow complete"
+
+    on_enter:
+      - action: inject_message
+        content: |
+          WORKFLOW COMPLETE
+
+          Requirements gathered, design created, implementation reviewed.
+
+triggers:
+  on_session_start:
+    - action: load_workflow_state
+    - action: enter_phase
+      phase: requirements
+      when: "not workflow_state.phase"
+
+  on_session_end:
+    - action: save_workflow_state

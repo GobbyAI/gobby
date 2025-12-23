@@ -1,0 +1,143 @@
+name: plan-to-tasks
+description: "Decompose a plan into atomic tasks and execute sequentially"
+type: phased
+version: "1.0"
+
+variables:
+  plan_pattern: "**/*.plan.md"
+  max_tasks: 20
+  require_task_approval: false
+
+phases:
+  - name: decompose
+    description: "Break plan into atomic tasks"
+
+    on_enter:
+      - action: inject_message
+        content: |
+          DECOMPOSITION PHASE
+
+          Looking for a plan file matching: {{ plan_pattern }}
+          Will break it into atomic, sequential tasks.
+
+      - action: read_artifact
+        pattern: "{{ plan_pattern }}"
+        as: current_plan
+
+      - action: call_llm
+        prompt: |
+          Break this plan into atomic, sequential tasks.
+          Each task should be:
+          - Single responsibility (one file, one function, one test)
+          - Independently verifiable
+          - Ordered by dependency
+
+          Plan:
+          {{ current_plan }}
+
+          Output as JSON: {"tasks": [{"id": 1, "description": "...", "verification": "..."}]}
+        output_as: task_list
+
+      - action: persist_tasks
+        source: task_list.tasks
+
+      - action: write_todos
+        source: task_list.tasks
+
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - TodoWrite
+
+    blocked_tools:
+      - Edit
+      - Write
+      - Bash
+
+    exit_conditions:
+      - type: variable_set
+        variable: task_list
+      - type: user_approval
+        prompt: "Proceed with these tasks?"
+
+  - name: execute
+    description: "Work through tasks sequentially"
+
+    on_enter:
+      - action: set_variable
+        name: current_task_index
+        value: 0
+
+      - action: inject_message
+        content: |
+          EXECUTION PHASE
+
+          Working on task {{ current_task_index + 1 }}.
+          Focus on one task at a time. Say "done" or "next" when ready to verify.
+
+    allowed_tools: all
+
+    transitions:
+      - to: verify
+        when: "user_says('done') or user_says('next') or user_says('verify')"
+
+  - name: verify
+    description: "Verify current task completion"
+
+    on_enter:
+      - action: inject_message
+        content: |
+          VERIFICATION PHASE
+
+          Verify the current task is complete.
+          Run tests or checks, then confirm with "pass" or "fail".
+
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - Bash
+      - TodoWrite
+
+    blocked_tools:
+      - Edit
+      - Write
+
+    transitions:
+      - to: execute
+        when: "user_says('pass') or user_says('verified')"
+        on_transition:
+          - action: mark_todo_complete
+            index: "{{ current_task_index }}"
+          - action: increment_variable
+            name: current_task_index
+
+      - to: complete
+        when: "user_says('complete') or user_says('all done')"
+
+      - to: execute
+        when: "user_says('fail') or user_says('fix')"
+        on_transition:
+          - action: inject_message
+            content: "Returning to execute phase to fix issues."
+
+  - name: complete
+    description: "All tasks complete"
+
+    on_enter:
+      - action: inject_message
+        content: |
+          ALL TASKS COMPLETE
+
+          Great work! All planned tasks have been verified.
+
+triggers:
+  on_session_start:
+    - action: load_workflow_state
+    - action: enter_phase
+      phase: decompose
+      when: "not workflow_state.phase"
+
+  on_session_end:
+    - action: save_workflow_state
