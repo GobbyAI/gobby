@@ -67,9 +67,12 @@ class SummaryFileGenerator:
         if llm_service:
             try:
                 self.llm_provider = llm_service.get_default_provider()
-                self.logger.debug(
-                    f"Using '{self.llm_provider.provider_name}' provider for SummaryFileGenerator"
+                provider_name = (
+                    getattr(self.llm_provider, "provider_name", "unknown")
+                    if self.llm_provider
+                    else "unknown"
                 )
+                self.logger.debug(f"Using '{provider_name}' provider for SummaryFileGenerator")
             except ValueError as e:
                 self.logger.warning(f"LLMService has no providers: {e}")
 
@@ -98,13 +101,14 @@ class SummaryFileGenerator:
             Tuple of (provider, prompt) where prompt is from feature config.
             Returns (None, None) if feature is disabled.
         """
-        if not self._config:
+        config = self._config
+        if not config:
             return self.llm_provider, None
 
         # Try to get feature-specific config
         try:
             if feature_name == "session_summary":
-                feature_config = self._config.session_summary
+                feature_config = getattr(config, "session_summary", None)
             else:
                 return self.llm_provider, None
 
@@ -120,9 +124,10 @@ class SummaryFileGenerator:
             provider_name = getattr(feature_config, "provider", None)
             prompt = getattr(feature_config, "prompt", None)
 
-            if self._llm_service and provider_name:
+            llm_service = self._llm_service
+            if llm_service and provider_name:
                 try:
-                    provider = self._llm_service.get_provider(provider_name)
+                    provider = llm_service.get_provider(provider_name)
                     self.logger.debug(f"Using provider '{provider_name}' for {feature_name}")
                     return provider, prompt
                 except ValueError as e:
@@ -152,12 +157,15 @@ class SummaryFileGenerator:
         external_id = None
         try:
             # Check if feature is enabled via config
-            if self._config and self._config.session_summary:
-                if not self._config.session_summary.enabled:
+            config = self._config
+            if config and hasattr(config, "session_summary") and config.session_summary:
+                if not getattr(config.session_summary, "enabled", True):
                     self.logger.info("Session summary file generation disabled in config")
                     return {"status": "disabled"}
                 # Update path from config if available
-                self._summary_file_path = self._config.session_summary.summary_file_path
+                new_path = getattr(config.session_summary, "summary_file_path", None)
+                if new_path:
+                    self._summary_file_path = new_path
 
             # Extract external_id from input_data
             external_id = input_data.get("session_id")
@@ -310,10 +318,16 @@ class SummaryFileGenerator:
         try:
 
             async def _run_gen() -> str:
+                # Ensure provider is narrowed for the closure
+                active_provider = provider
+                if not active_provider:
+                    return ""
                 if prompt:
-                    result: str = await provider.generate_summary(context, prompt_template=prompt)
+                    result: str = await active_provider.generate_summary(
+                        context, prompt_template=prompt
+                    )
                     return result
-                result = await provider.generate_summary(context)
+                result = await active_provider.generate_summary(context)
                 return result
 
             llm_summary: str = anyio.run(_run_gen)
@@ -387,7 +401,7 @@ class SummaryFileGenerator:
         Returns:
             Formatted string with turn summaries
         """
-        formatted = []
+        formatted: list[str] = []
         for i, turn in enumerate(turns):
             message = turn.get("message", {})
             role = message.get("role", "unknown")
@@ -395,11 +409,11 @@ class SummaryFileGenerator:
 
             # Assistant messages have content as array of blocks
             if isinstance(content, list):
-                text_parts = []
+                text_parts: list[str] = []
                 for block in content:
                     if isinstance(block, dict):
                         if block.get("type") == "text":
-                            text_parts.append(block.get("text", ""))
+                            text_parts.append(str(block.get("text", "")))
                         elif block.get("type") == "thinking":
                             text_parts.append(f"[Thinking: {block.get('thinking', '')}]")
                         elif block.get("type") == "tool_use":
@@ -436,7 +450,7 @@ class SummaryFileGenerator:
                                 return None
 
                             # Format as markdown checklist
-                            lines = []
+                            lines: list[str] = []
                             for todo in todos:
                                 content_text = todo.get("content", "")
                                 status = todo.get("status", "pending")

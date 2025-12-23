@@ -134,6 +134,7 @@ class LocalTaskManager:
 
         # Serialize labels
         labels_json = json.dumps(labels) if labels else None
+        task_id = ""
 
         for attempt in range(max_retries + 1):
             try:

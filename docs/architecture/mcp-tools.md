@@ -54,11 +54,11 @@ Execute a tool on a connected MCP server or internal registry.
 
 **Parameters:**
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `server_name` | string | Yes | Server name (e.g., "context7", "gobby-tasks") |
-| `tool_name` | string | Yes | Name of the tool to execute |
-| `arguments` | object | No | Tool-specific arguments |
+| Name            | Type   | Required | Description                                   |
+|-----------------|--------|----------|-----------------------------------------------|
+| `server_name`   | string | Yes      | Server name (e.g., "context7", "gobby-tasks") |
+| `tool_name`     | string | Yes      | Name of the tool to execute                   |
+| `arguments`     | object | No       | Tool-specific arguments                       |
 
 **Routing:**
 
@@ -81,9 +81,9 @@ List tools with lightweight metadata for progressive disclosure.
 
 **Parameters:**
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `server` | string | No | Server name. If omitted, returns all servers. |
+| Name     | Type   | Required | Description                                   |
+|----------|--------|----------|-----------------------------------------------|
+| `server` | string | No       | Server name. If omitted, returns all servers. |
 
 **Returns:**
 
@@ -104,10 +104,10 @@ Get full inputSchema for a specific tool.
 
 **Parameters:**
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `server_name` | string | Yes | Server name |
-| `tool_name` | string | Yes | Tool name |
+| Name          | Type   | Required | Description |
+|---------------|--------|----------|-------------|
+| `server_name` | string | Yes      | Server name |
+| `tool_name`   | string | Yes      | Tool name   |
 
 **Returns:**
 
@@ -149,16 +149,16 @@ Add a new MCP server to the current project.
 
 **Parameters:**
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `name` | string | Yes | Unique server name |
-| `transport` | string | Yes | "http", "stdio", or "websocket" |
-| `url` | string | For http/ws | Server URL |
-| `headers` | object | No | Custom HTTP headers |
-| `command` | string | For stdio | Command to run |
-| `args` | array | No | Command arguments |
-| `env` | object | No | Environment variables |
-| `enabled` | boolean | No | Whether enabled (default: true) |
+| Name        | Type    | Required    | Description                     |
+|-------------|---------|-------------|---------------------------------|
+| `name`      | string  | Yes         | Unique server name              |
+| `transport` | string  | Yes         | "http", "stdio", or "websocket" |
+| `url`       | string  | For http/ws | Server URL                      |
+| `headers`   | object  | No          | Custom HTTP headers             |
+| `command`   | string  | For stdio   | Command to run                  |
+| `args`      | array   | No          | Command arguments               |
+| `env`       | object  | No          | Environment variables           |
+| `enabled`   | boolean | No          | Whether enabled (default: true) |
 
 **Example (HTTP):**
 
@@ -243,12 +243,12 @@ Process large datasets for token optimization.
 
 **Parameters:**
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `data` | array/object | Yes | Dataset to process |
-| `operation` | string | Yes | Natural language operation description |
-| `parameters` | object | No | Parameters for the operation |
-| `timeout` | integer | No | Max execution time in seconds |
+| Name         | Type         | Required | Description                              |
+|--------------|--------------|----------|------------------------------------------|
+| `data`       | array/object | Yes      | Dataset to process                       |
+| `operation`  | string       | Yes      | Natural language operation description   |
+| `parameters` | object       | No       | Parameters for the operation             |
+| `timeout`    | integer      | No       | Max execution time in seconds            |
 
 **Returns:**
 
@@ -271,10 +271,10 @@ Get intelligent tool recommendations for a task.
 
 **Parameters:**
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `task_description` | string | Yes | What you're trying to accomplish |
-| `agent_id` | string | No | Agent profile ID for filtering |
+| Name               | Type   | Required | Description                      |
+|--------------------|--------|----------|----------------------------------|
+| `task_description` | string | Yes      | What you're trying to accomplish |
+| `agent_id`         | string | No       | Agent profile ID for filtering   |
 
 **Returns:**
 

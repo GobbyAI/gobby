@@ -2,11 +2,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..storage.database import LocalDatabase
-from ..storage.sessions import LocalSessionManager
-from ..storage.tasks import LocalTaskManager  # noqa: F401
-from .definitions import WorkflowState
-from .templates import TemplateEngine
+from gobby.storage.database import LocalDatabase
+from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.tasks import LocalTaskManager  # noqa: F401
+from gobby.workflows.definitions import WorkflowState
+from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +100,16 @@ class ActionExecutor:
     # --- Action Implementations ---
 
     async def _handle_inject_context(
-        self, context: ActionContext, source: str, **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """
         Inject context from a source.
         Returns: {"inject_context": "content..."}
         """
+        source = kwargs.get("source")
+        if not source:
+            return None
+
         content = ""
 
         if source in ["previous_session_summary", "handoff"]:
@@ -181,12 +185,16 @@ class ActionExecutor:
         return None
 
     async def _handle_inject_message(
-        self, context: ActionContext, content: str, **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """
         Inject a message to the user/assistant, rendering it as a template.
         """
-        render_context = {
+        content = kwargs.get("content")
+        if not content:
+            return None
+
+        render_context: dict[str, Any] = {
             "session": context.session_manager.get(context.session_id),
             "state": context.state,
             "artifacts": context.state.artifacts,
@@ -208,11 +216,15 @@ class ActionExecutor:
         return {"inject_message": rendered_content}
 
     async def _handle_capture_artifact(
-        self, context: ActionContext, pattern: str, **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """
         Capture an artifact (file) and store its path/content in state.
         """
+        pattern = kwargs.get("pattern")
+        if not pattern:
+            return None
+
         import glob
         import os
 
@@ -243,11 +255,15 @@ class ActionExecutor:
         return {"captured": filepath}
 
     async def _handle_read_artifact(
-        self, context: ActionContext, pattern: str, **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """
         Read an artifact's content into a workflow variable.
         """
+        pattern = kwargs.get("pattern")
+        if not pattern:
+            return None
+
         import glob
         import os
 
@@ -274,7 +290,7 @@ class ActionExecutor:
                 content = f.read()
 
             # Initialize variables dict if None
-            if context.state.variables is None:
+            if not context.state.variables:
                 context.state.variables = {}
 
             context.state.variables[variable_name] = content
@@ -317,21 +333,29 @@ class ActionExecutor:
         state_manager.save_state(context.state)
         return {"state_saved": True}
 
-    async def _handle_set_variable(
-        self, context: ActionContext, name: str, value: Any, **kwargs
-    ) -> dict[str, Any] | None:
+    async def _handle_set_variable(self, context: ActionContext, **kwargs) -> dict[str, Any] | None:
         """Set a workflow variable."""
-        if context.state.variables is None:
+        name = kwargs.get("name")
+        value = kwargs.get("value")
+        if not name:
+            return None
+
+        if not context.state.variables:
             context.state.variables = {}
 
         context.state.variables[name] = value
         return {"variable_set": name, "value": value}
 
     async def _handle_increment_variable(
-        self, context: ActionContext, name: str, amount: int = 1, **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """Increment a numeric workflow variable."""
-        if context.state.variables is None:
+        name = kwargs.get("name")
+        amount = kwargs.get("amount", 1)
+        if not name:
+            return None
+
+        if not context.state.variables:
             context.state.variables = {}
 
         current = context.state.variables.get(name, 0)
@@ -343,10 +367,12 @@ class ActionExecutor:
         context.state.variables[name] = new_value
         return {"variable_incremented": name, "value": new_value}
 
-    async def _handle_call_llm(
-        self, context: ActionContext, prompt: str, output_as: str, **kwargs
-    ) -> dict[str, Any] | None:
+    async def _handle_call_llm(self, context: ActionContext, **kwargs) -> dict[str, Any] | None:
         """Call LLM with a prompt template and store result in variable."""
+        prompt = kwargs.get("prompt")
+        output_as = kwargs.get("output_as")
+        if not prompt or not output_as:
+            return {"error": "Missing prompt or output_as"}
         if not context.llm_service:
             logger.warning("call_llm: Missing LLM service")
             return {"error": "Missing LLM service"}
@@ -379,7 +405,7 @@ class ActionExecutor:
             response = await provider.generate_text(rendered_prompt)
 
             # Store result
-            if context.state.variables is None:
+            if not context.state.variables:
                 context.state.variables = {}
             context.state.variables[output_as] = response
 
@@ -444,10 +470,9 @@ class ActionExecutor:
             logger.error(f"synthesize_title: Failed: {e}")
             return {"error": str(e)}
 
-    async def _handle_write_todos(
-        self, context: ActionContext, todos: list[str], **kwargs
-    ) -> dict[str, Any] | None:
+    async def _handle_write_todos(self, context: ActionContext, **kwargs) -> dict[str, Any] | None:
         """Write todos to a file (default TODO.md)."""
+        todos = kwargs.get("todos", [])
         import os
 
         filename = kwargs.get("filename", "TODO.md")
@@ -474,9 +499,12 @@ class ActionExecutor:
             return {"error": str(e)}
 
     async def _handle_mark_todo_complete(
-        self, context: ActionContext, todo_text: str, **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """Mark a todo as complete in TODO.md."""
+        todo_text = kwargs.get("todo_text")
+        if not todo_text:
+            return {"error": "Missing todo_text"}
         import os
 
         filename = kwargs.get("filename", "TODO.md")
@@ -507,11 +535,12 @@ class ActionExecutor:
             return {"error": str(e)}
 
     async def _handle_persist_tasks(
-        self, context: ActionContext, tasks: list[dict[str, Any]], **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """Persist a list of task dicts to Gobby task system."""
+        tasks = kwargs.get("tasks", [])
         try:
-            from ..storage.tasks import LocalTaskManager
+            from gobby.storage.tasks import LocalTaskManager
 
             task_manager = LocalTaskManager(context.db)
 
@@ -548,12 +577,14 @@ class ActionExecutor:
     async def _handle_call_mcp_tool(
         self,
         context: ActionContext,
-        server_name: str,
-        tool_name: str,
-        arguments: dict[str, Any],
         **kwargs,
     ) -> dict[str, Any] | None:
         """Call an MCP tool on a connected server."""
+        server_name = kwargs.get("server_name")
+        tool_name = kwargs.get("tool_name")
+        arguments = kwargs.get("arguments", {})
+        if not server_name or not tool_name:
+            return {"error": "Missing server_name or tool_name"}
         if not context.mcp_manager:
             logger.warning("call_mcp_tool: MCP manager not available")
             return {"error": "MCP manager not available"}
@@ -584,6 +615,9 @@ class ActionExecutor:
 
         # Mark Session Status
         context.session_manager.update_status(context.session_id, "handoff_ready")
+
+        if not summary_result:
+            return {"error": "Failed to generate summary"}
 
         return {"handoff_created": True, "summary_length": summary_result.get("summary_length", 0)}
 
@@ -746,11 +780,14 @@ class ActionExecutor:
         return {"inject_context": content}
 
     async def _handle_mark_session_status(
-        self, context: ActionContext, status: str, **kwargs
+        self, context: ActionContext, **kwargs
     ) -> dict[str, Any] | None:
         """
         Mark a session status (current or parent).
         """
+        status = kwargs.get("status")
+        if not status:
+            return {"error": "Missing status"}
         target = kwargs.get("target", "current_session")
 
         session_id = context.session_id
@@ -764,12 +801,13 @@ class ActionExecutor:
         context.session_manager.update_status(session_id, status)
         return {"status_updated": True, "session_id": session_id, "status": status}
 
-    async def _handle_switch_mode(
-        self, context: ActionContext, mode: str, **kwargs
-    ) -> dict[str, Any] | None:
+    async def _handle_switch_mode(self, context: ActionContext, **kwargs) -> dict[str, Any] | None:
         """
         Signal the agent to switch modes (e.g., PLAN, ACT).
         """
+        mode = kwargs.get("mode")
+        if not mode:
+            return {"error": "Missing mode"}
         # For now, we inject a strong system instruction
         message = (
             f"SYSTEM: SWITCH MODE TO {mode.upper()}\n"
@@ -791,7 +829,7 @@ class ActionExecutor:
         Returns:
             Formatted string with turn summaries
         """
-        formatted = []
+        formatted: list[str] = []
         for i, turn in enumerate(turns):
             message = turn.get("message", {})
             role = message.get("role", "unknown")
@@ -799,7 +837,7 @@ class ActionExecutor:
 
             # Assistant messages have content as array of blocks
             if isinstance(content, list):
-                text_parts = []
+                text_parts: list[str] = []
                 for block in content:
                     if isinstance(block, dict):
                         if block.get("type") == "text":

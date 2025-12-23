@@ -3,7 +3,7 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.database import LocalDatabase
@@ -107,7 +107,7 @@ class LocalSessionManager:
             Session instance
         """
         session_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Try insert, update on conflict
         self.db.execute(
@@ -198,7 +198,7 @@ class LocalSessionManager:
 
     def update_status(self, session_id: str, status: str) -> Session | None:
         """Update session status."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
             (status, now, session_id),
@@ -207,7 +207,7 @@ class LocalSessionManager:
 
     def update_title(self, session_id: str, title: str) -> Session | None:
         """Update session title."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             (title, now, session_id),
@@ -221,7 +221,7 @@ class LocalSessionManager:
         summary_markdown: str | None = None,
     ) -> Session | None:
         """Update session summary."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self.db.execute(
             """
             UPDATE sessions
@@ -236,7 +236,7 @@ class LocalSessionManager:
 
     def update_parent_session_id(self, session_id: str, parent_session_id: str) -> Session | None:
         """Update parent session ID."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET parent_session_id = ?, updated_at = ? WHERE id = ?",
             (parent_session_id, now, session_id),
