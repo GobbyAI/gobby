@@ -4,7 +4,7 @@ This document lists all HTTP endpoints exposed by the Gobby daemon's HTTP server
 
 ## Base URL
 
-```
+```text
 http://localhost:8765
 ```
 
@@ -19,6 +19,7 @@ The port is configurable via `~/.gobby/config.yaml` (default: 8765).
 Comprehensive status check endpoint.
 
 **Response:**
+
 ```json
 {
   "status": "healthy",
@@ -64,6 +65,7 @@ Prometheus-compatible metrics endpoint.
 **Response:** `text/plain; version=0.0.4`
 
 Returns metrics in Prometheus text exposition format including:
+
 - HTTP request counts and durations
 - Background task metrics
 - Daemon health metrics
@@ -76,6 +78,7 @@ Returns metrics in Prometheus text exposition format including:
 Get daemon configuration and version information.
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -107,6 +110,7 @@ Get daemon configuration and version information.
 Graceful daemon shutdown endpoint.
 
 **Response:**
+
 ```json
 {
   "status": "shutting_down",
@@ -116,6 +120,7 @@ Graceful daemon shutdown endpoint.
 ```
 
 **Behavior:**
+
 - Waits for pending background tasks to complete (up to 30s)
 - Disconnects all MCP servers
 - Shuts down gracefully
@@ -129,6 +134,7 @@ Graceful daemon shutdown endpoint.
 Register session metadata in local storage.
 
 **Request Body:**
+
 ```json
 {
   "cli_key": "session-abc123",
@@ -148,6 +154,7 @@ Register session metadata in local storage.
 **Required Fields:** `cli_key`
 
 **Response:**
+
 ```json
 {
   "status": "registered",
@@ -164,11 +171,13 @@ Register session metadata in local storage.
 Get session by ID from local storage.
 
 **Path Parameters:**
-| Parameter | Description |
-|-----------|-------------|
+
+| Parameter    | Description  |
+| ------------ | ------------ |
 | `session_id` | Session UUID |
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -193,6 +202,7 @@ Get session by ID from local storage.
 Find current active session by composite key.
 
 **Request Body:**
+
 ```json
 {
   "cli_key": "session-abc123",
@@ -204,6 +214,7 @@ Find current active session by composite key.
 **Required Fields:** `cli_key`, `machine_id`, `source`
 
 **Response:**
+
 ```json
 {
   "session": { ... }
@@ -219,6 +230,7 @@ Returns `{ "session": null }` if not found.
 Find parent session for handoff.
 
 **Request Body:**
+
 ```json
 {
   "cwd": "/path/to/project",
@@ -231,6 +243,7 @@ Find parent session for handoff.
 **Behavior:** Looks for most recent session in same `cwd` with completed/paused status.
 
 **Response:**
+
 ```json
 {
   "session": { ... }
@@ -246,6 +259,7 @@ Returns `{ "session": null }` if not found.
 Update session status.
 
 **Request Body:**
+
 ```json
 {
   "session_id": "session-uuid",
@@ -256,6 +270,7 @@ Update session status.
 **Required Fields:** `session_id`, `status`
 
 **Response:**
+
 ```json
 {
   "session": { ... }
@@ -269,6 +284,7 @@ Update session status.
 Update session summary path.
 
 **Request Body:**
+
 ```json
 {
   "session_id": "session-uuid",
@@ -279,6 +295,7 @@ Update session summary path.
 **Required Fields:** `session_id`, `summary_path`
 
 **Response:**
+
 ```json
 {
   "session": { ... }
@@ -294,11 +311,13 @@ Update session summary path.
 List available tools from an MCP server.
 
 **Path Parameters:**
-| Parameter | Description |
-|-----------|-------------|
+
+| Parameter     | Description                                           |
+| ------------- | ----------------------------------------------------- |
 | `server_name` | Name of the MCP server (e.g., "supabase", "context7") |
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -322,14 +341,16 @@ List available tools from an MCP server.
 Call a tool on an MCP server.
 
 **Path Parameters:**
-| Parameter | Description |
-|-----------|-------------|
-| `server_name` | Name of the MCP server |
-| `tool_name` | Name of the tool to call |
+
+| Parameter     | Description              |
+| ------------- | ------------------------ |
+| `server_name` | Name of the MCP server   |
+| `tool_name`   | Name of the tool to call |
 
 **Request Body:** Tool-specific arguments as JSON object.
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -347,6 +368,7 @@ Call a tool on an MCP server.
 Execute CLI hook via adapter pattern.
 
 **Request Body:**
+
 ```json
 {
   "hook_type": "session-start",
@@ -358,6 +380,7 @@ Execute CLI hook via adapter pattern.
 **Supported Sources:** `claude`, `gemini`, `codex`
 
 **Response:**
+
 ```json
 {
   "continue": true,
@@ -374,6 +397,7 @@ Execute CLI hook via adapter pattern.
 The FastMCP server is mounted at `/mcp`. This provides the MCP protocol interface via HTTP transport.
 
 **Usage:**
+
 - Tools are accessible via JSON-RPC at `/mcp/`
 - Uses stateless HTTP transport with JSON responses
 
@@ -402,6 +426,7 @@ All endpoints return 200 OK to prevent CLI hook failures. Errors are logged and 
 ```
 
 For endpoints that need to indicate actual errors, HTTP status codes are used:
+
 - `400` - Bad request (missing required fields)
 - `404` - Resource not found
 - `500` - Internal server error
