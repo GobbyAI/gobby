@@ -171,6 +171,60 @@ async def test_generate_handoff(
 
 
 @pytest.mark.asyncio
+async def test_generate_summary(
+    action_executor, action_context, session_manager, sample_project, mock_services, tmp_path
+):
+    # Create a real transcript file
+    transcript_file = tmp_path / "transcript_summary.jsonl"
+    import json
+
+    transcript_data = [
+        {"role": "user", "content": "hello again"},
+        {"role": "assistant", "content": "Hi there again!"},
+    ]
+    with open(transcript_file, "w") as f:
+        for entry in transcript_data:
+            f.write(json.dumps(entry) + "\n")
+
+    # Setup session
+    session = session_manager.register(
+        external_id="summary-ext",
+        machine_id="test-machine",
+        source="test-source",
+        project_id=sample_project["id"],
+        jsonl_path=str(transcript_file),
+    )
+    action_context.session_id = session.id
+
+    # Setup mocks
+    mock_services["transcript_processor"].extract_turns_since_clear.return_value = transcript_data
+    mock_services["transcript_processor"].extract_last_messages.return_value = transcript_data
+    mock_services["template_engine"].render.return_value = "Summarize: User: hello again"
+
+    mock_provider = MagicMock()
+    mock_provider.generate_summary = AsyncMock(return_value="Just a summary.")
+    mock_llm_service = MagicMock()
+    mock_llm_service.get_default_provider.return_value = mock_provider
+    mock_services["llm_service"] = mock_llm_service
+
+    # Patch context
+    action_context.llm_service = mock_services["llm_service"]
+    action_context.transcript_processor = mock_services["transcript_processor"]
+
+    result = await action_executor.execute("generate_summary", action_context)
+
+    assert result is not None
+    assert result["summary_generated"] is True
+    assert result["summary_length"] == 15
+
+    # Verify summary updated
+    updated_session = session_manager.get(session.id)
+    assert updated_session.summary_markdown == "Just a summary."
+    # Verify status NOT updated to handoff_ready (legacy behavior only in handoff action)
+    assert updated_session.status != "handoff_ready"
+
+
+@pytest.mark.asyncio
 async def test_call_mcp_tool(action_executor, action_context, mock_services):
     # Setup mock MCP manager behavior
     mock_services["mcp_manager"].connections = {"test-server": True}

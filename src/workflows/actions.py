@@ -65,6 +65,7 @@ class ActionExecutor:
         self.register("inject_message", self._handle_inject_message)
         self.register("capture_artifact", self._handle_capture_artifact)
         self.register("generate_handoff", self._handle_generate_handoff)
+        self.register("generate_summary", self._handle_generate_summary)
         self.register("find_parent_session", self._handle_find_parent_session)
         self.register("restore_context", self._handle_restore_context)
         self.register("mark_session_status", self._handle_mark_session_status)
@@ -558,32 +559,38 @@ class ActionExecutor:
     ) -> dict[str, Any] | None:
         """
         Generate a handoff record by summarizing the session and saving to sessions.summary_markdown.
+        Legacy combined action: Generates summary + Marks status 'handoff_ready'.
+        """
+        # Reuse generate_summary logic
+        summary_result = await self._handle_generate_summary(context, **kwargs)
+        if kwargs.get("error") or (summary_result and "error" in summary_result):
+            return summary_result
+
+        # Mark Session Status
+        context.session_manager.update_status(context.session_id, "handoff_ready")
+
+        return {"handoff_created": True, "summary_length": summary_result.get("summary_length", 0)}
+
+    async def _handle_generate_summary(
+        self, context: ActionContext, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Generate a session summary using LLM and store it in the session record.
         """
         # We need LLM service and transcript processor
         if not context.llm_service or not context.transcript_processor:
-            logger.warning("generate_handoff: Missing LLM service or transcript processor")
+            logger.warning("generate_summary: Missing LLM service or transcript processor")
             return {"error": "Missing services"}
 
         current_session = context.session_manager.get(context.session_id)
         if not current_session:
             return {"error": "Session not found"}
 
-        # Get transcript path (from context or session?)
-        # Session object usually has the transcript path if registered.
-        # But we might need to get it from the event if this is triggered dynamically?
-        # Actually Event usually has transcript_path.
-        # But ActionContext doesn't have Event directly unless we pass it.
-        # We assume `current_session.jsonl_path` is valid if we registered it.
+        # Get transcript path
         transcript_path = getattr(current_session, "jsonl_path", None)
         if not transcript_path:
-            # Try to get it from kwargs if passed (e.g. from event data)
-            # But arguments to action come from YAML.
-            logger.warning(f"generate_handoff: No transcript path for session {context.session_id}")
+            logger.warning(f"generate_summary: No transcript path for session {context.session_id}")
             return {"error": "No transcript path"}
-
-        # Use Template + LLM Service directly (Workflow Engine Native Logic)
-        # Note: SummaryFileGenerator is a separate failover mechanism in HookManager.
-        # Here we only generate content for the database record.
 
         template = kwargs.get("template")
         if not template:
@@ -666,11 +673,8 @@ class ActionExecutor:
         # 5. Save to Production Location (sessions table)
         context.session_manager.update_summary(context.session_id, summary_markdown=summary_content)
 
-        # 6. Mark Session Status
-        context.session_manager.update_status(context.session_id, "handoff_ready")
-
-        logger.info(f"Generated handoff summary for session {context.session_id}")
-        return {"handoff_created": True, "summary_length": len(summary_content)}
+        logger.info(f"Generated summary for session {context.session_id}")
+        return {"summary_generated": True, "summary_length": len(summary_content)}
 
     async def _handle_find_parent_session(
         self, context: ActionContext, **kwargs
