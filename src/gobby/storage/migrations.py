@@ -319,6 +319,50 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         DROP TABLE IF EXISTS workflow_handoffs;
         """,
     ),
+    (
+        14,
+        "Add task validation columns",
+        """
+        ALTER TABLE tasks ADD COLUMN validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid'));
+        ALTER TABLE tasks ADD COLUMN validation_feedback TEXT;
+        ALTER TABLE tasks ADD COLUMN original_instruction TEXT;
+        """,
+    ),
+    (
+        15,
+        "Create session messages tables",
+        """
+        CREATE TABLE IF NOT EXISTS session_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            message_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            content_type TEXT DEFAULT 'text',
+            tool_name TEXT,
+            tool_input TEXT,
+            tool_result TEXT,
+            timestamp TEXT NOT NULL,
+            raw_json TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(session_id, message_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id);
+        CREATE INDEX IF NOT EXISTS idx_session_messages_role ON session_messages(role);
+        CREATE INDEX IF NOT EXISTS idx_session_messages_timestamp ON session_messages(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_session_messages_tool ON session_messages(tool_name);
+
+        CREATE TABLE IF NOT EXISTS session_message_state (
+            session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+            last_byte_offset INTEGER DEFAULT 0,
+            last_message_index INTEGER DEFAULT 0,
+            last_processed_at TEXT,
+            processing_errors INTEGER DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """,
+    ),
 ]
 
 

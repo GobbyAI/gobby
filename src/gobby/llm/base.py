@@ -114,3 +114,23 @@ class LLMProvider(ABC):
             Dict with 'success', 'result', 'error', etc.
         """
         pass
+
+    @abstractmethod
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        """
+        Generate text from a prompt.
+
+        Args:
+            prompt: User prompt
+            system_prompt: Optional system prompt
+            model: Optional model override
+
+        Returns:
+            Generated text response
+        """
+        pass

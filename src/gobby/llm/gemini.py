@@ -189,3 +189,34 @@ class GeminiProvider(LLMProvider):  # type: ignore[misc]
             "error": "Code execution is not yet supported for Gemini provider. A sandbox environment is required.",
             "language": language,
         }
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        """
+        Generate text using Gemini.
+        """
+        if not self.genai:
+            return "Generation unavailable (Gemini client not initialized)"
+
+        model_name = model or "gemini-1.5-flash"
+
+        try:
+            # Note: Gemini system prompts are configured at model creation,
+            # but simple generation usually just includes it in the prompt or uses default.
+            # For simplicity we'll just generate content.
+            model_instance = self.genai.GenerativeModel(model_name)
+
+            full_prompt = prompt
+            if system_prompt:
+                # Prepend system prompt if provided
+                full_prompt = f"{system_prompt}\n\n{prompt}"
+
+            response = await model_instance.generate_content_async(full_prompt)
+            return response.text or ""
+        except Exception as e:
+            self.logger.error(f"Failed to generate text with Gemini: {e}")
+            return f"Generation failed: {e}"

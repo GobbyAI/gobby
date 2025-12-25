@@ -422,6 +422,48 @@ class HookExtensionsConfig(BaseModel):
     )
 
 
+class TaskExpansionConfig(BaseModel):
+    """Configuration for task expansion (breaking down broad tasks/epics)."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable automated task expansion",
+    )
+    provider: str = Field(
+        default="claude",
+        description="LLM provider to use for expansion",
+    )
+    model: str = Field(
+        default="claude-haiku-4-5",
+        description="Model to use for expansion",
+    )
+    prompt: str | None = Field(
+        default=None,
+        description="Custom prompt template for task expansion",
+    )
+
+
+class TaskValidationConfig(BaseModel):
+    """Configuration for task validation (checking completion against criteria)."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable automated task validation",
+    )
+    provider: str = Field(
+        default="claude",
+        description="LLM provider to use for validation",
+    )
+    model: str = Field(
+        default="claude-haiku-4-5",
+        description="Model to use for validation",
+    )
+    prompt: str | None = Field(
+        default=None,
+        description="Custom prompt template for task validation",
+    )
+
+
 class WorkflowConfig(BaseModel):
     """Workflow engine configuration."""
 
@@ -521,6 +563,14 @@ class DaemonConfig(BaseModel):
     workflow: WorkflowConfig = Field(
         default_factory=WorkflowConfig,
         description="Workflow engine configuration",
+    )
+    task_expansion: TaskExpansionConfig = Field(
+        default_factory=TaskExpansionConfig,
+        description="Task expansion configuration",
+    )
+    task_validation: TaskValidationConfig = Field(
+        default_factory=TaskValidationConfig,
+        description="Task validation configuration",
     )
 
     def get_code_execution_config(self) -> CodeExecutionConfig:

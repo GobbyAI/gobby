@@ -345,3 +345,32 @@ Execute the code and return only the output."""
                 "error_type": type(e).__name__,
                 "language": language,
             }
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        """
+        Generate text using Codex/OpenAI.
+        """
+        if not self._client:
+            return "Generation unavailable (Codex client not initialized)"
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=model or "gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt or "You are a helpful assistant.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=4000,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            self.logger.error(f"Failed to generate text with Codex: {e}")
+            return f"Generation failed: {e}"
