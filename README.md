@@ -16,13 +16,16 @@ A local daemon that makes AI coding assistants smarter by unifying session track
 
 ## CLI Support Status
 
-| CLI | Status | Notes |
-|-----|--------|-------|
-| **Claude Code** | ✅ Full | All 14 hook types supported |
-| **Gemini CLI** | ⏳ Pending | Waiting on [PR #9070](https://github.com/google-gemini/gemini-cli/pull/9070) for hook system |
-| **Codex CLI** | 🔸 Limited | Only `after_agent` notify hook currently implemented |
+| CLI             | Status     | Notes                                                                           |
+|:----------------|:-----------|:--------------------------------------------------------------------------------|
+| **Claude Code** | ✅ Full    | All 14 hook types supported                                                     |
+| **Gemini CLI**  | ⏳ Pending | Waiting on [PR #9070](https://github.com/google-gemini/gemini-cli/pull/9070) for hook system |
+| **Codex CLI**   | 🔸 Limited | Only `after_agent` notify hook currently implemented                            |
 
-## Quick Start
+## For AI Agents
+
+🤖 **Are you an AI Agent?**
+Read [docs/AGENT_INSTRUCTIONS.md](docs/AGENT_INSTRUCTIONS.md) first. This file contains your standard operating procedures, session workflows, and "landing the plane" protocols.
 
 ```bash
 # Install

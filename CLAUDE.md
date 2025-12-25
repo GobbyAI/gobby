@@ -63,7 +63,7 @@ uv run mypy src/
 - `src/servers/http.py` - FastAPI HTTP server with REST endpoints and MCP server
 - `src/servers/websocket.py` - WebSocket server for real-time communication
 - `src/mcp_proxy/server.py` - FastMCP server with daemon control tools (status, call_tool, list_tools, etc.)
-- `src/mcp_proxy/stdio.py` - Stdio MCP server for Claude Code integration
+- `src/mcp_proxy/stdio.py` - Stdio MCP server wrapper
 
 **MCP Proxy & Internal Tools:**
 
@@ -156,6 +156,24 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={"title"
 **Available internal servers:**
 
 - `gobby-tasks` - Task CRUD, dependencies, ready work detection, git sync
+
+## Task Management with gobby-tasks
+
+Use the `gobby-tasks` MCP tools for persistent task tracking (requires daemon running):
+
+1. **Start of session**: Call `list_ready_tasks` to see unblocked work
+2. **New requests**: Create tasks with `create_task(title="...", description="...")`
+3. **Complex work**: Break into subtasks with `parent_task_id` parameter
+4. **Track progress**: Use `update_task` to change status (`open` -> `in_progress` -> `done`)
+5. **End of session**: Close completed tasks with `close_task(task_id="...")`
+
+```python
+# Example MCP tool calls via daemon
+call_tool(server_name="gobby-tasks", tool_name="list_ready_tasks", arguments={})
+call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={"title": "Fix auth bug"})
+```
+
+If tools fail, check daemon status: `uv run gobby status`
 
 ## Testing
 

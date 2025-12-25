@@ -369,19 +369,19 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 
 #### Dependency Management
 
-| Tool                     | Description                   |
-| ------------------------ | ----------------------------- |
-| `add_dependency`         | Add dependency between tasks  |
-| `remove_dependency`      | Remove a dependency           |
-| `get_dependency_tree`    | Get blockers/blocking tasks   |
-| `check_dependency_cycles` | Detect circular dependencies |
+| Tool                      | Description                   |
+| ------------------------- | ----------------------------- |
+| `add_dependency`          | Add dependency between tasks  |
+| `remove_dependency`       | Remove a dependency           |
+| `get_dependency_tree`     | Get blockers/blocking tasks   |
+| `check_dependency_cycles` | Detect circular dependencies  |
 
 #### Ready Work
 
 | Tool                 | Description                      |
 | -------------------- | -------------------------------- |
-| `list_ready_tasks`    | List unblocked tasks             |
-| `list_blocked_tasks`  | List blocked tasks with blockers |
+| `list_ready_tasks`   | List unblocked tasks             |
+| `list_blocked_tasks` | List blocked tasks with blockers |
 
 #### Session Integration
 

@@ -1,6 +1,8 @@
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, ANY
-from gobby.workflows.actions import ActionExecutor, ActionContext
+
+from gobby.workflows.actions import ActionContext, ActionExecutor
 from gobby.workflows.definitions import WorkflowState
 
 
@@ -66,6 +68,7 @@ async def test_inject_context_artifacts(mock_context):
     expected_content = (
         "## Captured Artifacts\n- plan.md: /abs/path/to/plan.md\n- spec.md: /abs/path/to/spec.md"
     )
+    assert result is not None
     assert result["inject_context"] == expected_content
 
 
@@ -82,6 +85,7 @@ async def test_inject_context_observations(mock_context):
 
     result = await executor.execute("inject_context", mock_context, source="observations")
 
+    assert result is not None
     assert "## Observations" in result["inject_context"]
     assert '"tool": "read_file"' in result["inject_context"]
 
@@ -96,5 +100,6 @@ async def test_inject_context_workflow_state(mock_context):
 
     result = await executor.execute("inject_context", mock_context, source="workflow_state")
 
+    assert result is not None
     assert "## Workflow State" in result["inject_context"]
     assert '"workflow_name": "test-workflow"' in result["inject_context"]

@@ -579,10 +579,19 @@ class ActionExecutor:
         context: ActionContext,
         **kwargs,
     ) -> dict[str, Any] | None:
-        """Call an MCP tool on a connected server."""
+        """Call an MCP tool on a connected server.
+
+        Args (via kwargs):
+            server_name: Name of the MCP server
+            tool_name: Name of the tool to call
+            arguments: Arguments to pass to the tool
+            as: Optional variable name to store the result in workflow state
+        """
         server_name = kwargs.get("server_name")
         tool_name = kwargs.get("tool_name")
         arguments = kwargs.get("arguments", {})
+        output_as = kwargs.get("as")
+
         if not server_name or not tool_name:
             return {"error": "Missing server_name or tool_name"}
         if not context.mcp_manager:
@@ -596,7 +605,14 @@ class ActionExecutor:
 
             # Call tool
             result = await context.mcp_manager.call_tool(server_name, tool_name, arguments)
-            return {"result": result}
+
+            # Store result in workflow variable if 'as' specified
+            if output_as:
+                if not context.state.variables:
+                    context.state.variables = {}
+                context.state.variables[output_as] = result
+
+            return {"result": result, "stored_as": output_as}
         except Exception as e:
             logger.error(f"call_mcp_tool: Failed: {e}")
             return {"error": str(e)}

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.database import LocalDatabase
@@ -85,7 +86,7 @@ class TestHookManagerInit:
         assert manager._daemon_client is not None
         assert manager._transcript_processor is not None
         assert manager._session_manager is not None
-        assert manager._summary_generator is not None
+        assert manager._summary_file_generator is not None
         assert manager._database is not None
 
     def test_init_sets_daemon_url(self, hook_manager_with_mocks: HookManager):
@@ -137,6 +138,7 @@ class TestHookManagerHandle:
 
         # Should fail open
         assert response.decision == "allow"
+        assert response.reason is not None
         assert "not_running" in response.reason
 
     def test_handle_unknown_event_type(self, hook_manager_with_mocks: HookManager):

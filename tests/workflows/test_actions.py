@@ -1,10 +1,10 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
-from gobby.workflows.actions import ActionExecutor, ActionContext
+
+from gobby.workflows.actions import ActionContext, ActionExecutor
 from gobby.workflows.definitions import WorkflowState
 from gobby.workflows.templates import TemplateEngine
-from gobby.storage.sessions import Session
-from datetime import datetime, UTC
 
 
 @pytest.fixture
@@ -268,7 +268,8 @@ async def test_persist_tasks(action_executor, action_context, session_manager, s
     assert len(result["ids"]) == 2
 
     # Verify tasks in DB
-    from gobby.storage.tasks import LocalTaskManager
+    # Verify tasks in DB
+    # from gobby.storage.tasks import LocalTaskManager
     # Assuming LocalTaskManager can be imported; if not, we might need a mock or fix import
 
     # Check execution success directly via DB or return values

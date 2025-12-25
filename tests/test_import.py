@@ -1,10 +1,10 @@
-import pytest
-import asyncio
 import json
 from unittest.mock import MagicMock, patch
-from claude_agent_sdk import AssistantMessage, TextBlock
-from gobby.sync.tasks import TaskSyncManager
+
+import pytest
+
 from gobby.storage.tasks import LocalTaskManager
+from gobby.sync.tasks import TaskSyncManager
 
 
 @pytest.fixture
@@ -21,32 +21,31 @@ async def test_import_from_github_issues(sync_manager, temp_db):
         ("proj-123", "/tmp/test", "Test Project", "https://github.com/owner/repo"),
     )
 
-    with patch("claude_agent_sdk.query") as mock_query:
-        # Mock the generator
-        mock_message = MagicMock(spec=AssistantMessage)
-        mock_issues = [
-            {
-                "title": "Issue 1",
-                "body": "Desc 1",
-                "issue_number": 1,
-                "created_at": "2023-01-01T00:00:00Z",
-            }
+    with patch("subprocess.run") as mock_run:
+        # Mock gh --version
+        mock_run.side_effect = [
+            MagicMock(returncode=0),  # gh --version
+            MagicMock(
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "number": 1,
+                            "title": "Issue 1",
+                            "body": "Desc 1",
+                            "labels": [{"name": "bug"}],
+                            "createdAt": "2023-01-01T00:00:00Z",
+                        }
+                    ]
+                ),
+            ),  # gh issue list
         ]
-        json_str = json.dumps({"issues": mock_issues})
-
-        mock_block = MagicMock(spec=TextBlock)
-        mock_block.text = f"```json\n{json_str}\n```"
-        mock_message.content = [mock_block]
-
-        async def async_gen(*args, **kwargs):
-            yield mock_message
-
-        mock_query.return_value = async_gen()
 
         result = await sync_manager.import_from_github_issues("https://github.com/owner/repo")
 
         assert result["success"] is True
         assert len(result["imported"]) == 1
+        assert "gh-1" in result["imported"]
 
 
 # Since the import happens inside the method, verifying it without installing the package is tricky if it's not installed.
@@ -56,8 +55,6 @@ async def test_import_from_github_issues(sync_manager, temp_db):
 
 @pytest.mark.asyncio
 async def test_import_from_github_issues_mocked(sync_manager):
-    repo_url = "https://github.com/test/repo"
-
     # We'll use a wrapper or patching sys.modules
     with patch.dict("sys.modules", {"claude_agent_sdk": MagicMock()}):
         # We need to mock the import specifically within the function scope or globally before function call

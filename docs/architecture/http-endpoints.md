@@ -173,7 +173,7 @@ Get session by ID from local storage.
 **Path Parameters:**
 
 | Parameter    | Description  |
-| ------------ | ------------ |
+| :----------- | :----------- |
 | `session_id` | Session UUID |
 
 **Response:**
@@ -313,7 +313,7 @@ List available tools from an MCP server.
 **Path Parameters:**
 
 | Parameter     | Description                                           |
-| ------------- | ----------------------------------------------------- |
+| :------------ | :---------------------------------------------------- |
 | `server_name` | Name of the MCP server (e.g., "supabase", "context7") |
 
 **Response:**
@@ -343,7 +343,7 @@ Call a tool on an MCP server.
 **Path Parameters:**
 
 | Parameter     | Description              |
-| ------------- | ------------------------ |
+| :------------ | :----------------------- |
 | `server_name` | Name of the MCP server   |
 | `tool_name`   | Name of the tool to call |
 

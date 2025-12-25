@@ -1,10 +1,11 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
-from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.engine import WorkflowEngine
+from gobby.workflows.hooks import WorkflowHookHandler
 
 # Mock data
 MOCK_SESSION_ID = "session-123"
@@ -68,13 +69,14 @@ def test_hook_manager_integration():
         patch("gobby.hooks.hook_manager.DaemonClient") as MockDaemonClientClass,
         patch("gobby.hooks.hook_manager.WorkflowLoader"),
         patch("gobby.hooks.hook_manager.WorkflowStateManager"),
-        patch("gobby.hooks.hook_manager.WorkflowEngine") as MockEngineClass,
+        patch("gobby.hooks.hook_manager.WorkflowEngine"),
         patch("gobby.hooks.hook_manager.WorkflowHookHandler") as MockHandlerClass,
         patch("gobby.hooks.hook_manager.run_migrations"),
     ):
         # Setup mocks
         mock_handler_instance = MockHandlerClass.return_value
         mock_handler_instance.handle.return_value = HookResponse(decision="allow")
+        mock_handler_instance.handle_all_lifecycles.return_value = HookResponse(decision="allow")
 
         # Setup DaemonClient mock to pass health check
         mock_daemon_instance = MockDaemonClientClass.return_value
@@ -90,8 +92,8 @@ def test_hook_manager_integration():
         manager = HookManager(log_file="/tmp/gobby-test.log")
 
         # Force ready state to bypass async health check loop race conditions
-        manager._is_ready = True
-        manager._daemon_status = "healthy"
+        manager._cached_daemon_is_ready = True
+        manager._cached_daemon_status = "healthy"
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -127,6 +129,7 @@ def test_hook_manager_blocks_on_workflow():
         mock_handler_instance.handle.return_value = HookResponse(
             decision="block", reason="Workflow denied"
         )
+        mock_handler_instance.handle_all_lifecycles.return_value = HookResponse(decision="allow")
 
         # Setup DaemonClient mock to pass health check
         mock_daemon_instance = MockDaemonClientClass.return_value
@@ -140,8 +143,8 @@ def test_hook_manager_blocks_on_workflow():
         manager = HookManager(log_file="/tmp/gobby-test.log")
 
         # Force ready state
-        manager._is_ready = True
-        manager._daemon_status = "healthy"
+        manager._cached_daemon_is_ready = True
+        manager._cached_daemon_status = "healthy"
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,

@@ -1,12 +1,11 @@
 """Tests for the CLI module."""
 
-import json
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+
 from gobby.cli import cli
 from gobby.cli.install import (
     _is_claude_code_installed,
@@ -229,7 +228,9 @@ class TestStatusCommand:
         return CliRunner()
 
     @patch("gobby.cli.load_config")
-    def test_status_no_pid_file(self, mock_load_config: MagicMock, runner: CliRunner, temp_dir: Path):
+    def test_status_no_pid_file(
+        self, mock_load_config: MagicMock, runner: CliRunner, temp_dir: Path
+    ):
         """Test status when no PID file exists."""
         mock_config = MagicMock()
         mock_config.logging.client = str(temp_dir / "logs" / "client.log")
@@ -256,7 +257,7 @@ class TestInitCommand:
         """Create a CLI test runner."""
         return CliRunner()
 
-    @patch("gobby.utils.project_init.initialize_project")
+    @patch("gobby.cli.init.initialize_project")
     @patch("gobby.cli.load_config")
     def test_init_new_project(
         self,
@@ -282,7 +283,7 @@ class TestInitCommand:
             assert "test-project" in result.output
             assert "test-uuid-123" in result.output
 
-    @patch("gobby.utils.project_init.initialize_project")
+    @patch("gobby.cli.init.initialize_project")
     @patch("gobby.cli.load_config")
     def test_init_existing_project(
         self,
