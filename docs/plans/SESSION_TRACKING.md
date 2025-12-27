@@ -289,10 +289,10 @@ class MessageTrackingConfig:
 
 ### Phase 6: Query API
 
-- [ ] 6.1 Add HTTP endpoints for message queries (`GET /sessions/{id}/messages`)
-- [ ] 6.2 Add `gobby-messages` internal tool registry
-- [ ] 6.3 Implement full-text search across messages
-- [ ] 6.4 Add message count to session list responses
+- [x] 6.1 Add HTTP endpoints for message queries (`GET /sessions/{id}/messages`)
+- [x] 6.2 Add `gobby-messages` internal tool registry
+- [x] 6.3 Implement full-text search across messages
+- [x] 6.4 Add message count to session list responses
 
 ---
 

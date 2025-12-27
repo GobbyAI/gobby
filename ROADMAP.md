@@ -140,7 +140,7 @@ This document defines the implementation order across all Gobby planning documen
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Sprint 7.4: Multi-CLI Parsers & API                                          │
+│ Sprint 7.4: Multi-CLI Parsers & API ✅ COMPLETED                               │
 │ SESSION_TRACKING Phases 5-6                                                  │
 │                                                                              │
 │ Deliverable: Gemini/Codex parsers, parser registry, query API, MCP tools    │
@@ -312,7 +312,7 @@ This document defines the implementation order across all Gobby planning documen
 | 7.1 | Session Message Foundation | SESSION_TRACKING Phase 1 | None | ✅ Completed |
 | 7.2 | Async Message Processor | SESSION_TRACKING Phase 2 | Sprint 7.1 | ✅ Completed |
 | 7.3 | Session Tracking Integration | SESSION_TRACKING Phases 3-4 | Sprint 7.2 | ✅ Completed (Perf deferred) |
-| 7.4 | Multi-CLI Parsers & API | SESSION_TRACKING Phases 5-6 | Sprint 7.3 | 🔶 Partial (Parsers complete) |
+| 7.4 | Multi-CLI Parsers & API | SESSION_TRACKING Phases 5-6 | Sprint 7.3 | ✅ Completed |
 | 7.5 | Memory Storage & Operations | MEMORY Phases 1-2 | Sprint 7.4 | Pending |
 | 7.6 | Skill Learning | MEMORY Phases 3-4 | Sprint 7.5 | Pending |
 | 7.7 | Memory MCP/CLI | MEMORY Phases 5-6 | Sprint 7.6 | Pending |
@@ -377,7 +377,7 @@ Sprints 7.1 → 7.2 → 7.3 → 7.4 → 7.5 → 7.6 → 7.7 → 7.8 (Session Tra
 - **Value**: Complete workflow templating system ready for phase-based enforcement
 - **Next**: Tool hooks and phase-based restrictions (Sprint 10: Workflow CLI/MCP)
 
-### Milestone 2.5: "Session Recording" (Sprints 7.1-7.4)
+### Milestone 2.5: "Session Recording" (Sprints 7.1-7.4) ✅ COMPLETE
 
 - Async JSONL message processing for all CLIs
 - Multi-CLI parsers (Claude, Gemini, Codex, Antigravity)
