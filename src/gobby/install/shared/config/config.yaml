@@ -16,6 +16,78 @@ logging:
   mcp_client: ~/.gobby/logs/mcp-client.log
   max_size_mb: 10
   backup_count: 5
+mcp_client_proxy:
+  enabled: true
+  proxy_timeout: 30
+  tool_timeout: 30
+llm_providers:
+  claude:
+    models: claude-haiku-4-5,claude-sonnet-4-5,claude-opus-4-5
+    auth_mode: subscription
+  codex:
+    models: gpt-4o-mini,gpt-5-mini,gpt-5,gpt-5-high
+    auth_mode: subscription
+  gemini:
+    models: gemini-3
+    auth_mode: subscription
+  litellm:
+    models: gpt-4o-mini,gpt-5-mini
+    auth_mode: api_key
+  api_keys:
+    OPENAI_API_KEY: sk-proj-placeholder
+    MISTRAL_API_KEY: mistral-1234
+hook_extensions:
+  websocket:
+    enabled: true
+    broadcast_events:
+    - session-start
+    - session-end
+    - pre-tool-use
+    - post-tool-use
+    include_payload: true
+workflow:
+  enabled: true
+  timeout: 30.0   
+import_mcp_server:
+  enabled: true
+  provider: claude
+  model: claude-haiku-4-5
+  prompt: 'You are an MCP server configuration extractor. Given documentation for
+    an MCP server, extract the configuration needed to connect to it.
+
+
+    Return ONLY a valid JSON object (no markdown, no code blocks) with these fields:
+
+    - name: Server name (lowercase, no spaces, use hyphens)
+
+    - transport: "http", "stdio", or "websocket"
+
+    - url: Server URL (required for http/websocket transports)
+
+    - command: Command to run (required for stdio, e.g., "npx", "uv", "node")
+
+    - args: Array of command arguments (for stdio)
+
+    - env: Object of environment variables needed (use placeholder "<YOUR_KEY_NAME>"
+    for secrets)
+
+    - headers: Object of HTTP headers needed (use placeholder "<YOUR_KEY_NAME>" for
+    secrets)
+
+    - instructions: How to obtain any required API keys or setup steps
+
+
+    Example stdio server:
+
+    {"name": "filesystem", "transport": "stdio", "command": "npx", "args": ["-y",
+    "@anthropic-ai/filesystem-mcp"], "env": {}, "instructions": "No setup required"}
+
+
+    Example http server with API key:
+
+    {"name": "exa", "transport": "http", "url": "https://mcp.exa.ai/mcp", "headers":
+    {"EXA_API_KEY": "<YOUR_EXA_API_KEY>"}, "instructions": "Get your API key from
+    https://exa.ai/dashboard"}'
 session_summary:
   enabled: false
   provider: claude
@@ -117,26 +189,6 @@ session_summary:
 
     '
   summary_file_path: ~/.gobby/session_summaries/
-mcp_client_proxy:
-  enabled: true
-  proxy_timeout: 30
-  tool_timeout: 30
-llm_providers:
-  claude:
-    models: claude-haiku-4-5,claude-sonnet-4-5,claude-opus-4-5
-    auth_mode: subscription
-  codex:
-    models: gpt-4o-mini,gpt-5-mini,gpt-5,gpt-5-high
-    auth_mode: subscription
-  gemini:
-    models: gemini-3
-    auth_mode: subscription
-  litellm:
-    models: gpt-4o-mini,gpt-5-mini
-    auth_mode: api_key
-  api_keys:
-    OPENAI_API_KEY: sk-proj-placeholder
-    MISTRAL_API_KEY: mistral-1234
 title_synthesis:
   enabled: true
   provider: claude
@@ -150,9 +202,7 @@ title_synthesis:
 
     User''s first message:
 
-    {user_prompt}
-
-    '
+    {user_prompt}'
 code_execution:
   enabled: true
   provider: claude
@@ -172,9 +222,7 @@ code_execution:
     ```
 
 
-    Return the execution output or any errors encountered.
-
-    '
+    Return the execution output or any errors encountered.'
   max_turns: 5
   default_timeout: 30
   max_dataset_preview: 3
@@ -242,6 +290,4 @@ recommend_tools:
 
     3. Suggested workflow (e.g., "First call X, then use result with Y")
 
-    4. Only mention built-in tools if no MCP server is suitable
-
-    '
+    4. Only mention built-in tools if no MCP server is suitable '
