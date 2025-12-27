@@ -281,11 +281,11 @@ class MessageTrackingConfig:
 
 ### Phase 5: Additional Parsers
 
-- [ ] 5.1 Create `GeminiTranscriptParser` in `src/sessions/transcripts/gemini.py`
-- [ ] 5.2 Create `CodexTranscriptParser` in `src/sessions/transcripts/codex.py`
-- [ ] 5.3 Add parser registry in `src/sessions/transcripts/__init__.py`
-- [ ] 5.4 Test with actual Gemini/Codex transcripts
-- [ ] 5.5 Handle Antigravity (uses Gemini parser)
+- [x] 5.1 Create `GeminiTranscriptParser` in `src/sessions/transcripts/gemini.py`
+- [x] 5.2 Create `CodexTranscriptParser` in `src/sessions/transcripts/codex.py`
+- [x] 5.3 Add parser registry in `src/sessions/transcripts/__init__.py`
+- [x] 5.4 Test with actual Gemini/Codex transcripts
+- [x] 5.5 Handle Antigravity (uses Gemini parser)
 
 ### Phase 6: Query API
 

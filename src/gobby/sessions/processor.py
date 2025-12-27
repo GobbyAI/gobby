@@ -10,9 +10,9 @@ import logging
 import os
 
 
-from gobby.sessions.transcripts.base import TranscriptParser
-from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.servers.websocket import WebSocketServer
+from gobby.sessions.transcripts import get_parser
+from gobby.sessions.transcripts.base import TranscriptParser
 from gobby.storage.database import LocalDatabase
 from gobby.storage.messages import LocalMessageManager
 
@@ -71,13 +71,16 @@ class SessionMessageProcessor:
             self._task = None
         logger.info("SessionMessageProcessor stopped")
 
-    def register_session(self, session_id: str, transcript_path: str) -> None:
+    def register_session(
+        self, session_id: str, transcript_path: str, source: str = "claude"
+    ) -> None:
         """
         Register a session for monitoring.
 
         Args:
             session_id: Session ID
             transcript_path: Absolute path to the transcript JSONL file
+            source: CLI source name (default: "claude")
         """
         if session_id in self._active_sessions:
             return
@@ -88,8 +91,8 @@ class SessionMessageProcessor:
             # For now, let's assume it might be created shortly.
 
         self._active_sessions[session_id] = transcript_path
-        self._parsers[session_id] = ClaudeTranscriptParser()
-        logger.debug(f"Registered session {session_id} for processing")
+        self._parsers[session_id] = get_parser(source)
+        logger.debug(f"Registered session {session_id} for processing ({source})")
 
     def unregister_session(self, session_id: str) -> None:
         """Stop monitoring a session."""

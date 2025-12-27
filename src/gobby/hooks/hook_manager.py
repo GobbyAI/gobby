@@ -644,7 +644,9 @@ class HookManager:
         # Step 3.5: Register with Message Processor
         if self._message_processor and transcript_path:
             try:
-                self._message_processor.register_session(session_id, transcript_path)
+                self._message_processor.register_session(
+                    session_id, transcript_path, source=cli_source
+                )
             except Exception as e:
                 self.logger.warning(f"Failed to register session with message processor: {e}")
 
