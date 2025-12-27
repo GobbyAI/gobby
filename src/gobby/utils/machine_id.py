@@ -4,9 +4,13 @@ Provides stable machine identification stored in ~/.gobby/machine_id.
 Uses py-machineid for hardware-based IDs with UUID fallback.
 """
 
+import logging
+import os
 import threading
 import uuid
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Thread-safe cache
 _cache_lock = threading.Lock()
@@ -73,41 +77,31 @@ def _get_or_create_machine_id() -> str:
         if content:
             return content
 
-    # Try to migrate from config.yaml (one-time migration)
-    migrated_id = _migrate_from_config()
-    if migrated_id:
-        return migrated_id
-
-    # Generate new ID
+    # Generate new ID and save with atomic permissions
     new_id = _generate_machine_id()
-
-    # Save to file with restrictive permissions
-    MACHINE_ID_FILE.write_text(new_id)
-    MACHINE_ID_FILE.chmod(0o600)
+    _write_file_secure(MACHINE_ID_FILE, new_id)
 
     return new_id
 
 
-def _migrate_from_config() -> str | None:
-    """Migrate machine_id from config.yaml if present.
+def _write_file_secure(path: Path, content: str) -> None:
+    """Write content to file with restrictive permissions atomically.
 
-    Returns:
-        Machine ID if found and migrated, None otherwise
+    Uses os.open with O_CREAT to set permissions at creation time,
+    avoiding TOCTOU race condition with write_text()/chmod() pattern.
+
+    Args:
+        path: File path to write to
+        content: Content to write
+
+    Raises:
+        OSError: If file operations fail
     """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        from gobby.config.app import load_config
-
-        config = load_config(create_default=False)
-        if config.machine_id:
-            # Save to new location
-            MACHINE_ID_FILE.write_text(config.machine_id)
-            MACHINE_ID_FILE.chmod(0o600)
-            return config.machine_id
-    except Exception:
-        # Config doesn't exist or can't be read - that's fine
-        pass
-
-    return None
+        os.write(fd, content.encode())
+    finally:
+        os.close(fd)
 
 
 def _generate_machine_id() -> str:
@@ -122,8 +116,12 @@ def _generate_machine_id() -> str:
         import machineid
 
         return machineid.id()
-    except (ImportError, Exception):
-        # Fallback to UUID4 if library not available
+    except ImportError:
+        # Library not available, use UUID fallback
+        return str(uuid.uuid4())
+    except Exception as e:
+        # machineid library failed (hardware access issues, etc.)
+        logger.debug(f"machineid.id() failed, using UUID fallback: {e}")
         return str(uuid.uuid4())
 
 

@@ -116,6 +116,8 @@ def _ensure_daemon_config() -> dict[str, Any]:
     from gobby.config.app import generate_default_config
 
     generate_default_config(str(config_path))
+    # Set restrictive permissions (same as copied template)
+    config_path.chmod(0o600)
     return {"created": True, "path": str(config_path), "source": "generated"}
 
 

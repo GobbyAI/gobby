@@ -409,13 +409,20 @@ def import_tasks(file_path: str, format: str = "jsonl") -> dict:
 @mcp.tool()
 def expand_task(
     task_id: str,
-    strategy: str = "checklist",  # checklist, parallel, epic, tdd
+    strategy: str = "phased",  # phased, flat, parallel, tdd
     max_subtasks: int = 10,
     analyze_codebase: bool = True,
     infer_validation: bool = True,
+    research: bool = True,
 ) -> dict:
     """
     Use LLM to decompose a task into subtasks with codebase analysis.
+
+    Strategies (mutually exclusive):
+    - phased: Group subtasks into logical phases with dependencies (default)
+    - flat: Sequential subtasks, no dependencies
+    - parallel: Independent subtasks that can run concurrently
+    - tdd: Test → implementation pairs
 
     When analyze_codebase=True:
     - Reads relevant files for context
@@ -424,6 +431,10 @@ def expand_task(
 
     When infer_validation=True:
     - Generates validation_criteria for each subtask
+
+    When research=True (default, matches claude-task-master):
+    - Web search for best practices and patterns
+    - Enriches expansion with external knowledge
 
     Returns created subtask IDs with dependencies.
     """
@@ -986,8 +997,9 @@ Unlike beads (which is purely a tracking system), gobby provides LLM-powered tas
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
 | `phased` | Group subtasks into logical phases with dependencies | Complex features (default) |
-| `flat` | Simple sequential subtasks | Quick tasks |
-| `tdd` | Test task → implementation task pairs | Test-driven development |
+| `flat` | Sequential subtasks, no dependencies | Quick well-understood tasks |
+| `parallel` | Independent subtasks that can run concurrently | Tasks with no interdependencies |
+| `tdd` | Test → implementation pairs | Test-driven development |
 
 ### Expansion Architecture
 

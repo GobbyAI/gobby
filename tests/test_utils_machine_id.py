@@ -1,14 +1,17 @@
 """Tests for src/utils/machine_id.py - Machine ID Utility."""
 
+import os
 import pytest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
-import uuid
 
 from gobby.utils.machine_id import (
     get_machine_id,
     _get_or_create_machine_id,
+    _write_file_secure,
+    _generate_machine_id,
     clear_cache,
-    _cached_machine_id,
+    MACHINE_ID_FILE,
 )
 
 
@@ -67,76 +70,125 @@ class TestGetMachineId:
 class TestGetOrCreateMachineId:
     """Tests for _get_or_create_machine_id function."""
 
-    def test_returns_existing_machine_id_from_config(self):
-        """Test returns machine_id from config if present."""
-        mock_config = MagicMock()
-        mock_config.machine_id = "existing-id-from-config"
+    def test_returns_existing_id_from_file(self, tmp_path):
+        """Test returns machine_id from file if present."""
+        test_file = tmp_path / "machine_id"
+        test_file.write_text("existing-id-from-file")
 
-        with patch("gobby.config.app.load_config", return_value=mock_config):
+        with patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file):
             result = _get_or_create_machine_id()
 
-        assert result == "existing-id-from-config"
+        assert result == "existing-id-from-file"
 
-    def test_generates_id_using_machineid_library(self):
-        """Test generates ID using machineid library."""
-        mock_config = MagicMock()
-        mock_config.machine_id = None
-
-        with (
-            patch("gobby.config.app.load_config", return_value=mock_config),
-            patch("gobby.config.app.save_config") as mock_save,
-            patch.dict("sys.modules", {"machineid": MagicMock(id=lambda: "hardware-id")}),
-        ):
-            # Re-import to use patched module
-            import importlib
-            import gobby.utils.machine_id as mid
-
-            importlib.reload(mid)
-
-            result = mid._get_or_create_machine_id()
-
-        # Should use hardware ID
-        assert result is not None
-        mock_save.assert_called_once()
-
-    def test_falls_back_to_uuid_when_machineid_not_available(self):
-        """Test falls back to UUID when machineid library unavailable."""
-        mock_config = MagicMock()
-        mock_config.machine_id = None
+    def test_generates_and_saves_new_id_when_file_missing(self, tmp_path):
+        """Test generates new ID and saves to file when missing."""
+        test_file = tmp_path / "machine_id"
 
         with (
-            patch("gobby.config.app.load_config", return_value=mock_config),
-            patch("gobby.config.app.save_config"),
+            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch("gobby.utils.machine_id._generate_machine_id", return_value="new-generated-id"),
         ):
-            # Import error for machineid
-            import sys
+            result = _get_or_create_machine_id()
 
-            if "machineid" in sys.modules:
-                del sys.modules["machineid"]
+        assert result == "new-generated-id"
+        assert test_file.exists()
+        assert test_file.read_text() == "new-generated-id"
 
-            with patch.dict("sys.modules", {"machineid": None}):
-                result = _get_or_create_machine_id()
+    def test_creates_parent_directory_if_missing(self, tmp_path):
+        """Test creates parent directory if it doesn't exist."""
+        test_file = tmp_path / "subdir" / "machine_id"
 
-        # Should generate a UUID since machineid is unavailable
+        with (
+            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch("gobby.utils.machine_id._generate_machine_id", return_value="new-id"),
+        ):
+            result = _get_or_create_machine_id()
+
+        assert result == "new-id"
+        assert test_file.parent.exists()
+
+    def test_ignores_empty_file(self, tmp_path):
+        """Test generates new ID if file exists but is empty."""
+        test_file = tmp_path / "machine_id"
+        test_file.write_text("   \n")  # Whitespace only
+
+        with (
+            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch("gobby.utils.machine_id._generate_machine_id", return_value="new-id"),
+        ):
+            result = _get_or_create_machine_id()
+
+        assert result == "new-id"
+
+
+class TestWriteFileSecure:
+    """Tests for _write_file_secure function."""
+
+    def test_writes_content_to_file(self, tmp_path):
+        """Test writes content correctly."""
+        test_file = tmp_path / "test_file"
+
+        _write_file_secure(test_file, "test-content")
+
+        assert test_file.read_text() == "test-content"
+
+    def test_sets_restrictive_permissions(self, tmp_path):
+        """Test file is created with 0o600 permissions."""
+        test_file = tmp_path / "test_file"
+
+        _write_file_secure(test_file, "test-content")
+
+        # Check permissions (owner read/write only)
+        mode = test_file.stat().st_mode & 0o777
+        assert mode == 0o600
+
+    def test_overwrites_existing_file(self, tmp_path):
+        """Test overwrites existing file content."""
+        test_file = tmp_path / "test_file"
+        test_file.write_text("old-content")
+
+        _write_file_secure(test_file, "new-content")
+
+        assert test_file.read_text() == "new-content"
+
+
+class TestGenerateMachineId:
+    """Tests for _generate_machine_id function."""
+
+    def test_uses_machineid_library_when_available(self):
+        """Test uses machineid library if available."""
+        mock_machineid = MagicMock()
+        mock_machineid.id.return_value = "hardware-id"
+
+        with patch.dict("sys.modules", {"machineid": mock_machineid}):
+            # Need to reimport to pick up the mock
+            from gobby.utils import machine_id as mid
+            result = mid._generate_machine_id()
+
+        # Should attempt to use machineid
+        mock_machineid.id.assert_called_once()
+
+    def test_falls_back_to_uuid_when_import_fails(self):
+        """Test falls back to UUID when machineid unavailable."""
+        with patch.dict("sys.modules", {"machineid": None}):
+            result = _generate_machine_id()
+
+        # Should be a valid UUID string
         assert result is not None
         assert isinstance(result, str)
-        # Verify it was saved to config
-        assert mock_config.machine_id == result
+        assert len(result) == 36  # UUID format
 
-    def test_saves_new_id_to_config(self):
-        """Test that newly generated ID is saved to config."""
-        mock_config = MagicMock()
-        mock_config.machine_id = None
+    def test_falls_back_to_uuid_when_machineid_raises(self):
+        """Test falls back to UUID when machineid.id() raises."""
+        mock_machineid = MagicMock()
+        mock_machineid.id.side_effect = Exception("Hardware access failed")
 
-        with (
-            patch("gobby.config.app.load_config", return_value=mock_config),
-            patch("gobby.config.app.save_config") as mock_save,
-        ):
-            result = _get_or_create_machine_id()
+        with patch.dict("sys.modules", {"machineid": mock_machineid}):
+            result = _generate_machine_id()
 
-        # Verify save was called with config that has machine_id set
-        mock_save.assert_called_once()
-        assert mock_config.machine_id is not None
+        # Should fall back to UUID
+        assert result is not None
+        assert isinstance(result, str)
 
 
 class TestClearCache:

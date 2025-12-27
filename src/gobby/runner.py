@@ -168,10 +168,11 @@ class GobbyRunner:
             server.should_exit = True
             await server_task
 
+            # Stop in reverse startup order
+            await self.lifecycle_manager.stop()
+
             if self.message_processor:
                 await self.message_processor.stop()
-
-            await self.lifecycle_manager.stop()
 
             if websocket_task:
                 websocket_task.cancel()
