@@ -23,7 +23,7 @@ from gobby.adapters.codex import CodexAdapter
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.hooks.hook_manager import HookManager
 from gobby.llm import LLMService, create_llm_service
-from gobby.mcp_proxy.server import create_mcp_server
+from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
 from gobby.memory.manager import MemoryManager
 from gobby.memory.skills import SkillLearner
 from gobby.storage.sessions import LocalSessionManager
@@ -74,6 +74,7 @@ class HTTPServer:
         port: int = 8000,
         test_mode: bool = False,
         mcp_manager: Any | None = None,
+        mcp_db_manager: Any | None = None,
         config: Any | None = None,
         codex_client: Any | None = None,
         session_manager: LocalSessionManager | None = None,
@@ -142,20 +143,27 @@ class HTTPServer:
         # Create MCP server instance
         self._mcp_server = None
         if mcp_manager:
-            self._mcp_server = create_mcp_server(
+            # Determine WebSocket port
+            ws_port = 8766
+            if config and hasattr(config, "websocket") and config.websocket:
+                ws_port = config.websocket.port
+
+            # Create tools handler
+            tools_handler = GobbyDaemonTools(
                 mcp_manager=mcp_manager,
                 daemon_port=port,
+                websocket_port=ws_port,
                 start_time=self._start_time,
+                internal_manager=None,  # Not used or handled by runner
                 config=config,
                 llm_service=self.llm_service,
                 codex_client=codex_client,
-                task_manager=task_manager,
-                task_sync_manager=task_sync_manager,
-                message_manager=message_manager,
                 session_manager=session_manager,
                 memory_manager=memory_manager,
                 skill_learner=skill_learner,
+                config_manager=mcp_db_manager,
             )
+            self._mcp_server = create_mcp_server(tools_handler)
             logger.debug("MCP server initialized and will be mounted at /mcp")
 
         self.app = self._create_app()
@@ -213,9 +221,7 @@ class HTTPServer:
         # Create MCP app first if available (needed for lifespan)
         mcp_app = None
         if self._mcp_server:
-            mcp_app = self._mcp_server.http_app(
-                path="/", transport="http", stateless_http=True, json_response=True
-            )
+            mcp_app = self._mcp_server.streamable_http_app()
             logger.debug("MCP HTTP app created")
 
         @asynccontextmanager

@@ -1,11 +1,10 @@
 """Tests for the MCP proxy stdio module."""
 
-import asyncio
+import signal
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import psutil
 
 from gobby.mcp_proxy.stdio import (
     check_daemon_http_health,
@@ -190,32 +189,39 @@ class TestStopDaemonProcess:
     @pytest.mark.asyncio
     async def test_stops_daemon_successfully(self):
         """Test successful daemon stop."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "Daemon stopped"
-        mock_result.stderr = ""
-
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
-            with patch("gobby.mcp_proxy.daemon_control.subprocess.run", return_value=mock_result):
+            with patch("gobby.mcp_proxy.daemon_control.os.kill") as mock_kill:
                 result = await stop_daemon_process()
 
                 assert result["success"] is True
                 assert result["output"] == "Daemon stopped"
+                mock_kill.assert_called_once_with(12345, signal.SIGTERM)
 
     @pytest.mark.asyncio
-    async def test_handles_stop_failure(self):
-        """Test handles daemon stop failure."""
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-        mock_result.stderr = "Stop failed"
-
+    async def test_handles_stop_failure_permission(self):
+        """Test handles daemon stop failure due to permission."""
         with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
-            with patch("gobby.mcp_proxy.daemon_control.subprocess.run", return_value=mock_result):
+            with patch(
+                "gobby.mcp_proxy.daemon_control.os.kill", side_effect=PermissionError("Denied")
+            ):
                 result = await stop_daemon_process()
 
                 assert result["success"] is False
-                assert result["error"] == "Stop failed"
+                assert result["error"] == "Permission denied"
+
+    @pytest.mark.asyncio
+    async def test_handles_stop_failure_not_found(self):
+        """Test handles daemon stop failure due to process lookup."""
+        with patch("gobby.mcp_proxy.daemon_control.get_daemon_pid", return_value=12345):
+            with patch(
+                "gobby.mcp_proxy.daemon_control.os.kill",
+                side_effect=ProcessLookupError("Not found"),
+            ):
+                result = await stop_daemon_process()
+
+                assert result["success"] is False
+                assert result["error"] == "Process not found"
+                assert result["not_running"] is True
 
 
 class TestRestartDaemonProcess:
@@ -304,7 +310,7 @@ class TestCheckDaemonHttpHealth:
         mock_client.__aexit__.return_value = None
 
         with patch("gobby.mcp_proxy.daemon_control.httpx.AsyncClient", return_value=mock_client):
-            result = await check_daemon_http_health(8765, timeout=5.0)
+            await check_daemon_http_health(8765, timeout=5.0)
 
             # Verify the get was called with the timeout
             mock_client.get.assert_called_once()

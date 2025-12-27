@@ -32,28 +32,25 @@ import logging
 import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.memory.manager import MemoryManager
+from gobby.memory.skills import SkillLearner
 from gobby.sessions.manager import SessionManager
 from gobby.sessions.summary import SummaryFileGenerator
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
+from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.messages import LocalMessageManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.skills import LocalSkillManager
 from gobby.utils.daemon_client import DaemonClient
 from gobby.workflows.engine import WorkflowEngine
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.state_manager import WorkflowStateManager
-
-# Memory & Skills (Phase 4)
-from gobby.storage.memories import LocalMemoryManager
-from gobby.storage.skills import LocalSkillManager
-from gobby.storage.messages import LocalMessageManager
-from gobby.memory.manager import MemoryManager
-from gobby.memory.skills import SkillLearner
 
 # Backward-compatible alias
 TranscriptProcessor = ClaudeTranscriptParser
@@ -152,6 +149,9 @@ class HookManager:
         else:
             health_check_interval = 10.0
 
+        # Initialize Database
+        self._database = LocalDatabase()
+
         # Create session-agnostic subsystems (shared across all sessions)
         self._daemon_client = DaemonClient(
             host=daemon_host,
@@ -162,11 +162,7 @@ class HookManager:
         self._transcript_processor = TranscriptProcessor(logger_instance=self.logger)
 
         # Create local storage for sessions
-        self._database = LocalDatabase()
-        run_migrations(self._database)
         self._session_storage = LocalSessionManager(self._database)
-        self._session_task_manager = SessionTaskManager(self._database)
-
         self._session_task_manager = SessionTaskManager(self._database)
 
         # Initialize Memory & Skills (Phase 4)
@@ -610,8 +606,8 @@ class HookManager:
         """Get unique machine identifier."""
         from gobby.utils.machine_id import get_machine_id as _get_machine_id
 
-        result: str = _get_machine_id()
-        return result
+        result = _get_machine_id()
+        return result or "unknown-machine"
 
     def _resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
         """
@@ -646,7 +642,7 @@ class HookManager:
 
         result = initialize_project(cwd=working_dir)
         self.logger.info(f"Auto-initialized project '{result.project_name}' in {working_dir}")
-        return cast(str, result.project_id)
+        return result.project_id
 
     # ==================== EVENT HANDLERS ====================
     # These handlers work with unified HookEvent and return HookResponse.

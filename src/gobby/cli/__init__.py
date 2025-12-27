@@ -3,15 +3,15 @@ Gobby CLI entry point.
 """
 
 import click
-from gobby.config.app import load_config
 
+from gobby.config.app import load_config
 from .daemon import restart, start, status, stop
 from .init import init
 from .install import install, uninstall
 from .mcp import mcp_server
-from .tasks import tasks
 from .memory import memory
 from .skills import skills
+from .tasks import tasks
 
 
 @click.group()
@@ -36,7 +36,6 @@ cli.add_command(status)
 cli.add_command(mcp_server)
 cli.add_command(init)
 cli.add_command(install)
-cli.add_command(uninstall)
 cli.add_command(uninstall)
 cli.add_command(tasks)
 cli.add_command(memory)

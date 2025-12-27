@@ -1,10 +1,3 @@
-"""
-Simple runner for Gobby daemon.
-
-Runs HTTP server, WebSocket server, and MCP connections as a long-running async process.
-Local-first version: uses SQLite storage instead of platform APIs.
-"""
-
 import asyncio
 import logging
 import os
@@ -12,29 +5,34 @@ import signal
 import sys
 from pathlib import Path
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+import uvicorn
 
 from gobby.config.app import load_config
-from gobby.llm import create_llm_service
+from gobby.hooks.broadcaster import HookEventBroadcaster
+from gobby.hooks.hook_manager import HookManager
+from gobby.llm import LLMService, create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.memory.manager import MemoryManager
+from gobby.memory.skills import SkillLearner
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket import WebSocketConfig, WebSocketServer
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.database import LocalDatabase
-from gobby.storage.mcp import LocalMCPManager
-from gobby.storage.messages import LocalMessageManager
 from gobby.storage.messages import LocalMessageManager
 from gobby.storage.migrations import run_migrations
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.memory.manager import MemoryManager
-from gobby.memory.skills import SkillLearner
 from gobby.sync.memories import MemorySyncManager
 from gobby.sync.tasks import TaskSyncManager
-from gobby.utils.logging import setup_file_logging, setup_mcp_logging
+from gobby.tasks.expansion import TaskExpander
+from gobby.tasks.validation import TaskValidator
+from gobby.utils.logging import setup_file_logging
 from gobby.utils.machine_id import get_machine_id
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +42,7 @@ class GobbyRunner:
 
     def __init__(self, config_path: Path | None = None, verbose: bool = False):
         setup_file_logging(verbose=verbose)
-        setup_mcp_logging(verbose=verbose)
+        # setup_mcp_logging(verbose=verbose) # Removed as per instruction
 
         config_file = str(config_path) if config_path else None
         self.config = load_config(config_file)
@@ -58,9 +56,11 @@ class GobbyRunner:
         self.session_manager = LocalSessionManager(self.database)
         self.skill_storage = LocalSkillManager(self.database)
         self.message_manager = LocalMessageManager(self.database)
+        self.task_manager = LocalTaskManager(self.database)
+        self.session_task_manager = SessionTaskManager(self.database)
 
         # Initialize LLM Service (needed for SkillLearner)
-        self.llm_service = None
+        self.llm_service: LLMService | None = None  # Added type hint
         try:
             self.llm_service = create_llm_service(self.config)
             logger.debug(f"LLM service initialized: {self.llm_service.enabled_providers}")
@@ -68,14 +68,14 @@ class GobbyRunner:
             logger.error(f"Failed to initialize LLM service: {e}")
 
         # Initialize Memory & Skills
-        self.memory_manager = None
+        self.memory_manager: MemoryManager | None = None  # Added type hint
         if hasattr(self.config, "memory"):
             try:
                 self.memory_manager = MemoryManager(self.database, self.config.memory)
             except Exception as e:
                 logger.error(f"Failed to initialize MemoryManager: {e}")
 
-        self.skill_learner = None
+        self.skill_learner: SkillLearner | None = None  # Added type hint
         if hasattr(self.config, "skills") and self.llm_service:
             try:
                 self.skill_learner = SkillLearner(
@@ -87,16 +87,24 @@ class GobbyRunner:
             except Exception as e:
                 logger.error(f"Failed to initialize SkillLearner: {e}")
 
-        # MCP database manager (stores servers and tools in SQLite)
-        self.mcp_db_manager = LocalMCPManager(self.database)
-        self.task_manager = LocalTaskManager(self.database)
-        self.task_sync_manager = TaskSyncManager(self.task_manager)
+        # MCP Proxy Manager - Initialize early for tool access
+        # Pass memory manager to proxy manager so tools can access it (Phase 5)
+        # We need the MCP DB manager for persistent tool storage
+        self.mcp_db_manager = self.database  # Reuse main database for MCP storage
 
+        self.mcp_proxy = MCPClientManager()
+
+        # Hook Event Broadcaster
+        # Check if websocket config exists first to avoid NoneType errors
+        self.broadcaster = HookEventBroadcaster(websocket_server=None, config=self.config)
+
+        # Task Sync Manager
+        self.task_sync_manager = TaskSyncManager(self.task_manager)
         # Wire up change listener for automatic export
         self.task_manager.add_change_listener(self.task_sync_manager.trigger_export)
 
         # Initialize Memory Sync Manager (Phase 7) & Wire up listeners
-        self.memory_sync_manager = None
+        self.memory_sync_manager: MemorySyncManager | None = None  # Added type hint
         if hasattr(self.config, "memory_sync") and self.config.memory_sync.enabled:
             # Only if memory/skills are enabled
             if self.memory_manager:
@@ -117,21 +125,51 @@ class GobbyRunner:
                 except Exception as e:
                     logger.error(f"Failed to initialize MemorySyncManager: {e}")
 
-        self.mcp_proxy = MCPClientManager(
-            mcp_db_manager=self.mcp_db_manager,
-        )
-
-        # Configured WebSocket (created later if enabled)
-        self.websocket_server = None
-
-        # Message Processor
-        self.message_processor = None
-        if self.config.message_tracking.enabled:
-            # We pass None for websocket_server initially, will attach later if enabled
+        # Session Message Processor (Phase 6)
+        # Needs to be created before HookManager to register sessions
+        self.message_processor: SessionMessageProcessor | None = None
+        if getattr(self.config, "message_tracking", None) and self.config.message_tracking.enabled:
             self.message_processor = SessionMessageProcessor(
                 db=self.database,
                 poll_interval=self.config.message_tracking.poll_interval,
             )
+
+        # Hook Manager
+        self.hook_manager = HookManager(
+            daemon_host="localhost",
+            daemon_port=self.config.daemon_port,
+            llm_service=self.llm_service,
+            config=self.config,
+            broadcaster=self.broadcaster,
+            mcp_manager=self.mcp_proxy,
+            message_processor=self.message_processor,
+            memory_sync_manager=self.memory_sync_manager,
+        )
+
+        # Initialize Task Managers (Phase 7.1)
+        self.task_expander: TaskExpander | None = None
+        self.task_validator: TaskValidator | None = None
+
+        if self.llm_service:
+            task_expansion_config = getattr(self.config, "task_expansion", None)
+            if task_expansion_config:
+                try:
+                    self.task_expander = TaskExpander(
+                        llm_service=self.llm_service,
+                        config=task_expansion_config,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to initialize TaskExpander: {e}")
+
+            task_validation_config = getattr(self.config, "task_validation", None)
+            if task_validation_config:
+                try:
+                    self.task_validator = TaskValidator(
+                        llm_service=self.llm_service,
+                        config=task_validation_config,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to initialize TaskValidator: {e}")
 
         # Session Lifecycle Manager (background jobs for expiring and processing)
         self.lifecycle_manager = SessionLifecycleManager(
@@ -139,10 +177,11 @@ class GobbyRunner:
             config=self.config.session_lifecycle,
         )
 
-        # HTTP server with local session storage
+        # HTTP Server
         self.http_server = HTTPServer(
             port=self.config.daemon_port,
             mcp_manager=self.mcp_proxy,
+            mcp_db_manager=self.database,
             config=self.config,
             session_manager=self.session_manager,
             task_manager=self.task_manager,
@@ -151,13 +190,16 @@ class GobbyRunner:
             memory_manager=self.memory_manager,
             skill_learner=self.skill_learner,
             llm_service=self.llm_service,
+            message_processor=self.message_processor,
             memory_sync_manager=self.memory_sync_manager,
         )
 
-        # Share message processor with HTTP server (for HookManager injection)
+        # Share message processor with HTTP server (for HookManager injection if needed)
+        # HTTP Server already receives message_processor in init, but ensuring property is set:
         self.http_server.message_processor = self.message_processor
 
-        # WebSocket server (optional)
+        # WebSocket Server (Optional)
+        self.websocket_server: WebSocketServer | None = None
         if self.config.websocket and getattr(self.config.websocket, "enabled", True):
             websocket_config = WebSocketConfig(
                 host="localhost",
@@ -171,6 +213,10 @@ class GobbyRunner:
             )
             # Pass WebSocket server reference to HTTP server for broadcasting
             self.http_server.websocket_server = self.websocket_server
+
+            # Pass WebSocket server to global broadcaster
+            if self.broadcaster:
+                self.broadcaster.websocket_server = self.websocket_server
 
             # Pass WebSocket server to message processor if enabled
             if self.message_processor:
@@ -206,8 +252,6 @@ class GobbyRunner:
                 websocket_task = asyncio.create_task(self.websocket_server.start())
 
             # Start HTTP server
-            import uvicorn
-
             config = uvicorn.Config(
                 self.http_server.app,
                 host="0.0.0.0",
@@ -239,7 +283,7 @@ class GobbyRunner:
                 except asyncio.CancelledError:
                     pass
 
-            await self.mcp_proxy.disconnect_all()  # Changed from self.mcp_manager to self.mcp_proxy
+            await self.mcp_proxy.disconnect_all()
 
         except Exception as e:
             logger.error(f"Fatal error: {e}", exc_info=True)

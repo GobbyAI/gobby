@@ -68,8 +68,11 @@ class ToolProxyService:
         """Execute a tool."""
         # Check internal tools first
         if server_name.startswith("gobby-") and server_name in self._internal_tools:
-            # Handle internal tool (simplified)
-            pass
+            tool_func = self._internal_tools[server_name].get(tool_name)
+            if tool_func:
+                return await tool_func(arguments or {})
+            else:
+                raise MCPError(f"Tool {tool_name} not found in internal server {server_name}")
 
         # Use MCP manager
         return await self._mcp_manager.call_tool(server_name, tool_name, arguments)

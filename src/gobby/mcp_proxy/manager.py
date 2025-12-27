@@ -62,7 +62,6 @@ class MCPClientManager:
         self.external_id = external_id
         self.project_path = project_path
         self.project_id = project_id
-        self.mcp_db_manager: Any | None = None
 
         if server_configs:
             for config in server_configs:

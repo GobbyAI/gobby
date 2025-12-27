@@ -107,29 +107,12 @@ async def stop_daemon_process(pid: int | None = None) -> dict[str, Any]:
         return {"success": False, "not_running": True, "message": "Daemon not running"}
 
     try:
-        # Use subprocess.run to kill? Or os.kill?
-        # Tests patch subprocess.run in TestStopDaemonProcess.
-        # So we should use subprocess.run to call kill? Or maybe standard kill command?
-        # Tests check result.returncode.
-        # So we probably run "kill <pid>" via subprocess?
-        # OR original code used subprocess.run(["kill", ...])?
-        # Let's try matching test expectation: subprocess.run is called.
-
-        # Alternatively, original code used os.kill but tests mocked subprocess.run for other reasons?
-        # No, test lines 195: with patch("...subprocess.run", return_value=mock_result).
-        # So it uses subprocess.
-
-        # I'll use `kill <pid>` command via subprocess.
-        # Note: this is platform specific (Mac/Linux).
-        cmd = ["kill", str(pid)]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-        if result.returncode == 0:
-            return {"success": True, "output": "Daemon stopped"}
-        else:
-            return {"success": False, "error": "Stop failed"}
-
+        os.kill(pid, signal.SIGTERM)
+        return {"success": True, "output": "Daemon stopped"}
+    except ProcessLookupError:
+        return {"success": False, "error": "Process not found", "not_running": True}
+    except PermissionError:
+        return {"success": False, "error": "Permission denied"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
