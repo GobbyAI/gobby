@@ -518,6 +518,45 @@ class MessageTrackingConfig(BaseModel):
         return v
 
 
+class SessionLifecycleConfig(BaseModel):
+    """Configuration for session lifecycle management.
+
+    Handles:
+    - Expiring stale sessions (active/paused for too long)
+    - Background transcript processing for expired sessions
+    """
+
+    stale_session_timeout_hours: int = Field(
+        default=24,
+        description="Hours after which inactive sessions are marked expired",
+    )
+    expire_check_interval_minutes: int = Field(
+        default=60,
+        description="How often to check for stale sessions (minutes)",
+    )
+    transcript_processing_interval_minutes: int = Field(
+        default=5,
+        description="How often to process pending transcripts (minutes)",
+    )
+    transcript_processing_batch_size: int = Field(
+        default=10,
+        description="Maximum sessions to process per batch",
+    )
+
+    @field_validator(
+        "stale_session_timeout_hours",
+        "expire_check_interval_minutes",
+        "transcript_processing_interval_minutes",
+        "transcript_processing_batch_size",
+    )
+    @classmethod
+    def validate_positive(cls, v: int) -> int:
+        """Validate value is positive."""
+        if v <= 0:
+            raise ValueError("Value must be positive")
+        return v
+
+
 class DaemonConfig(BaseModel):
     """
     Main configuration for Gobby daemon.
@@ -526,13 +565,9 @@ class DaemonConfig(BaseModel):
     1. CLI arguments (highest)
     2. YAML file (~/.gobby/config.yaml)
     3. Defaults (lowest)
-    """
 
-    # Machine identification
-    machine_id: str | None = Field(
-        default=None,
-        description="Stable machine identifier (auto-generated on first run)",
-    )
+    Note: machine_id is stored separately in ~/.gobby/machine_id
+    """
 
     # Daemon settings
     daemon_port: int = Field(
@@ -608,6 +643,10 @@ class DaemonConfig(BaseModel):
     message_tracking: MessageTrackingConfig = Field(
         default_factory=MessageTrackingConfig,
         description="Session message tracking configuration",
+    )
+    session_lifecycle: SessionLifecycleConfig = Field(
+        default_factory=SessionLifecycleConfig,
+        description="Session lifecycle management configuration",
     )
 
     def get_code_execution_config(self) -> CodeExecutionConfig:
@@ -725,7 +764,7 @@ def apply_cli_overrides(
 
 def generate_default_config(config_file: str) -> None:
     """
-    Generate default configuration file.
+    Generate default configuration file from Pydantic model defaults.
 
     Args:
         config_file: Path where to create the config file
@@ -733,29 +772,14 @@ def generate_default_config(config_file: str) -> None:
     config_path = Path(config_file).expanduser()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    default_config = {
-        "daemon_port": 8765,
-        "daemon_health_check_interval": 10.0,
-        "database_path": "~/.gobby/gobby.db",
-        "websocket": {
-            "enabled": True,
-            "port": 8766,
-            "ping_interval": 30,
-            "ping_timeout": 10,
-        },
-        "logging": {
-            "level": "info",
-            "max_size_mb": 10,
-            "backup_count": 5,
-        },
-        "workflow": {
-            "enabled": True,
-            "timeout": 30.0,
-        },
-    }
+    # Use Pydantic model defaults as source of truth
+    default_config = DaemonConfig().model_dump(mode="python", exclude_none=True)
 
     with open(config_path, "w") as f:
-        yaml.dump(default_config, f, default_flow_style=False, sort_keys=False)
+        yaml.safe_dump(default_config, f, default_flow_style=False, sort_keys=False)
+
+    # Set restrictive permissions (owner read/write only)
+    config_path.chmod(0o600)
 
 
 def load_config(

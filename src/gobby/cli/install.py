@@ -88,6 +88,37 @@ def _install_cli_content(cli_name: str, target_path: Path) -> dict[str, list[str
     return installed
 
 
+def _ensure_daemon_config() -> dict[str, Any]:
+    """Ensure daemon config exists at ~/.gobby/config.yaml.
+
+    If config doesn't exist, copies the shared config template.
+
+    Returns:
+        Dict with 'created' (bool) and 'path' (str) keys
+    """
+    config_path = Path("~/.gobby/config.yaml").expanduser()
+
+    if config_path.exists():
+        return {"created": False, "path": str(config_path)}
+
+    # Ensure directory exists
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Copy shared config template
+    shared_config = get_install_dir() / "shared" / "config" / "config.yaml"
+    if shared_config.exists():
+        copy2(shared_config, config_path)
+        # Set restrictive permissions
+        config_path.chmod(0o600)
+        return {"created": True, "path": str(config_path), "source": "shared"}
+
+    # Fallback: generate from Pydantic defaults
+    from gobby.config.app import generate_default_config
+
+    generate_default_config(str(config_path))
+    return {"created": True, "path": str(config_path), "source": "generated"}
+
+
 def _is_claude_code_installed() -> bool:
     """Check if Claude Code CLI is installed."""
     return shutil.which("claude") is not None
@@ -909,6 +940,11 @@ def install(
     click.echo(f"\nProject: {project_path}")
     if is_dev_mode:
         click.echo("Mode: Development (using source directory)")
+
+    # Ensure daemon config exists
+    config_result = _ensure_daemon_config()
+    if config_result["created"]:
+        click.echo(f"Created daemon config: {config_result['path']}")
 
     toggles = list(clis_to_install)
     if install_hooks:

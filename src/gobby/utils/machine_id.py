@@ -1,24 +1,28 @@
 """Machine ID utility.
 
-Provides stable machine identification stored in config.yaml.
+Provides stable machine identification stored in ~/.gobby/machine_id.
 Uses py-machineid for hardware-based IDs with UUID fallback.
 """
 
 import threading
 import uuid
+from pathlib import Path
 
 # Thread-safe cache
 _cache_lock = threading.Lock()
 _cached_machine_id: str | None = None
 
+# Default location for machine ID file
+MACHINE_ID_FILE = Path("~/.gobby/machine_id").expanduser()
+
 
 def get_machine_id() -> str | None:
-    """Get stable machine ID from config.yaml.
+    """Get stable machine ID from ~/.gobby/machine_id.
 
     Strategy:
     1. Return cached ID if available
-    2. Check config.yaml for machine_id
-    3. If not present, generate ID and save to config.yaml
+    2. Check ~/.gobby/machine_id file
+    3. If not present, generate ID and save to file
 
     Returns:
         Machine ID as string, or None if operations fail
@@ -33,7 +37,6 @@ def get_machine_id() -> str | None:
         if _cached_machine_id is not None:
             return _cached_machine_id
 
-    # Try config.yaml first, then fall back to legacy file
     try:
         machine_id = _get_or_create_machine_id()
         if machine_id:
@@ -48,11 +51,12 @@ def get_machine_id() -> str | None:
 
 
 def _get_or_create_machine_id() -> str:
-    """Get or create machine ID from config.yaml.
+    """Get or create machine ID from ~/.gobby/machine_id.
 
     Strategy:
-    1. Read from config.yaml if present
-    2. Generate new ID and save to config.yaml
+    1. Read from file if present
+    2. Migrate from config.yaml if present there (one-time migration)
+    3. Generate new ID and save to file
 
     Returns:
         Machine ID string
@@ -60,32 +64,67 @@ def _get_or_create_machine_id() -> str:
     Raises:
         OSError: If file operations fail
     """
-    from gobby.config.app import load_config, save_config
+    # Ensure directory exists
+    MACHINE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load config (creates default if doesn't exist)
-    config = load_config(create_default=True)
+    # Check if file exists and has content
+    if MACHINE_ID_FILE.exists():
+        content = MACHINE_ID_FILE.read_text().strip()
+        if content:
+            return content
 
-    # If config has machine_id, return it
-    if config.machine_id:
-        return config.machine_id  # type: ignore[no-any-return]
+    # Try to migrate from config.yaml (one-time migration)
+    migrated_id = _migrate_from_config()
+    if migrated_id:
+        return migrated_id
 
-    # Config doesn't have it - generate new ID
-    new_id: str
+    # Generate new ID
+    new_id = _generate_machine_id()
 
-    # Try to use hardware-based ID from library
+    # Save to file with restrictive permissions
+    MACHINE_ID_FILE.write_text(new_id)
+    MACHINE_ID_FILE.chmod(0o600)
+
+    return new_id
+
+
+def _migrate_from_config() -> str | None:
+    """Migrate machine_id from config.yaml if present.
+
+    Returns:
+        Machine ID if found and migrated, None otherwise
+    """
+    try:
+        from gobby.config.app import load_config
+
+        config = load_config(create_default=False)
+        if config.machine_id:
+            # Save to new location
+            MACHINE_ID_FILE.write_text(config.machine_id)
+            MACHINE_ID_FILE.chmod(0o600)
+            return config.machine_id
+    except Exception:
+        # Config doesn't exist or can't be read - that's fine
+        pass
+
+    return None
+
+
+def _generate_machine_id() -> str:
+    """Generate a new machine ID.
+
+    Uses py-machineid for hardware-based ID, falls back to UUID4.
+
+    Returns:
+        Generated machine ID string
+    """
     try:
         import machineid
 
-        new_id = machineid.id()
+        return machineid.id()
     except (ImportError, Exception):
         # Fallback to UUID4 if library not available
-        new_id = str(uuid.uuid4())
-
-    # Save to config.yaml
-    config.machine_id = new_id
-    save_config(config)
-
-    return new_id
+        return str(uuid.uuid4())
 
 
 def clear_cache() -> None:

@@ -798,6 +798,9 @@ class HookManager:
             if prompt_lower not in ("/clear", "/exit"):
                 try:
                     self._session_manager.update_session_status(session_id, "active")
+                    # Reset transcript_processed so background job will re-process
+                    # when session expires again (catches new messages)
+                    self._session_storage.reset_transcript_processed(session_id)
                 except Exception as e:
                     self.logger.warning(f"Failed to update session status: {e}")
 

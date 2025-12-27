@@ -1,5 +1,8 @@
 """Local session storage manager."""
 
+from __future__ import annotations
+
+import builtins
 import logging
 import uuid
 from dataclasses import dataclass
@@ -293,3 +296,87 @@ class LocalSessionManager:
         """Delete session by ID."""
         cursor = self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         return bool(cursor.rowcount and cursor.rowcount > 0)
+
+    def expire_stale_sessions(self, timeout_hours: int = 24) -> int:
+        """
+        Mark sessions as expired if they've been inactive for too long.
+
+        Args:
+            timeout_hours: Hours of inactivity before expiring
+
+        Returns:
+            Number of sessions expired
+        """
+        now = datetime.now(UTC).isoformat()
+        cursor = self.db.execute(
+            """
+            UPDATE sessions
+            SET status = 'expired', updated_at = ?
+            WHERE status IN ('active', 'paused', 'handoff_ready')
+            AND updated_at < datetime('now', ? || ' hours')
+            """,
+            (now, f"-{timeout_hours}"),
+        )
+        count = cursor.rowcount or 0
+        if count > 0:
+            logger.info(f"Expired {count} stale sessions (>{timeout_hours}h inactive)")
+        return count
+
+    def get_pending_transcript_sessions(self, limit: int = 10) -> builtins.list[Session]:
+        """
+        Get sessions that need transcript processing.
+
+        These are expired sessions with transcript_processed = FALSE.
+
+        Args:
+            limit: Maximum sessions to return
+
+        Returns:
+            List of sessions needing processing
+        """
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM sessions
+            WHERE status = 'expired'
+            AND transcript_processed = FALSE
+            AND jsonl_path IS NOT NULL
+            ORDER BY updated_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [Session.from_row(row) for row in rows]
+
+    def mark_transcript_processed(self, session_id: str) -> Session | None:
+        """
+        Mark a session's transcript as fully processed.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Updated session or None if not found
+        """
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            "UPDATE sessions SET transcript_processed = TRUE, updated_at = ? WHERE id = ?",
+            (now, session_id),
+        )
+        return self.get(session_id)
+
+    def reset_transcript_processed(self, session_id: str) -> Session | None:
+        """
+        Reset transcript_processed flag when a session is resumed.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Updated session or None if not found
+        """
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            "UPDATE sessions SET transcript_processed = FALSE, updated_at = ? WHERE id = ?",
+            (now, session_id),
+        )
+        return self.get(session_id)

@@ -363,6 +363,17 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         """,
     ),
+    (
+        16,
+        "Add transcript_processed column to sessions",
+        """
+        ALTER TABLE sessions ADD COLUMN transcript_processed BOOLEAN DEFAULT FALSE;
+
+        CREATE INDEX IF NOT EXISTS idx_sessions_pending_transcript
+            ON sessions(status, transcript_processed)
+            WHERE status = 'expired' AND transcript_processed = FALSE;
+        """,
+    ),
 ]
 
 

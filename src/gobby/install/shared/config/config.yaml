@@ -1,4 +1,3 @@
-machine_id: 
 daemon_port: 8765
 daemon_health_check_interval: 60.0
 websocket:
@@ -291,3 +290,14 @@ recommend_tools:
     3. Suggested workflow (e.g., "First call X, then use result with Y")
 
     4. Only mention built-in tools if no MCP server is suitable '
+message_tracking:
+  enabled: true
+  poll_interval: 5.0
+  debounce_delay: 1.0
+  max_message_length: 10000
+  broadcast_enabled: true
+session_lifecycle:
+  stale_session_timeout_hours: 24
+  expire_check_interval_minutes: 60
+  transcript_processing_interval_minutes: 5
+  transcript_processing_batch_size: 10
