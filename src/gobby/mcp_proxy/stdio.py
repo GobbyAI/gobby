@@ -356,7 +356,7 @@ def create_stdio_mcp_server() -> FastMCP:
         # Wire up change listener for automatic export in this process too
         task_manager.add_change_listener(sync_manager.trigger_export)
 
-        # Create task registry for internal tools
+        # Create task registry for internal tools (LLM tools proxied to daemon)
         internal_manager.add_registry(create_task_registry(task_manager, sync_manager))
         logger.debug("✅ Created internal task registry in stdio server")
     except Exception as e:
@@ -640,8 +640,11 @@ def create_stdio_mcp_server() -> FastMCP:
         Returns:
             Dictionary with success status and tool execution result
         """
-        # Route internal tools locally (no HTTP round-trip)
-        if internal_manager.is_internal(server_name):
+        # Tools that require LLM service - proxy to HTTP daemon
+        LLM_TOOLS = {"expand_task", "validate_task"}
+
+        # Route internal tools locally (no HTTP round-trip), except LLM tools
+        if internal_manager.is_internal(server_name) and tool_name not in LLM_TOOLS:
             registry = internal_manager.get_registry(server_name)
             if not registry:
                 available = ", ".join(r.name for r in internal_manager.get_all_registries())
@@ -672,7 +675,7 @@ def create_stdio_mcp_server() -> FastMCP:
                     "error_type": type(e).__name__,
                 }
 
-        # Route external tools through HTTP daemon
+        # Route external tools (and LLM-dependent internal tools) through HTTP daemon
         return await _call_daemon_tool(
             daemon_port=daemon_port,
             tool_name="call_tool",
@@ -950,6 +953,12 @@ def create_stdio_mcp_server() -> FastMCP:
                 {"name": "supabase", "tools": [...]}
               ]}
         """
+        # LLM-dependent tools that are proxied to daemon but belong to gobby-tasks
+        LLM_TOOLS = [
+            {"name": "expand_task", "brief": "Expand a high-level task into smaller subtasks using AI."},
+            {"name": "validate_task", "brief": "Validate if a task is completed according to its description."},
+        ]
+
         # Handle internal servers locally
         if server and internal_manager.is_internal(server):
             registry = internal_manager.get_registry(server)
@@ -960,7 +969,11 @@ def create_stdio_mcp_server() -> FastMCP:
                     "error": f"Internal server '{server}' not found",
                     "available_internal_servers": available,
                 }
-            return {"success": True, "tools": registry.list_tools()}
+            tools = registry.list_tools()
+            # Add LLM tools for gobby-tasks (proxied to daemon)
+            if server == "gobby-tasks":
+                tools.extend(LLM_TOOLS)
+            return {"success": True, "tools": tools}
 
         # For external servers or listing all, proxy to daemon
         # The daemon will include internal servers in its response
@@ -1042,8 +1055,11 @@ def create_stdio_mcp_server() -> FastMCP:
             # Or for internal tools
             get_tool_schema(server_name="gobby-tasks", tool_name="create_task")
         """
-        # Handle internal servers locally
-        if internal_manager.is_internal(server_name):
+        # LLM-dependent tools - proxy to daemon
+        LLM_TOOLS = {"expand_task", "validate_task"}
+
+        # Handle internal servers locally, except LLM tools
+        if internal_manager.is_internal(server_name) and tool_name not in LLM_TOOLS:
             registry = internal_manager.get_registry(server_name)
             if not registry:
                 available = ", ".join(r.name for r in internal_manager.get_all_registries())
@@ -1064,7 +1080,7 @@ def create_stdio_mcp_server() -> FastMCP:
 
             return {"success": True, "tool": schema}
 
-        # Route to HTTP daemon for external servers
+        # Route to HTTP daemon for external servers and LLM tools
         return await _call_daemon_tool(
             daemon_port=daemon_port,
             tool_name="get_tool_schema",

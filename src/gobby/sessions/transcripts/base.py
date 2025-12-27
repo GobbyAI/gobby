@@ -7,9 +7,26 @@ Defines the interface for CLI-specific transcript parsers.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ParsedMessage:
+    """Normalized message from any CLI transcript."""
+
+    index: int
+    role: str
+    content: str
+    content_type: str  # text, thinking, tool_use, tool_result
+    tool_name: str | None
+    tool_input: dict | None
+    tool_result: dict | None
+    timestamp: datetime
+    raw_json: dict
 
 
 @runtime_checkable
@@ -21,6 +38,32 @@ class TranscriptParser(Protocol):
     transcript format. Implementations of this protocol handle parsing
     and extracting conversation data from each format.
     """
+
+    def parse_line(self, line: str, index: int) -> ParsedMessage | None:
+        """
+        Parse a single line from the transcript JSONL.
+
+        Args:
+            line: Raw JSON line string
+            index: Line index (0-based)
+
+        Returns:
+            ParsedMessage object or None if line should be skipped
+        """
+        ...
+
+    def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:
+        """
+        Parse multiple lines from the transcript.
+
+        Args:
+            lines: List of raw JSON line strings
+            start_index: Starting line index for first line in list
+
+        Returns:
+            List of ParsedMessage objects
+        """
+        ...
 
     def extract_last_messages(self, turns: list[dict], num_pairs: int = 2) -> list[dict]:
         """

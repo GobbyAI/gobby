@@ -206,9 +206,11 @@ llm_providers:
   litellm:
     models: gpt-4o-mini,gpt-5-mini
     auth_mode: api_key  # litellm always uses api_key
-  api_keys:
-    OPENAI_API_KEY: sk-...
-    MISTRAL_API_KEY: ...
+  # API keys - prefer environment variables (OPENAI_API_KEY, etc.)
+  # or uncomment below for config-based keys:
+  # api_keys:
+  #   OPENAI_API_KEY: "<YOUR_OPENAI_API_KEY>"
+  #   MISTRAL_API_KEY: "<YOUR_MISTRAL_API_KEY>"
 
 # Session summaries (LLM-powered)
 session_summary:

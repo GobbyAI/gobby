@@ -77,6 +77,7 @@ class HTTPServer:
         websocket_server: Any | None = None,
         task_manager: LocalTaskManager | None = None,
         task_sync_manager: TaskSyncManager | None = None,
+        message_processor: Any | None = None,
     ) -> None:
         """
         Initialize HTTP server.
@@ -91,6 +92,7 @@ class HTTPServer:
             websocket_server: Optional WebSocketServer instance for event broadcasting
             task_manager: LocalTaskManager instance
             task_sync_manager: TaskSyncManager instance
+            message_processor: SessionMessageProcessor instance
         """
         self.port = port
         self.test_mode = test_mode
@@ -98,10 +100,10 @@ class HTTPServer:
         self.config = config
         self.codex_client = codex_client
         self.session_manager = session_manager
-        self.codex_client = codex_client
-        self.session_manager = session_manager
         self.task_manager = task_manager
         self.task_sync_manager = task_sync_manager
+        self.message_processor = message_processor
+        self.websocket_server = websocket_server
 
         # Initialize WebSocket broadcaster
         # Note: websocket_server might be None if disabled
@@ -214,6 +216,7 @@ class HTTPServer:
                 "config": self.config,
                 "broadcaster": self.broadcaster,
                 "mcp_manager": self.mcp_manager,
+                "message_processor": self.message_processor,
             }
             if self.config:
                 # Pass full log file path from config

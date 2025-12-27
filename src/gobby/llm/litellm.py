@@ -205,3 +205,32 @@ class LiteLLMProvider(LLMProvider):  # type: ignore[misc]
             "Use Claude provider for code execution.",
             "language": language,
         }
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        """
+        Generate text using LiteLLM.
+        """
+        if not self._litellm:
+            return "Generation unavailable (LiteLLM not initialized)"
+
+        try:
+            response = await self._litellm.acompletion(
+                model=model or "gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt or "You are a helpful assistant.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=4000,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            self.logger.error(f"Failed to generate text with LiteLLM: {e}")
+            return f"Generation failed: {e}"

@@ -17,8 +17,13 @@ from typing import Any, Literal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.task_dependencies import TaskDependencyManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import (
+    LocalTaskManager,
+    Task,
+)
 from gobby.sync.tasks import TaskSyncManager
+from gobby.tasks.expansion import TaskExpander
+from gobby.tasks.validation import TaskValidator
 from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import initialize_project
 
@@ -26,6 +31,8 @@ from gobby.utils.project_init import initialize_project
 def create_task_registry(
     task_manager: LocalTaskManager,
     sync_manager: TaskSyncManager,
+    task_expander: TaskExpander | None = None,
+    task_validator: TaskValidator | None = None,
 ) -> InternalToolRegistry:
     """
     Create a task tool registry with all task-related tools.
@@ -33,6 +40,8 @@ def create_task_registry(
     Args:
         task_manager: LocalTaskManager instance
         sync_manager: TaskSyncManager instance
+        task_expander: TaskExpander instance (optional)
+        task_validator: TaskValidator instance (optional)
 
     Returns:
         InternalToolRegistry with all task tools registered
@@ -41,6 +50,95 @@ def create_task_registry(
         name="gobby-tasks",
         description="Task management - CRUD, dependencies, sync",
     )
+
+    @registry.tool(
+        name="expand_task",
+        description="Expand a high-level task into smaller subtasks using AI.",
+    )
+    async def expand_task(
+        task_id: str,
+        context: str | None = None,
+    ) -> list[Task]:
+        """
+        Expand a task into subtasks.
+
+        Args:
+            task_id: ID of the task to expand
+            context: Additional context for expansion
+
+        Returns:
+            List of created subtasks
+        """
+        if not task_expander:
+            raise RuntimeError("Task expansion is not enabled")
+
+        task = task_manager.get_task(task_id)
+        if not task:
+            raise ValueError(f"Task not found: {task_id}")
+
+        subtask_data = await task_expander.expand_task(
+            task_id=task.id,
+            title=task.title,
+            description=task.description,
+            context=context,
+        )
+
+        created_subtasks = []
+        for data in subtask_data:
+            # Create subtask
+            subtask = task_manager.create_task(
+                title=data["title"],
+                description=data.get("description"),
+                parent_task_id=task.id,
+                project_id=task.project_id,
+            )
+            created_subtasks.append(subtask)
+
+        return created_subtasks
+
+    @registry.tool(
+        name="validate_task",
+        description="Validate if a task is completed according to its description.",
+    )
+    async def validate_task(
+        task_id: str,
+        changes_summary: str,
+        context: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Validate task completion.
+
+        Args:
+            task_id: ID of the task to validate
+            changes_summary: Summary of changes made (files, diffs, etc.)
+            context: Additional context for validation (optional)
+
+        Returns:
+            Validation result
+        """
+        if not task_validator:
+            raise RuntimeError("Task validation is not enabled")
+
+        task = task_manager.get_task(task_id)
+        if not task:
+            raise ValueError(f"Task not found: {task_id}")
+
+        result = await task_validator.validate_task(
+            task_id=task.id,
+            title=task.title,
+            original_instruction=task.original_instruction,
+            changes_summary=changes_summary,
+        )
+
+        # Update task status if validated
+        if result.status == "valid":
+            task_manager.close_task(task.id, reason="Completed via validation")
+
+        return {
+            "is_valid": result.status == "valid",
+            "feedback": result.feedback,
+            "status": result.status,
+        }
 
     # Helper managers
     dep_manager = TaskDependencyManager(task_manager.db)

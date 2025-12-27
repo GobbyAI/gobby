@@ -318,3 +318,42 @@ class ClaudeLLMProvider(LLMProvider):  # type: ignore[misc]
                 "error_type": type(e).__name__,
                 "language": language,
             }
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        """
+        Generate text using Claude.
+        """
+        cli_path = self._verify_cli_path()
+        if not cli_path:
+            return "Generation unavailable (Claude CLI not found)"
+
+        # Configure Claude Agent SDK
+        options = ClaudeAgentOptions(
+            system_prompt=system_prompt or "You are a helpful assistant.",
+            max_turns=1,
+            model=model or "claude-haiku-4-5",
+            allowed_tools=[],
+            permission_mode="default",
+            cli_path=cli_path,
+        )
+
+        # Run async query
+        async def _run_query() -> str:
+            result_text = ""
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            result_text += block.text
+            return result_text
+
+        try:
+            return await _run_query()
+        except Exception as e:
+            self.logger.error(f"Failed to generate text with Claude: {e}")
+            return f"Generation failed: {e}"

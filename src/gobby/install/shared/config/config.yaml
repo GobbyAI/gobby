@@ -1,0 +1,304 @@
+daemon_port: 8765
+daemon_health_check_interval: 60.0
+websocket:
+  enabled: true
+  port: 8766
+  ping_interval: 30
+  ping_timeout: 10
+logging:
+  level: debug
+  format: text
+  client: ~/.gobby/logs/gobby-client.log
+  client_error: ~/.gobby/logs/gobby-client-error.log
+  hook_manager: ~/.gobby/logs/hook-manager.log
+  mcp_server: ~/.gobby/logs/mcp-server.log
+  mcp_client: ~/.gobby/logs/mcp-client.log
+  max_size_mb: 10
+  backup_count: 5
+mcp_client_proxy:
+  enabled: true
+  proxy_timeout: 30
+  tool_timeout: 30
+llm_providers:
+  claude:
+    models: claude-haiku-4-5,claude-sonnet-4-5,claude-opus-4-5
+    auth_mode: subscription
+  codex:
+    models: gpt-4o-mini,gpt-5-mini,gpt-5,gpt-5-high
+    auth_mode: subscription
+  gemini:
+    models: gemini-3
+    auth_mode: subscription
+  litellm:
+    models: gpt-4o-mini,gpt-5-mini
+    auth_mode: api_key
+  # API keys - set via environment variables or uncomment and fill in below
+  # api_keys:
+  #   OPENAI_API_KEY: "<YOUR_OPENAI_API_KEY>"
+  #   MISTRAL_API_KEY: "<YOUR_MISTRAL_API_KEY>"
+hook_extensions:
+  websocket:
+    enabled: true
+    broadcast_events:
+    - session-start
+    - session-end
+    - pre-tool-use
+    - post-tool-use
+    include_payload: true
+workflow:
+  enabled: true
+  timeout: 30.0   
+import_mcp_server:
+  enabled: true
+  provider: claude
+  model: claude-haiku-4-5
+  prompt: 'You are an MCP server configuration extractor. Given documentation for
+    an MCP server, extract the configuration needed to connect to it.
+
+
+    Return ONLY a valid JSON object (no markdown, no code blocks) with these fields:
+
+    - name: Server name (lowercase, no spaces, use hyphens)
+
+    - transport: "http", "stdio", or "websocket"
+
+    - url: Server URL (required for http/websocket transports)
+
+    - command: Command to run (required for stdio, e.g., "npx", "uv", "node")
+
+    - args: Array of command arguments (for stdio)
+
+    - env: Object of environment variables needed (use placeholder "<YOUR_KEY_NAME>"
+    for secrets)
+
+    - headers: Object of HTTP headers needed (use placeholder "<YOUR_KEY_NAME>" for
+    secrets)
+
+    - instructions: How to obtain any required API keys or setup steps
+
+
+    Example stdio server:
+
+    {"name": "filesystem", "transport": "stdio", "command": "npx", "args": ["-y",
+    "@anthropic-ai/filesystem-mcp"], "env": {}, "instructions": "No setup required"}
+
+
+    Example http server with API key:
+
+    {"name": "exa", "transport": "http", "url": "https://mcp.exa.ai/mcp", "headers":
+    {"EXA_API_KEY": "<YOUR_EXA_API_KEY>"}, "instructions": "Get your API key from
+    https://exa.ai/dashboard"}'
+session_summary:
+  enabled: false
+  provider: claude
+  model: claude-haiku-4-5
+  prompt: 'Analyze this Claude Code session transcript and create a comprehensive
+    session summary.
+
+
+    ## Transcript (last 50 turns):
+
+    {transcript_summary}
+
+
+    ## Last Messages:
+
+    {last_messages}
+
+
+    ## Git Status:
+
+    {git_status}
+
+
+    ## Files Changed:
+
+    {file_changes}
+
+
+    Create a markdown summary with the following sections (do NOT include a top-level
+    ''# Session Summary'' header):
+
+
+    ## Overview
+
+    [1-2 paragraph summary of what was accomplished in this session]
+
+
+    ## Key Decisions
+
+    [List of important technical or architectural decisions made, with bullet points]
+
+
+    ## Important Lessons Learned
+
+    [Technical insights, gotchas, or patterns discovered, with bullet points]
+
+
+    ## Substantive Interrupts
+
+    [Times when the user changed direction significantly - NOT simple "continue" or
+    "resume" prompts]
+
+
+    ## Research & Epiphanies
+
+    [Key discoveries from research or debugging that should be remembered, with bullet
+    points]
+
+
+    ### Interactions (X substantive of Y total)
+
+    [This section will be automatically populated with substantive interactions from
+    the session]
+
+
+    ## Files Changed
+
+    {file_changes}
+
+    [Add specific details about WHY each file was changed and WHAT the changes accomplish.]
+
+
+    ## Git Status
+
+    ```
+
+    {git_status}
+
+    ```
+
+
+    ## Claude Specific Todo List (or equivalent if provided by another LLM)
+
+    [This section will be automatically populated with the actual TodoWrite list if
+    it exists]
+
+
+    ## Next Steps
+
+    [Concrete, numbered suggestions for what to do when resuming work. Be specific
+    and actionable.]
+
+
+    Focus on actionable insights and context that would be valuable when resuming
+    work later.
+
+    Use only ASCII-safe characters - avoid Unicode em-dashes, smart quotes, or special
+    characters.
+
+    '
+  summary_file_path: ~/.gobby/session_summaries/
+title_synthesis:
+  enabled: true
+  provider: claude
+  model: claude-haiku-4-5
+  prompt: 'Generate a concise 3-6 word title summarizing the user''s intent.
+
+    Use title case. Be specific and descriptive. Focus on the task/goal.
+
+    Respond with ONLY the title, no explanation or quotes.
+
+
+    User''s first message:
+
+    {user_prompt}'
+code_execution:
+  enabled: true
+  provider: claude
+  model: claude-sonnet-4-5
+  prompt: 'Execute the following code and return the result.
+
+
+    Context: {context}
+
+
+    Code:
+
+    ```{language}
+
+    {code}
+
+    ```
+
+
+    Return the execution output or any errors encountered.'
+  max_turns: 5
+  default_timeout: 30
+  max_dataset_preview: 3
+recommend_tools:
+  enabled: true
+  provider: claude
+  model: claude-sonnet-4-5
+  prompt: 'You are a tool recommendation assistant for Claude Code with access to
+    MCP servers.
+
+
+    CRITICAL PRIORITIZATION RULES:
+
+    1. Analyze the task type (code navigation, docs lookup, database query, planning,
+    data processing, etc.)
+
+    2. Check available MCP server DESCRIPTIONS for capability matches
+
+    3. If ANY MCP server''s description matches the task type -> recommend those tools
+    FIRST
+
+    4. Only recommend built-in Claude Code tools (Grep, Read, Bash, WebSearch) if
+    NO suitable MCP server exists
+
+
+    TASK TYPE MATCHING GUIDELINES:
+
+    - Task needs library/framework documentation -> Look for MCP servers describing
+    "documentation", "library docs", "API reference"
+
+    - Task needs code navigation/architecture understanding -> Look for MCP servers
+    describing "code analysis", "symbols", "semantic search"
+
+    - Task needs database operations -> Look for MCP servers describing "database",
+    "PostgreSQL", "SQL"
+
+    - Task needs complex reasoning/planning -> Look for MCP servers describing "problem-solving",
+    "thinking", "reasoning"
+
+    - Task needs data processing/large datasets -> Look for MCP servers describing
+    "code execution", "data processing", "token optimization"
+
+
+    ANTI-PATTERNS (What NOT to recommend):
+
+    - Don''t recommend WebSearch when an MCP server provides library/framework documentation
+
+    - Don''t recommend Grep/Read for code architecture questions when an MCP server
+    does semantic code analysis
+
+    - Don''t recommend Bash for database queries when an MCP server provides database
+    tools
+
+    - Don''t recommend direct implementation when an MCP server provides structured
+    reasoning
+
+
+    OUTPUT FORMAT:
+
+    Be concise and specific. Recommend 1-3 tools maximum with:
+
+    1. Which MCP server and tools to use (if applicable)
+
+    2. Brief rationale based on server description matching task type
+
+    3. Suggested workflow (e.g., "First call X, then use result with Y")
+
+    4. Only mention built-in tools if no MCP server is suitable '
+message_tracking:
+  enabled: true
+  poll_interval: 5.0
+  debounce_delay: 1.0
+  max_message_length: 10000
+  broadcast_enabled: true
+session_lifecycle:
+  stale_session_timeout_hours: 24
+  expire_check_interval_minutes: 60
+  transcript_processing_interval_minutes: 5
+  transcript_processing_batch_size: 10

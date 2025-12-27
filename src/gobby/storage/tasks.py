@@ -31,13 +31,19 @@ class Task:
     assignee: str | None = None
     labels: list[str] | None = None
     closed_reason: str | None = None
-    platform_id: str | None = None  # UUID for future fleet sync
+    platform_id: str | None = None
+    validation_status: Literal["pending", "valid", "invalid"] | None = None
+    validation_feedback: str | None = None
+    original_instruction: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
         """Convert database row to Task object."""
         labels_json = row["labels"]
         labels = json.loads(labels_json) if labels_json else []
+
+        # Handle optional columns that might not exist yet if migration pending
+        keys = row.keys()
 
         return cls(
             id=row["id"],
@@ -54,7 +60,14 @@ class Task:
             assignee=row["assignee"],
             labels=labels,
             closed_reason=row["closed_reason"],
-            platform_id=row["platform_id"] if "platform_id" in row.keys() else None,
+            platform_id=row["platform_id"] if "platform_id" in keys else None,
+            validation_status=row["validation_status"] if "validation_status" in keys else None,
+            validation_feedback=row["validation_feedback"]
+            if "validation_feedback" in keys
+            else None,
+            original_instruction=row["original_instruction"]
+            if "original_instruction" in keys
+            else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +88,9 @@ class Task:
             "labels": self.labels,
             "closed_reason": self.closed_reason,
             "platform_id": self.platform_id,
+            "validation_status": self.validation_status,
+            "validation_feedback": self.validation_feedback,
+            "original_instruction": self.original_instruction,
         }
 
 
@@ -127,6 +143,7 @@ class LocalTaskManager:
         task_type: str = "task",
         assignee: str | None = None,
         labels: list[str] | None = None,
+        original_instruction: str | None = None,
     ) -> Task:
         """Create a new task with collision handling."""
         max_retries = 3
@@ -135,6 +152,9 @@ class LocalTaskManager:
         # Serialize labels
         labels_json = json.dumps(labels) if labels else None
         task_id = ""
+
+        # Default validation status
+        validation_status = "pending" if original_instruction else None
 
         for attempt in range(max_retries + 1):
             try:
@@ -146,8 +166,9 @@ class LocalTaskManager:
                         INSERT INTO tasks (
                             id, project_id, title, description, parent_task_id,
                             discovered_in_session_id, priority, type, assignee,
-                            labels, status, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+                            labels, status, created_at, updated_at,
+                            original_instruction, validation_status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
                         """,
                         (
                             task_id,
@@ -162,6 +183,8 @@ class LocalTaskManager:
                             labels_json,
                             now,
                             now,
+                            original_instruction,
+                            validation_status,
                         ),
                     )
 
@@ -218,6 +241,8 @@ class LocalTaskManager:
         assignee: str | None = None,
         labels: list[str] | None = None,
         parent_task_id: str | None = None,
+        validation_status: str | None = None,
+        validation_feedback: str | None = None,
     ) -> Task:
         """Update task fields."""
         updates = []
@@ -248,6 +273,12 @@ class LocalTaskManager:
             updates.append("parent_task_id = ?")
             # Note: explicit None means clear parent
             params.append(parent_task_id)
+        if validation_status is not None:
+            updates.append("validation_status = ?")
+            params.append(validation_status)
+        if validation_feedback is not None:
+            updates.append("validation_feedback = ?")
+            params.append(validation_feedback)
 
         if not updates:
             return self.get_task(task_id)

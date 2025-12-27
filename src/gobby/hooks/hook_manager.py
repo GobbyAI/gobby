@@ -82,6 +82,7 @@ class HookManager:
         log_backup_count: int = 5,
         broadcaster: Any | None = None,
         mcp_manager: Any | None = None,
+        message_processor: Any | None = None,
     ):
         """
         Initialize HookManager with subsystems.
@@ -96,6 +97,7 @@ class HookManager:
             log_backup_count: Number of backup log files
             broadcaster: Optional HookEventBroadcaster instance
             mcp_manager: Optional MCPClientManager instance
+            message_processor: SessionMessageProcessor instance
         """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -105,6 +107,7 @@ class HookManager:
         self.log_backup_count = log_backup_count
         self.broadcaster = broadcaster
         self.mcp_manager = mcp_manager
+        self._message_processor = message_processor
 
         # Capture event loop for thread-safe broadcasting (if running in async context)
         self._loop: asyncio.AbstractEventLoop | None
@@ -638,6 +641,13 @@ class HookManager:
         # This is required so the workflow engine can access the session correctly
         event.metadata["_platform_session_id"] = session_id
 
+        # Step 3.5: Register with Message Processor
+        if self._message_processor and transcript_path:
+            try:
+                self._message_processor.register_session(session_id, transcript_path)
+            except Exception as e:
+                self.logger.warning(f"Failed to register session with message processor: {e}")
+
         # Step 4: Execute lifecycle workflows (discovers all workflows, evaluates triggers)
         # This handles: find_parent_session, restore_context, mark_session_status, etc.
         wf_response = self._workflow_handler.handle_all_lifecycles(event)
@@ -744,6 +754,15 @@ class HookManager:
         except Exception as e:
             self.logger.error(f"Failed to generate failover summary: {e}")
 
+        # Unregister from message processor
+        if self._message_processor and (session_id or external_id):
+            try:
+                # We use whatever ID we found (preferably session_id)
+                target_id = session_id or external_id
+                self._message_processor.unregister_session(target_id)
+            except Exception as e:
+                self.logger.warning(f"Failed to unregister session from message processor: {e}")
+
         return HookResponse(decision="allow")
 
     def _handle_event_before_agent(self, event: HookEvent) -> HookResponse:
@@ -779,6 +798,9 @@ class HookManager:
             if prompt_lower not in ("/clear", "/exit"):
                 try:
                     self._session_manager.update_session_status(session_id, "active")
+                    # Reset transcript_processed so background job will re-process
+                    # when session expires again (catches new messages)
+                    self._session_storage.reset_transcript_processed(session_id)
                 except Exception as e:
                     self.logger.warning(f"Failed to update session status: {e}")
 

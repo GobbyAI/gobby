@@ -72,6 +72,73 @@ class InternalToolRegistry:
         )
         logger.debug(f"Registered internal tool '{name}' on '{self.name}'")
 
+    def tool(
+        self,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """
+        Decorator to register a function as a tool.
+
+        Args:
+            name: Optional tool name (defaults to function name)
+            description: Optional description (defaults to docstring)
+
+        Returns:
+            Decorator function
+        """
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            tool_name = name or func.__name__
+            tool_desc = description or func.__doc__ or ""
+
+            # Simple schema generation (placeholder for fuller introspection)
+            # In a real system, we'd inspect signature to build JSON schema
+            # For now, we'll assume the decorated function is well-behaved
+            # or rely on manual registration if complex schema needed.
+            # But wait, tasks.py usage implies we need schema extraction.
+            # Let's use a basic schema generator or require schema?
+            # looking at existing code, there is no schema generator.
+            # I will create a dummy schema for now to satisfy the type checker
+            # and allow the code to run, noting that a real schema generator is needed.
+
+            import inspect
+
+            # Very basic schema extraction
+            sig = inspect.signature(func)
+            properties = {}
+            required = []
+
+            for param_name, param in sig.parameters.items():
+                if param_name == "self":
+                    continue
+
+                param_type = "string"
+                if param.annotation == int:
+                    param_type = "integer"
+                elif param.annotation == bool:
+                    param_type = "boolean"
+                elif param.annotation == dict:
+                    param_type = "object"
+                elif param.annotation == list:
+                    param_type = "array"
+
+                properties[param_name] = {"type": param_type}
+                if param.default == inspect.Parameter.empty:
+                    required.append(param_name)
+
+            input_schema = {"type": "object", "properties": properties, "required": required}
+
+            self.register(
+                name=tool_name,
+                description=tool_desc.strip(),
+                input_schema=input_schema,
+                func=func,
+            )
+            return func
+
+        return decorator
+
     async def call(self, name: str, args: dict[str, Any]) -> Any:
         """
         Call a tool by name with the given arguments.
@@ -90,9 +157,7 @@ class InternalToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             available = ", ".join(self._tools.keys())
-            raise ValueError(
-                f"Tool '{name}' not found on '{self.name}'. Available: {available}"
-            )
+            raise ValueError(f"Tool '{name}' not found on '{self.name}'. Available: {available}")
 
         # Call the function (handle both sync and async)
         if asyncio.iscoroutinefunction(tool.func):
@@ -160,9 +225,7 @@ class InternalRegistryManager:
             registry: The registry to add
         """
         self._registries[registry.name] = registry
-        logger.info(
-            f"Added internal registry '{registry.name}' with {len(registry)} tools"
-        )
+        logger.info(f"Added internal registry '{registry.name}' with {len(registry)} tools")
 
     def is_internal(self, server_name: str | None) -> bool:
         """

@@ -139,8 +139,34 @@ def create_mcp_server(
     if task_manager and task_sync_manager:
         try:
             from gobby.mcp_proxy.tools.tasks import create_task_registry
+            from gobby.tasks.expansion import TaskExpander
+            from gobby.tasks.validation import TaskValidator
 
-            internal_manager.add_registry(create_task_registry(task_manager, task_sync_manager))
+            # Create task expander and validator if LLM service is available
+            task_expander = None
+            task_validator = None
+
+            if llm_service and config:
+                try:
+                    task_expander = TaskExpander(config.task_expansion, llm_service)
+                    logger.info("Task expander enabled")
+                except Exception as e:
+                    logger.warning(f"Failed to create task expander: {e}")
+
+                try:
+                    task_validator = TaskValidator(config.task_validation, llm_service)
+                    logger.info("Task validator enabled")
+                except Exception as e:
+                    logger.warning(f"Failed to create task validator: {e}")
+
+            internal_manager.add_registry(
+                create_task_registry(
+                    task_manager,
+                    task_sync_manager,
+                    task_expander=task_expander,
+                    task_validator=task_validator,
+                )
+            )
         except Exception as e:
             logger.error(f"Failed to create task registry: {e}")
 
