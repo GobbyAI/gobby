@@ -114,6 +114,10 @@ class GobbyRunner:
             # Pass WebSocket server reference to HTTP server for broadcasting
             self.http_server.websocket_server = self.websocket_server
 
+            # Pass WebSocket server to message processor if enabled
+            if self.message_processor:
+                self.message_processor.websocket_server = self.websocket_server
+
     def _setup_signal_handlers(self) -> None:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):

@@ -13,16 +13,31 @@ import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
-from gobby.mcp_proxy.manager import MCPClientManager
 from websockets.asyncio.server import serve
 from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from websockets.http11 import Response
 
+from gobby.mcp_proxy.manager import MCPClientManager
+
+
 logger = logging.getLogger(__name__)
+
+
+# Protocol for WebSocket connection to include custom attributes
+class WebSocketClient(Protocol):
+    user_id: str
+    subscriptions: set[str]
+    latency: float
+    remote_address: Any
+
+    async def send(self, message: str) -> None: ...
+    async def close(self, code: int = 1000, reason: str = "") -> None: ...
+    async def wait_closed(self) -> None: ...
+    def __aiter__(self) -> Any: ...
 
 
 @dataclass
@@ -437,28 +452,24 @@ class WebSocketServer:
                 # Filter logic
                 if is_hook_event:
                     # If subscriptions are present, we MUST match.
-                    # If NO subscriptions present, we default to sending everything (backward compatibility/simple tools)
-                    # Wait, strictly speaking, empty set means empty subscriptions.
-                    # But for ease of use, let's say: empty set = receive all?
-                    # No, explicit is better. Let's make it:
-                    # - Default (no attribute): Receive All (legacy/simple)
-                    # - Empty set (subscribed then unsubscribed all): Receive None
-                    # - Set with items: Filter
-
-                    # Ensure attribute exists
-                    if not hasattr(websocket, "subscriptions"):
-                        # Explicitly NO subscriptions set, so sending all (None means not filtering)
-                        pass
-
-                    # Refined Logic:
-                    # 1. New clients have `subscriptions = None` (implicitly if not set) -> Receive All
-                    # 2. subscribe() -> sets `subscriptions` to set(...) -> Filter
-                    # 3. unsubscribe(*) -> sets `subscriptions` to empty set() -> Receive None
-
+                    # If NO subscriptions present, we default to sending everything (backward compatibility)
                     subs = getattr(websocket, "subscriptions", None)
                     if subs is not None:
                         # Filtering active
                         if event_type not in subs and "*" not in subs:
+                            continue
+
+                # Session Message Logic
+                elif message.get("type") == "session_message":
+                    # Only send to clients subscribed to "session_message" or "*"
+                    # If NO subscriptions present (None), we invoke backward compat logic?
+                    # Actually for new feature session_message, let's say:
+                    # If subscriptions is None => Receive All (simple tools)
+                    # If subscriptions is set => Must include "session_message" or "*"
+
+                    subs = getattr(websocket, "subscriptions", None)
+                    if subs is not None:
+                        if "session_message" not in subs and "*" not in subs:
                             continue
 
                 await websocket.send(message_str)

@@ -45,6 +45,13 @@ CREATE TABLE tasks (
     assignee TEXT,                    -- Agent or human identifier
     labels TEXT,                      -- JSON array
     closed_reason TEXT,
+    -- Enhanced expansion fields (Phase 12)
+    details TEXT,                     -- Implementation notes/guidance
+    test_strategy TEXT,               -- How to verify completion
+    original_instruction TEXT,        -- Original user request (for validation)
+    complexity_score INTEGER,         -- 1-10 complexity rating
+    estimated_subtasks INTEGER,       -- Recommended subtask count
+    expansion_context TEXT,           -- JSON: gathered context during expansion
     -- Validation fields (Phase 12.5)
     validation_criteria TEXT,         -- Natural language prompt for validating completion
     use_external_validator BOOLEAN DEFAULT FALSE,  -- Use separate validation agent vs completing agent
@@ -569,11 +576,99 @@ task_expansion:
   enabled: true
   provider: "claude"                    # claude, codex, gemini, litellm
   model: "claude-sonnet-4-5"            # Higher reasoning model for codebase analysis
+
+  # Context gathering
   analyze_codebase: true                # Read relevant files during expansion
   max_context_files: 20                 # Max files to include for context
+  max_file_lines: 200                   # Lines to include per file
+
+  # Expansion behavior
   max_subtasks: 15                      # Max subtasks per expansion
+  default_strategy: "phased"            # phased, flat, tdd
+  create_dependencies: true             # Auto-create blocks relationships
   infer_validation: true                # Auto-generate validation_criteria for subtasks
-  prompt: null                          # Custom expansion prompt (optional)
+
+  # Research mode (web search for best practices before expansion)
+  research_enabled: true                # Enabled by default for quality expansions
+  research_provider: "claude"           # Can differ from main provider
+  max_search_results: 5
+
+  # Prompts
+  system_prompt: |
+    You are a senior software architect breaking down development tasks.
+
+    Your goal is to decompose a task into actionable, atomic subtasks that:
+    1. Can each be completed in a single focused session
+    2. Have clear verification criteria
+    3. Are ordered by dependency (what must be done first)
+    4. Include implementation guidance
+
+    You have access to:
+    - The task description and any context
+    - Relevant codebase files
+    - Related tasks for reference
+    - Web research on best practices
+
+  user_prompt: |
+    ## Task to Expand
+
+    **Title:** {title}
+    **Description:** {description}
+    **Original Instruction:** {original_instruction}
+
+    ## Project Context
+
+    **Relevant Files:**
+    {file_context}
+
+    **Related Tasks:**
+    {related_tasks}
+
+    **Project Patterns:**
+    - Test Framework: {test_framework}
+    - Build Tool: {build_tool}
+    - Key Directories: {directories}
+
+    {research_section}
+
+    ## Instructions
+
+    Break this task into phases and subtasks.
+
+    For each subtask provide:
+    - `title`: Clear, actionable title
+    - `description`: What needs to be done
+    - `details`: Implementation notes, code snippets, patterns to follow
+    - `test_strategy`: How to verify this subtask is complete
+    - `depends_on_indices`: Array of subtask indices (0-based) that must complete first
+    - `files_touched`: Files this subtask will create or modify
+
+    Output as JSON matching this schema:
+    ```json
+    {
+      "complexity_analysis": {
+        "score": <1-10>,
+        "reasoning": "<why this complexity>",
+        "recommended_subtasks": <count>
+      },
+      "phases": [
+        {
+          "name": "<phase name>",
+          "description": "<what this phase accomplishes>",
+          "subtasks": [
+            {
+              "title": "...",
+              "description": "...",
+              "details": "...",
+              "test_strategy": "...",
+              "depends_on_indices": [],
+              "files_touched": []
+            }
+          ]
+        }
+      ]
+    }
+    ```
 
 # Task Validation Configuration
 task_validation:
@@ -582,7 +677,34 @@ task_validation:
   model: "claude-haiku-4-5"             # Fast model for validation checks
   max_validation_fails: 3               # Mark task 'failed' after this many failures
   create_fix_subtask: true              # Create "fix validation" subtask on failure
-  prompt: null                          # Custom validation prompt (optional)
+  prompt: |
+    You are validating that a task has been completed correctly.
+
+    ## Task
+    **Title:** {title}
+    **Description:** {description}
+    **Validation Criteria:** {validation_criteria}
+
+    ## Context
+    **Files Changed:**
+    {files_changed}
+
+    **Test Results:**
+    {test_results}
+
+    ## Instructions
+    Evaluate whether the task has been completed according to the validation criteria.
+    Be thorough but fair - minor style differences are acceptable if functionality is correct.
+
+    Output JSON:
+    ```json
+    {
+      "passed": true|false,
+      "reasoning": "Detailed explanation of pass/fail decision",
+      "issues": ["List of specific issues if failed"],
+      "suggestions": ["Optional improvement suggestions"]
+    }
+    ```
 ```
 
 ### Provider Selection
@@ -857,35 +979,159 @@ ALTER TABLE tasks ADD COLUMN sequence_order INTEGER;    -- Order within parent e
 
 ## LLM-Powered Task Expansion
 
-Unlike beads (which is purely a tracking system), gobby provides LLM-powered task decomposition as a first-class feature.
+Unlike beads (which is purely a tracking system), gobby provides LLM-powered task decomposition as a first-class feature. This is enhanced with context-aware expansion inspired by [claude-task-master](https://github.com/eyaltoledano/claude-task-master).
 
 ### Expansion Strategies
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `checklist` | Break into sequential subtasks | Simple features |
-| `parallel` | Independent subtasks (no dependencies) | Refactoring multiple files |
-| `epic` | Create epic with child tasks | Large features |
+| `phased` | Group subtasks into logical phases with dependencies | Complex features (default) |
+| `flat` | Simple sequential subtasks | Quick tasks |
 | `tdd` | Test task → implementation task pairs | Test-driven development |
+
+### Expansion Architecture
+
+Before expansion, gather context:
+
+1. **Related tasks** - Fuzzy search for similar/related tasks
+2. **Codebase context** - Relevant files based on task description
+3. **Project structure** - Key directories, patterns, conventions
+4. **Research** - Web search for best practices (enabled by default)
+
+```python
+@dataclass
+class ExpansionContext:
+    related_tasks: list[Task]         # Similar tasks for reference
+    relevant_files: list[str]         # File paths to analyze
+    file_contents: dict[str, str]     # Partial file contents
+    project_patterns: dict[str, Any]  # Detected patterns (test framework, etc.)
+    search_results: list[dict] | None # Web search results
+```
+
+### Expansion Output Schema
+
+```json
+{
+  "complexity_analysis": {
+    "score": 7,
+    "reasoning": "Multiple components, API integration, requires testing",
+    "recommended_subtasks": 5
+  },
+  "phases": [
+    {
+      "name": "Setup & Foundation",
+      "description": "Initial setup and core structure",
+      "subtasks": [
+        {
+          "title": "Create game board HTML structure",
+          "description": "Set up 4x4 grid with CSS Grid",
+          "details": "Use semantic HTML, add ARIA labels for accessibility",
+          "test_strategy": "Visual inspection, grid renders correctly",
+          "depends_on_indices": [],
+          "files_touched": ["index.html", "styles.css"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Dependency Mapping
+
+Dependencies are created based on:
+
+1. **Explicit `depends_on_indices`** - LLM specifies which subtasks must complete first
+2. **Phase ordering** - Later phases block on earlier phases completing
+3. **Parent blocking** - Parent task blocked until all children complete
+
+```python
+def create_expansion_dependencies(
+    parent_task: Task,
+    subtasks: list[Task],
+    expansion_result: dict,
+) -> list[tuple[str, str]]:
+    """
+    Returns list of (task_id, blocks_task_id) tuples.
+    """
+    dependencies = []
+
+    # Map indices to created task IDs
+    index_to_id = {i: st.id for i, st in enumerate(subtasks)}
+
+    for phase in expansion_result["phases"]:
+        for subtask_data in phase["subtasks"]:
+            subtask_idx = subtask_data["_index"]  # Added during processing
+            for dep_idx in subtask_data.get("depends_on_indices", []):
+                if dep_idx in index_to_id:
+                    # dep_idx blocks subtask_idx
+                    dependencies.append((
+                        index_to_id[subtask_idx],
+                        index_to_id[dep_idx]
+                    ))
+
+    # All subtasks block the parent task
+    for subtask in subtasks:
+        dependencies.append((parent_task.id, subtask.id))
+
+    return dependencies
+```
 
 ### MCP Tools for Expansion
 
 ```python
 @mcp.tool()
-def expand_task(
+async def expand_task(
     task_id: str,
-    strategy: str = "checklist",  # checklist, parallel, epic, tdd
-    max_subtasks: int = 10,
+    num_subtasks: int | None = None,     # Override recommended count
+    research: bool = True,                # Enable web research (default: True)
+    force: bool = False,                  # Clear existing subtasks
+    prompt: str | None = None,            # Additional context/guidance
+    analyze_codebase: bool = True,        # Gather file context
 ) -> dict:
     """
-    Use LLM to decompose a task into subtasks.
+    Expand a task into phases and subtasks using AI analysis.
 
-    Reads task title/description, generates child tasks with:
-    - Appropriate dependencies based on strategy
-    - Verification criteria for each subtask
-    - Priority inherited from parent
+    Process:
+    1. Gather context (related tasks, codebase files)
+    2. Research best practices (unless research=False)
+    3. Generate phased breakdown with dependencies
+    4. Create subtasks with blocks relationships
+    5. Update parent task with expansion metadata
 
-    Returns created subtask IDs.
+    Returns:
+        {
+            "success": True,
+            "task_id": "gt-abc123",
+            "complexity": {"score": 7, "reasoning": "..."},
+            "phases": [...],
+            "subtasks_created": ["gt-def456", "gt-ghi789", ...],
+            "dependencies_created": 5
+        }
+    """
+
+@mcp.tool()
+async def analyze_complexity(
+    task_id: str | None = None,
+    all_pending: bool = False,
+) -> dict:
+    """
+    Analyze task complexity without expanding.
+
+    Returns complexity score, recommended subtask count,
+    and expansion guidance for one or all pending tasks.
+    """
+
+@mcp.tool()
+async def expand_all(
+    research: bool = True,
+    max_tasks: int = 10,
+    min_complexity: int = 5,  # Only expand tasks >= this complexity
+) -> dict:
+    """
+    Expand all pending tasks that haven't been expanded.
+
+    Uses complexity analysis to determine subtask counts.
+    Respects dependencies - expands in topological order.
     """
 
 @mcp.tool()
@@ -893,7 +1139,6 @@ def expand_from_spec(
     spec_content: str,
     spec_type: str = "prd",  # prd, user_story, bug_report, rfc
     parent_task_id: str | None = None,
-    strategy: str = "epic",
 ) -> dict:
     """
     Parse a specification and generate a task tree.
@@ -922,34 +1167,27 @@ def suggest_next_task(
     """
 ```
 
-### Expansion Prompt Template
+### Example Expansion
 
-```python
-EXPAND_TASK_PROMPT = """
-Break down this task into atomic, actionable subtasks.
+**Input Task:**
 
-Task: {title}
-Description: {description}
-Strategy: {strategy}
+```text
+Title: Create a basic 2048 game
+Description: Create a basic 2048 game using HTML and JavaScript
+```
 
-Requirements:
-- Each subtask should be completable in a single focused session
-- Each subtask should have clear verification criteria
-- Order subtasks by dependency (what must be done first)
-- For '{strategy}' strategy: {strategy_guidance}
+**Created Tasks:**
 
-Output as JSON:
-{{
-  "subtasks": [
-    {{
-      "title": "...",
-      "description": "...",
-      "verification": "How to verify this is complete",
-      "depends_on_index": null | 0 | 1 | ...  // Index of blocking subtask
-    }}
-  ]
-}}
-"""
+```text
+gt-abc123 (parent): Create a basic 2048 game [status: open]
+├── gt-def001: Create project directory and base HTML [status: open]
+├── gt-def002: Style game board with CSS Grid [blocked by: gt-def001]
+├── gt-def003: Implement game state management [blocked by: gt-def001]
+├── gt-def004: Implement tile movement logic [blocked by: gt-def003]
+├── gt-def005: Add keyboard controls and render loop [blocked by: gt-def002, gt-def004]
+└── gt-def006: Implement win/lose detection [blocked by: gt-def005]
+
+Parent gt-abc123 is blocked by all subtasks (can only close when all children complete)
 ```
 
 ### Agent Instructions for Task Management
@@ -1002,58 +1240,107 @@ For large tasks, use `expand_task(id)` to break them down before starting.
 - [ ] Implement ID mapping in `persist_decomposed_tasks` (map temp indices 1,2.. to gt-{hash})
 - [ ] Add unit tests for workflow-task integration
 
-### Phase 12: LLM-Powered Expansion (with Codebase Analysis)
+### Phase 12: Enhanced Task Expansion System
 
+> Upgrade gobby's task expansion to match [claude-task-master](https://github.com/eyaltoledano/claude-task-master) capabilities.
 > Uses configured `task_expansion` provider (Claude Agent SDK, Codex SDK, Gemini SDK, or LiteLLM).
 > Tools are registered in `gobby-tasks` internal MCP server.
 
-**Core Implementation:**
+#### Phase 12.1: Schema Updates
 
-- [ ] Create `src/tasks/expansion.py` with `TaskExpander` class
-- [ ] Create `TaskExpansionConfig` in `src/config/app.py`
-- [ ] Implement expansion prompt templates per strategy
-- [ ] Implement `expand_task()` method
-- [ ] Implement `expand_from_spec()` method
-- [ ] Implement `suggest_next_task()` method
+- [ ] Create migration for `details` column
+- [ ] Create migration for `test_strategy` column
+- [ ] Create migration for `original_instruction` column
+- [ ] Create migration for `complexity_score` column
+- [ ] Create migration for `estimated_subtasks` column
+- [ ] Create migration for `expansion_context` column (JSON)
+- [ ] Update `Task` dataclass with new fields
+- [ ] Update `to_dict()` and `from_dict()` methods
+- [ ] Update JSONL serialization for new fields
+- [ ] Add unit tests for schema changes
 
-**Codebase Analysis (when `analyze_codebase: true`):**
+#### Phase 12.2: Context Gathering
 
-- [ ] Implement `gather_codebase_context()` - uses Glob/Grep to find relevant files
-- [ ] Read key files for context (respecting `max_context_files`)
-- [ ] Pass codebase context + task description to LLM
-- [ ] Infer which files/modules each subtask will touch
+- [ ] Create `src/tasks/context.py` with `ExpansionContextGatherer` class
+- [ ] Implement `gather_related_tasks()` - fuzzy search by title/description
+- [ ] Implement `gather_relevant_files()` - Glob/Grep based on task keywords
+- [ ] Implement `read_file_context()` - partial file contents with line limits
+- [ ] Implement `detect_project_patterns()` - test framework, build tool, etc.
+- [ ] Create `ExpansionContext` dataclass
+- [ ] Add configuration for `max_context_files`, `max_file_lines`
+- [ ] Add unit tests for context gathering
 
-**Automated Dependency Mapping:**
+#### Phase 12.3: Enhanced Expansion Prompt
 
-- [ ] LLM analyzes code relationships during expansion
-- [ ] Auto-create `blocks` dependencies based on:
-  - Sequential file dependencies (e.g., schema before API, API before tests)
-  - Import/export relationships in code
-  - Logical ordering from task descriptions
-- [ ] Implement `analyze_dependencies()` helper method
+- [ ] Create `src/tasks/prompts/expand.py` with prompt templates
+- [ ] Load system_prompt and user_prompt from config.yaml
+- [ ] Implement context injection (files, related tasks, patterns)
+- [ ] Implement research section injection (when enabled)
+- [ ] Create JSON schema for expansion output
+- [ ] Implement response parsing with validation
+- [ ] Handle markdown code block extraction
+- [ ] Add fallback for malformed responses
+- [ ] Add unit tests for prompt generation and parsing
 
-**Validation Criteria Generation (when `infer_validation: true`):**
+#### Phase 12.4: Dependency Wiring
 
-- [ ] Generate `validation_criteria` for each subtask during expansion
-- [ ] Include file-level checks (e.g., "file X exists and exports Y")
-- [ ] Include behavioral checks (e.g., "tests pass", "endpoint returns 200")
+- [ ] Update `expand_task()` to parse `depends_on_indices`
+- [ ] Implement `create_expansion_dependencies()` helper
+- [ ] Create subtasks with proper `parent_task_id`
+- [ ] Create `blocks` dependencies between subtasks based on indices
+- [ ] Create dependency from parent to all subtasks (parent blocked until children done)
+- [ ] Handle phase-level implicit dependencies
+- [ ] Run `check_dependency_cycles()` after creation
+- [ ] Add transaction rollback on cycle detection
+- [ ] Add unit tests for dependency wiring
 
-**MCP Tools (gobby-tasks internal server):**
+#### Phase 12.5: Research Mode
 
-- [ ] Add `expand_task` tool to `src/mcp_proxy/tools/tasks.py`
-- [ ] Add `expand_from_spec` tool to `src/mcp_proxy/tools/tasks.py`
-- [ ] Add `suggest_next_task` tool to `src/mcp_proxy/tools/tasks.py`
+- [ ] Implement `research_task()` helper using WebSearch
+- [ ] Format search results for prompt injection
+- [ ] Cache research results in `expansion_context`
+- [ ] Add `--no-research` CLI flag to disable (enabled by default)
+- [ ] Add unit tests for research mode
 
-**CLI Commands:**
+#### Phase 12.6: MCP Tool Updates
 
-- [ ] Add `gobby tasks expand TASK_ID [--strategy S] [--no-codebase]` command
-- [ ] Add `gobby tasks import-spec FILE [--type T]` command
+- [ ] Update `expand_task` tool with new parameters:
+  - `num_subtasks: int | None` - Override recommended count
+  - `research: bool = True` - Enable/disable web research
+  - `force: bool = False` - Clear existing subtasks
+  - `prompt: str | None` - Additional context/guidance
+  - `analyze_codebase: bool = True` - Gather file context
+- [ ] Add `analyze_complexity` tool - analyze without expanding
+- [ ] Add `expand_all` tool - expand all pending tasks
+- [ ] Add `expand_from_spec` tool - parse PRD/user story/bug report
+- [ ] Add `suggest_next_task` tool - LLM recommends next ready task
+- [ ] Update tool schemas for progressive disclosure
+- [ ] Add detailed tool documentation
 
-**Testing:**
+#### Phase 12.7: CLI Updates
 
-- [ ] Add unit tests for TaskExpander
-- [ ] Add integration tests with mock LLM
-- [ ] Test codebase analysis with real project
+- [ ] Update `gobby tasks expand TASK_ID` with new flags:
+  - `--num N` - Override subtask count
+  - `--no-research` - Disable research mode
+  - `--force` - Clear existing subtasks
+  - `--prompt "context"` - Additional guidance
+- [ ] Add `gobby tasks complexity TASK_ID` command
+- [ ] Add `gobby tasks complexity --all --pending` command
+- [ ] Add `gobby tasks expand --all` command
+- [ ] Update `gobby tasks show TASK_ID --expansion` to show phases/dependencies
+- [ ] Add progress indicators for long operations
+- [ ] Add unit tests for CLI commands
+
+#### Phase 12.8: Testing & Documentation
+
+- [ ] Add integration test: expand → subtasks created with dependencies
+- [ ] Add integration test: expand with research mode
+- [ ] Add integration test: expand_all with complexity filtering
+- [ ] Add integration test: dependency cycle prevention
+- [ ] Test with real project (2048 game example from plan)
+- [ ] Update CLAUDE.md task management section
+- [ ] Update docs/tasks.md with expansion guide
+- [ ] Add example prompts and outputs to documentation
 
 ### Phase 12.5: Task Validation
 
@@ -1128,6 +1415,13 @@ For large tasks, use `expand_task(id)` to break them down before starting.
 | 6 | **Validation failure handling** | Create subtask + increment counter + fail after max | Gives agent multiple attempts to fix. `failed` status alerts humans. Subtask documents what went wrong. |
 | 7 | **Codebase analysis during expansion** | Enabled by default, configurable | LLM reads relevant files to understand context. Infers dependencies from code structure. Can disable with `--no-codebase`. |
 | 8 | **Validation criteria format** | Natural language prompt | Simple, flexible. LLM evaluates against current state. No rigid schema needed. |
+| 9 | **Research mode** | Enabled by default | Quality over speed - web search for best practices improves expansion quality. Use `--no-research` to disable. |
+| 10 | **Prompts location** | Full text in config.yaml | Users can see and customize prompts without reading source code. Config is the source of truth. |
+| 11 | **Phase structure** | Required in output, optional to display | Always generate phases for logical grouping, but CLI can flatten if user prefers. |
+| 12 | **Dependency format** | Index-based in prompt, converted to task IDs | Simpler for LLM to reference by index, we map to real IDs after creation. |
+| 13 | **Parent blocking** | Parent blocked by all children | Parent task can't close until subtasks complete - enforces completion. |
+| 14 | **Research caching** | Store in `expansion_context` | Avoid re-searching if task re-expanded. |
+| 15 | **Force behavior** | Delete existing subtasks | Clean slate, not merge - too complex to merge intelligently. |
 
 ---
 

@@ -8,11 +8,11 @@ Tracks file offsets and updates the database with new messages.
 import asyncio
 import logging
 import os
-from datetime import datetime
-from typing import Dict
+
 
 from gobby.sessions.transcripts.base import TranscriptParser
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+from gobby.servers.websocket import WebSocketServer
 from gobby.storage.database import LocalDatabase
 from gobby.storage.messages import LocalMessageManager
 
@@ -29,17 +29,23 @@ class SessionMessageProcessor:
     - stores normalized messages in the database
     """
 
-    def __init__(self, db: LocalDatabase, poll_interval: float = 2.0):
+    def __init__(
+        self,
+        db: LocalDatabase,
+        poll_interval: float = 2.0,
+        websocket_server: WebSocketServer | None = None,
+    ):
         self.db = db
         self.message_manager = LocalMessageManager(db)
         self.poll_interval = poll_interval
+        self.websocket_server = websocket_server
 
         # Track active sessions: session_id -> transcript_path
-        self._active_sessions: Dict[str, str] = {}
+        self._active_sessions: dict[str, str] = {}
 
         # Track parsers: session_id -> TranscriptParser
         # Currently hardcoded to ClaudeTranscriptParser, but could support others
-        self._parsers: Dict[str, TranscriptParser] = {}
+        self._parsers: dict[str, TranscriptParser] = {}
 
         self._running = False
         self._task: asyncio.Task | None = None
@@ -184,6 +190,23 @@ class SessionMessageProcessor:
 
         # Store messages
         await self.message_manager.store_messages(session_id, parsed_messages)
+
+        # Broadcast new messages
+        if self.websocket_server:
+            for msg in parsed_messages:
+                payload = {
+                    "type": "session_message",
+                    "session_id": session_id,
+                    "message": {
+                        "index": msg.index,
+                        "role": msg.role,
+                        "content": msg.content,
+                        "content_type": msg.content_type,
+                        "tool_name": msg.tool_name,
+                        "timestamp": msg.timestamp.isoformat(),
+                    },
+                }
+                await self.websocket_server.broadcast(payload)
 
         # Update state
         new_last_index = parsed_messages[-1].index
