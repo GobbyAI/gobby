@@ -48,6 +48,13 @@ from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.state_manager import WorkflowStateManager
 
+# Memory & Skills (Phase 4)
+from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.skills import LocalSkillManager
+from gobby.storage.messages import LocalMessageManager
+from gobby.memory.manager import MemoryManager
+from gobby.memory.skills import SkillLearner
+
 # Backward-compatible alias
 TranscriptProcessor = ClaudeTranscriptParser
 
@@ -157,6 +164,44 @@ class HookManager:
         self._session_storage = LocalSessionManager(self._database)
         self._session_task_manager = SessionTaskManager(self._database)
 
+        self._session_task_manager = SessionTaskManager(self._database)
+
+        # Initialize Memory & Skills (Phase 4)
+        self._memory_storage = LocalMemoryManager(self._database)
+        self._skill_storage = LocalSkillManager(self._database)
+        self._message_manager = LocalMessageManager(self._database)
+
+        # Use config or defaults
+        memory_config = (
+            self._config.memory if self._config and hasattr(self._config, "memory") else None
+        )
+        skill_config = (
+            self._config.skills if self._config and hasattr(self._config, "skills") else None
+        )
+
+        if not memory_config:
+            from gobby.config.app import MemoryConfig
+
+            memory_config = MemoryConfig()
+        if not skill_config:
+            from gobby.config.app import SkillConfig
+
+            skill_config = SkillConfig()
+
+        self._memory_manager = MemoryManager(self._database, memory_config)
+
+        # SkillLearner needs LLM service. If not provided, it might fail or we skip.
+        # But llm_service is passed to HookManager.
+        if self._llm_service:
+            self._skill_learner: SkillLearner | None = SkillLearner(
+                storage=self._skill_storage,
+                message_manager=self._message_manager,
+                llm_service=self._llm_service,
+                config=skill_config,
+            )
+        else:
+            self._skill_learner = None
+
         # Initialize Workflow Engine (Phase 0-2 + 3 Integration)
         # Initialize Workflow Engine (Phase 0-2 + 3 Integration)
         from gobby.workflows.actions import ActionExecutor
@@ -165,7 +210,11 @@ class HookManager:
         # Workflow loader now handles project-specific paths dynamically via project_path parameter
         # Global workflows are loaded from ~/.gobby/workflows/
         # Project-specific workflows are loaded from {project_path}/.gobby/workflows/
-        self._workflow_loader = WorkflowLoader()
+        # Include built-in templates
+        builtin_workflows = Path(__file__).parent.parent / "templates" / "workflows"
+        self._workflow_loader = WorkflowLoader(
+            workflow_dirs=[Path.home() / ".gobby" / "workflows", builtin_workflows]
+        )
         self._workflow_state_manager = WorkflowStateManager(self._database)
 
         # Initialize Template Engine
@@ -185,6 +234,8 @@ class HookManager:
             transcript_processor=self._transcript_processor,
             config=self._config,
             mcp_manager=self.mcp_manager,
+            memory_manager=self._memory_manager,
+            skill_learner=self._skill_learner,
         )
         self._workflow_engine = WorkflowEngine(
             loader=self._workflow_loader,
@@ -733,6 +784,7 @@ class HookManager:
                 f"Failed to execute lifecycle workflows on session_end: {e}",
                 exc_info=True,
             )
+
 
         # FAILOVER: Generate independent session summary file
         # This acts as a flight recorder, independent of workflow success/failure

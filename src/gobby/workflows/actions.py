@@ -24,6 +24,8 @@ class ActionContext:
     transcript_processor: Any | None = None
     config: Any | None = None
     mcp_manager: Any | None = None
+    memory_manager: Any | None = None
+    skill_learner: Any | None = None
 
 
 class ActionHandler(Protocol):
@@ -44,6 +46,8 @@ class ActionExecutor:
         transcript_processor: Any | None = None,
         config: Any | None = None,
         mcp_manager: Any | None = None,
+        memory_manager: Any | None = None,
+        skill_learner: Any | None = None,
     ):
         self.db = db
         self.session_manager = session_manager
@@ -52,6 +56,8 @@ class ActionExecutor:
         self.transcript_processor = transcript_processor
         self.config = config
         self.mcp_manager = mcp_manager
+        self.memory_manager = memory_manager
+        self.skill_learner = skill_learner
         self._handlers: dict[str, ActionHandler] = {}
         self._register_defaults()
 
@@ -81,6 +87,8 @@ class ActionExecutor:
         self.register("mark_todo_complete", self._handle_mark_todo_complete)
         self.register("persist_tasks", self._handle_persist_tasks)
         self.register("call_mcp_tool", self._handle_call_mcp_tool)
+        self.register("memory_inject", self._handle_memory_inject)
+        self.register("skills_learn", self._handle_skills_learn)
 
     async def execute(
         self, action_type: str, context: ActionContext, **kwargs
@@ -794,6 +802,109 @@ class ActionExecutor:
             content = context.template_engine.render(template, render_context)
 
         return {"inject_context": content}
+
+    async def _handle_memory_inject(
+        self, context: ActionContext, **kwargs
+    ) -> dict[str, Any] | None:
+        """
+        Inject memory context (memories + skills) into the session.
+        Uses memory_manager.recall and skill_learner.match_skills.
+        """
+        if not context.memory_manager:
+            return None  # Memory system disabled or not initialized
+
+        # Check config enabled
+        if not context.memory_manager.config.enabled:
+            return None
+
+        project_id = kwargs.get("project_id")
+        if not project_id:
+            # Try to resolve from session
+            session = context.session_manager.get(context.session_id)
+            if session:
+                project_id = session.project_id
+
+        if not project_id:
+            logger.warning("memory_inject: No project_id found")
+            return None
+
+        import asyncio
+        import logging
+        from gobby.memory.context import build_memory_context
+
+        try:
+            # 1. Recall Project Memories
+            # Default to reasonable importance if not specified
+            min_importance = kwargs.get("min_importance", 0.5)
+            project_memories = context.memory_manager.recall(
+                project_id=project_id, min_importance=min_importance
+            )
+
+            # 2. Match Skills (if prompt provided)
+            # This action might be called with 'initial_prompt' from session-start event
+            skills = []
+            prompt = kwargs.get("prompt")
+
+            if prompt and context.skill_learner and context.skill_learner.config.enabled:
+                try:
+                    # Skill matching is async
+                    skills = await context.skill_learner.match_skills(prompt, project_id)
+                except Exception as e:
+                    logger.warning(f"memory_inject: Skill matching failed: {e}")
+
+            # 3. Build Context
+            # Only build if we have something
+            if not project_memories and not skills:
+                return {"injected": False, "reason": "No memories or skills found"}
+
+            memory_context = build_memory_context(project_memories, skills)
+
+            if not memory_context:
+                return {"injected": False}
+
+            # Return as 'inject_context' trigger
+            return {"inject_context": memory_context}
+
+        except Exception as e:
+            logger.error(f"memory_inject: Failed: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    async def _handle_skills_learn(self, context: ActionContext, **kwargs) -> dict[str, Any] | None:
+        """
+        Trigger skill learning from session.
+        """
+        if not context.skill_learner or not context.skill_learner.config.enabled:
+            return None
+
+        # Fire and forget?
+        # The hook workflow is usually awaited.
+        # Skill learning might be slow (LLM call).
+        # We should probably run it in background or allow it to take time if it's session-end.
+        # But for session-end, we want it to finish before daemon shutdown if possible?
+        # Actually session-end hook usually just waits for response decision.
+
+        # Let's await it. The user sees "Gobby is thinking..." effectively.
+
+        session = context.session_manager.get(context.session_id)
+        if not session:
+            return {"error": "Session not found"}
+
+        try:
+            # We can't await if we want fire-and-forget.
+            # But if we want to ensure it runs, we should await.
+            # Given this is "Action", it implies synchronous execution in workflow steps.
+            # If user wants async, we might need a specific "async: true" flag in workflow engine,
+            # but here we just implement the logic.
+
+            # Optimized: check if we should even try (e.g. min turns)
+            # SkillLearner.learn_from_session handles checks.
+
+            new_skills = await context.skill_learner.learn_from_session(session)
+
+            return {"skills_learned": len(new_skills), "skill_names": [s.name for s in new_skills]}
+        except Exception as e:
+            logger.error(f"skills_learn: Failed: {e}", exc_info=True)
+            return {"error": str(e)}
 
     async def _handle_mark_session_status(
         self, context: ActionContext, **kwargs

@@ -1,0 +1,19 @@
+name: memory-lifecycle
+description: Standard memory lifecycle hooks
+version: 1.0
+type: lifecycle
+author: Gobby
+settings:
+  priority: 50 # Run before handoff (which might clear context?)
+
+on:
+  session-start:
+    steps:
+      - action: memory_inject
+        args:
+          min_importance: 0.5
+          prompt: "{{ event.data.initial_prompt }}"
+
+  session-end:
+    steps:
+      - action: skills_learn
