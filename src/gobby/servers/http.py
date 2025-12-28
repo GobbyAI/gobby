@@ -95,6 +95,9 @@ class HTTPServer:
             port: Server port
             test_mode: Run in test mode (disable features that conflict with testing)
             mcp_manager: MCPClientManager instance for multi-server support
+            mcp_db_manager: LocalMCPManager instance for SQLite-based storage of MCP
+                server configurations and tool schemas. Used by ToolsHandler for
+                progressive tool discovery. Optional; defaults to None.
             config: DaemonConfig instance for configuration
             codex_client: CodexAppServerClient instance for Codex integration
             session_manager: LocalSessionManager for session storage
@@ -252,9 +255,7 @@ class HTTPServer:
                 hook_manager_kwargs["log_max_bytes"] = self.config.logging.max_size_mb * 1024 * 1024
                 hook_manager_kwargs["log_backup_count"] = self.config.logging.backup_count
 
-                print("DEBUG: Entering lifespan...")
                 app.state.hook_manager = HookManager(**hook_manager_kwargs)
-                print("DEBUG: HookManager initialized.")
             logger.debug("HookManager initialized in daemon")
 
             # Initialize CodexAdapter for session tracking

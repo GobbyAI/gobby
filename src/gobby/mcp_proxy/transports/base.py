@@ -2,8 +2,10 @@
 
 import asyncio
 from collections.abc import Callable, Coroutine
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
+
+from mcp import ClientSession
 
 from gobby.mcp_proxy.models import ConnectionState, MCPServerConfig
 
@@ -60,6 +62,11 @@ class BaseTransportConnection:
         """Get current connection state."""
         return self._state
 
+    @property
+    def session(self) -> ClientSession | None:
+        """Get the current client session, if connected."""
+        return self._session
+
     def set_auth_token(self, token: str) -> None:
         """Update authentication token."""
         self._auth_token = token
@@ -80,7 +87,7 @@ class BaseTransportConnection:
         try:
             # Use asyncio.wait_for for timeout
             await asyncio.wait_for(self._session.list_tools(), timeout)
-            self._last_health_check = datetime.now()
+            self._last_health_check = datetime.now(UTC)
             self._consecutive_failures = 0
             return True
         except (TimeoutError, Exception):

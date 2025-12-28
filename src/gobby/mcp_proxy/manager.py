@@ -87,10 +87,7 @@ class MCPClientManager:
     async def add_server(self, config: MCPServerConfig) -> None:
         """Add and connect to a server."""
         if config.name in self._configs:
-            # Check if attempting to add duplicate
-            # If connected, raise ValueError per test
-            if config.name in self._connections and self._connections[config.name].is_connected:
-                raise ValueError(f"MCP server '{config.name}' already exists")
+            raise ValueError(f"MCP server '{config.name}' already exists")
 
         self._configs[config.name] = config
         # Attempt connect
@@ -287,21 +284,7 @@ class MCPClientManager:
             except Exception as e:
                 raise MCPError(f"Server '{server_name}' disconnected and reconnect failed") from e
 
-        # Since BaseTransportConnection.connect returns ClientSession, we can't fully access
-        # a .session property directly if it wasn't exposed publically in base.
-        # But we added `_session` in base and `connect` returns it.
-        # However, the type hint for connect is Any.
-        # Let's rely on the transport keeping a session reference.
-        # We need to expose it on the base class or return it here.
-        # The connection object has a `_session` attribute but we should access it safely.
-        # Let's assume the subclasses implement a mechanism or we access `_session` (which is protected)
-        # For this refactor, let's access the protected member or use the one returned from connect.
-        # But connect is async and we just want to get it.
-        # We should improve BaseTransportConnection to expose `session`.
-
-        # Accessing protected member for now as it was in the original design (it was all one file)
-        # Ideally we'd add a property.
-        session = connection._session  # type: ignore
+        session = connection.session
         if not session:
             raise MCPError(f"Server '{server_name}' has no active session")
 
