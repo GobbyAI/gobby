@@ -65,9 +65,6 @@ class HandlerMixin:
         """
         Handle tool_call message and route to MCP server.
 
-        Fires BEFORE_TOOL / AFTER_TOOL hook events so that rules can block
-        or observe direct websocket tool calls (parity with CLI adapter).
-
         Message format:
         {
             "type": "tool_call",
@@ -105,20 +102,20 @@ class HandlerMixin:
             )
             return
 
-        # --- BEFORE_TOOL: evaluate rules before executing the call ---
-        blocked = await self._evaluate_tool_hook_before(mcp_name, tool_name, args)
-        if blocked:
-            await self._send_error(
-                websocket,
-                blocked,
-                request_id=request_id,
-                code="BLOCKED",
-            )
-            return
-
         try:
-            # Route to MCP via manager
-            result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
+            # Route to internal registries first, then external MCP
+            internal_mgr = getattr(self, "internal_manager", None)
+            if internal_mgr and internal_mgr.is_internal(mcp_name):
+                registry = internal_mgr.get_registry(mcp_name)
+                if registry:
+                    try:
+                        result = await registry.call(tool_name, args)
+                    except ValueError:
+                        result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
+                else:
+                    result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
+            else:
+                result = await self.mcp_manager.call_tool(mcp_name, tool_name, args)
 
             # Send result back to client
             await websocket.send(
@@ -131,9 +128,6 @@ class HandlerMixin:
                 )
             )
 
-            # --- AFTER_TOOL: best-effort, non-blocking ---
-            self._fire_tool_hook_after(mcp_name, tool_name, args, result)
-
         except ValueError as e:
             # Unknown MCP server
             await self._send_error(websocket, str(e), request_id=request_id)
@@ -141,99 +135,6 @@ class HandlerMixin:
         except Exception as e:
             logger.exception(f"Tool call error: {mcp_name}.{tool_name}")
             await self._send_error(websocket, f"Tool call failed: {str(e)}", request_id=request_id)
-
-    async def _evaluate_tool_hook_before(
-        self,
-        mcp_name: str,
-        tool_name: str,
-        args: dict[str, Any],
-    ) -> str | None:
-        """Fire BEFORE_TOOL for a direct websocket tool call.
-
-        Returns a block reason string if the call should be denied, or None
-        to proceed.  Fails open on any evaluation error.
-        """
-        workflow_handler = getattr(self, "workflow_handler", None)
-        if not workflow_handler:
-            return None
-
-        from datetime import UTC, datetime
-
-        from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-
-        event = HookEvent(
-            event_type=HookEventType.BEFORE_TOOL,
-            session_id="",
-            source=SessionSource.CLAUDE_SDK_WEB_CHAT,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": f"mcp__{mcp_name}__{tool_name}",
-                "tool_input": args,
-                "mcp_server": mcp_name,
-                "mcp_tool": tool_name,
-            },
-        )
-
-        try:
-            from gobby.hooks.events import HookResponse
-
-            response: HookResponse = await asyncio.to_thread(workflow_handler.evaluate, event)
-            if response.decision in ("deny", "block"):
-                return response.reason or "Blocked by rule"
-        except Exception:
-            logger.debug(
-                "BEFORE_TOOL evaluation failed for %s.%s (fail-open)",
-                mcp_name,
-                tool_name,
-                exc_info=True,
-            )
-
-        return None
-
-    def _fire_tool_hook_after(
-        self,
-        mcp_name: str,
-        tool_name: str,
-        args: dict[str, Any],
-        result: Any,
-    ) -> None:
-        """Fire AFTER_TOOL for a direct websocket tool call (best-effort)."""
-        workflow_handler = getattr(self, "workflow_handler", None)
-        if not workflow_handler:
-            return
-
-        from datetime import UTC, datetime
-
-        from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-
-        # Truncate tool output to avoid bloating event data
-        result_str = str(result)
-        if len(result_str) > 500:
-            result_str = result_str[:500] + "..."
-
-        event = HookEvent(
-            event_type=HookEventType.AFTER_TOOL,
-            session_id="",
-            source=SessionSource.CLAUDE_SDK_WEB_CHAT,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": f"mcp__{mcp_name}__{tool_name}",
-                "tool_input": args,
-                "mcp_server": mcp_name,
-                "mcp_tool": tool_name,
-                "tool_output": result_str,
-            },
-        )
-
-        async def _eval() -> None:
-            try:
-                await asyncio.to_thread(workflow_handler.evaluate, event)
-            except Exception:
-                logger.debug(
-                    "AFTER_TOOL evaluation failed for %s.%s", mcp_name, tool_name, exc_info=True
-                )
-
-        asyncio.create_task(_eval())
 
     async def _handle_ping(self, websocket: Any, data: dict[str, Any]) -> None:
         """

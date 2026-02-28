@@ -81,28 +81,6 @@ class TestSessionRegistrationTracking:
         assert len(coordinator._registered_sessions) == 0
 
 
-class TestTitleSynthesisTracking:
-    """Test session title synthesis tracking."""
-
-    def test_init_creates_empty_title_set(self) -> None:
-        """Test SessionCoordinator starts with empty title tracking set."""
-        coordinator = SessionCoordinator()
-        assert coordinator._title_synthesized_sessions == set()
-
-    def test_mark_title_synthesized(self) -> None:
-        """Test marking a session as having title synthesized."""
-        coordinator = SessionCoordinator()
-        coordinator.mark_title_synthesized("session-123")
-        assert "session-123" in coordinator._title_synthesized_sessions
-
-    def test_is_title_synthesized_returns_correct_value(self) -> None:
-        """Test is_title_synthesized returns correct boolean."""
-        coordinator = SessionCoordinator()
-        assert coordinator.is_title_synthesized("session-123") is False
-        coordinator.mark_title_synthesized("session-123")
-        assert coordinator.is_title_synthesized("session-123") is True
-
-
 class TestAgentMessageCache:
     """Test agent message caching between hooks."""
 
@@ -500,7 +478,6 @@ class TestSessionCoordinatorInitialization:
         coordinator = SessionCoordinator()
 
         assert hasattr(coordinator, "_registered_sessions_lock")
-        assert hasattr(coordinator, "_title_synthesized_lock")
         assert hasattr(coordinator, "_cache_lock")
         assert hasattr(coordinator, "_lookup_lock")
 

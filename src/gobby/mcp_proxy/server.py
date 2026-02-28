@@ -73,30 +73,39 @@ class GobbyDaemonTools:
 
     async def list_mcp_servers(self) -> dict[str, Any]:
         """List configured MCP servers."""
-        status = self.system_service.get_status()
-        servers_info = status.get("mcp_servers", {})
+        server_list: list[dict[str, Any]] = []
+        connected_count = 0
 
-        server_list = []
-        for name, info in servers_info.items():
-            state = info["state"]
-            connected = state == "connected"
-            available = state in ("connected", "pending", "configured")
+        # Internal servers (always connected)
+        if self.internal_manager:
+            for registry in self.internal_manager.get_all_registries():
+                server_list.append(
+                    {"name": registry.name, "state": "connected", "transport": "internal"}
+                )
+                connected_count += 1
+
+        # External servers
+        mgr = self._mcp_manager
+        for config in mgr.server_configs:
+            health = mgr.health.get(config.name)
+            state = health.state.value if health else "unknown"
+            is_connected = config.name in mgr.connections
+            if is_connected:
+                connected_count += 1
             entry: dict[str, Any] = {
-                "name": name,
+                "name": config.name,
                 "state": state,
-                "connected": connected,
-                "available": available,
+                "transport": config.transport,
             }
-            if state in ("pending", "configured"):
-                entry["note"] = "Connects automatically on first use"
+            if not config.enabled:
+                entry["enabled"] = False
             server_list.append(entry)
 
         return {
             "success": True,
             "servers": server_list,
-            "total_count": len(server_list),
-            "connected_count": len([s for s in server_list if s["connected"]]),
-            "available_count": len([s for s in server_list if s["available"]]),
+            "total": len(server_list),
+            "connected": connected_count,
         }
 
     # --- Tool Proxying ---

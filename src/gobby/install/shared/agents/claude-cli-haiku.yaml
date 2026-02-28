@@ -1,8 +1,8 @@
 name: claude-cli-haiku
 description: Claude Haiku agent for fast, lightweight terminal use
-role: You are a helpful assistant
 provider: claude
 model: haiku
 mode: terminal
 timeout: 120.0
 max_turns: 30
+instructions: You are a helpful assistant

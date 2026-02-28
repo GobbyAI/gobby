@@ -31,6 +31,7 @@ from claude_agent_sdk.types import (
     HookInput as SDKHookInput,
 )
 from claude_agent_sdk.types import (
+    StreamEvent,
     SyncHookJSONOutput,
     UserPromptSubmitHookSpecificOutput,
 )
@@ -43,6 +44,7 @@ from gobby.llm.claude_models import (
     ThinkingEvent,
     ToolCallEvent,
     ToolResultEvent,
+    resolve_context_window,
 )
 from gobby.servers.chat_session_helpers import (
     _ADDITIONAL_CONTEXT_LIMIT,
@@ -61,6 +63,14 @@ from gobby.servers.chat_session_helpers import (
 from gobby.servers.chat_session_permissions import ChatSessionPermissionsMixin
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_error(e: Exception) -> str:
+    """Return a user-facing error message, hiding internal library details."""
+    msg = str(e)
+    if "litellm" in msg.lower() or "model isn't mapped" in msg or "custom_llm_provider" in msg:
+        return "An internal error occurred. Please try again."
+    return msg
 
 
 @dataclass
@@ -106,11 +116,13 @@ class ChatSession(ChatSessionPermissionsMixin):
     _last_model: str | None = field(default=None, repr=False)
     _message_manager: Any | None = field(default=None, repr=False)
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
+    _pending_agent_name: str | None = field(default=None, repr=False)
     _max_history_message_chars: int = field(default=2000, repr=False)
     _max_history_total_chars: int = field(default=30_000, repr=False)
     _accumulated_output_tokens: int = field(default=0, repr=False)
     _accumulated_cost_usd: float = field(default=0.0, repr=False)
     sdk_session_id: str | None = field(default=None, repr=False)
+    system_prompt_override: str | None = field(default=None, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
@@ -148,7 +160,10 @@ class ChatSession(ChatSessionPermissionsMixin):
             project_root = _find_project_root()
             cwd = str(project_root) if project_root else str(Path.cwd())
 
-        system_prompt = _load_chat_system_prompt()
+        if self.system_prompt_override:
+            system_prompt = self.system_prompt_override
+        else:
+            system_prompt = _load_chat_system_prompt()
         # Inject working directory so the agent doesn't hallucinate paths
         system_prompt += f"\n\n## Environment\n- Working directory: {cwd}\n"
         if self.db_session_id:
@@ -182,6 +197,11 @@ class ChatSession(ChatSessionPermissionsMixin):
             cwd=cwd,
             hooks=cast(Any, sdk_hooks) if sdk_hooks else None,
             env=env or {},
+            # Enable partial messages so we receive StreamEvent objects with
+            # per-API-call usage from message_start events. Without this, the
+            # ResultMessage.usage contains accumulated token counts across ALL
+            # API calls in the agentic loop, making context % wildly wrong.
+            include_partial_messages=True,
         )
 
         self._client = ClaudeSDKClient(options=options)
@@ -202,21 +222,26 @@ class ChatSession(ChatSessionPermissionsMixin):
                 tool_use_id: str | None,
                 ctx: HookContext,
             ) -> SyncHookJSONOutput:
-                data = {"prompt_text": inp.get("prompt", ""), "source": "claude_sdk_web_chat"}
+                data = {"prompt": inp.get("prompt", ""), "source": "claude_sdk_web_chat"}
                 resp = await cb(data)
                 output = _response_to_prompt_output(resp)
 
-                # Inject plan mode context into additionalContext
-                plan_ctx = self._consume_plan_mode_context()
+                context_parts = []
+
+                hook_specific = output.get("hookSpecificOutput")
+                if hook_specific and isinstance(hook_specific, dict):
+                    existing = hook_specific.get("additionalContext")
+                    if existing:
+                        context_parts.append(str(existing))
+
+                plan_ctx = getattr(self, "_consume_plan_mode_context", lambda: None)()
                 if plan_ctx:
-                    hook_specific = output.get("hookSpecificOutput")
-                    existing = ""
-                    if hook_specific and isinstance(hook_specific, dict):
-                        existing = str(hook_specific.get("additionalContext", "") or "")
-                    combined = (existing + "\n\n" + plan_ctx).strip() if existing else plan_ctx
+                    context_parts.append(plan_ctx)
+
+                if context_parts:
                     output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
                         hookEventName="UserPromptSubmit",
-                        additionalContext=combined,
+                        additionalContext="\n\n".join(context_parts).strip(),
                     )
 
                 # Inject conversation history on first prompt of a recreated session
@@ -427,9 +452,26 @@ class ChatSession(ChatSessionPermissionsMixin):
             needs_spacing_before_text = False
             has_text = False
             context_window: int | None = None
+            # Track the LAST API call's input usage from message_start stream
+            # events. ResultMessage.usage accumulates across ALL API calls in
+            # the agentic loop, making total_input wildly exceed context_window
+            # for tool-heavy turns.  message_start gives per-call values.
+            _last_call_input: dict[str, int] | None = None
             try:
                 async for message in self._client.receive_response():
                     if message is None:
+                        continue
+                    if isinstance(message, StreamEvent):
+                        # Capture per-API-call input usage from message_start.
+                        # Each API call in the agentic loop emits one; the last
+                        # one reflects the actual current context window load.
+                        ev = message.event
+                        if isinstance(ev, dict) and ev.get("type") == "message_start":
+                            msg_body = ev.get("message")
+                            if isinstance(msg_body, dict):
+                                u = msg_body.get("usage")
+                                if isinstance(u, dict):
+                                    _last_call_input = u
                         continue
                     if isinstance(message, ResultMessage):
                         # Capture SDK session_id on first ResultMessage
@@ -453,51 +495,41 @@ class ChatSession(ChatSessionPermissionsMixin):
                         usage: dict[str, Any] = (
                             cast(dict[str, Any], _raw_usage) if has_usage else {}
                         )
-                        uncached_input = usage.get("input_tokens", 0) or 0
-                        output_tokens = usage.get("output_tokens", 0) or 0
-                        cache_read = usage.get("cache_read_input_tokens", 0) or 0
-                        cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
-                        # With prompt caching, input_tokens is often only 3-23 tokens.
-                        # The real context consumed = uncached + cache_read + cache_creation.
+
+                        # --- Context window tracking (per-call) ---
+                        # Prefer per-call values from message_start stream events
+                        # (accurate context size). Fall back to ResultMessage.usage
+                        # which is accumulated across all API calls in the turn.
+                        if _last_call_input:
+                            uncached_input = _last_call_input.get("input_tokens", 0) or 0
+                            cache_read = _last_call_input.get("cache_read_input_tokens", 0) or 0
+                            cache_creation = (
+                                _last_call_input.get("cache_creation_input_tokens", 0) or 0
+                            )
+                        else:
+                            uncached_input = usage.get("input_tokens", 0) or 0
+                            cache_read = usage.get("cache_read_input_tokens", 0) or 0
+                            cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
                         total_input = uncached_input + cache_read + cache_creation
 
-                        # Resolve context_window with three fallbacks:
-                        # 1. litellm lookup (most reliable for known models)
-                        # 2. sdk_compat _model_usage stash (bonus from CLI)
-                        # 3. Static fallback for Claude models (all use 200k)
-                        context_window = None
-                        if self._last_model:
-                            try:
-                                from gobby.conductor.pricing import litellm as _llm
+                        # Output tokens: use accumulated from ResultMessage
+                        # (correct for cost tracking; not part of context %)
+                        output_tokens = usage.get("output_tokens", 0) or 0
 
-                                if _llm:
-                                    model_info = _llm.get_model_info(model=self._last_model)
-                                    context_window = model_info.get("max_input_tokens")
-                            except (ImportError, KeyError, AttributeError, TypeError) as e:
-                                logger.debug(
-                                    "Could not derive context window for %s: %s",
-                                    self._last_model,
-                                    e,
-                                )
-                        if context_window is None:
-                            _model_usage = getattr(message, "_model_usage", None)
-                            if isinstance(_model_usage, dict):
-                                context_window = _model_usage.get("contextWindow")
-                        if context_window is None:
-                            # All Claude models use 200k context
-                            model_lower = (self._last_model or "").lower()
-                            if any(k in model_lower for k in ("opus", "sonnet", "haiku")):
-                                context_window = 200_000
+                        _model_usage = getattr(message, "_model_usage", None)
+                        context_window = resolve_context_window(self._last_model, _model_usage)
 
                         logger.info(
                             "DoneEvent: uncached=%d cache_read=%d cache_creation=%d "
-                            "total_input=%d output=%d context_window=%s",
+                            "total_input=%d output=%d context_window=%s "
+                            "per_call=%s",
                             uncached_input,
                             cache_read,
                             cache_creation,
                             total_input,
                             output_tokens,
                             context_window,
+                            _last_call_input is not None,
                         )
                         yield DoneEvent(
                             tool_calls_count=tool_calls_count,
@@ -574,35 +606,21 @@ class ChatSession(ChatSessionPermissionsMixin):
                                     needs_spacing_before_text = True
 
             except ExceptionGroup as eg:
-                errors = [f"{type(exc).__name__}: {exc}" for exc in eg.exceptions]
+                errors = [_sanitize_error(exc) for exc in eg.exceptions]
                 yield TextChunk(content=f"Generation failed: {'; '.join(errors)}")
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
             except Exception as e:
                 logger.error(f"ChatSession {self.conversation_id} error: {e}", exc_info=True)
-                yield TextChunk(content=f"Generation failed: {e}")
+                yield TextChunk(content=f"Generation failed: {_sanitize_error(e)}")
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
 
     def _resolve_context_window_fallback(self) -> int | None:
         """Resolve context_window from _last_model for error paths."""
-        if not self._last_model:
-            return None
-        try:
-            from gobby.conductor.pricing import litellm as _llm
-
-            if _llm:
-                model_info = _llm.get_model_info(model=self._last_model)
-                val = model_info.get("max_input_tokens")
-                return int(val) if val is not None else None
-        except (ImportError, KeyError, AttributeError, TypeError):
-            pass
-        model_lower = self._last_model.lower()
-        if any(k in model_lower for k in ("opus", "sonnet", "haiku")):
-            return 200_000
-        return None
+        return resolve_context_window(self._last_model, None)
 
     async def interrupt(self) -> None:
         """Interrupt the current response stream."""
@@ -649,9 +667,11 @@ class ChatSession(ChatSessionPermissionsMixin):
                         f"ChatSession {self.conversation_id} cross-task disconnect (expected): {e}"
                     )
                 else:
-                    logger.warning(f"ChatSession {self.conversation_id} disconnect error: {e}")
+                    logger.debug(
+                        f"ChatSession {self.conversation_id} disconnect error (expected): {e}"
+                    )
             except Exception as e:
-                logger.warning(f"ChatSession {self.conversation_id} disconnect error: {e}")
+                logger.debug(f"ChatSession {self.conversation_id} disconnect error (expected): {e}")
             finally:
                 self._client = None
                 self._connected = False

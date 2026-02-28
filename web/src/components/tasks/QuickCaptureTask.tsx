@@ -34,7 +34,7 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
     setSubmitting(true)
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/tasks`, {
+      const response = await fetch(`${baseUrl}/api/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: title.trim(), task_type: taskType, priority: 2 }),

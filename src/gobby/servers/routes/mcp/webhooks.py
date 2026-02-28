@@ -26,7 +26,7 @@ def create_webhooks_router() -> APIRouter:
     Returns:
         Configured APIRouter with webhooks endpoints
     """
-    router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+    router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
     @router.get("")
     async def list_webhooks(

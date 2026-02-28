@@ -33,7 +33,6 @@ CONTEXT_HANDOFF_RULES = {
     "inject-previous-session-summary",
     "inject-compact-handoff",
     "task-sync-import-on-start",
-    "inject-skills-on-start",
     "inject-task-context-on-start",
     "inject-error-triage-policy",
     "preserve-context-on-end",
@@ -219,31 +218,6 @@ class TestTaskSyncImportOnStart:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# inject-skills-on-start
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestInjectSkillsOnStart:
-    """Inject skills guide on session_start (not resume)."""
-
-    def test_event_and_effect(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("inject-skills-on-start")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "session_start"
-        assert body.effect.type == "inject_context"
-        assert body.effect.template is not None
-
-    def test_has_when_condition(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("inject-skills-on-start")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-        assert "resume" in body.when
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # inject-task-context-on-start
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -326,8 +300,7 @@ class TestPreserveContextOnEnd:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
         handoff_effects = [
-            e for e in effects
-            if e.server == "gobby-sessions" and e.tool == "set_handoff_context"
+            e for e in effects if e.server == "gobby-sessions" and e.tool == "set_handoff_context"
         ]
         assert len(handoff_effects) == 1
         assert handoff_effects[0].arguments.get("full") is True
@@ -339,10 +312,7 @@ class TestPreserveContextOnEnd:
         row = manager.get_by_name("preserve-context-on-end")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
-        task_exports = [
-            e for e in effects
-            if e.server == "gobby-tasks" and e.tool == "sync_export"
-        ]
+        task_exports = [e for e in effects if e.server == "gobby-tasks" and e.tool == "sync_export"]
         assert len(task_exports) == 1
 
     def test_includes_memory_extract_and_export(self, db, manager) -> None:
@@ -407,8 +377,7 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
         memory_reset = [
-            e for e in effects
-            if e.type == "set_variable" and e.variable == "injected_memory_ids"
+            e for e in effects if e.type == "set_variable" and e.variable == "injected_memory_ids"
         ]
         assert len(memory_reset) == 1
         assert memory_reset[0].value == []
@@ -420,8 +389,7 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
         reset_flag = [
-            e for e in effects
-            if e.type == "set_variable" and e.variable == "pending_context_reset"
+            e for e in effects if e.type == "set_variable" and e.variable == "pending_context_reset"
         ]
         assert len(reset_flag) == 1
         assert reset_flag[0].value is True
@@ -433,14 +401,12 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
         handoff_effects = [
-            e for e in effects
-            if e.server == "gobby-sessions" and e.tool == "set_handoff_context"
+            e for e in effects if e.server == "gobby-sessions" and e.tool == "set_handoff_context"
         ]
         # One compact handoff + one full handoff
         assert len(handoff_effects) == 2
         full_handoff = [
-            e for e in handoff_effects
-            if e.arguments and e.arguments.get("full") is True
+            e for e in handoff_effects if e.arguments and e.arguments.get("full") is True
         ]
         assert len(full_handoff) == 1
         assert full_handoff[0].arguments.get("write_file") is True
@@ -451,10 +417,7 @@ class TestPreserveContextOnCompact:
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
-        task_exports = [
-            e for e in effects
-            if e.server == "gobby-tasks" and e.tool == "sync_export"
-        ]
+        task_exports = [e for e in effects if e.server == "gobby-tasks" and e.tool == "sync_export"]
         assert len(task_exports) == 1
 
     def test_includes_memory_extract_and_export(self, db, manager) -> None:

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -486,8 +486,13 @@ class TestSessionStartPreCreatedSession:
 class TestSessionStartNewSession:
     """Test SESSION_START handling for new sessions."""
 
-    def test_new_session_with_parent_on_handoff(self, mock_dependencies: dict) -> None:
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_new_session_with_parent_on_handoff(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
         """Test new session finds parent when source is 'clear'."""
+        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+
         mock_parent = MagicMock()
         mock_parent.id = "parent-sess-123"
 
@@ -532,8 +537,13 @@ class TestSessionStartNewSession:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_new_session_mark_parent_expired_error(self, mock_dependencies: dict) -> None:
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_new_session_mark_parent_expired_error(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
         """Test error marking parent as expired is handled gracefully."""
+        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+
         mock_parent = MagicMock()
         mock_parent.id = "parent-sess-123"
 
@@ -614,8 +624,15 @@ class TestSessionStartNewSession:
         # Should still allow despite error
         assert response.decision == "allow"
 
-    def test_new_session_with_task_id_context(self, mock_dependencies: dict) -> None:
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_new_session_with_task_id_context(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
         """Test new session includes task context when task_id present."""
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
 
@@ -815,6 +832,205 @@ class TestSessionEndHandling:
 
         # Should still allow despite error
         assert response.decision == "allow"
+
+    def test_session_end_marks_handoff_ready(self, mock_dependencies: dict) -> None:
+        """Test SESSION_END marks session as handoff_ready for parent lookup."""
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = None
+        mock_dependencies["session_storage"].get.return_value = mock_session
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].update_status.assert_called_once_with(
+            "sess-123", "handoff_ready"
+        )
+
+    def test_session_end_handoff_ready_error_handled(self, mock_dependencies: dict) -> None:
+        """Test error marking handoff_ready doesn't block response."""
+        mock_session = MagicMock()
+        mock_session.created_at = "2024-01-01T00:00:00Z"
+        mock_session.agent_run_id = None
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        mock_dependencies["session_storage"].update_status.side_effect = Exception(
+            "DB write error"
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_END,
+            session_id="ext-123",
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_session_end(event)
+
+        # Should still allow despite error
+        assert response.decision == "allow"
+
+
+class TestSessionStartHandoff:
+    """Test session handoff context injection on /clear and /compact."""
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_session_start_compact_finds_parent(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Test parent lookup works for source='compact'."""
+        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+
+        mock_parent = MagicMock()
+        mock_parent.id = "parent-sess-123"
+
+        mock_dependencies["session_storage"].get.return_value = None
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={"source": "compact", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert "Parent session: parent-sess-123" in response.context
+        mock_dependencies["session_storage"].find_parent.assert_called_once()
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_session_start_clear_sets_full_session_summary_variable(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Test summary_markdown set as full_session_summary session variable for source='clear'."""
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+
+        mock_parent_obj = MagicMock()
+        mock_parent_obj.id = "parent-sess-123"
+        mock_parent_obj.seq_num = 42
+        mock_parent_obj.summary_markdown = "# Summary\nWorked on feature X"
+        mock_parent_obj.compact_markdown = None
+
+        # get() called: pre-created check (None), handoff var population (parent),
+        # seq_num fetch (new session)
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,  # pre-created session check
+            mock_parent_obj,  # handoff variable population
+            mock_new_session,  # fetch session for seq_num
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={"source": "clear", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_sv_mgr.merge_variables.assert_any_call(
+            "new-sess-456",
+            {"full_session_summary": "# Summary\nWorked on feature X"},
+        )
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_session_start_compact_sets_compact_session_summary_variable(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Test compact_markdown set as compact_session_summary session variable for source='compact'."""
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {"auto_inject_handoff": True}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+
+        mock_parent_obj = MagicMock()
+        mock_parent_obj.id = "parent-sess-123"
+        mock_parent_obj.seq_num = 42
+        mock_parent_obj.summary_markdown = None
+        mock_parent_obj.compact_markdown = "# Compact\nContinuation of task Y"
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,  # pre-created session check
+            mock_parent_obj,  # handoff variable population
+            mock_new_session,  # fetch session for seq_num
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={"source": "compact", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_sv_mgr.merge_variables.assert_any_call(
+            "new-sess-456",
+            {"compact_session_summary": "# Compact\nContinuation of task Y"},
+        )
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_session_start_task_context_variable(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Test task_context session variable set when task_id is present."""
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.return_value = {}
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,  # pre-created session check
+            MagicMock(seq_num=10),  # fetch session for seq_num
+        ]
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-789"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-456",
+            data={"source": "startup", "cwd": "/some/dir"},
+            metadata={"_task_title": "Fix login bug"},
+        )
+        event.task_id = "task-abc"
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_sv_mgr.merge_variables.assert_any_call(
+            "new-sess-789",
+            {"task_context": "You are working on task: Fix login bug (task-abc)"},
+        )
 
 
 class TestBeforeAgentHandling:

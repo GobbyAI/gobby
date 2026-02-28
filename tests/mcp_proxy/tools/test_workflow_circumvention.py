@@ -34,6 +34,26 @@ def mock_state_manager():
 
 
 @pytest.fixture
+def mock_session_var_manager():
+    """Create a mock session variable manager."""
+    manager = MagicMock()
+    # Simple in-memory variables store for tests
+    store = {}
+
+    def set_var(session_id, name, value):
+        if session_id not in store:
+            store[session_id] = {}
+        store[session_id][name] = value
+
+    def get_vars(session_id):
+        return store.get(session_id, {})
+
+    manager.set_variable.side_effect = set_var
+    manager.get_variables.side_effect = get_vars
+    return manager
+
+
+@pytest.fixture
 def mock_session_manager():
     """Create a mock session manager."""
     manager = MagicMock()
@@ -52,15 +72,20 @@ def mock_loader():
 
 
 @pytest.fixture
-def registry(mock_loader, mock_state_manager, mock_session_manager, mock_db):
-    """Create workflow registry for testing.
-
-    Patch out WorkflowInstanceManager and SessionVariableManager so the
-    registry uses the backward-compat code path (no session_var_manager).
-    """
+def registry(
+    mock_loader, mock_state_manager, mock_session_manager, mock_db, mock_session_var_manager
+):
+    """Create workflow registry for testing."""
     with (
         patch("gobby.mcp_proxy.tools.workflows.WorkflowInstanceManager", return_value=None),
-        patch("gobby.mcp_proxy.tools.workflows.SessionVariableManager", return_value=None),
+        patch(
+            "gobby.mcp_proxy.tools.workflows.SessionVariableManager",
+            return_value=mock_session_var_manager,
+        ),
+        patch(
+            "gobby.workflows.state_manager.SessionVariableManager",
+            return_value=mock_session_var_manager,
+        ),
     ):
         return create_workflows_registry(
             loader=mock_loader,
@@ -227,149 +252,6 @@ class TestBlockManualTransitionToConditionalSteps:
         assert result["to_step"] == "step2"
 
 
-class TestBlockSessionTaskModification:
-    """Tests for blocking session_task modification when workflow is active."""
-
-    def test_blocks_session_task_modification_with_active_workflow(
-        self, registry, mock_state_manager
-    ) -> None:
-        """Cannot modify session_task when a real workflow is active."""
-        # Setup mock state with active workflow and existing session_task
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "auto-task"
-        mock_state.variables = {"session_task": "gt-parent-123"}
-        mock_state_manager.get_state.return_value = mock_state
-
-        # Try to change session_task
-        result = call_tool(
-            registry,
-            "set_variable",
-            name="session_task",
-            value="gt-child-456",
-            session_id="test-session",
-        )
-
-        assert "error" in result
-        assert "Cannot modify session_task" in result["error"]
-        assert "auto-task" in result["error"]
-        assert "gt-parent-123" in result["error"]
-
-    def test_allows_session_task_modification_with_lifecycle_workflow(
-        self, registry, mock_state_manager
-    ) -> None:
-        """Can modify session_task when only __lifecycle__ workflow is active."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {"session_task": "gt-old-task"}
-        mock_state_manager.get_state.return_value = mock_state
-
-        result = call_tool(
-            registry,
-            "set_variable",
-            name="session_task",
-            value="gt-new-task",
-            session_id="test-session",
-        )
-
-        assert "error" not in result
-        # Should have deprecation warning
-        assert "warning" in result
-        assert "DEPRECATED" in result["warning"]
-
-    def test_allows_session_task_modification_with_no_state(
-        self, registry, mock_state_manager
-    ) -> None:
-        """Can set session_task when no workflow state exists."""
-        mock_state_manager.get_state.return_value = None
-
-        result = call_tool(
-            registry,
-            "set_variable",
-            name="session_task",
-            value="gt-new-task",
-            session_id="test-session",
-        )
-
-        assert "error" not in result
-        # Should still save state and show warning
-        mock_state_manager.save_state.assert_called_once()
-
-    def test_allows_initial_session_task_setting(self, registry, mock_state_manager) -> None:
-        """Can set session_task for the first time even with active workflow."""
-        # Workflow active but session_task not yet set
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "auto-task"
-        mock_state.variables = {}  # No session_task yet
-        mock_state_manager.get_state.return_value = mock_state
-
-        result = call_tool(
-            registry,
-            "set_variable",
-            name="session_task",
-            value="gt-initial-task",
-            session_id="test-session",
-        )
-
-        # Should allow since there's no existing value to protect
-        assert "error" not in result
-
-    def test_allows_setting_same_session_task_value(self, registry, mock_state_manager) -> None:
-        """Setting session_task to same value is allowed (idempotent)."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "auto-task"
-        mock_state.variables = {"session_task": "gt-same-task"}
-        mock_state_manager.get_state.return_value = mock_state
-
-        result = call_tool(
-            registry,
-            "set_variable",
-            name="session_task",
-            value="gt-same-task",  # Same value
-            session_id="test-session",
-        )
-
-        assert "error" not in result
-
-    def test_allows_other_variable_modification_with_active_workflow(
-        self, registry, mock_state_manager
-    ) -> None:
-        """Other variables can still be modified when workflow is active."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "auto-task"
-        mock_state.variables = {"session_task": "gt-task-123", "other_var": "old"}
-        mock_state_manager.get_state.return_value = mock_state
-
-        result = call_tool(
-            registry,
-            "set_variable",
-            name="other_var",
-            value="new",
-            session_id="test-session",
-        )
-
-        assert result == {"ok": True, "value": "new"}
-
-    def test_blocks_session_task_modification_suggests_end_workflow(
-        self, registry, mock_state_manager
-    ) -> None:
-        """Error message suggests using end_workflow first."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "auto-task"
-        mock_state.variables = {"session_task": "gt-current"}
-        mock_state_manager.get_state.return_value = mock_state
-
-        result = call_tool(
-            registry,
-            "set_variable",
-            name="session_task",
-            value="gt-different",
-            session_id="test-session",
-        )
-
-        assert "error" in result
-        assert "end_workflow()" in result["error"]
-
-
 class TestSetVariableBooleanCoercion:
     """Tests for string-to-boolean coercion in set_variable.
 
@@ -378,12 +260,9 @@ class TestSetVariableBooleanCoercion:
     workflow gate conditions like pending_memory_review.
     """
 
-    def test_coerces_string_false_to_bool(self, registry, mock_state_manager) -> None:
+    def test_coerces_string_false_to_bool(self, registry, mock_session_var_manager) -> None:
         """String 'false' is coerced to boolean False."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {"pending_memory_review": True}
-        mock_state_manager.get_state.return_value = mock_state
+        mock_session_var_manager.set_variable("test-session", "pending_memory_review", True)
 
         call_tool(
             registry,
@@ -393,15 +272,12 @@ class TestSetVariableBooleanCoercion:
             session_id="test-session",
         )
 
-        assert mock_state.variables["pending_memory_review"] is False
+        assert (
+            mock_session_var_manager.get_variables("test-session")["pending_memory_review"] is False
+        )
 
-    def test_coerces_string_true_to_bool(self, registry, mock_state_manager) -> None:
+    def test_coerces_string_true_to_bool(self, registry, mock_session_var_manager) -> None:
         """String 'true' is coerced to boolean True."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {}
-        mock_state_manager.get_state.return_value = mock_state
-
         call_tool(
             registry,
             "set_variable",
@@ -410,80 +286,53 @@ class TestSetVariableBooleanCoercion:
             session_id="test-session",
         )
 
-        assert mock_state.variables["pre_existing_errors_triaged"] is True
+        assert (
+            mock_session_var_manager.get_variables("test-session")["pre_existing_errors_triaged"]
+            is True
+        )
 
-    def test_coerces_case_insensitive(self, registry, mock_state_manager) -> None:
+    def test_coerces_case_insensitive(self, registry, mock_session_var_manager) -> None:
         """Coercion is case-insensitive for True/False/NULL."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {}
-        mock_state_manager.get_state.return_value = mock_state
-
         call_tool(registry, "set_variable", name="v1", value="True", session_id="test-session")
-        assert mock_state.variables["v1"] is True
+        assert mock_session_var_manager.get_variables("test-session")["v1"] is True
 
         call_tool(registry, "set_variable", name="v2", value="FALSE", session_id="test-session")
-        assert mock_state.variables["v2"] is False
+        assert mock_session_var_manager.get_variables("test-session")["v2"] is False
 
         call_tool(registry, "set_variable", name="v3", value="Null", session_id="test-session")
-        assert mock_state.variables["v3"] is None
+        assert mock_session_var_manager.get_variables("test-session")["v3"] is None
 
-    def test_coerces_string_null_to_none(self, registry, mock_state_manager) -> None:
+    def test_coerces_string_null_to_none(self, registry, mock_session_var_manager) -> None:
         """String 'null' and 'none' are coerced to None."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {}
-        mock_state_manager.get_state.return_value = mock_state
-
         call_tool(registry, "set_variable", name="v1", value="null", session_id="test-session")
-        assert mock_state.variables["v1"] is None
+        assert mock_session_var_manager.get_variables("test-session")["v1"] is None
 
         call_tool(registry, "set_variable", name="v2", value="none", session_id="test-session")
-        assert mock_state.variables["v2"] is None
+        assert mock_session_var_manager.get_variables("test-session")["v2"] is None
 
-    def test_coerces_string_int_to_int(self, registry, mock_state_manager) -> None:
+    def test_coerces_string_int_to_int(self, registry, mock_session_var_manager) -> None:
         """String '0' is coerced to integer 0."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {}
-        mock_state_manager.get_state.return_value = mock_state
-
         call_tool(registry, "set_variable", name="count", value="0", session_id="test-session")
-        assert mock_state.variables["count"] == 0
-        assert isinstance(mock_state.variables["count"], int)
+        assert mock_session_var_manager.get_variables("test-session")["count"] == 0
+        assert isinstance(mock_session_var_manager.get_variables("test-session")["count"], int)
 
         call_tool(registry, "set_variable", name="count", value="42", session_id="test-session")
-        assert mock_state.variables["count"] == 42
+        assert mock_session_var_manager.get_variables("test-session")["count"] == 42
 
-    def test_coerces_string_float_to_float(self, registry, mock_state_manager) -> None:
+    def test_coerces_string_float_to_float(self, registry, mock_session_var_manager) -> None:
         """String '3.14' is coerced to float."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {}
-        mock_state_manager.get_state.return_value = mock_state
-
         call_tool(registry, "set_variable", name="ratio", value="3.14", session_id="test-session")
-        assert mock_state.variables["ratio"] == 3.14
-        assert isinstance(mock_state.variables["ratio"], float)
+        assert mock_session_var_manager.get_variables("test-session")["ratio"] == 3.14
+        assert isinstance(mock_session_var_manager.get_variables("test-session")["ratio"], float)
 
-    def test_preserves_regular_strings(self, registry, mock_state_manager) -> None:
+    def test_preserves_regular_strings(self, registry, mock_session_var_manager) -> None:
         """Non-boolean/numeric strings are kept as-is."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {}
-        mock_state_manager.get_state.return_value = mock_state
-
         call_tool(
             registry, "set_variable", name="name", value="hello world", session_id="test-session"
         )
-        assert mock_state.variables["name"] == "hello world"
+        assert mock_session_var_manager.get_variables("test-session")["name"] == "hello world"
 
-    def test_preserves_native_bool(self, registry, mock_state_manager) -> None:
+    def test_preserves_native_bool(self, registry, mock_session_var_manager) -> None:
         """Native boolean values pass through without coercion."""
-        mock_state = MagicMock(spec=WorkflowState)
-        mock_state.workflow_name = "__lifecycle__"
-        mock_state.variables = {}
-        mock_state_manager.get_state.return_value = mock_state
-
         call_tool(registry, "set_variable", name="flag", value=False, session_id="test-session")
-        assert mock_state.variables["flag"] is False
+        assert mock_session_var_manager.get_variables("test-session")["flag"] is False

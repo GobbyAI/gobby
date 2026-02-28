@@ -22,7 +22,7 @@ class TestProjectRoutes:
 
     @pytest.fixture
     def client(
-        self, session_manager: "LocalSessionManager", project_manager: "LocalProjectManager"
+        self, session_manager: LocalSessionManager, project_manager: LocalProjectManager
     ) -> TestClient:
         """Create a test client with real session_manager and project_manager."""
         server = create_http_server(
@@ -32,7 +32,7 @@ class TestProjectRoutes:
         return TestClient(server.app)
 
     @pytest.fixture
-    def real_project(self, project_manager: "LocalProjectManager") -> dict:
+    def real_project(self, project_manager: LocalProjectManager) -> dict:
         """Create a real project in the database."""
         proj = project_manager.create(
             name="my-project",
@@ -42,20 +42,20 @@ class TestProjectRoutes:
         return proj.to_dict()
 
     @pytest.fixture
-    def personal_project(self, project_manager: "LocalProjectManager") -> dict:
+    def personal_project(self, project_manager: LocalProjectManager) -> dict:
         """Get the _personal system project (created by migrations)."""
         proj = project_manager.get_by_name("_personal")
         assert proj is not None, "_personal should be created by migrations"
         return proj.to_dict()
 
     @pytest.fixture
-    def orphaned_project(self, project_manager: "LocalProjectManager") -> dict:
+    def orphaned_project(self, project_manager: LocalProjectManager) -> dict:
         """Get or create the _orphaned hidden project."""
         proj = project_manager.get_or_create(name="_orphaned", repo_path=None)
         return proj.to_dict()
 
     @pytest.fixture
-    def migrated_project(self, project_manager: "LocalProjectManager") -> dict:
+    def migrated_project(self, project_manager: LocalProjectManager) -> dict:
         """Get or create the _migrated hidden project."""
         proj = project_manager.get_or_create(name="_migrated", repo_path=None)
         return proj.to_dict()
@@ -124,7 +124,7 @@ class TestProjectRoutes:
         self,
         client: TestClient,
         real_project: dict,
-        session_manager: "LocalSessionManager",
+        session_manager: LocalSessionManager,
     ) -> None:
         """Project stats reflect actual session and task counts."""
         # Create a session for this project using register()
@@ -169,7 +169,7 @@ class TestProjectRoutes:
         assert response.status_code == 404
 
     def test_get_project_soft_deleted(
-        self, client: TestClient, real_project: dict, project_manager: "LocalProjectManager"
+        self, client: TestClient, real_project: dict, project_manager: LocalProjectManager
     ) -> None:
         """404 when project is soft-deleted."""
         project_manager.soft_delete(real_project["id"])
@@ -250,7 +250,7 @@ class TestProjectRoutes:
         assert response.status_code == 404
 
     def test_update_project_soft_deleted(
-        self, client: TestClient, real_project: dict, project_manager: "LocalProjectManager"
+        self, client: TestClient, real_project: dict, project_manager: LocalProjectManager
     ) -> None:
         """404 when updating soft-deleted project."""
         project_manager.soft_delete(real_project["id"])
@@ -291,7 +291,7 @@ class TestProjectRoutes:
         assert response.status_code == 404
 
     def test_delete_project_already_deleted(
-        self, client: TestClient, real_project: dict, project_manager: "LocalProjectManager"
+        self, client: TestClient, real_project: dict, project_manager: LocalProjectManager
     ) -> None:
         """404 when deleting already soft-deleted project."""
         project_manager.soft_delete(real_project["id"])
@@ -317,7 +317,7 @@ class TestProjectRoutes:
     # Error: session_manager unavailable
     # -----------------------------------------------------------------
 
-    def test_session_manager_unavailable(self, temp_db: "LocalDatabase") -> None:
+    def test_session_manager_unavailable(self, temp_db: LocalDatabase) -> None:
         """503 when session_manager is None."""
         server = create_http_server(session_manager=None, database=temp_db)
         client = TestClient(server.app)

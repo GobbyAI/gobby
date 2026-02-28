@@ -38,7 +38,6 @@ async def dispatch_mcp_calls(
     Context injection:
     - ``session_id`` is injected from ``event.metadata["_platform_session_id"]``
       when not already present in the call's arguments.
-    - ``prompt_text`` is injected from ``event.data["prompt"]`` when absent.
 
     Args:
         mcp_calls: List of effect dicts from ``response.metadata["mcp_calls"]``.
@@ -86,6 +85,13 @@ async def _safe_call(
 ) -> None:
     """Execute a single MCP call, logging errors without propagating."""
     try:
-        await call_tool_fn(server, tool, arguments)
+        result = await call_tool_fn(server, tool, arguments)
+        if isinstance(result, dict) and result.get("success") is False:
+            logger.warning(
+                "dispatch_mcp_calls: %s/%s returned failure: %s",
+                server,
+                tool,
+                result.get("error", "unknown"),
+            )
     except Exception as exc:
         logger.error("dispatch_mcp_calls: %s/%s failed: %s", server, tool, exc, exc_info=True)

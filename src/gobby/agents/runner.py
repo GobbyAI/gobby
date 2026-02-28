@@ -10,7 +10,9 @@ The AgentRunner coordinates:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents import runner_queries as _queries
@@ -20,15 +22,13 @@ from gobby.agents.runner_tracking import RunTracker
 from gobby.agents.session import ChildSessionConfig, ChildSessionManager
 from gobby.llm.executor import AgentExecutor, AgentResult, ToolHandler, ToolResult
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowState
-from gobby.workflows.loader import WorkflowLoader
-from gobby.workflows.state_manager import WorkflowStateManager
 
 __all__ = ["AgentRunner"]
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.sessions import LocalSessionManager
+    from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +80,30 @@ class AgentRunner:
             max_agent_depth=max_agent_depth,
         )
         self._run_storage = LocalAgentRunManager(db)
-        self._workflow_loader = workflow_loader or WorkflowLoader()
+        if workflow_loader is not None:
+            self._workflow_loader = workflow_loader
+        else:
+            from gobby.workflows.loader import WorkflowLoader as _WL
+
+            self._workflow_loader = _WL()
         # Agent definitions are now loaded by the spawn_agent factory directly
-        self._workflow_state_manager = WorkflowStateManager(db)
 
         self.logger = logger
 
+        # Workflow handler for hook evaluation on spawned agent tool calls
+        self._workflow_handler: Any = None
+
         # Thread-safe in-memory tracking of running agents
         self._tracker = RunTracker()
+
+    @property
+    def workflow_handler(self) -> Any:
+        """Workflow handler for hook evaluation on spawned agent tool calls."""
+        return self._workflow_handler
+
+    @workflow_handler.setter
+    def workflow_handler(self, value: Any) -> None:
+        self._workflow_handler = value
 
     @property
     def child_session_manager(self) -> ChildSessionManager:
@@ -187,14 +203,19 @@ class AgentRunner:
 
         # Validate workflow BEFORE creating child session to avoid orphaned sessions
         workflow_definition = None
-        if effective_workflow:
+        if effective_workflow and self._workflow_loader:
             workflow_definition = self._workflow_loader.load_workflow_sync(
                 effective_workflow,
                 project_path=config.project_path,
             )
             if workflow_definition:
+                from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
+
                 # Reject lifecycle workflows - they run automatically via hooks
-                if workflow_definition.type == "lifecycle":
+                if (
+                    isinstance(workflow_definition, WorkflowDefinition)
+                    and workflow_definition.type == "lifecycle"
+                ):
                     self.logger.error(
                         f"Cannot use lifecycle workflow '{effective_workflow}' for agent spawning"
                     )
@@ -208,18 +229,12 @@ class AgentRunner:
                         ),
                         turns_used=0,
                     )
-                # Agent spawning only supports WorkflowDefinition, not PipelineDefinition
-                if not isinstance(workflow_definition, WorkflowDefinition):
-                    self.logger.error(
-                        f"Cannot use pipeline '{effective_workflow}' for agent spawning"
-                    )
+                # Ensure the loaded workflow is actually a PipelineDefinition or a valid WorkflowDefinition
+                elif not isinstance(workflow_definition, (PipelineDefinition, WorkflowDefinition)):
                     return AgentResult(
                         output="",
                         status="error",
-                        error=(
-                            f"'{effective_workflow}' is a pipeline, not a step workflow. "
-                            f"Agent spawning requires a step-based workflow."
-                        ),
+                        error=f"Loaded workflow '{effective_workflow}' is not a valid Agent Definition",
                         turns_used=0,
                     )
 
@@ -246,49 +261,24 @@ class AgentRunner:
                 turns_used=0,
             )
 
-        # Initialize workflow state if workflow was loaded
-        # workflow_definition is WorkflowDefinition | None at this point (PipelineDefinition rejected above)
-        workflow_state = None
-        workflow_config: WorkflowDefinition | None = None
-        if workflow_definition and isinstance(workflow_definition, WorkflowDefinition):
-            workflow_config = workflow_definition
-            self.logger.info(
-                f"Loaded workflow '{effective_workflow}' for agent (type={workflow_config.type})"
-            )
-
-            # Initialize workflow state for child session
-            initial_step = ""
-            if workflow_config.steps:
-                initial_step = workflow_config.steps[0].name
-
-            # Build initial variables with agent depth information
-            initial_variables = dict(workflow_config.variables)
-            initial_variables["agent_depth"] = child_session.agent_depth
-            initial_variables["max_agent_depth"] = self._child_session_manager.max_agent_depth
-            initial_variables["can_spawn"] = (
-                child_session.agent_depth < self._child_session_manager.max_agent_depth
-            )
-            initial_variables["parent_session_id"] = parent_session_id
-
-            # Merge lifecycle_variables
-            if config.lifecycle_variables:
-                initial_variables.update(config.lifecycle_variables)
-
-            workflow_state = WorkflowState(
-                session_id=child_session.id,
-                workflow_name=effective_workflow,
-                step=initial_step,
-                variables=initial_variables,
-            )
-            self._workflow_state_manager.save_state(workflow_state)
-            self.logger.info(
-                f"Initialized workflow state for child session {child_session.id} "
-                f"(step={initial_step}, agent_depth={child_session.agent_depth})"
-            )
+        # Log workflow assignment
+        if workflow_definition:
+            if isinstance(workflow_definition, PipelineDefinition):
+                self.logger.info(
+                    f"Pipeline '{effective_workflow}' assigned to agent session {child_session.id}"
+                )
+            else:
+                self.logger.info(
+                    f"Workflow '{effective_workflow}' loaded for agent session {child_session.id} "
+                    f"(type={type(workflow_definition).__name__})"
+                )
         elif effective_workflow:
-            # workflow_definition is None but effective_workflow was specified
-            self.logger.warning(
-                f"Workflow '{effective_workflow}' not found, proceeding without workflow"
+            self.logger.error(f"Workflow '{effective_workflow}' not found")
+            return AgentResult(
+                output="",
+                status="error",
+                error=f"Workflow '{effective_workflow}' not found. Agent cannot start without its assigned pipeline.",
+                turns_used=0,
             )
 
         # Create agent run record
@@ -323,8 +313,6 @@ class AgentRunner:
         return AgentRunContext(
             session=session_obj,
             run=agent_run,
-            workflow_state=workflow_state,
-            workflow_config=workflow_config,
         )
 
     async def execute_run(
@@ -358,7 +346,6 @@ class AgentRunner:
 
         child_session = context.session
         agent_run = context.run
-        workflow_definition = context.workflow_config
 
         # Get executor for provider
         executor = self.get_executor(config.provider)
@@ -406,15 +393,7 @@ class AgentRunner:
 
         base_handler = tool_handler or default_tool_handler
 
-        # Create workflow-filtered handler if workflow is active
-        if workflow_definition:
-            handler = self._create_workflow_filtered_handler(
-                base_handler=base_handler,
-                session_id=child_session.id,
-                workflow_definition=workflow_definition,
-            )
-        else:
-            handler = base_handler
+        handler = base_handler
 
         # Track tool calls to preserve partial progress info on exception
         # Note: Each tool call within a turn counts separately. The executor's
@@ -432,12 +411,56 @@ class AgentRunner:
             )
             return await handler(tool_name, arguments)
 
+        async def hook_aware_handler(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+            """Wrap tracking_handler with AFTER_TOOL hook evaluation."""
+            result = await tracking_handler(tool_name, arguments)
+            if not self._workflow_handler:
+                return result
+            try:
+                from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+
+                event = HookEvent(
+                    event_type=HookEventType.AFTER_TOOL,
+                    session_id=child_session.id,
+                    source=SessionSource.EMBEDDED,
+                    timestamp=datetime.now(UTC),
+                    data={
+                        "tool_name": tool_name,
+                        "tool_input": arguments,
+                        "is_error": not result.success,
+                    },
+                    metadata={
+                        "is_failure": not result.success,
+                        "_platform_session_id": child_session.id,
+                    },
+                )
+                response = await asyncio.to_thread(self._workflow_handler.evaluate, event)
+                if response and response.context:
+                    if not result.success:
+                        result.error = (
+                            f"{result.error}\n\n{response.context}"
+                            if result.error
+                            else response.context
+                        )
+                    else:
+                        result_str = str(result.result) if result.result else ""
+                        result.result = (
+                            f"{result_str}\n\n{response.context}"
+                            if result_str
+                            else response.context
+                        )
+            except Exception:
+                logger.debug(
+                    "AFTER_TOOL hook eval failed for %s (fail-open)", tool_name, exc_info=True
+                )
+            return result
+
         # Execute the agent
         try:
             result = await executor.run(
                 prompt=config.prompt,
                 tools=config.tools or [],
-                tool_handler=tracking_handler,
+                tool_handler=hook_aware_handler,
                 system_prompt=config.system_prompt,
                 model=config.model,
                 max_turns=config.max_turns,
@@ -606,86 +629,3 @@ class AgentRunner:
     def is_agent_running(self, run_id: str) -> bool:
         """Check if an agent is running. Delegates to RunTracker.is_running()."""
         return self._tracker.is_running(run_id)
-
-    def _create_workflow_filtered_handler(
-        self,
-        base_handler: ToolHandler,
-        session_id: str,
-        workflow_definition: WorkflowDefinition,
-    ) -> ToolHandler:
-        """
-        Create a tool handler that enforces workflow tool restrictions.
-
-        Args:
-            base_handler: The underlying tool handler to call for allowed tools.
-            session_id: Session ID for looking up workflow state.
-            workflow_definition: The workflow definition with step restrictions.
-
-        Returns:
-            An async callable that filters tools based on workflow state.
-        """
-
-        async def filtered_handler(tool_name: str, arguments: dict[str, Any]) -> ToolResult:
-            # Get current workflow state
-            state = self._workflow_state_manager.get_state(session_id)
-            if not state:
-                # No state - just pass through
-                return await base_handler(tool_name, arguments)
-
-            # Get current step
-            current_step = workflow_definition.get_step(state.step)
-            if not current_step:
-                # No step defined - pass through
-                return await base_handler(tool_name, arguments)
-
-            # Check blocked_tools first (explicit deny)
-            if tool_name in current_step.blocked_tools:
-                self.logger.warning(f"Tool '{tool_name}' blocked by workflow step '{state.step}'")
-                return ToolResult(
-                    tool_name=tool_name,
-                    success=False,
-                    error=f"Tool '{tool_name}' is blocked in workflow step '{state.step}'",
-                )
-
-            # Check allowed_tools (if not "all")
-            if current_step.allowed_tools != "all":
-                if tool_name not in current_step.allowed_tools:
-                    self.logger.warning(
-                        f"Tool '{tool_name}' not allowed in workflow step '{state.step}'"
-                    )
-                    return ToolResult(
-                        tool_name=tool_name,
-                        success=False,
-                        error=(
-                            f"Tool '{tool_name}' is not allowed in workflow step "
-                            f"'{state.step}'. Allowed tools: {current_step.allowed_tools}"
-                        ),
-                    )
-
-            # Handle 'complete' tool as workflow exit condition
-            if tool_name == "complete":
-                result_message = arguments.get("result", "Task completed")
-                self.logger.info(
-                    f"Agent called 'complete' tool - workflow exit condition met "
-                    f"(session={session_id}, step={state.step})"
-                )
-
-                # Update workflow state to indicate completion
-                state.variables["workflow_completed"] = True
-                state.variables["completion_result"] = result_message
-                self._workflow_state_manager.save_state(state)
-
-                return ToolResult(
-                    tool_name=tool_name,
-                    success=True,
-                    result={
-                        "status": "completed",
-                        "message": result_message,
-                        "step": state.step,
-                    },
-                )
-
-            # Tool is allowed - pass through to base handler
-            return await base_handler(tool_name, arguments)
-
-        return filtered_handler

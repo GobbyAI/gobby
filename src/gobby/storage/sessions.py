@@ -267,6 +267,7 @@ class LocalSessionManager:
             True if ancestor_id is found in the parent chain
         """
         current_id = descendant_id
+        # Using mutable set for O(1) insertions during cycle detection
         seen: set[str] = set()
         while True:
             row = self.db.fetchone(
@@ -308,8 +309,14 @@ class LocalSessionManager:
             (session_id,),
         )
 
+    _VALID_CHAT_MODES = {"plan", "accept_edits", "normal", "bypass"}
+
     def update_chat_mode(self, session_id: str, chat_mode: str) -> None:
         """Persist the chat mode (plan, accept_edits, normal, bypass) for a session."""
+        if chat_mode not in self._VALID_CHAT_MODES:
+            raise ValueError(
+                f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
+            )
         self.db.execute(
             "UPDATE sessions SET chat_mode = ? WHERE id = ?",
             (chat_mode, session_id),

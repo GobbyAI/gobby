@@ -1,0 +1,11 @@
+name: default-web-chat
+description: Web chat agent — extends default with canvas UI rendering
+extends: default
+mode: self
+sources: [claude_sdk_web_chat]
+
+workflows:
+  # Inherit rule_selectors from default (tag:gobby)
+  # Inherit skill_selectors from default (null = all, canvas passes audience for web chat)
+  # Inherit variable_selectors from default (null = all)
+  variables: {}

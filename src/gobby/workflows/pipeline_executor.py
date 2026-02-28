@@ -432,20 +432,28 @@ class PipelineExecutor:
 
     async def _execute_nested_pipeline(
         self,
-        pipeline_name: str,
+        pipeline_ref: str | dict[str, Any],
         context: dict[str, Any],
         project_id: str,
     ) -> dict[str, Any]:
         """Execute a nested pipeline.
 
         Args:
-            pipeline_name: Name of the pipeline to invoke
+            pipeline_ref: Pipeline name (str) or dict with 'name' and optional 'arguments'
             context: Execution context (used as inputs)
             project_id: Project context
 
         Returns:
             Dict with nested pipeline outputs
         """
+        # Parse dict-style invoke_pipeline
+        if isinstance(pipeline_ref, dict):
+            pipeline_name = pipeline_ref.get("name", "")
+            explicit_args = pipeline_ref.get("arguments")
+        else:
+            pipeline_name = pipeline_ref
+            explicit_args = None
+
         logger.info(f"Invoking nested pipeline: {pipeline_name}")
 
         # Check if loader is available
@@ -466,14 +474,18 @@ class PipelineExecutor:
                     "error": f"Pipeline '{pipeline_name}' not found",
                 }
 
-            # Execute the nested pipeline recursively
-            # Use inputs from context as the nested pipeline's inputs
-            nested_inputs = context.get("inputs", {})
+            # Use explicit arguments if provided, otherwise inherit parent inputs
+            if explicit_args is not None:
+                nested_inputs = explicit_args
+            else:
+                nested_inputs = context.get("inputs", {})
 
+            # Propagate session_id to nested execution
             result = await self.execute(
                 pipeline=nested_pipeline,
                 inputs=nested_inputs,
                 project_id=project_id,
+                session_id=context.get("session_id"),
             )
 
             return {

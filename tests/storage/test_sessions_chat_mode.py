@@ -76,6 +76,17 @@ class TestChatModePersistence:
         d = reloaded.to_dict()
         assert d["chat_mode"] == "normal"
 
+    def test_invalid_mode_raises(self, sm: LocalSessionManager) -> None:
+        """Invalid chat_mode values should raise ValueError."""
+        session = sm.register(
+            external_id="ext-mode-invalid",
+            machine_id="m1",
+            source="test",
+            project_id=PROJECT_ID,
+        )
+        with pytest.raises(ValueError, match="Invalid chat_mode"):
+            sm.update_chat_mode(session.id, "turbo")
+
     def test_all_modes(self, sm: LocalSessionManager) -> None:
         """All valid modes should round-trip through the DB."""
         session = sm.register(

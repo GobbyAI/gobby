@@ -42,7 +42,7 @@ class Watchdog:
     Daemon watchdog that monitors health and restarts on failure.
 
     Features:
-    - HTTP health checks to /admin/status
+    - HTTP health checks to /api/admin/health
     - Consecutive failure threshold before restart
     - Circuit breaker to prevent restart loops
     - Graceful shutdown handling
@@ -111,7 +111,7 @@ class Watchdog:
         """
         try:
             response = httpx.get(
-                f"http://localhost:{self.daemon_port}/admin/status",
+                f"http://localhost:{self.daemon_port}/api/admin/health",
                 timeout=5.0,
             )
             if response.status_code == 200:

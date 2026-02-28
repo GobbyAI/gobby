@@ -214,17 +214,16 @@ class TestHandleAllLifecycles:
     def test_evaluate_exception_handling(self, mock_engine, event) -> None:
         """Test exception handling in evaluate.
 
-        This tests lines 75-77 - the exception handler.
+        Exceptions now propagate (not swallowed) so the caller
+        (_evaluate_workflow_rules) can log to hook-manager.log and fail-open.
         """
         handler = WorkflowHookHandler(mock_engine)
         handler._loop = None
 
         with patch("asyncio.run", side_effect=Exception("Test error")):
             with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                result = handler.evaluate(event)
-
-                # Should return allow on error
-                assert result.decision == "allow"
+                with pytest.raises(Exception, match="Test error"):
+                    handler.evaluate(event)
 
     def test_evaluate_timeout_exception(self, mock_engine, event) -> None:
         """Test timeout exception in thread-safe execution."""
@@ -353,15 +352,18 @@ class TestHandle:
             mock_engine.handle_event.assert_not_called()
 
     def test_handle_exception_handling(self, mock_engine, event) -> None:
-        """Test exception handling in handle."""
+        """Test exception handling in handle.
+
+        Exceptions now propagate so the caller (_evaluate_workflow_rules)
+        can log to hook-manager.log and fail-open at the right level.
+        """
         handler = WorkflowHookHandler(mock_engine)
         handler._loop = None
 
         with patch("asyncio.run", side_effect=ValueError("Unexpected error")):
             with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                result = handler.handle(event)
-
-                assert result.decision == "allow"
+                with pytest.raises(ValueError, match="Unexpected error"):
+                    handler.handle(event)
 
 
 
@@ -741,7 +743,7 @@ class TestVariablePersistence:
     async def test_variables_accumulate_across_evaluations(self, db, handler, session_var_manager) -> None:
         """Variables should persist and accumulate across multiple evaluations."""
         self._insert_set_variable_rule(
-            db, "test-increment", "stop", "stop_attempts", "variables.get('stop_attempts', 0) + 1"
+            db, "test-increment", "stop", "custom_counter", "variables.get('custom_counter', 0) + 1"
         )
 
         event = self._make_stop_event()
@@ -750,8 +752,8 @@ class TestVariablePersistence:
         for i in range(3):
             await handler._evaluate_rules(event)
             variables = session_var_manager.get_variables("test-session")
-            assert variables.get("stop_attempts") == i + 1, (
-                f"After evaluation {i + 1}, stop_attempts should be {i + 1}"
+            assert variables.get("custom_counter") == i + 1, (
+                f"After evaluation {i + 1}, custom_counter should be {i + 1}"
             )
 
     @pytest.mark.asyncio
@@ -794,6 +796,7 @@ class TestVariablePersistence:
     async def test_session_variables_override_workflow_state(self, db, handler, session_var_manager) -> None:
         """Session variables should take precedence over workflow_states variables."""
         import json
+
         from gobby.workflows.definitions import WorkflowState
 
         # Mock state_manager to return workflow state with a variable

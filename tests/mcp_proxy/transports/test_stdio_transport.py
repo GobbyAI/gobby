@@ -714,7 +714,7 @@ class TestStdioDisconnectTransportGenericError:
     @pytest.mark.asyncio
     async def test_generic_exception_handled(self, conn: StdioTransportConnection) -> None:
         mock_transport_ctx = AsyncMock()
-        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=IOError("broken pipe"))
+        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=OSError("broken pipe"))
         conn._transport_context = mock_transport_ctx
 
         await conn.disconnect()

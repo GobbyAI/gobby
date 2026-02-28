@@ -17,7 +17,6 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks import (
     SKIP_REASONS,
-    _infer_category,
     create_task_registry,
 )
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -49,7 +48,6 @@ def mock_sync_manager():
 def mock_task_validator():
     """Create a mock task validator."""
     validator = AsyncMock()
-    validator.generate_criteria = AsyncMock(return_value="Generated criteria")
     validator.validate_task = AsyncMock()
     return validator
 
@@ -97,58 +95,6 @@ def sample_task():
 # =============================================================================
 
 
-class TestInferTestStrategy:
-    """Tests for _infer_category helper function."""
-
-    def test_infer_manual_from_verify_that(self) -> None:
-        """Test inferring manual strategy from 'verify that' pattern."""
-        result = _infer_category("Verify that the feature works", None)
-        assert result == "manual"
-
-    def test_infer_manual_from_check_the(self) -> None:
-        """Test inferring manual strategy from 'check the' pattern."""
-        result = _infer_category("Check the output format", None)
-        assert result == "manual"
-
-    def test_infer_manual_from_functional_test(self) -> None:
-        """Test inferring manual strategy from 'functional test' pattern."""
-        result = _infer_category("Run functional testing on auth", None)
-        assert result == "manual"
-
-    def test_infer_manual_from_smoke_test(self) -> None:
-        """Test inferring manual strategy from 'smoke test' pattern."""
-        result = _infer_category("Perform smoke test", None)
-        assert result == "manual"
-
-    def test_infer_manual_from_manually_verify(self) -> None:
-        """Test inferring manual strategy from 'manually verify' pattern."""
-        result = _infer_category("Manually verify the changes", None)
-        assert result == "manual"
-
-    def test_infer_manual_from_description(self) -> None:
-        """Test inferring from description when title doesn't match."""
-        result = _infer_category("Task title", "Need to verify that it works")
-        assert result == "manual"
-
-    def test_infer_none_for_generic_task(self) -> None:
-        """Test returning None for generic task without patterns."""
-        result = _infer_category("Deploy to staging", "Push to staging environment")
-        assert result is None
-
-    def test_infer_code_from_implement_pattern(self) -> None:
-        """Test inferring code category from 'implement' pattern."""
-        result = _infer_category("Implement new feature", "Add the feature")
-        assert result == "code"
-
-    def test_infer_manual_from_run_and_check(self) -> None:
-        """Test inferring manual strategy from 'run and check' pattern."""
-        result = _infer_category("Run and check output", None)
-        assert result == "manual"
-
-    def test_infer_manual_case_insensitive(self) -> None:
-        """Test that pattern matching is case insensitive."""
-        result = _infer_category("VERIFY THAT it works", None)
-        assert result == "manual"
 
 
 class TestSkipReasons:
@@ -196,7 +142,8 @@ class TestCreateTaskTool:
             mock_ctx.return_value = {"id": "proj-1"}
 
             result = await registry.call(
-                "create_task", {"title": "New Task", "session_id": "test-session"}
+                "create_task",
+                {"title": "New Task", "session_id": "test-session", "category": "research"},
             )
 
             assert result == {
@@ -231,6 +178,7 @@ class TestCreateTaskTool:
                     {
                         "title": "Blocker Task",
                         "session_id": "test-session",
+                        "category": "research",
                         "blocks": [
                             "550e8400-e29b-41d4-a716-446655440003",
                             "550e8400-e29b-41d4-a716-446655440004",
@@ -281,6 +229,7 @@ class TestCreateTaskTool:
                         {
                             "title": "Dependent Task",
                             "session_id": "test-session",
+                            "category": "research",
                             "depends_on": ["blocker-1", "blocker-2"],
                         },
                     )
@@ -333,6 +282,7 @@ class TestCreateTaskTool:
                         {
                             "title": "Partial Deps Task",
                             "session_id": "test-session",
+                            "category": "research",
                             "depends_on": ["valid-ref", "invalid-ref"],
                         },
                     )
@@ -368,6 +318,7 @@ class TestCreateTaskTool:
                 {
                     "title": "Labeled Task",
                     "session_id": "test-session",
+                    "category": "research",
                     "labels": ["urgent", "bug"],
                 },
             )
@@ -377,8 +328,65 @@ class TestCreateTaskTool:
             assert call_kwargs["labels"] == ["urgent", "bug"]
 
     @pytest.mark.asyncio
-    async def test_create_task_infers_category(self, mock_task_manager, mock_sync_manager):
-        """Test that create_task infers category for manual test tasks."""
+    async def test_create_code_task_requires_validation_criteria(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test that code tasks are rejected without validation_criteria."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        with patch("gobby.mcp_proxy.tools.tasks._crud.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "proj-1"}
+
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": "Implement new feature",
+                    "session_id": "test-session",
+                    "category": "code",
+                },
+            )
+
+            assert "error" in result
+            assert "validation_criteria" in result["error"]
+            mock_task_manager.create_task_with_decomposition.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_code_task_with_validation_criteria_succeeds(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test that code tasks succeed when validation_criteria is provided."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440007"
+        mock_task.to_dict.return_value = {"id": "550e8400-e29b-41d4-a716-446655440007"}
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {"id": "550e8400-e29b-41d4-a716-446655440007"},
+        }
+        mock_task_manager.get_task.return_value = mock_task
+
+        with patch("gobby.mcp_proxy.tools.tasks._crud.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "proj-1"}
+
+            await registry.call(
+                "create_task",
+                {
+                    "title": "Implement new feature",
+                    "session_id": "test-session",
+                    "category": "code",
+                    "validation_criteria": "Tests pass and feature works",
+                },
+            )
+
+            mock_task_manager.create_task_with_decomposition.assert_called_once()
+            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+            assert call_kwargs["category"] == "code"
+
+    @pytest.mark.asyncio
+    async def test_create_non_code_task_without_validation_criteria(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test that non-code tasks succeed without validation_criteria."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
         mock_task = MagicMock()
@@ -394,42 +402,16 @@ class TestCreateTaskTool:
 
             await registry.call(
                 "create_task",
-                {"title": "Verify that the feature works correctly", "session_id": "test-session"},
-            )
-
-            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-            assert call_kwargs["category"] == "manual"
-
-    @pytest.mark.asyncio
-    async def test_create_task_explicit_category_overrides_inference(
-        self, mock_task_manager, mock_sync_manager
-    ):
-        """Test that explicit category overrides inference."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-        mock_task = MagicMock()
-        mock_task.id = "550e8400-e29b-41d4-a716-446655440007"
-        mock_task.to_dict.return_value = {"id": "550e8400-e29b-41d4-a716-446655440007"}
-        mock_task_manager.create_task_with_decomposition.return_value = {
-            "task": {"id": "550e8400-e29b-41d4-a716-446655440007"},
-        }
-        mock_task_manager.get_task.return_value = mock_task
-
-        with patch("gobby.mcp_proxy.tools.tasks._crud.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "proj-1"}
-
-            # Title would infer "manual", but explicit value overrides
-            await registry.call(
-                "create_task",
                 {
-                    "title": "Verify that tests pass",
+                    "title": "Research auth options",
                     "session_id": "test-session",
-                    "category": "automated",
+                    "category": "research",
                 },
             )
 
+            mock_task_manager.create_task_with_decomposition.assert_called_once()
             call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-            assert call_kwargs["category"] == "automated"
+            assert call_kwargs["category"] == "research"
 
     @pytest.mark.asyncio
     async def test_create_task_with_all_optional_fields(self, mock_task_manager, mock_sync_manager):
@@ -497,7 +479,10 @@ class TestCreateTaskTool:
         with patch("gobby.mcp_proxy.tools.tasks._crud.get_project_context") as mock_ctx:
             mock_ctx.return_value = None  # No project context
 
-            await registry.call("create_task", {"title": "Task", "session_id": "test-session"})
+            await registry.call(
+                "create_task",
+                {"title": "Task", "session_id": "test-session", "category": "research"},
+            )
 
             # When no project context, should fall back to PERSONAL_PROJECT_ID
             call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
@@ -532,7 +517,8 @@ class TestCreateTaskTool:
             mock_ctx.return_value = {"id": "proj-1"}
 
             result = await registry.call(
-                "create_task", {"title": "Full Task", "session_id": "test-session"}
+                "create_task",
+                {"title": "Full Task", "session_id": "test-session", "category": "research"},
             )
 
             # Should return full task dict, not minimal
@@ -569,7 +555,8 @@ class TestCreateTaskTool:
             mock_ctx.return_value = {"id": "proj-1"}
 
             result = await registry.call(
-                "create_task", {"title": "Task", "session_id": "test-session"}
+                "create_task",
+                {"title": "Task", "session_id": "test-session", "category": "research"},
             )
 
             # Without claim=True, update_task should NOT be called (no auto-claim)
@@ -615,7 +602,7 @@ class TestCreateTaskTool:
 
                 result = await registry.call(
                     "create_task",
-                    {"title": "New Task", "session_id": "test-session"},
+                    {"title": "New Task", "session_id": "test-session", "category": "research"},
                 )
 
                 # Task should be created
@@ -669,7 +656,7 @@ class TestCreateTaskTool:
 
                 result = await registry.call(
                     "create_task",
-                    {"title": "New Task", "session_id": "test-session", "claim": True},
+                    {"title": "New Task", "session_id": "test-session", "category": "research", "claim": True},
                 )
 
                 # Task should be created
@@ -739,7 +726,7 @@ class TestCreateTaskTool:
 
                 result = await registry.call(
                     "create_task",
-                    {"title": "New Task", "session_id": "test-session", "claim": True},
+                    {"title": "New Task", "session_id": "test-session", "category": "research", "claim": True},
                 )
 
                 assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
@@ -1871,7 +1858,6 @@ class TestRegistryIntegration:
         merged_tools = [
             # From task_validation
             "validate_task",
-            "generate_validation_criteria",
             # From task_expansion (skill-based)
             "save_expansion_spec",
             "execute_expansion",
@@ -2211,7 +2197,7 @@ class TestSessionVariableMirroring:
 
                 result = await registry.call(
                     "create_task",
-                    {"title": "New Task", "session_id": "test-session", "claim": True},
+                    {"title": "New Task", "session_id": "test-session", "category": "research", "claim": True},
                 )
 
                 assert result["id"] == task_uuid

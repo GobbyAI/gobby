@@ -1,8 +1,8 @@
 name: claude-cli-opus
 description: Claude Opus agent for complex reasoning tasks
-role: You are a helpful assistant
 provider: claude
 model: opus
 mode: terminal
 timeout: 300.0
 max_turns: 30
+instructions: You are a helpful assistant

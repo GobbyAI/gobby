@@ -78,7 +78,7 @@ def list_servers(ctx: click.Context, json_format: bool) -> None:
     if not check_daemon_running(client):
         sys.exit(1)
 
-    result = call_mcp_api(client, "/mcp/servers", method="GET")
+    result = call_mcp_api(client, "/api/mcp/servers", method="GET")
     if result is None:
         sys.exit(1)
 
@@ -92,12 +92,12 @@ def list_servers(ctx: click.Context, json_format: bool) -> None:
         click.echo("No MCP servers configured.")
         return
 
-    connected = result.get("connected_count", 0)
-    total = result.get("total_count", 0)
+    connected = result.get("connected", 0)
+    total = result.get("total", 0)
     click.echo(f"MCP Servers ({connected}/{total} connected):")
     for server in servers:
-        status_icon = "●" if server.get("connected") else "○"
         state = server.get("state", "unknown")
+        status_icon = "●" if state == "connected" else "○"
         click.echo(f"  {status_icon} {server['name']} ({state})")
 
 
@@ -111,10 +111,10 @@ def list_tools(ctx: click.Context, server: str | None, json_format: bool) -> Non
     if not check_daemon_running(client):
         sys.exit(1)
 
-    endpoint = "/mcp/tools"
+    endpoint = "/api/mcp/tools"
     if server:
         encoded_server = urllib.parse.quote(server)
-        endpoint = f"/mcp/tools?server_filter={encoded_server}"
+        endpoint = f"/api/mcp/tools?server_filter={encoded_server}"
 
     result = call_mcp_api(client, endpoint, method="GET")
     if result is None:
@@ -159,7 +159,7 @@ def get_schema(ctx: click.Context, server_name: str, tool_name: str) -> None:
 
     result = call_mcp_api(
         client,
-        "/mcp/tools/schema",
+        "/api/mcp/tools/schema",
         method="POST",
         json_data={"server_name": server_name, "tool_name": tool_name},
     )
@@ -220,7 +220,7 @@ def call_tool(
 
     result = call_mcp_api(
         client,
-        "/mcp/tools/call",
+        "/api/mcp/tools/call",
         method="POST",
         json_data={
             "server_name": server_name,
@@ -313,7 +313,7 @@ def add_server(
 
     result = call_mcp_api(
         client,
-        "/mcp/servers",
+        "/api/mcp/servers",
         method="POST",
         json_data={
             "name": name,
@@ -349,7 +349,7 @@ def remove_server(ctx: click.Context, name: str) -> None:
     encoded_name = urllib.parse.quote(name, safe="")
     result = call_mcp_api(
         client,
-        f"/mcp/servers/{encoded_name}",
+        f"/api/mcp/servers/{encoded_name}",
         method="DELETE",
     )
     if result is None:
@@ -399,7 +399,7 @@ def recommend_tools(
 
     result = call_mcp_api(
         client,
-        "/mcp/tools/recommend",
+        "/api/mcp/tools/recommend",
         method="POST",
         json_data={
             "task_description": task_description,
@@ -461,7 +461,7 @@ def search_tools(
 
     result = call_mcp_api(
         client,
-        "/mcp/tools/search",
+        "/api/mcp/tools/search",
         method="POST",
         json_data={
             "query": query,
@@ -535,7 +535,7 @@ def import_server(
 
     result = call_mcp_api(
         client,
-        "/mcp/servers/import",
+        "/api/mcp/servers/import",
         method="POST",
         json_data={
             "from_project": from_project,
@@ -614,7 +614,7 @@ def refresh_tools(ctx: click.Context, force: bool, server: str | None, json_form
 
     result = call_mcp_api(
         client,
-        "/mcp/refresh",
+        "/api/mcp/refresh",
         method="POST",
         json_data={
             "cwd": os.getcwd(),
@@ -671,7 +671,7 @@ def proxy_status(ctx: click.Context, json_format: bool) -> None:
     if not check_daemon_running(client):
         sys.exit(1)
 
-    result = call_mcp_api(client, "/mcp/status", method="GET")
+    result = call_mcp_api(client, "/api/mcp/status", method="GET")
     if result is None:
         sys.exit(1)
 

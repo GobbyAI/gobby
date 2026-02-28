@@ -41,7 +41,7 @@ def create_mcp_router() -> APIRouter:
     Returns:
         Configured APIRouter with MCP endpoints
     """
-    router = APIRouter(prefix="/mcp", tags=["mcp"])
+    router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
     # Execution endpoints from endpoints/execution.py
     router.get("/{server_name}/tools")(list_mcp_tools)

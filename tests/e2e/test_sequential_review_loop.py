@@ -78,6 +78,8 @@ class TestSequentialReviewLoopE2E:
                 "title": "E2E Test Epic - Sequential Processing",
                 "description": "Epic task for testing sequential review loop",
                 "task_type": "epic",
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -96,6 +98,8 @@ class TestSequentialReviewLoopE2E:
                     "description": f"Subtask {i} for sequential processing test",
                     "task_type": "task",
                     "parent_task_id": epic_id,
+                    "category": "code",
+                    "validation_criteria": "Tests pass and task is functional",
                     "session_id": session_id,
                 },
             )
@@ -256,6 +260,8 @@ class TestSequentialReviewLoopE2E:
             arguments={
                 "title": "Epic with Dependencies",
                 "task_type": "epic",
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -270,6 +276,8 @@ class TestSequentialReviewLoopE2E:
                 "title": "Subtask 1 - Foundation",
                 "task_type": "task",
                 "parent_task_id": epic_id,
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -285,6 +293,8 @@ class TestSequentialReviewLoopE2E:
                 "title": "Subtask 2 - Depends on Subtask 1",
                 "task_type": "task",
                 "parent_task_id": epic_id,
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -401,6 +411,8 @@ class TestSequentialReviewLoopE2E:
             arguments={
                 "title": "Suggest Sequence Epic",
                 "task_type": "epic",
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -416,6 +428,8 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "task",
                 "parent_task_id": epic_id,
                 "priority": 1,
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -431,6 +445,8 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "task",
                 "parent_task_id": epic_id,
                 "priority": 3,
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -489,6 +505,8 @@ class TestReviewStepE2E:
             arguments={
                 "title": "Task for Skip Reason Test",
                 "task_type": "task",
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )
@@ -557,6 +575,8 @@ class TestReviewStepE2E:
             arguments={
                 "title": "Task for Review Close Test",
                 "task_type": "task",
+                "category": "code",
+                "validation_criteria": "Tests pass and task is functional",
                 "session_id": session_id,
             },
         )

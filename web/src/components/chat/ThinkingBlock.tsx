@@ -29,7 +29,7 @@ export function ThinkingBlock({ content, messageId }: ThinkingBlockProps) {
         <span className="text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
         <span className="font-medium">Thinking</span>
       </div>
-      {expanded && (
+      {expanded && content && (
         <div
           className="px-3 pb-3 text-sm text-muted-foreground prose-sm"
           onClick={(e) => e.stopPropagation()}

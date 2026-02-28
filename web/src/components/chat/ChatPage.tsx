@@ -144,9 +144,9 @@ export function ChatPage({
         onSelectSession={conversations.onSelectSession}
         onDeleteSession={conversations.onDeleteSession}
         onRenameSession={conversations.onRenameSession}
-        onRefresh={conversations.onRefresh}
         agents={conversations.agents}
         onNavigateToAgent={conversations.onNavigateToAgent}
+        onKillAgent={conversations.onKillAgent}
         cliSessions={conversations.cliSessions}
         viewingSessionId={conversations.viewingSessionId}
         attachedSessionId={conversations.attachedSessionId}
@@ -164,9 +164,18 @@ export function ChatPage({
         <MobileChatDrawer
           sessions={conversations.sessions}
           activeSessionId={conversations.activeSessionId}
+          sessionRef={effectiveSessionRef}
+          title={chat.viewingSessionMeta?.title ?? chat.attachedSessionMeta?.title ?? activeTitle}
+          mode={chat.mode}
           onNewChat={conversations.onNewChat}
           onSelectSession={conversations.onSelectSession}
           onDeleteSession={conversations.onDeleteSession}
+          agentDefinitions={agentDefinitions}
+          agentGlobalDefs={agentGlobalDefs}
+          agentProjectDefs={agentProjectDefs}
+          agentShowScopeToggle={agentShowScopeToggle}
+          agentHasGlobal={agentHasGlobal}
+          agentHasProject={agentHasProject}
         />
         <ArtifactContext.Provider value={{ openCodeAsArtifact }}>
           <div className="flex flex-1 min-h-0">
@@ -174,22 +183,24 @@ export function ChatPage({
             <div
               className={`flex flex-col flex-1 min-w-0${isMobile && ((isPanelOpen && activeArtifact) || (canvas.isPanelOpen && canvas.activeCanvas)) ? " hidden" : ""}`}
             >
-              <SessionStatusBar
-                sessionRef={effectiveSessionRef}
-                title={chat.viewingSessionMeta?.title ?? chat.attachedSessionMeta?.title ?? activeTitle}
-                mode={chat.mode}
-                viewingMeta={chat.viewingSessionMeta ?? chat.attachedSessionMeta}
-                isAttached={!!chat.attachedSessionId}
-                onAttach={chat.onAttachToViewed}
-                onDetach={chat.onDetachFromSession}
-              />
+              <div className="hidden md:block">
+                <SessionStatusBar
+                  sessionRef={effectiveSessionRef}
+                  title={chat.viewingSessionMeta?.title ?? chat.attachedSessionMeta?.title ?? activeTitle}
+                  mode={chat.mode}
+                  viewingMeta={chat.viewingSessionMeta ?? chat.attachedSessionMeta}
+                  isAttached={!!chat.attachedSessionId}
+                  onAttach={chat.onAttachToViewed}
+                  onDetach={chat.onDetachFromSession}
+                />
+              </div>
               <MessageList
                 messages={chat.messages}
                 isStreaming={chat.isStreaming}
                 isThinking={chat.isThinking}
                 onRespondToQuestion={chat.onRespondToQuestion}
                 onRespondToApproval={chat.onRespondToApproval}
-                planPendingApproval={chat.planPendingApproval}
+                planPendingApproval={!isPanelOpen && chat.planPendingApproval}
                 onApprovePlan={handleApprovePlan}
                 onRequestPlanChanges={handleRequestPlanChanges}
                 canvasSurfaces={chat.canvasSurfaces}
@@ -202,8 +213,8 @@ export function ChatPage({
                 disabled={!chat.isConnected || (!!chat.viewingSessionId && !chat.attachedSessionId)}
                 viewingSession={!!chat.viewingSessionId && !chat.attachedSessionId}
                 onInputChange={chat.onInputChange}
-                filteredCommands={chat.filteredCommands}
-                onCommandSelect={chat.onCommandSelect}
+                paletteItems={chat.paletteItems}
+                onPaletteSelect={chat.onPaletteSelect}
                 mode={chat.mode}
                 onModeChange={chat.onModeChange}
                 contextUsage={chat.contextUsage}
@@ -224,10 +235,8 @@ export function ChatPage({
                 isListening={voice.isListening}
                 isSpeechDetected={voice.isSpeechDetected}
                 isTranscribing={voice.isTranscribing}
-                isSpeaking={voice.isSpeaking}
                 voiceError={voice.voiceError}
                 onToggleVoice={voice.onToggleVoice}
-                onStopSpeaking={voice.onStopSpeaking}
               />
             </div>
 

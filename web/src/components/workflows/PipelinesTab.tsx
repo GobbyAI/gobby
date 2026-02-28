@@ -3,7 +3,9 @@ import * as yaml from 'js-yaml'
 import { useWorkflows } from '../../hooks/useWorkflows'
 import type { WorkflowDetail } from '../../hooks/useWorkflows'
 import { PipelineEditor } from './PipelineEditor'
+import type { PipelineEditorHandle } from './PipelineEditor'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
+import { SidebarPanel } from '../shared/SidebarPanel'
 import { YamlEditorModal } from './WorkflowsPage'
 
 const SCAFFOLD_PIPELINE_YAML = `name: new-pipeline
@@ -48,6 +50,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, createMode, on
   const [yamlEditorWf, setYamlEditorWf] = useState<WorkflowDetail | null>(null)
   const [yamlContent, setYamlContent] = useState('')
   const [yamlLoading, setYamlLoading] = useState(false)
+  const editorRef = useRef<PipelineEditorHandle>(null)
 
   // Always fetch with include_deleted so the filter can work
   useEffect(() => {
@@ -238,16 +241,11 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, createMode, on
     }
   }, [])
 
-  if (editingWorkflow) {
-    return (
-      <PipelineEditor
-        pipeline={editingWorkflow}
-        onBack={() => { setEditingWorkflow(null); fetchWorkflows({ include_deleted: true }) }}
-        updateWorkflow={updateWorkflow}
-        onExport={() => handleExport(editingWorkflow)}
-      />
-    )
-  }
+  const handleEditorClose = useCallback(() => {
+    if (editorRef.current?.isDirty && !window.confirm('You have unsaved changes. Discard them?')) return
+    setEditingWorkflow(null)
+    fetchWorkflows({ include_deleted: true })
+  }, [fetchWorkflows])
 
   return (
     <>
@@ -405,6 +403,31 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, createMode, on
           onClose={() => setYamlEditorWf(null)}
         />
       )}
+
+      {/* Pipeline editor sidebar */}
+      <SidebarPanel
+        isOpen={!!editingWorkflow}
+        onClose={handleEditorClose}
+        title={editingWorkflow?.name || 'Pipeline'}
+        width={560}
+        footer={
+          <>
+            <button className="pipeline-editor-btn" onClick={() => editingWorkflow && handleExport(editingWorkflow)} type="button">Export YAML</button>
+            <button className="pipeline-editor-btn pipeline-editor-btn--primary" onClick={() => editorRef.current?.save()} type="button">Save</button>
+          </>
+        }
+      >
+        {editingWorkflow && (
+          <PipelineEditor
+            ref={editorRef}
+            pipeline={editingWorkflow}
+            onBack={handleEditorClose}
+            updateWorkflow={updateWorkflow}
+            onExport={() => handleExport(editingWorkflow)}
+            inSidebar
+          />
+        )}
+      </SidebarPanel>
     </>
   )
 }

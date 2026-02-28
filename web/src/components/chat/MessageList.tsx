@@ -27,7 +27,10 @@ export function MessageList({ messages, isStreaming, isThinking, onRespondToQues
   const messageFingerprint = useMemo(() => messages.reduce((acc, m) => {
     const toolCount = m.toolCalls?.length ?? 0
     const lastStatus = m.toolCalls?.[toolCount - 1]?.status ?? ''
-    return acc + m.id + ':' + toolCount + ':' + lastStatus + '|'
+    const contentLen = m.content?.length ?? 0
+    const blockCount = m.contentBlocks?.length ?? 0
+    const thinkingLen = m.thinkingContent?.length ?? 0
+    return acc + m.id + ':' + toolCount + ':' + lastStatus + ':' + contentLen + ':' + blockCount + ':' + thinkingLen + '|'
   }, ''), [messages])
 
   // Track whether user has manually scrolled away from bottom

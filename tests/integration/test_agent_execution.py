@@ -585,7 +585,6 @@ class TestAgentTerminalPickupMetadata:
             project_id=parent_session.project_id,
             machine_id="test-machine",
             provider="claude",
-            workflow="plan-execute",
         )
 
         context = runner.prepare_run(config)
@@ -594,6 +593,5 @@ class TestAgentTerminalPickupMetadata:
         # Fetch child session and verify metadata
         child_session = session_storage.get(context.session_id)
         assert child_session is not None
-        assert child_session.workflow_name == "plan-execute"
         assert child_session.agent_run_id == context.run_id
         assert child_session.original_prompt == "Terminal pickup test prompt"

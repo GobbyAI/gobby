@@ -6,7 +6,7 @@ export interface CommandInfo {
   action: string
 }
 
-const COMMANDS: CommandInfo[] = [
+export const COMMANDS: CommandInfo[] = [
   { name: 'clear', description: 'Clear chat history', action: 'clear_history' },
   { name: 'compact', description: 'Compact conversation history', action: 'compact_chat' },
   { name: 'gobby', description: 'Browse internal Gobby tools', action: 'open_gobby' },

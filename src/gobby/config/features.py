@@ -289,6 +289,11 @@ class MetricsConfig(BaseModel):
         "Set higher for large installs to avoid underreporting. "
         "Use 0 for unbounded (uses COUNT queries instead of list).",
     )
+    daily_budget_usd: float = Field(
+        default=50.0,
+        ge=0.0,
+        description="Daily budget limit in USD. Set to 0 for unlimited.",
+    )
 
     @field_validator("list_limit")
     @classmethod

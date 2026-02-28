@@ -81,6 +81,40 @@ class RuleEngine:
         if config_store.get("rules.enforcement_enabled") is False:
             return HookResponse(decision="allow")
 
+        # Auto-track consecutive tool blocks (universal safety — not configurable)
+        # Only escalate when the SAME tool is retried — different tools reset the counter
+        # so the agent can recover by using other tools (Read, Bash, etc.).
+        if rule_event == RuleEvent.BEFORE_TOOL and variables.get("tool_block_pending"):
+            tool_name = event.data.get("tool_name", "")
+            last_blocked = variables.get("_last_blocked_tool", "")
+            if tool_name == last_blocked:
+                count = variables.get("consecutive_tool_blocks", 0) + 1
+                variables["consecutive_tool_blocks"] = count
+                if count >= 2:
+                    return HookResponse(
+                        decision="block",
+                        reason=(
+                            "Rule enforced by Gobby: [consecutive-tool-block]\n"
+                            f"You have attempted {tool_name} {count + 1} times consecutively "
+                            "without addressing the error.\n"
+                            "STOP retrying the same action. Read the previous error messages "
+                            "and take a DIFFERENT action to resolve the underlying issue first."
+                        ),
+                    )
+            else:
+                # Different tool — reset counter, let it through to rule evaluation
+                variables["consecutive_tool_blocks"] = 0
+        elif rule_event == RuleEvent.BEFORE_AGENT:
+            variables["consecutive_tool_blocks"] = 0
+            variables["_last_blocked_tool"] = ""
+            variables["tool_block_pending"] = False
+            variables["pre_existing_errors_triaged"] = False
+            variables["stop_attempts"] = 0
+
+        # Auto-increment stop attempts (universal — not configurable)
+        if rule_event == RuleEvent.STOP:
+            variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
+
         # 1. Load enabled rules for this event, sorted by priority
         rules = self._load_rules(rule_event)
 
@@ -95,8 +129,50 @@ class RuleEngine:
         # 4. Filter by active rules (selector-based)
         rules = self._filter_by_active_rules(rules, variables)
 
-        if not rules:
+        # Force-allow stop (catastrophic failure bypass — self-clearing)
+        if rule_event == RuleEvent.STOP and variables.get("force_allow_stop"):
+            variables["force_allow_stop"] = False
             return HookResponse(decision="allow")
+
+        # Auto-block stop when a tool just failed (self-clearing)
+        if rule_event == RuleEvent.STOP and variables.get("tool_block_pending"):
+            variables["tool_block_pending"] = False
+            return HookResponse(
+                decision="block",
+                reason="Rule enforced by Gobby: [tool-failure-recovery]\nA tool just failed. Read the error and recover — do not stop.",
+            )
+
+        if not rules:
+            # Auto-manage tool_block_pending on after_tool
+            # (Symmetric with auto-set on before_tool block at line ~164)
+            if rule_event == RuleEvent.AFTER_TOOL:
+                is_failure = event.metadata.get("is_failure", False) or event.data.get(
+                    "is_error", False
+                )
+                if is_failure:
+                    variables["tool_block_pending"] = True
+                    self._check_catastrophic_failure(event, variables)
+                else:
+                    if variables.get("tool_block_pending"):
+                        variables["tool_block_pending"] = False
+                        variables["consecutive_tool_blocks"] = 0
+                        variables["_last_blocked_tool"] = ""
+            return HookResponse(decision="allow")
+
+        # Auto-manage tool_block_pending on after_tool before rule eval
+        # (Symmetric with auto-set on before_tool block at line ~164)
+        if rule_event == RuleEvent.AFTER_TOOL:
+            is_failure = event.metadata.get("is_failure", False) or event.data.get(
+                "is_error", False
+            )
+            if is_failure:
+                variables["tool_block_pending"] = True
+                self._check_catastrophic_failure(event, variables)
+            else:
+                if variables.get("tool_block_pending"):
+                    variables["tool_block_pending"] = False
+                    variables["consecutive_tool_blocks"] = 0
+                    variables["_last_blocked_tool"] = ""
 
         # 5. Evaluate rules in priority order
         context_parts: list[str] = []
@@ -146,6 +222,7 @@ class RuleEngine:
                     # Auto-set tool_block_pending on before_tool blocks
                     if rule_event == RuleEvent.BEFORE_TOOL:
                         variables["tool_block_pending"] = True
+                        variables["_last_blocked_tool"] = event.data.get("tool_name", "")
                     # First block wins — stop evaluating
                     break
 
@@ -251,6 +328,12 @@ class RuleEngine:
             self._apply_set_variable(effect, variables, ctx)
 
         elif effect.type == "inject_context":
+            # NOTE: inject_context templates render with rule evaluation context:
+            # event, variables (flattened to top-level), and helper functions.
+            # Session data (summary_markdown, compact_markdown, task_context) is
+            # populated as session variables by the SESSION_START handler before
+            # rules evaluate, making them available as {{ full_session_summary }},
+            # {{ compact_session_summary }}, {{ task_context }} in templates.
             if effect.template:
                 template_text = self._render_template(effect.template, ctx, allowed_funcs)
                 context_parts.append(template_text)
@@ -377,6 +460,21 @@ class RuleEngine:
             (session_id,),
         )
         return row[0] if row else 0
+
+    # Patterns indicating unrecoverable failures where the agent should stop immediately
+    _CATASTROPHIC_PATTERNS = [
+        "out of usage",
+        "rate limit",
+        "quota exceeded",
+        "billing",
+        "account suspended",
+    ]
+
+    def _check_catastrophic_failure(self, event: HookEvent, variables: dict[str, Any]) -> None:
+        """Check if a tool failure is catastrophic and set force_allow_stop if so."""
+        tool_output = str(event.data.get("tool_output", "")).lower()
+        if any(p in tool_output for p in self._CATASTROPHIC_PATTERNS):
+            variables["force_allow_stop"] = True
 
     def _evaluate_condition(
         self,

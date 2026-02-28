@@ -356,6 +356,11 @@ class SkillSearch:
             if not all(tag in meta.tags for tag in filters.tags_all):
                 return False
 
+        # Check allowed_names filter (session-scoped allowlist)
+        if filters.allowed_names is not None:
+            if meta.name not in set(filters.allowed_names):
+                return False
+
         return True
 
     def add_skill(self, skill: Skill) -> None:

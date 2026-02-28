@@ -37,7 +37,7 @@ export function useDashboard() {
     const controller = new AbortController()
     abortControllerRef.current = controller
     try {
-      const response = await fetch('/admin/status', { signal: controller.signal })
+      const response = await fetch('/api/admin/status', { signal: controller.signal })
       if (response.ok) {
         const json = await response.json()
         setData(json)

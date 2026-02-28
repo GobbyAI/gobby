@@ -344,7 +344,7 @@ class TestRegisterSession:
         mock_server.session_manager.register.return_value = session
 
         response = client.post(
-            "/sessions/register",
+            "/api/sessions/register",
             json={
                 "external_id": "ext-123",
                 "machine_id": "machine-1",
@@ -370,7 +370,7 @@ class TestRegisterSession:
             return_value="auto-machine",
         ):
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "ext-123",
                     "source": "Claude Code",
@@ -385,7 +385,7 @@ class TestRegisterSession:
         mock_server.session_manager = None
 
         response = client.post(
-            "/sessions/register",
+            "/api/sessions/register",
             json={"external_id": "ext-123"},
         )
 
@@ -402,7 +402,7 @@ class TestRegisterSession:
             return_value={"git_branch": "feature/test"},
         ):
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "ext-123",
                     "machine_id": "machine-1",
@@ -420,7 +420,7 @@ class TestRegisterSession:
         mock_server.resolve_project_id.side_effect = ValueError("No project found")
 
         response = client.post(
-            "/sessions/register",
+            "/api/sessions/register",
             json={
                 "external_id": "ext-123",
                 "machine_id": "machine-1",
@@ -435,7 +435,7 @@ class TestRegisterSession:
         mock_server.session_manager.register.side_effect = RuntimeError("boom")
 
         response = client.post(
-            "/sessions/register",
+            "/api/sessions/register",
             json={
                 "external_id": "ext-123",
                 "machine_id": "machine-1",
@@ -465,7 +465,7 @@ class TestListSessions:
             "sess-2": 5,
         }
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
 
         assert response.status_code == 200
         data = response.json()
@@ -479,7 +479,7 @@ class TestListSessions:
         mock_server.message_manager.get_all_counts.return_value = {}
 
         response = client.get(
-            "/sessions",
+            "/api/sessions",
             params={
                 "project_id": "proj-1",
                 "status": "active",
@@ -500,7 +500,7 @@ class TestListSessions:
         """Returns 503 when session_manager is None."""
         mock_server.session_manager = None
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
 
         assert response.status_code == 503
 
@@ -509,7 +509,7 @@ class TestListSessions:
         mock_server.session_manager.list.return_value = []
         mock_server.message_manager.get_all_counts.return_value = {}
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
 
         assert response.status_code == 200
         data = response.json()
@@ -522,7 +522,7 @@ class TestListSessions:
         mock_server.session_manager.list.return_value = sessions
         mock_server.message_manager.get_all_counts.side_effect = Exception("boom")
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
 
         assert response.status_code == 200
         data = response.json()
@@ -536,7 +536,7 @@ class TestListSessions:
         mock_server.session_manager.list.return_value = sessions
         mock_server.message_manager = None
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
 
         assert response.status_code == 200
         data = response.json()
@@ -557,7 +557,7 @@ class TestGetSession:
         mock_server.session_manager.get.return_value = session
         mock_server.message_manager.get_all_counts.return_value = {"sess-abc123": 15}
 
-        response = client.get("/sessions/sess-abc123")
+        response = client.get("/api/sessions/sess-abc123")
 
         assert response.status_code == 200
         data = response.json()
@@ -569,7 +569,7 @@ class TestGetSession:
         """Returns 404 when session not found."""
         mock_server.session_manager.get.return_value = None
 
-        response = client.get("/sessions/nonexistent")
+        response = client.get("/api/sessions/nonexistent")
 
         assert response.status_code == 404
         assert "Session not found" in response.json()["detail"]
@@ -578,7 +578,7 @@ class TestGetSession:
         """Returns 503 when session_manager is None."""
         mock_server.session_manager = None
 
-        response = client.get("/sessions/sess-abc123")
+        response = client.get("/api/sessions/sess-abc123")
 
         assert response.status_code == 503
 
@@ -597,7 +597,7 @@ class TestGetSession:
                 "skills_used": 2,
             },
         ):
-            response = client.get("/sessions/sess-abc123")
+            response = client.get("/api/sessions/sess-abc123")
 
         assert response.status_code == 200
         session_data = response.json()["session"]
@@ -616,7 +616,7 @@ class TestGetSession:
             "gobby.servers.routes.sessions._get_session_stats",
             side_effect=Exception("stats error"),
         ):
-            response = client.get("/sessions/sess-abc123")
+            response = client.get("/api/sessions/sess-abc123")
 
         assert response.status_code == 200
         assert response.json()["session"]["id"] == "sess-abc123"
@@ -638,7 +638,7 @@ class TestGetMessages:
         ]
         mock_server.message_manager.count_messages.return_value = 2
 
-        response = client.get("/sessions/sess-abc123/messages")
+        response = client.get("/api/sessions/sess-abc123/messages")
 
         assert response.status_code == 200
         data = response.json()
@@ -653,7 +653,7 @@ class TestGetMessages:
         mock_server.message_manager.count_messages.return_value = 0
 
         response = client.get(
-            "/sessions/sess-abc123/messages",
+            "/api/sessions/sess-abc123/messages",
             params={"limit": 50, "offset": 10, "role": "user"},
         )
 
@@ -666,7 +666,7 @@ class TestGetMessages:
         """Returns 503 when message_manager is None."""
         mock_server.message_manager = None
 
-        response = client.get("/sessions/sess-abc123/messages")
+        response = client.get("/api/sessions/sess-abc123/messages")
 
         assert response.status_code == 503
         assert "Message manager not available" in response.json()["detail"]
@@ -686,7 +686,7 @@ class TestFindCurrentSession:
         mock_server.session_manager.find_by_external_id.return_value = session
 
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
                 "machine_id": "machine-1",
@@ -704,7 +704,7 @@ class TestFindCurrentSession:
         mock_server.session_manager.find_by_external_id.return_value = None
 
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "ext-999",
                 "machine_id": "machine-1",
@@ -719,7 +719,7 @@ class TestFindCurrentSession:
     def test_find_current_missing_required_fields(self, client, mock_server) -> None:
         """Returns 400 when required fields are missing."""
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={"external_id": "ext-123"},
         )
 
@@ -729,7 +729,7 @@ class TestFindCurrentSession:
     def test_find_current_missing_external_id(self, client, mock_server) -> None:
         """Returns 400 when external_id is missing."""
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "machine_id": "machine-1",
                 "source": "Claude Code",
@@ -746,7 +746,7 @@ class TestFindCurrentSession:
         mock_server.resolve_project_id.return_value = "proj-from-cwd"
 
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
                 "machine_id": "machine-1",
@@ -761,7 +761,7 @@ class TestFindCurrentSession:
     def test_find_current_no_project_id_or_cwd(self, client, mock_server) -> None:
         """Returns 400 when neither project_id nor cwd is provided."""
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
                 "machine_id": "machine-1",
@@ -777,7 +777,7 @@ class TestFindCurrentSession:
         mock_server.session_manager = None
 
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "ext-123",
                 "machine_id": "machine-1",
@@ -803,7 +803,7 @@ class TestFindParentSession:
         mock_server.session_manager.find_parent.return_value = session
 
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "machine_id": "machine-1",
                 "source": "Claude Code",
@@ -820,7 +820,7 @@ class TestFindParentSession:
         mock_server.session_manager.find_parent.return_value = None
 
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "machine_id": "machine-1",
                 "source": "Claude Code",
@@ -834,7 +834,7 @@ class TestFindParentSession:
     def test_find_parent_missing_source(self, client, mock_server) -> None:
         """Returns 400 when source is missing."""
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "machine_id": "machine-1",
                 "project_id": "proj-123",
@@ -847,7 +847,7 @@ class TestFindParentSession:
     def test_find_parent_no_project_id_or_cwd(self, client, mock_server) -> None:
         """Returns 400 when neither project_id nor cwd is provided."""
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "machine_id": "machine-1",
                 "source": "Claude Code",
@@ -864,7 +864,7 @@ class TestFindParentSession:
         mock_server.resolve_project_id.return_value = "proj-from-cwd"
 
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "machine_id": "machine-1",
                 "source": "Claude Code",
@@ -885,7 +885,7 @@ class TestFindParentSession:
             return_value="auto-machine",
         ):
             response = client.post(
-                "/sessions/find_parent",
+                "/api/sessions/find_parent",
                 json={
                     "source": "Claude Code",
                     "project_id": "proj-123",
@@ -904,7 +904,7 @@ class TestFindParentSession:
         mock_server.session_manager = None
 
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "source": "Claude Code",
                 "project_id": "proj-123",
@@ -928,7 +928,7 @@ class TestUpdateSessionStatus:
         mock_server.session_manager.update_status.return_value = session
 
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={"session_id": "sess-abc123", "status": "archived"},
         )
 
@@ -941,7 +941,7 @@ class TestUpdateSessionStatus:
         mock_server.session_manager.update_status.return_value = None
 
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={"session_id": "nonexistent", "status": "archived"},
         )
 
@@ -951,7 +951,7 @@ class TestUpdateSessionStatus:
     def test_update_status_missing_fields(self, client, mock_server) -> None:
         """Returns 400 when required fields are missing."""
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={"session_id": "sess-abc123"},
         )
 
@@ -961,7 +961,7 @@ class TestUpdateSessionStatus:
     def test_update_status_missing_session_id(self, client, mock_server) -> None:
         """Returns 400 when session_id is missing."""
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={"status": "archived"},
         )
 
@@ -972,7 +972,7 @@ class TestUpdateSessionStatus:
         mock_server.session_manager = None
 
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={"session_id": "sess-abc123", "status": "archived"},
         )
 
@@ -993,7 +993,7 @@ class TestUpdateSessionSummary:
         mock_server.session_manager.update_summary.return_value = session
 
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={
                 "session_id": "sess-abc123",
                 "summary_path": "/tmp/summary.md",
@@ -1009,7 +1009,7 @@ class TestUpdateSessionSummary:
         mock_server.session_manager.update_summary.return_value = None
 
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={
                 "session_id": "nonexistent",
                 "summary_path": "/tmp/summary.md",
@@ -1021,7 +1021,7 @@ class TestUpdateSessionSummary:
     def test_update_summary_missing_fields(self, client, mock_server) -> None:
         """Returns 400 when required fields are missing."""
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={"session_id": "sess-abc123"},
         )
 
@@ -1033,7 +1033,7 @@ class TestUpdateSessionSummary:
         mock_server.session_manager = None
 
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={
                 "session_id": "sess-abc123",
                 "summary_path": "/tmp/summary.md",
@@ -1064,7 +1064,7 @@ class TestSynthesizeTitle:
         mock_server.llm_service.get_default_provider.return_value = provider
         mock_server.session_manager.update_title.return_value = session
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 200
         data = response.json()
@@ -1076,7 +1076,7 @@ class TestSynthesizeTitle:
         """Returns 503 when session_manager is None."""
         mock_server.session_manager = None
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 503
 
@@ -1084,7 +1084,7 @@ class TestSynthesizeTitle:
         """Returns 503 when llm_service is None."""
         mock_server.llm_service = None
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 503
 
@@ -1092,7 +1092,7 @@ class TestSynthesizeTitle:
         """Returns 503 when message_manager is None."""
         mock_server.message_manager = None
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 503
 
@@ -1100,7 +1100,7 @@ class TestSynthesizeTitle:
         """Returns 404 when session does not exist."""
         mock_server.session_manager.get.return_value = None
 
-        response = client.post("/sessions/nonexistent/synthesize-title")
+        response = client.post("/api/sessions/nonexistent/synthesize-title")
 
         assert response.status_code == 404
 
@@ -1110,7 +1110,7 @@ class TestSynthesizeTitle:
         mock_server.session_manager.get.return_value = session
         mock_server.message_manager.get_messages.return_value = []
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 422
         assert "No messages" in response.json()["detail"]
@@ -1123,7 +1123,7 @@ class TestSynthesizeTitle:
             {"role": "tool", "content": "some tool output"},
         ]
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 422
         assert "No user/assistant messages" in response.json()["detail"]
@@ -1141,7 +1141,7 @@ class TestSynthesizeTitle:
         mock_server.llm_service.get_default_provider.return_value = provider
         mock_server.session_manager.update_title.return_value = session
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 200
         assert response.json()["title"] == "Greeting Session"
@@ -1159,7 +1159,7 @@ class TestSynthesizeTitle:
         mock_server.llm_service.get_default_provider.return_value = provider
         mock_server.session_manager.update_title.return_value = session
 
-        response = client.post("/sessions/sess-abc123/synthesize-title")
+        response = client.post("/api/sessions/sess-abc123/synthesize-title")
 
         assert response.status_code == 200
         assert response.json()["title"] == "Untitled Session"
@@ -1180,7 +1180,7 @@ class TestRenameSession:
         mock_server.session_manager.update_title.return_value = session
 
         response = client.post(
-            "/sessions/sess-abc123/rename",
+            "/api/sessions/sess-abc123/rename",
             json={"title": "New Title"},
         )
 
@@ -1192,7 +1192,7 @@ class TestRenameSession:
     def test_rename_empty_title(self, client, mock_server) -> None:
         """Returns 400 when title is empty."""
         response = client.post(
-            "/sessions/sess-abc123/rename",
+            "/api/sessions/sess-abc123/rename",
             json={"title": ""},
         )
 
@@ -1202,7 +1202,7 @@ class TestRenameSession:
     def test_rename_whitespace_title(self, client, mock_server) -> None:
         """Returns 400 when title is only whitespace."""
         response = client.post(
-            "/sessions/sess-abc123/rename",
+            "/api/sessions/sess-abc123/rename",
             json={"title": "   "},
         )
 
@@ -1211,7 +1211,7 @@ class TestRenameSession:
     def test_rename_no_title_field(self, client, mock_server) -> None:
         """Returns 400 when title field is missing."""
         response = client.post(
-            "/sessions/sess-abc123/rename",
+            "/api/sessions/sess-abc123/rename",
             json={},
         )
 
@@ -1222,7 +1222,7 @@ class TestRenameSession:
         mock_server.session_manager.get.return_value = None
 
         response = client.post(
-            "/sessions/sess-abc123/rename",
+            "/api/sessions/sess-abc123/rename",
             json={"title": "New Title"},
         )
 
@@ -1235,7 +1235,7 @@ class TestRenameSession:
         mock_server.session_manager.update_title.return_value = None
 
         response = client.post(
-            "/sessions/sess-abc123/rename",
+            "/api/sessions/sess-abc123/rename",
             json={"title": "New Title"},
         )
 
@@ -1246,7 +1246,7 @@ class TestRenameSession:
         mock_server.session_manager = None
 
         response = client.post(
-            "/sessions/sess-abc123/rename",
+            "/api/sessions/sess-abc123/rename",
             json={"title": "New Title"},
         )
 
@@ -1278,7 +1278,7 @@ class TestGenerateSummary:
                 return_value={"status": "ok"},
             ),
         ):
-            response = client.post("/sessions/sess-abc123/generate-summary")
+            response = client.post("/api/sessions/sess-abc123/generate-summary")
 
         assert response.status_code == 200
         data = response.json()
@@ -1290,7 +1290,7 @@ class TestGenerateSummary:
         """Returns 503 when session_manager is None."""
         mock_server.session_manager = None
 
-        response = client.post("/sessions/sess-abc123/generate-summary")
+        response = client.post("/api/sessions/sess-abc123/generate-summary")
 
         assert response.status_code == 503
 
@@ -1298,7 +1298,7 @@ class TestGenerateSummary:
         """Returns 503 when llm_service is None."""
         mock_server.llm_service = None
 
-        response = client.post("/sessions/sess-abc123/generate-summary")
+        response = client.post("/api/sessions/sess-abc123/generate-summary")
 
         assert response.status_code == 503
 
@@ -1306,7 +1306,7 @@ class TestGenerateSummary:
         """Returns 404 when session does not exist."""
         mock_server.session_manager.get.return_value = None
 
-        response = client.post("/sessions/nonexistent/generate-summary")
+        response = client.post("/api/sessions/nonexistent/generate-summary")
 
         assert response.status_code == 404
 
@@ -1326,7 +1326,7 @@ class TestGenerateSummary:
                 return_value={"error": "No transcript data available"},
             ),
         ):
-            response = client.post("/sessions/sess-abc123/generate-summary")
+            response = client.post("/api/sessions/sess-abc123/generate-summary")
 
         assert response.status_code == 422
         assert "No transcript data" in response.json()["detail"]
@@ -1346,7 +1346,7 @@ class TestStopSession:
         mock_hook_manager._stop_registry.signal_stop.return_value = signal
 
         response = client.post(
-            "/sessions/sess-abc123/stop",
+            "/api/sessions/sess-abc123/stop",
             json={"reason": "User requested stop", "source": "cli"},
         )
 
@@ -1362,7 +1362,7 @@ class TestStopSession:
         signal = _make_stop_signal()
         mock_hook_manager._stop_registry.signal_stop.return_value = signal
 
-        response = client.post("/sessions/sess-abc123/stop")
+        response = client.post("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 200
         # Defaults: reason="External stop request", source="http_api"
@@ -1377,7 +1377,7 @@ class TestStopSession:
         # Remove hook_manager from app state
         del client.app.state.hook_manager
 
-        response = client.post("/sessions/sess-abc123/stop")
+        response = client.post("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]
@@ -1386,7 +1386,7 @@ class TestStopSession:
         """Returns 503 when _stop_registry is None."""
         mock_hook_manager._stop_registry = None
 
-        response = client.post("/sessions/sess-abc123/stop")
+        response = client.post("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503
         assert "Stop registry not available" in response.json()["detail"]
@@ -1395,7 +1395,7 @@ class TestStopSession:
         """Returns 503 when hook_manager has no _stop_registry attribute."""
         del mock_hook_manager._stop_registry
 
-        response = client.post("/sessions/sess-abc123/stop")
+        response = client.post("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503
 
@@ -1413,7 +1413,7 @@ class TestGetStopSignal:
         signal = _make_stop_signal(acknowledged=False, acknowledged_at=None)
         mock_hook_manager._stop_registry.get_signal.return_value = signal
 
-        response = client.get("/sessions/sess-abc123/stop")
+        response = client.get("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1432,7 +1432,7 @@ class TestGetStopSignal:
         )
         mock_hook_manager._stop_registry.get_signal.return_value = signal
 
-        response = client.get("/sessions/sess-abc123/stop")
+        response = client.get("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1444,7 +1444,7 @@ class TestGetStopSignal:
         """Returns has_signal=False when no signal exists."""
         mock_hook_manager._stop_registry.get_signal.return_value = None
 
-        response = client.get("/sessions/sess-abc123/stop")
+        response = client.get("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1455,7 +1455,7 @@ class TestGetStopSignal:
         """Returns 503 when hook_manager is not on app state."""
         del client.app.state.hook_manager
 
-        response = client.get("/sessions/sess-abc123/stop")
+        response = client.get("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503
 
@@ -1463,7 +1463,7 @@ class TestGetStopSignal:
         """Returns 503 when _stop_registry is None."""
         mock_hook_manager._stop_registry = None
 
-        response = client.get("/sessions/sess-abc123/stop")
+        response = client.get("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503
 
@@ -1480,7 +1480,7 @@ class TestClearStopSignal:
         """Clears existing stop signal."""
         mock_hook_manager._stop_registry.clear.return_value = True
 
-        response = client.delete("/sessions/sess-abc123/stop")
+        response = client.delete("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1492,7 +1492,7 @@ class TestClearStopSignal:
         """Returns no_signal when clearing nonexistent signal."""
         mock_hook_manager._stop_registry.clear.return_value = False
 
-        response = client.delete("/sessions/sess-abc123/stop")
+        response = client.delete("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1503,7 +1503,7 @@ class TestClearStopSignal:
         """Returns 503 when hook_manager is not on app state."""
         del client.app.state.hook_manager
 
-        response = client.delete("/sessions/sess-abc123/stop")
+        response = client.delete("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503
 
@@ -1511,7 +1511,7 @@ class TestClearStopSignal:
         """Returns 503 when _stop_registry is None."""
         mock_hook_manager._stop_registry = None
 
-        response = client.delete("/sessions/sess-abc123/stop")
+        response = client.delete("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503
 
@@ -1519,6 +1519,6 @@ class TestClearStopSignal:
         """Returns 503 when hook_manager has no _stop_registry attribute."""
         del mock_hook_manager._stop_registry
 
-        response = client.delete("/sessions/sess-abc123/stop")
+        response = client.delete("/api/sessions/sess-abc123/stop")
 
         assert response.status_code == 503

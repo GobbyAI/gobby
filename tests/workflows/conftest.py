@@ -22,7 +22,7 @@ def _workflow_tmp_dir() -> Iterator[Path]:
 
 
 @pytest.fixture(scope="module")
-def workflow_db(_workflow_tmp_dir: Path) -> Iterator["LocalDatabase"]:
+def workflow_db(_workflow_tmp_dir: Path) -> Iterator[LocalDatabase]:
     """Populate a module-scoped DB with bundled workflows and return it.
 
     Shared across all tests in a module to avoid expensive repeated syncs.
@@ -41,7 +41,7 @@ def workflow_db(_workflow_tmp_dir: Path) -> Iterator["LocalDatabase"]:
 
 
 @pytest.fixture(scope="module")
-def db_loader(workflow_db: "LocalDatabase") -> "WorkflowLoader":
+def db_loader(workflow_db: LocalDatabase) -> WorkflowLoader:
     """Return a WorkflowLoader backed by a DB with bundled workflows."""
     from gobby.workflows.loader import WorkflowLoader
 

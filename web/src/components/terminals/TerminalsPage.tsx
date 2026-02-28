@@ -6,17 +6,16 @@ import './TerminalsPage.css'
 import { TmuxSession } from '../../hooks/useTmuxSessions'
 import { MenuIcon } from '../shared/Icons'
 import { MobileTerminalDrawer } from './MobileTerminalDrawer'
+import { ConfirmDialog } from '../chat/ui/ConfirmDialog'
 
 interface TerminalsPageProps {
   sessions: TmuxSession[]
   attachedSession: string | null
   streamingId: string | null
-  isLoading: boolean
   sessionEnded: boolean
   attachSession: (sessionName: string, socket: string) => void
   createSession: (name?: string, socket?: string) => void
   killSession: (sessionName: string, socket: string) => void
-  refreshSessions: () => void
   refreshTerminal: (sessionName: string, socket: string) => void
   dismissEndedSession: () => void
   sendInput: (data: string) => void
@@ -44,12 +43,10 @@ export function TerminalsPage({
   sessions,
   attachedSession,
   streamingId,
-  isLoading,
   sessionEnded,
   attachSession,
   createSession,
   killSession,
-  refreshSessions,
   refreshTerminal,
   dismissEndedSession,
   sendInput,
@@ -97,6 +94,8 @@ export function TerminalsPage({
 
   // Track attached session's socket for kill
   const attachedSocketRef = useRef<string>('default')
+  // Track terminal instance for mobile toolbar redraw
+  const terminalInstanceRef = useRef<XTerm | null>(null)
 
   // Compute display name for the attached session
   const attachedDisplayName = useMemo(() => {
@@ -119,11 +118,19 @@ export function TerminalsPage({
     attachedSocketRef.current = socket
   }, [attachSession])
 
+  const [killTarget, setKillTarget] = useState<{ name: string; socket: string } | null>(null)
+
   const handleKill = useCallback((sessionName: string, socket: string) => {
-    if (!window.confirm(`Kill terminal "${sessionName}"?`)) return
-    killSession(sessionName, socket)
-    setIsInteractive(false)
-  }, [killSession])
+    setKillTarget({ name: sessionName, socket })
+  }, [])
+
+  const handleKillConfirm = useCallback(() => {
+    if (killTarget) {
+      killSession(killTarget.name, killTarget.socket)
+      setIsInteractive(false)
+    }
+    setKillTarget(null)
+  }, [killTarget, killSession])
 
   const defaultSessions = sessions.filter(s => s.socket === 'default')
   const gobbySessions = sessions.filter(s => s.socket === 'gobby')
@@ -135,14 +142,6 @@ export function TerminalsPage({
         <div className="terminals-sidebar-header">
           <span className="terminals-sidebar-title">Terminals</span>
           <div className="terminals-sidebar-actions">
-            <button
-              className="terminals-action-btn"
-              onClick={refreshSessions}
-              title="Refresh"
-              disabled={isLoading}
-            >
-              <RefreshIcon />
-            </button>
             <button
               className="terminals-action-btn"
               onClick={() => createSession()}
@@ -205,8 +204,8 @@ export function TerminalsPage({
           isInteractive={isInteractive && !sessionEnded}
           onAttach={handleAttach}
           onCreate={() => createSession()}
-          onRefresh={refreshSessions}
           onSetInteractive={setIsInteractive}
+          onKill={handleKill}
         />
         {streamingId ? (
           <div className="terminals-terminal-outer">
@@ -219,8 +218,10 @@ export function TerminalsPage({
               sidebarOpen={sidebarOpen}
               onSetInteractive={setIsInteractive}
               onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-              onRedraw={() => {
+              onTerminalReady={(t) => { terminalInstanceRef.current = t }}
+              onRedraw={(terminal) => {
                 if (attachedSession && attachedSocketRef.current) {
+                  terminal?.reset()
                   refreshTerminal(attachedSession, attachedSocketRef.current)
                 }
               }}
@@ -270,22 +271,39 @@ export function TerminalsPage({
         {/* Mobile special-key toolbar */}
         {streamingId && isInteractive && (
           <div className="terminals-mobile-toolbar">
-            <button onClick={() => {
-              if (attachedSession && attachedSocketRef.current) {
-                refreshTerminal(attachedSession, attachedSocketRef.current)
-              }
-            }}>Redraw</button>
-            <button onClick={() => sendInput('\x1b')}>Esc</button>
-            <button onClick={() => sendInput('\t')}>Tab</button>
-            <button onClick={() => sendInput('\x03')}>Ctrl+C</button>
-            <button onClick={() => sendInput('\x04')}>Ctrl+D</button>
-            <button onClick={() => sendInput('\x1b[A')}>&uarr;</button>
-            <button onClick={() => sendInput('\x1b[B')}>&darr;</button>
-            <button onClick={() => sendInput('\x1b[D')}>&larr;</button>
-            <button onClick={() => sendInput('\x1b[C')}>&rarr;</button>
+            <div className="toolbar-row">
+              <button onClick={() => sendInput('\x1b')}>Esc</button>
+              <button onClick={() => sendInput('\t')}>Tab</button>
+              <button onClick={() => sendInput('\x1b[Z')}>⇧Tab</button>
+              <button onClick={() => sendInput('\n')}>⇧Enter</button>
+              <button onClick={() => sendInput('\x03')}>^C</button>
+              <button onClick={() => sendInput('\x04')}>^D</button>
+            </div>
+            <div className="toolbar-row">
+              <button onClick={() => sendInput('\x1b[A')}>↑</button>
+              <button onClick={() => sendInput('\x1b[B')}>↓</button>
+              <button onClick={() => sendInput('\x1b[D')}>←</button>
+              <button onClick={() => sendInput('\x1b[C')}>→</button>
+              <button onClick={() => {
+                if (attachedSession && attachedSocketRef.current) {
+                  terminalInstanceRef.current?.reset()
+                  refreshTerminal(attachedSession, attachedSocketRef.current)
+                }
+              }}>Redraw</button>
+            </div>
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={killTarget !== null}
+        onConfirm={handleKillConfirm}
+        onCancel={() => setKillTarget(null)}
+        title="Close terminal?"
+        description={killTarget ? `This will kill "${terminalNames[`${killTarget.socket}:${killTarget.name}`] || killTarget.name}" and any processes running in it.` : undefined}
+        confirmLabel="Close"
+        destructive
+      />
     </div>
   )
 }
@@ -405,7 +423,8 @@ interface TerminalViewProps {
   sidebarOpen: boolean
   onSetInteractive: (interactive: boolean) => void
   onToggleSidebar: () => void
-  onRedraw: () => void
+  onRedraw: (terminal: XTerm | null) => void
+  onTerminalReady: (terminal: XTerm | null) => void
   sendInput: (data: string) => void
   resizeTerminal: (rows: number, cols: number) => void
   onOutput: (callback: (runId: string, data: string) => void) => void
@@ -421,6 +440,7 @@ function TerminalView({
   onSetInteractive,
   onToggleSidebar,
   onRedraw,
+  onTerminalReady,
   sendInput,
   resizeTerminal,
   onOutput,
@@ -475,7 +495,7 @@ function TerminalView({
       cursorStyle: 'bar',
       cursorInactiveStyle: 'none',
       scrollback: 10000,
-      convertEol: true,
+      convertEol: false,
       minimumContrastRatio: 4.5,
     })
 
@@ -483,12 +503,23 @@ function TerminalView({
     terminal.loadAddon(fitAddon)
 
     terminal.open(containerRef.current)
+
+    // Suppress iOS QuickType/autofill bar and Android autofill above keyboard
+    if (terminal.textarea) {
+      terminal.textarea.setAttribute('autocomplete', 'off')
+      terminal.textarea.setAttribute('autocorrect', 'off')
+      terminal.textarea.setAttribute('autocapitalize', 'off')
+      terminal.textarea.setAttribute('spellcheck', 'false')
+      terminal.textarea.setAttribute('data-form-type', 'other')
+    }
+
     requestAnimationFrame(() => {
       fitAddon.fit()
     })
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+    onTerminalReady(terminal)
 
     // Shift+Enter handler — send newline even when xterm might not
     terminal.attachCustomKeyEventHandler((event) => {
@@ -553,6 +584,7 @@ function TerminalView({
       resizeDisposable.dispose()
       resizeObserver.disconnect()
       window.removeEventListener('resize', handleWindowResize)
+      onTerminalReady(null)
       terminal.dispose()
     }
   }, [streamingId]) // Re-create terminal on new attachment
@@ -586,16 +618,16 @@ function TerminalView({
           {panePid && (
             <span className="session-pid">PID {panePid}</span>
           )}
-          {!isInteractive && (
-            <span className="read-only-badge">read-only</span>
-          )}
+          <span className={`mode-badge ${isInteractive ? 'mode-edit' : 'mode-view'}`}>
+            {isInteractive ? 'EDIT' : 'VIEW'}
+          </span>
         </span>
         <div className="terminals-header-actions">
           {isInteractive ? (
             <>
               <button
                 className="terminals-redraw-btn"
-                onClick={onRedraw}
+                onClick={() => onRedraw(terminalRef.current)}
                 title="Force tmux redraw (Ctrl+L)"
                 style={{ marginRight: '8px' }}
               >
@@ -635,15 +667,6 @@ function TerminalIcon({ size = 16 }: { size?: number }) {
     >
       <polyline points="4 17 10 11 4 5" />
       <line x1="12" y1="19" x2="20" y2="19" />
-    </svg>
-  )
-}
-
-function RefreshIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="23 4 23 10 17 10" />
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
     </svg>
   )
 }

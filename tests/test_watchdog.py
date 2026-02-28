@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import os
 import signal
-import subprocess
 import time
-from collections import deque
 from pathlib import Path
-from unittest.mock import MagicMock, call, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -123,7 +121,7 @@ class TestCheckHealth:
         mock_get.return_value = MagicMock(status_code=200)
         assert watchdog.check_health() is True
         mock_get.assert_called_once_with(
-            "http://localhost:60887/admin/status",
+            "http://localhost:60887/api/admin/health",
             timeout=5.0,
         )
 

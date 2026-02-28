@@ -1,0 +1,18 @@
+tags: [pipeline-enforcement, enforcement, agents]
+
+rules:
+  pipeline-restrict-call-tool:
+    description: "Restrict call_tool to discovery + run_pipeline + kill_agent for pipeline agents"
+    event: before_tool
+    enabled: false
+    priority: 6
+    when: >
+      variables.get('_assigned_pipeline')
+      and not is_discovery_tool(tool_input.get('tool_name'))
+      and tool_input.get('tool_name') not in ('run_pipeline', 'kill_agent', 'send_message')
+    effect:
+      type: block
+      tools: ["mcp__gobby__call_tool"]
+      reason: |
+        Pipeline agent: Only progressive discovery, run_pipeline, kill_agent, and send_message are available to you.
+        Discover tools with list_mcp_servers → list_tools → get_tool_schema → call_tool(server_name='gobby-workflows', run_pipeline.

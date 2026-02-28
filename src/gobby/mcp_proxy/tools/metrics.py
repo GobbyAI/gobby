@@ -11,9 +11,9 @@ via the downstream proxy pattern (call_tool).
 
 from typing import Any
 
-from gobby.conductor.token_tracker import SessionTokenTracker
 from gobby.mcp_proxy.metrics import ToolMetricsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.sessions.token_tracker import SessionTokenTracker
 
 
 def create_metrics_registry(

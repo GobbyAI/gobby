@@ -12,9 +12,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def fetch_rich_status(http_port: int, timeout: float = 2.0) -> dict[str, Any]:
+async def fetch_rich_status(http_port: int, timeout: float = 2.0) -> dict[str, Any]:
     """
-    Fetch rich status data from the daemon API.
+    Fetch rich status data from the daemon API asynchronously.
 
     Args:
         http_port: HTTP port of the daemon
@@ -26,7 +26,10 @@ def fetch_rich_status(http_port: int, timeout: float = 2.0) -> dict[str, Any]:
     status_kwargs: dict[str, Any] = {}
 
     try:
-        response = httpx.get(f"http://localhost:{http_port}/admin/status", timeout=timeout)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"http://localhost:{http_port}/api/admin/status", timeout=timeout
+            )
         if response.status_code != 200:
             return status_kwargs
 
@@ -82,6 +85,13 @@ def fetch_rich_status(http_port: int, timeout: float = 2.0) -> dict[str, Any]:
         skills_data = data.get("skills", {})
         if skills_data:
             status_kwargs["skills_total"] = skills_data.get("total", 0)
+
+        # Neo4j (from memory.neo4j in admin/status response)
+        neo4j_data = memory.get("neo4j", {})
+        if neo4j_data:
+            status_kwargs["neo4j_installed"] = neo4j_data.get("installed", False)
+            status_kwargs["neo4j_healthy"] = neo4j_data.get("healthy", False)
+            status_kwargs["neo4j_url"] = neo4j_data.get("url")
 
     except (httpx.ConnectError, httpx.TimeoutException):
         # Daemon not responding - return empty

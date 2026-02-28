@@ -9,11 +9,10 @@ Tests cover:
 - Repairing projects (no issues, mismatches, --fix)
 """
 
-from pathlib import Path
-
 import json
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

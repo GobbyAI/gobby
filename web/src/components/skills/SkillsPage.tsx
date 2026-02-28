@@ -60,7 +60,6 @@ export function SkillsPage() {
   const [sourceTypeFilter, setSourceTypeFilter] = useState<string | null>(null)
   const [installing, setInstalling] = useState<string | null>(null)
 
-  const [refreshing, setRefreshing] = useState(false)
   const [showFilterPopover, setShowFilterPopover] = useState(false)
   const filterRef = useRef<HTMLDivElement>(null)
 
@@ -129,12 +128,6 @@ export function SkillsPage() {
       includeDeleted: f === 'deleted',
     }))
   }, [setFilters])
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true)
-    refreshSkills()
-    setTimeout(() => setRefreshing(false), 600)
-  }, [refreshSkills])
 
   const handleCreate = useCallback(() => {
     setEditSkill(null)
@@ -347,16 +340,7 @@ export function SkillsPage() {
             )}
           </div>
         )}
-        <button
-          className={`workflows-toolbar-btn ${refreshing ? 'workflows-toolbar-btn--spinning' : ''}`}
-          onClick={handleRefresh}
-          title="Refresh"
-        >
-          &#x21bb;
-        </button>
       </div>
-
-
 
       {/* Installed View */}
       {activeTab === 'installed' && (

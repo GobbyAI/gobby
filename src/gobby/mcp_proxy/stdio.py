@@ -74,12 +74,12 @@ class DaemonProxy:
 
     async def get_status(self) -> dict[str, Any]:
         """Get daemon status."""
-        return await self._request("GET", "/admin/status")
+        return await self._request("GET", "/api/admin/status")
 
     async def list_tools(self, server_name: str | None = None) -> dict[str, Any]:
         """List tools from MCP servers."""
         if server_name:
-            return await self._request("GET", f"/mcp/{server_name}/tools")
+            return await self._request("GET", f"/api/mcp/{server_name}/tools")
         # List all - need to get server list first
         status = await self.get_status()
         if status.get("success") is False:
@@ -87,7 +87,7 @@ class DaemonProxy:
         servers = status.get("mcp_servers", {})
         all_tools: dict[str, list[dict[str, Any]]] = {}
         for srv_name in servers:
-            result = await self._request("GET", f"/mcp/{srv_name}/tools")
+            result = await self._request("GET", f"/api/mcp/{srv_name}/tools")
             if result.get("success"):
                 all_tools[srv_name] = result.get("tools", [])
         return {
@@ -129,7 +129,7 @@ class DaemonProxy:
 
         return await self._request(
             "POST",
-            f"/mcp/{server_name}/tools/{tool_name}",
+            f"/api/mcp/{server_name}/tools/{tool_name}",
             json=arguments or {},
             timeout=timeout,
         )
@@ -138,7 +138,7 @@ class DaemonProxy:
         """Get schema for a specific tool."""
         result = await self._request(
             "POST",
-            "/mcp/tools/schema",
+            "/api/mcp/tools/schema",
             json={"server_name": server_name, "tool_name": tool_name},
         )
         if "error" in result:
@@ -154,7 +154,7 @@ class DaemonProxy:
 
     async def list_mcp_servers(self) -> dict[str, Any]:
         """List configured MCP servers (includes internal gobby-* servers)."""
-        return await self._request("GET", "/mcp/servers")
+        return await self._request("GET", "/api/mcp/servers")
 
     async def recommend_tools(
         self,
@@ -168,7 +168,7 @@ class DaemonProxy:
         """Get tool recommendations for a task."""
         return await self._request(
             "POST",
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             json={
                 "task_description": task_description,
                 "agent_id": agent_id,
@@ -191,7 +191,7 @@ class DaemonProxy:
         """Search for tools using semantic similarity."""
         return await self._request(
             "POST",
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={
                 "query": query,
                 "top_k": top_k,
@@ -216,7 +216,7 @@ class DaemonProxy:
         """Add a new MCP server to the daemon's configuration."""
         return await self._request(
             "POST",
-            "/mcp/servers",
+            "/api/mcp/servers",
             json={
                 "name": name,
                 "transport": transport,
@@ -231,7 +231,7 @@ class DaemonProxy:
 
     async def remove_mcp_server(self, name: str) -> dict[str, Any]:
         """Remove an MCP server from the daemon's configuration."""
-        return await self._request("DELETE", f"/mcp/servers/{name}")
+        return await self._request("DELETE", f"/api/mcp/servers/{name}")
 
     async def import_mcp_server(
         self,
@@ -243,7 +243,7 @@ class DaemonProxy:
         """Import MCP servers from various sources."""
         return await self._request(
             "POST",
-            "/mcp/servers/import",
+            "/api/mcp/servers/import",
             json={
                 "from_project": from_project,
                 "servers": servers,

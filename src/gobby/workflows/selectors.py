@@ -1,4 +1,5 @@
 import fnmatch
+import json
 from typing import Any
 
 from gobby.storage.skills import Skill
@@ -56,14 +57,11 @@ def resolve_rules_for_agent(
     selectors = agent.workflows.rule_selectors
 
     for rule in all_rules:
-        # Load JSON definition if needed
-        import json
-
         definition_json: dict[str, Any] = {}
         if rule.definition_json:
             try:
                 definition_json = json.loads(rule.definition_json)
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 pass
 
         for inc in selectors.include:
@@ -153,13 +151,11 @@ def resolve_variables_for_agent(
     exclude_matches = set()
 
     for var in all_variables:
-        import json
-
         definition_json: dict[str, Any] = {}
         if var.definition_json:
             try:
                 definition_json = json.loads(var.definition_json)
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 pass
 
         for inc in selectors.include:

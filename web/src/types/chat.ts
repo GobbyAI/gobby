@@ -1,5 +1,5 @@
-import type { CommandInfo } from "../hooks/useSlashCommands";
 import type { GobbySession } from "../hooks/useSessions";
+import type { PaletteItem } from "../hooks/useColonAutocomplete";
 
 export type ChatMode = "accept_edits" | "bypass" | "plan";
 
@@ -41,6 +41,11 @@ export interface ToolCall {
   error?: string;
 }
 
+export type ContentBlock =
+  | { type: "text"; content: string }
+  | { type: "tool_chain"; calls: ToolCall[] }
+  | { type: "image"; src: string; alt?: string };
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -48,6 +53,7 @@ export interface ChatMessage {
   timestamp: Date;
   toolCalls?: ToolCall[];
   thinkingContent?: string;
+  contentBlocks?: ContentBlock[];
 }
 
 export interface QueuedFile {
@@ -107,8 +113,8 @@ export interface ChatState {
     decision: "approve" | "reject" | "approve_always",
   ) => void;
   onInputChange: (value: string) => void;
-  filteredCommands: CommandInfo[];
-  onCommandSelect: (cmd: CommandInfo) => void;
+  paletteItems: PaletteItem[];
+  onPaletteSelect: (item: PaletteItem) => void;
   canvasSurfaces: Map<string, A2UISurfaceState>;
   canvasPanel: CanvasPanelState | null;
   onCanvasInteraction: (canvasId: string, action: UserAction) => void;
@@ -137,7 +143,6 @@ export interface ConversationState {
   onSelectSession: (session: GobbySession) => void;
   onDeleteSession?: (session: GobbySession) => void;
   onRenameSession?: (id: string, title: string) => void;
-  onRefresh?: () => void;
   agents: Array<{
     run_id: string;
     provider: string;
@@ -148,8 +153,11 @@ export interface ConversationState {
   }>;
   onNavigateToAgent: (agent: {
     run_id: string;
+    session_id?: string;
+    mode?: string;
     tmux_session_name?: string;
   }) => void;
+  onKillAgent?: (runId: string) => void;
   cliSessions?: GobbySession[];
   viewingSessionId?: string | null;
   attachedSessionId?: string | null;
@@ -169,8 +177,6 @@ export interface VoiceProps {
   isListening?: boolean;
   isSpeechDetected?: boolean;
   isTranscribing?: boolean;
-  isSpeaking?: boolean;
   voiceError?: string | null;
   onToggleVoice?: () => void;
-  onStopSpeaking?: () => void;
 }

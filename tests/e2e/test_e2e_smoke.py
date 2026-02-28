@@ -18,7 +18,7 @@ class TestE2EInfrastructure:
         assert daemon_instance.is_alive(), "Daemon process should be alive"
 
         # Check health endpoint
-        response = daemon_client.get("/admin/status")
+        response = daemon_client.get("/api/admin/status")
         assert response.status_code == 200
 
         data = response.json()
@@ -40,7 +40,7 @@ class TestE2EInfrastructure:
     def test_cli_events_simulator_works(self, daemon_instance, daemon_client) -> None:
         """Verify CLI event endpoints are accessible."""
         # Test that sessions endpoint is accessible
-        response = daemon_client.get("/sessions")
+        response = daemon_client.get("/api/sessions")
         assert response.status_code == 200
 
         data = response.json()

@@ -7,7 +7,7 @@ sets a variable after file edits.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -165,7 +165,7 @@ def _make_bash_event(command: str) -> HookEvent:
         event_type=HookEventType.BEFORE_TOOL,
         session_id="test-session",
         source=SessionSource.CLAUDE,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         data={"tool_name": "Bash", "tool_input": {"command": command}},
     )
 
@@ -240,7 +240,7 @@ class TestRequireUvShouldBlock:
             event_type=HookEventType.BEFORE_TOOL,
             session_id="test-session",
             source=SessionSource.CLAUDE,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             data={"tool_name": "Bash", "command": "python script.py"},
         )
         assert engine._should_block(_require_uv_effect(), event) is True

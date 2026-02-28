@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Map litellm model prefixes to Gobby provider names
 _PROVIDER_PREFIX_MAP: dict[str, str] = {
+    "haiku": "claude",
     "gemini": "gemini",
     "gpt": "codex",
     "o1": "codex",
@@ -37,9 +38,22 @@ _PROVIDER_PREFIX_MAP: dict[str, str] = {
 
 # Exclude non-coding model categories
 _EXCLUDED_KEYWORDS = (
-    "audio", "image", "vision", "embedding", "realtime", "tts",
-    "transcribe", "search", "robotics", "live", "nano", "customtools",
-    "computer-use", "deep-research", "thinking", "exp",
+    "audio",
+    "image",
+    "vision",
+    "embedding",
+    "realtime",
+    "tts",
+    "transcribe",
+    "search",
+    "robotics",
+    "live",
+    "nano",
+    "customtools",
+    "computer-use",
+    "deep-research",
+    "thinking",
+    "exp",
 )
 
 # Minimum version filters — skip deprecated/retired generations
@@ -130,9 +144,7 @@ def _fallback_models_from_config(server: "HTTPServer") -> dict[str, list[dict[st
                 models = provider_config.get_models_list()
                 if models:
                     entries = [{"value": "", "label": "(default)"}]
-                    entries.extend(
-                        {"value": m, "label": _model_id_to_label(m)} for m in models
-                    )
+                    entries.extend({"value": m, "label": _model_id_to_label(m)} for m in models)
                     result[provider_name] = entries
     return result
 
@@ -147,7 +159,7 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
     Returns:
         Configured APIRouter with admin endpoints
     """
-    router = APIRouter(prefix="/admin", tags=["admin"])
+    router = APIRouter(prefix="/api/admin", tags=["admin"])
 
     @router.get("/health")
     async def health_check() -> dict[str, str]:
@@ -231,6 +243,7 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
                             else None
                         ),
                         "response_time_ms": health.response_time_ms if health else None,
+                        "tool_count": len(config.tools) if config.tools else 0,
                     }
             except Exception as e:
                 logger.warning(f"Failed to get MCP health: {e}")
@@ -294,17 +307,21 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
 
             # Neo4j knowledge graph status
             try:
+                from gobby.cli.services import is_neo4j_healthy, is_neo4j_installed
+
                 neo4j_client = getattr(server.memory_manager, "_neo4j_client", None)
-                if neo4j_client is not None:
-                    memory_stats["neo4j"] = {
-                        "configured": True,
-                        "url": neo4j_client.base_url,
-                    }
-                else:
-                    memory_stats["neo4j"] = {"configured": False}
+                neo4j_url = neo4j_client.base_url if neo4j_client else None
+                installed = is_neo4j_installed()
+                healthy = await is_neo4j_healthy(neo4j_url) if neo4j_url else False
+                memory_stats["neo4j"] = {
+                    "configured": neo4j_client is not None,
+                    "installed": installed,
+                    "healthy": healthy,
+                    "url": neo4j_url,
+                }
             except Exception as e:
                 logger.warning(f"Failed to check Neo4j status: {e}")
-                memory_stats["neo4j"] = {"configured": False, "error": str(e)}
+                memory_stats["neo4j"] = {"configured": False, "installed": False, "healthy": False}
 
         # Get skills statistics
         skills_stats: dict[str, Any] = {"total": 0}
@@ -318,6 +335,13 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
                         break
             except Exception as e:
                 logger.warning(f"Failed to get skills stats: {e}")
+
+        # Compute total cached tools across downstream servers
+        downstream_tools_count = 0
+        if server.mcp_manager:
+            for config in server.mcp_manager.server_configs:
+                if config.tools:
+                    downstream_tools_count += len(config.tools)
 
         # Calculate response time
         response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -335,8 +359,8 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
             "process": process_metrics,
             "background_tasks": background_tasks,
             "mcp_servers": mcp_health,
-            # Count of tools from internal gobby-* registries (tasks, memory)
             "internal_tools_count": internal_tools_count,
+            "mcp_tools_cached": internal_tools_count + downstream_tools_count,
             "sessions": session_stats,
             "tasks": task_stats,
             "memory": memory_stats,
@@ -450,17 +474,17 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
                 },
                 "endpoints": {
                     "mcp": [
-                        "/mcp/{server_name}/tools/{tool_name}",
+                        "/api/mcp/{server_name}/tools/{tool_name}",
                     ],
                     "sessions": [
-                        "/sessions/register",
-                        "/sessions/{id}",
+                        "/api/sessions/register",
+                        "/api/sessions/{id}",
                     ],
                     "admin": [
-                        "/admin/status",
-                        "/admin/metrics",
-                        "/admin/config",
-                        "/admin/shutdown",
+                        "/api/admin/status",
+                        "/api/admin/metrics",
+                        "/api/admin/config",
+                        "/api/admin/shutdown",
                     ],
                 },
             }
@@ -559,12 +583,24 @@ for _ in range(300):
     except ProcessLookupError:
         break
 else:
-    # Force kill if still running
+    # Graceful stop: SIGTERM first, then SIGKILL after 5s
     try:
-        os.kill(pid, signal.SIGKILL)
-        time.sleep(0.5)
+        os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    else:
+        for _ in range(50):  # 5s grace
+            try:
+                os.kill(pid, 0)
+                time.sleep(0.1)
+            except ProcessLookupError:
+                break
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                time.sleep(0.5)
+            except ProcessLookupError:
+                pass
 
 # Wait for port release
 time.sleep(2.0)
@@ -581,9 +617,8 @@ except FileNotFoundError:
 import json
 log_dir = os.path.join(gobby_home, "logs")
 os.makedirs(log_dir, exist_ok=True)
-log_file = open(os.path.join(log_dir, "gobby-client.log"), "a")
-err_file = open(os.path.join(log_dir, "gobby-client-error.log"), "a")
-try:
+with open(os.path.join(log_dir, "gobby-client.log"), "a") as log_file, \
+     open(os.path.join(log_dir, "gobby-client-error.log"), "a") as err_file:
     proc = subprocess.Popen(
         [python, "-m", "gobby.runner"],
         stdout=log_file, stderr=err_file,
@@ -591,11 +626,8 @@ try:
         start_new_session=True,
         env=os.environ.copy(),
     )
-    with open(pid_file, "w") as f:
-        f.write(str(proc.pid))
-finally:
-    log_file.close()
-    err_file.close()
+with open(pid_file, "w") as f:
+    f.write(str(proc.pid))
 """
             # Spawn the restarter as a fully detached subprocess
             subprocess.Popen(  # nosec B603

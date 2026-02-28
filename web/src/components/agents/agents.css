@@ -1,3 +1,11 @@
+/* Agent definitions tab container */
+.agent-defs-tab {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
 /* Shared agent button */
 .agent-defs-btn {
   padding: 5px 12px;
@@ -42,72 +50,13 @@
   background: rgba(239, 68, 68, 0.1);
 }
 
-/* Agent edit panel (sliding sidebar) */
-.agent-edit-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  z-index: 90;
-}
-
-.agent-edit-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: 480px;
-  max-width: 90vw;
+/* YAML view inside sidebar */
+.agent-edit-yaml-view {
   height: 100%;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
-  z-index: 100;
-  transform: translateX(100%);
-  transition: transform 0.25s ease;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
 }
 
-.agent-edit-panel.open {
-  transform: translateX(0);
-}
-
-.agent-edit-header {
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.agent-edit-header-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-}
-
-.agent-edit-header-label {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-}
-
-.agent-edit-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: 0.25rem;
-  transition: background 0.15s, color 0.15s;
-}
-
-.agent-edit-close:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+.agent-edit-yaml-view .codemirror-container {
+  height: 100%;
 }
 
 .agent-edit-meta {
@@ -169,6 +118,12 @@
   border-color: var(--accent, #6366f1);
   box-shadow: 0 0 0 2px
     color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+}
+
+.agent-edit-textarea {
+  font-family: inherit;
+  line-height: 1.4;
+  min-height: 3.6em;
 }
 
 .agent-edit-model-field {
@@ -242,14 +197,7 @@
   margin: 0 0 0.2rem;
 }
 
-.agent-edit-actions {
-  padding: 0.75rem 1.25rem;
-  border-top: 1px solid var(--border);
-  margin-top: auto;
-  display: flex;
-  gap: 0.5rem;
-  justify-content: flex-end;
-}
+/* (actions moved to SidebarPanel footer) */
 
 
 /* Rules editor */
@@ -321,9 +269,11 @@
 }
 
 .agent-rule-selectors-label {
-  font-size: calc(var(--font-size-base) * 0.75);
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .agent-rule-selector-group {

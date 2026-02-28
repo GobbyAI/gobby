@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Upper bound for skill fetch queries — high enough to get all installed skills
+# without unbounded queries. Actual skill counts are typically < 200.
+_MAX_SKILL_FETCH = 10_000
+
 
 def _db_skill_to_parsed(skill: Any) -> ParsedSkill:
     """Convert a storage Skill to a ParsedSkill for backward compat.
@@ -144,7 +148,7 @@ class HookSkillManager:
             enabled=True,
             include_templates=False,
             include_deleted=False,
-            limit=10000,
+            limit=_MAX_SKILL_FETCH,
         )
 
         return [_db_skill_to_parsed(s) for s in db_skills]

@@ -235,6 +235,9 @@ class SessionMessageProcessor:
                         "content": msg.content,
                         "content_type": msg.content_type,
                         "tool_name": msg.tool_name,
+                        "tool_input": json.dumps(msg.tool_input) if msg.tool_input else None,
+                        "tool_result": json.dumps(msg.tool_result) if msg.tool_result else None,
+                        "tool_use_id": msg.tool_use_id,
                         "timestamp": msg.timestamp.isoformat(),
                     },
                 }
@@ -323,6 +326,9 @@ class SessionMessageProcessor:
                         "content": msg.content,
                         "content_type": msg.content_type,
                         "tool_name": msg.tool_name,
+                        "tool_input": json.dumps(msg.tool_input) if msg.tool_input else None,
+                        "tool_result": json.dumps(msg.tool_result) if msg.tool_result else None,
+                        "tool_use_id": msg.tool_use_id,
                         "timestamp": msg.timestamp.isoformat(),
                     },
                 }

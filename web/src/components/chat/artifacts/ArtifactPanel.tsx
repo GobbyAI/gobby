@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, memo } from 'react'
 import type { Artifact } from '../../../types/artifacts'
 import { Button } from '../ui/Button'
 import { Badge } from '../ui/Badge'
@@ -20,7 +20,7 @@ interface ArtifactPanelProps {
   onRequestPlanChanges?: (feedback: string) => void
 }
 
-export function ArtifactPanel({ artifact, width, onClose, onUpdateContent, onSetVersion, planPendingApproval, onApprovePlan, onRequestPlanChanges }: ArtifactPanelProps) {
+export const ArtifactPanel = memo(function ArtifactPanel({ artifact, width, onClose, onUpdateContent, onSetVersion, planPendingApproval, onApprovePlan, onRequestPlanChanges }: ArtifactPanelProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [showSource, setShowSource] = useState(false)
 
@@ -151,7 +151,7 @@ export function ArtifactPanel({ artifact, width, onClose, onUpdateContent, onSet
       />
     </div>
   )
-}
+})
 
 function CopyIcon() {
   return (

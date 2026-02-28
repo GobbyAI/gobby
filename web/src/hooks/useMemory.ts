@@ -112,7 +112,7 @@ export function useMemory() {
       if (filters.projectId) params.set('project_id', filters.projectId)
       if (filters.memoryType) params.set('memory_type', filters.memoryType)
 
-      const response = await fetch(`${baseUrl}/memories?${params}`)
+      const response = await fetch(`${baseUrl}/api/memories?${params}`)
       if (response.ok) {
         const data = await response.json()
         const items = (data.memories || []).map((m: Record<string, unknown>) => ({
@@ -134,7 +134,7 @@ export function useMemory() {
     async (params: CreateMemoryParams): Promise<GobbyMemory | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/memories`, {
+        const response = await fetch(`${baseUrl}/api/memories`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -158,7 +158,7 @@ export function useMemory() {
     async (memoryId: string, params: UpdateMemoryParams): Promise<GobbyMemory | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/memories/${memoryId}`, {
+        const response = await fetch(`${baseUrl}/api/memories/${memoryId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -181,7 +181,7 @@ export function useMemory() {
     async (memoryId: string): Promise<boolean> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/memories/${memoryId}`, {
+        const response = await fetch(`${baseUrl}/api/memories/${memoryId}`, {
           method: 'DELETE',
         })
         if (response.ok) {
@@ -214,7 +214,7 @@ export function useMemory() {
           const params = new URLSearchParams({ q: query })
           if (filters.projectId) params.set('project_id', filters.projectId)
 
-          const response = await fetch(`${baseUrl}/memories/search?${params}`)
+          const response = await fetch(`${baseUrl}/api/memories/search?${params}`)
           if (response.ok) {
             const data = await response.json()
             setSearchResults(data.results || [])
@@ -234,7 +234,7 @@ export function useMemory() {
       const params = new URLSearchParams()
       if (filters.projectId) params.set('project_id', filters.projectId)
 
-      const response = await fetch(`${baseUrl}/memories/stats?${params}`)
+      const response = await fetch(`${baseUrl}/api/memories/stats?${params}`)
       if (response.ok) {
         setStats(await response.json())
       }
@@ -266,7 +266,7 @@ export function useMemory() {
     try {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams({ limit: String(limit) })
-      const response = await fetch(`${baseUrl}/memories/graph/entities?${params}`)
+      const response = await fetch(`${baseUrl}/api/memories/graph/entities?${params}`)
       if (response.ok) {
         return await response.json()
       }
@@ -279,7 +279,7 @@ export function useMemory() {
   const fetchEntityNeighbors = useCallback(async (name: string): Promise<KnowledgeGraphData | null> => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/memories/graph/entities/${encodeURIComponent(name)}/neighbors`)
+      const response = await fetch(`${baseUrl}/api/memories/graph/entities/${encodeURIComponent(name)}/neighbors`)
       if (response.ok) {
         return await response.json()
       }
@@ -296,7 +296,7 @@ export function useMemory() {
       if (filters.projectId) params.set('project_id', filters.projectId)
       if (memoryLimit !== undefined) params.set('memory_limit', String(memoryLimit))
 
-      const response = await fetch(`${baseUrl}/memories/graph?${params}`)
+      const response = await fetch(`${baseUrl}/api/memories/graph?${params}`)
       if (response.ok) {
         const data = await response.json()
         return {
@@ -345,7 +345,7 @@ export function useNeo4jStatus() {
     async function fetchStatus() {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/admin/status`, { signal: controller.signal })
+        const response = await fetch(`${baseUrl}/api/admin/status`, { signal: controller.signal })
         if (response.ok) {
           const data = await response.json()
           const neo4j = data.memory?.neo4j

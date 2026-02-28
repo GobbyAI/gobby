@@ -13,7 +13,7 @@ tools (search_tasks, reindex_tasks) with all code paths:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def task_manager(temp_db: "LocalDatabase") -> "LocalTaskManager":
+def task_manager(temp_db: LocalDatabase) -> LocalTaskManager:
     """Create a real LocalTaskManager backed by temp database."""
     from gobby.storage.tasks import LocalTaskManager
 
@@ -42,7 +42,7 @@ def task_manager(temp_db: "LocalDatabase") -> "LocalTaskManager":
 
 
 @pytest.fixture
-def real_project(project_manager: "LocalProjectManager") -> dict:
+def real_project(project_manager: LocalProjectManager) -> dict:
     """Create a real project for task scoping."""
     project = project_manager.create(
         name="search-test-project",
@@ -53,7 +53,7 @@ def real_project(project_manager: "LocalProjectManager") -> dict:
 
 @pytest.fixture
 def seeded_tasks(
-    task_manager: "LocalTaskManager",
+    task_manager: LocalTaskManager,
     real_project: dict,
 ) -> list:
     """Create several tasks for search tests."""
@@ -77,7 +77,7 @@ def seeded_tasks(
 
 
 def _make_ctx(
-    task_manager: "LocalTaskManager",
+    task_manager: LocalTaskManager,
     project_id: str | None = None,
 ) -> MagicMock:
     """Create a RegistryContext-like mock that delegates to real task_manager."""
@@ -95,7 +95,7 @@ def _make_ctx(
 class TestSearchTasksValidation:
     """Tests for input validation in search_tasks."""
 
-    def test_empty_query_returns_error(self, task_manager: "LocalTaskManager") -> None:
+    def test_empty_query_returns_error(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
@@ -105,7 +105,7 @@ class TestSearchTasksValidation:
         assert result["tasks"] == []
         assert result["count"] == 0
 
-    def test_whitespace_only_query_returns_error(self, task_manager: "LocalTaskManager") -> None:
+    def test_whitespace_only_query_returns_error(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         func = registry.get_tool("search_tasks")
@@ -114,7 +114,7 @@ class TestSearchTasksValidation:
         assert "error" in result
         assert result["count"] == 0
 
-    def test_none_like_empty_query(self, task_manager: "LocalTaskManager") -> None:
+    def test_none_like_empty_query(self, task_manager: LocalTaskManager) -> None:
         """Query that is falsy but not empty string."""
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
@@ -128,7 +128,7 @@ class TestSearchTasksValidation:
 class TestSearchTasksProjectFilter:
     """Tests for project filter handling."""
 
-    def test_project_filter_error_returns_error(self, task_manager: "LocalTaskManager") -> None:
+    def test_project_filter_error_returns_error(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         ctx.resolve_project_filter.side_effect = ValueError("Project not found: nonexistent")
 
@@ -141,7 +141,7 @@ class TestSearchTasksProjectFilter:
         assert result["tasks"] == []
         assert result["count"] == 0
 
-    def test_project_filter_called_with_params(self, task_manager: "LocalTaskManager") -> None:
+    def test_project_filter_called_with_params(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
 
         registry = create_search_registry(ctx)
@@ -156,7 +156,7 @@ class TestSearchTasksResults:
 
     def test_successful_search_returns_results(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
         real_project: dict,
         seeded_tasks: list,
     ) -> None:
@@ -172,7 +172,7 @@ class TestSearchTasksResults:
 
     def test_search_results_have_score(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
         real_project: dict,
         seeded_tasks: list,
     ) -> None:
@@ -189,7 +189,7 @@ class TestSearchTasksResults:
 
     def test_search_results_include_brief_fields(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
         real_project: dict,
         seeded_tasks: list,
     ) -> None:
@@ -208,7 +208,7 @@ class TestSearchTasksResults:
 
     def test_query_is_stripped(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
         real_project: dict,
         seeded_tasks: list,
     ) -> None:
@@ -222,7 +222,7 @@ class TestSearchTasksResults:
 
     def test_no_matching_results_returns_empty(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
         real_project: dict,
         seeded_tasks: list,
     ) -> None:
@@ -241,7 +241,7 @@ class TestSearchTasksStatusFilter:
 
     def test_comma_separated_status_split_into_list(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
         real_project: dict,
         seeded_tasks: list,
     ) -> None:
@@ -261,7 +261,7 @@ class TestSearchTasksStatusFilter:
 
     def test_single_status_passed_as_string(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
         real_project: dict,
     ) -> None:
         ctx = _make_ctx(task_manager, project_id=real_project["id"])
@@ -279,7 +279,7 @@ class TestSearchTasksStatusFilter:
 
     def test_list_status_passed_through(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
@@ -295,7 +295,7 @@ class TestSearchTasksStatusFilter:
 
     def test_comma_status_splits_correctly(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
@@ -317,7 +317,7 @@ class TestSearchTasksParentFilter:
     def test_parent_task_id_resolved(
         self,
         mock_resolve: MagicMock,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         mock_resolve.return_value = "parent-uuid-123"
         ctx = _make_ctx(task_manager)
@@ -337,7 +337,7 @@ class TestSearchTasksParentFilter:
     def test_invalid_parent_task_id_returns_error(
         self,
         mock_resolve: MagicMock,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         mock_resolve.side_effect = Exception("Invalid reference")
         ctx = _make_ctx(task_manager)
@@ -354,7 +354,7 @@ class TestSearchTasksParentFilter:
 
     def test_no_parent_task_id_passes_none(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
@@ -374,7 +374,7 @@ class TestSearchTasksAllFilters:
 
     def test_all_filters_forwarded_to_task_manager(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
@@ -411,7 +411,7 @@ class TestSearchTasksAllFilters:
 class TestReindexTasks:
     """Tests for the reindex_tasks tool."""
 
-    def test_successful_reindex(self, task_manager: "LocalTaskManager") -> None:
+    def test_successful_reindex(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
         ctx.task_manager.reindex_search.return_value = {"item_count": 50}
@@ -424,7 +424,7 @@ class TestReindexTasks:
         assert "50 tasks" in result["message"]
         assert result["stats"]["item_count"] == 50
 
-    def test_reindex_with_project_filter(self, task_manager: "LocalTaskManager") -> None:
+    def test_reindex_with_project_filter(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager, project_id="proj-abc")
         ctx.task_manager = MagicMock()
         ctx.task_manager.reindex_search.return_value = {"item_count": 10}
@@ -436,7 +436,7 @@ class TestReindexTasks:
 
         ctx.resolve_project_filter.assert_called_once_with("my-project", False)
 
-    def test_reindex_all_projects(self, task_manager: "LocalTaskManager") -> None:
+    def test_reindex_all_projects(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
         ctx.task_manager.reindex_search.return_value = {"item_count": 100}
@@ -448,7 +448,7 @@ class TestReindexTasks:
 
         ctx.resolve_project_filter.assert_called_once_with(None, True)
 
-    def test_reindex_project_filter_error(self, task_manager: "LocalTaskManager") -> None:
+    def test_reindex_project_filter_error(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         ctx.resolve_project_filter.side_effect = ValueError("Project not found: bad")
 
@@ -462,7 +462,7 @@ class TestReindexTasks:
 
     def test_reindex_returns_zero_for_empty_project(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
@@ -485,29 +485,29 @@ class TestReindexTasks:
 class TestRegistryStructure:
     """Tests for the registry created by create_search_registry."""
 
-    def test_registry_has_search_tasks_tool(self, task_manager: "LocalTaskManager") -> None:
+    def test_registry_has_search_tasks_tool(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         assert registry.get_tool("search_tasks") is not None
 
-    def test_registry_has_reindex_tasks_tool(self, task_manager: "LocalTaskManager") -> None:
+    def test_registry_has_reindex_tasks_tool(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         assert registry.get_tool("reindex_tasks") is not None
 
-    def test_registry_has_two_tools(self, task_manager: "LocalTaskManager") -> None:
+    def test_registry_has_two_tools(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         assert len(registry) == 2
 
-    def test_registry_name(self, task_manager: "LocalTaskManager") -> None:
+    def test_registry_name(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
         assert registry.name == "gobby-tasks-search"
 
     def test_search_tasks_schema_has_required_query(
         self,
-        task_manager: "LocalTaskManager",
+        task_manager: LocalTaskManager,
     ) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)

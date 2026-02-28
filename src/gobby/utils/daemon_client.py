@@ -17,7 +17,7 @@ Example:
     is_healthy, error = client.check_health()
 
     # Call HTTP API endpoint
-    response = client.call_http_api("/sessions/register", method="POST", json_data={
+    response = client.call_http_api("/api/sessions/register", method="POST", json_data={
         "external_id": "abc123"
     })
     ```
@@ -92,7 +92,7 @@ class DaemonClient:
         """
         try:
             response = httpx.get(
-                f"{self.url}/admin/status",
+                f"{self.url}/api/admin/health",
                 timeout=self.timeout,
             )
             is_healthy = response.status_code == 200
@@ -146,7 +146,7 @@ class DaemonClient:
         Call daemon HTTP API endpoint directly (for non-MCP endpoints).
 
         Args:
-            endpoint: API endpoint path (e.g., "/sessions/register")
+            endpoint: API endpoint path (e.g., "/api/sessions/register")
             method: HTTP method (default: POST)
             json_data: JSON data to send
             timeout: Request timeout (default: uses self.timeout)
@@ -194,7 +194,7 @@ class DaemonClient:
         Returns:
             Tool execution result
         """
-        endpoint = f"/mcp/{server_name}/tools/{tool_name}"
+        endpoint = f"/api/mcp/{server_name}/tools/{tool_name}"
         response = self.call_http_api(
             endpoint=endpoint,
             method="POST",

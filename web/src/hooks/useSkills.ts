@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useWebSocketEvent } from './useWebSocketEvent'
 
 export interface GobbySkill {
   id: string
@@ -130,6 +131,7 @@ export function useSkills() {
   const [hubs, setHubs] = useState<HubInfo[]>([])
   const [hubResults, setHubResults] = useState<HubSkillResult[]>([])
   const debounceRef = useRef<number | null>(null)
+  const wsDebounceRef = useRef<number | null>(null)
 
   // Fetch skills list
   const fetchSkills = useCallback(async () => {
@@ -142,7 +144,7 @@ export function useSkills() {
       if (filters.includeTemplates) params.set('include_templates', 'true')
       if (filters.includeDeleted) params.set('include_deleted', 'true')
 
-      const response = await fetch(`${baseUrl}/skills?${params}`)
+      const response = await fetch(`${baseUrl}/api/skills?${params}`)
       if (response.ok) {
         const data = await response.json()
         setSkills(data.skills || [])
@@ -161,7 +163,7 @@ export function useSkills() {
       const params = new URLSearchParams()
       if (filters.projectId) params.set('project_id', filters.projectId)
 
-      const response = await fetch(`${baseUrl}/skills/stats?${params}`)
+      const response = await fetch(`${baseUrl}/api/skills/stats?${params}`)
       if (response.ok) {
         setStats(await response.json())
       }
@@ -175,7 +177,7 @@ export function useSkills() {
     async (params: CreateSkillParams): Promise<GobbySkill | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills`, {
+        const response = await fetch(`${baseUrl}/api/skills`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -201,7 +203,7 @@ export function useSkills() {
     async (skillId: string, params: UpdateSkillParams): Promise<GobbySkill | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills/${skillId}`, {
+        const response = await fetch(`${baseUrl}/api/skills/${skillId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -225,7 +227,7 @@ export function useSkills() {
     async (skillId: string): Promise<boolean> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills/${skillId}`, {
+        const response = await fetch(`${baseUrl}/api/skills/${skillId}`, {
           method: 'DELETE',
         })
         if (response.ok) {
@@ -267,7 +269,7 @@ export function useSkills() {
           const params = new URLSearchParams({ q: query })
           if (filters.projectId) params.set('project_id', filters.projectId)
 
-          const response = await fetch(`${baseUrl}/skills/search?${params}`)
+          const response = await fetch(`${baseUrl}/api/skills/search?${params}`)
           if (response.ok) {
             const data = await response.json()
             setSkills(data.results || [])
@@ -285,7 +287,7 @@ export function useSkills() {
     async (source: string, projectId?: string | null): Promise<{ imported: number; skills: GobbySkill[] } | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills/import`, {
+        const response = await fetch(`${baseUrl}/api/skills/import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ source, project_id: projectId }),
@@ -310,7 +312,7 @@ export function useSkills() {
   const exportSkill = useCallback(async (skillId: string): Promise<{ filename: string; content: string } | null> => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/skills/${skillId}/export`)
+      const response = await fetch(`${baseUrl}/api/skills/${skillId}/export`)
       if (response.ok) {
         return await response.json()
       }
@@ -342,7 +344,7 @@ export function useSkills() {
   const scanSkill = useCallback(async (content: string, name?: string): Promise<ScanResult | null> => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/skills/scan`, {
+      const response = await fetch(`${baseUrl}/api/skills/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, name: name || 'untitled' }),
@@ -364,7 +366,7 @@ export function useSkills() {
   const fetchHubs = useCallback(async () => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/skills/hubs`)
+      const response = await fetch(`${baseUrl}/api/skills/hubs`)
       if (response.ok) {
         const data = await response.json()
         setHubs(data.hubs || [])
@@ -381,7 +383,7 @@ export function useSkills() {
       const params = new URLSearchParams({ q: query })
       if (hubName) params.set('hub_name', hubName)
 
-      const response = await fetch(`${baseUrl}/skills/hubs/search?${params}`)
+      const response = await fetch(`${baseUrl}/api/skills/hubs/search?${params}`)
       if (response.ok) {
         const data = await response.json()
         setHubResults(data.results || [])
@@ -396,7 +398,7 @@ export function useSkills() {
     async (hubName: string, slug: string, version?: string, projectId?: string | null): Promise<GobbySkill | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills/hubs/install`, {
+        const response = await fetch(`${baseUrl}/api/skills/hubs/install`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ hub_name: hubName, slug, version, project_id: projectId }),
@@ -422,7 +424,7 @@ export function useSkills() {
     async (skillId: string): Promise<GobbySkill | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills/${skillId}/install`, { method: 'POST' })
+        const response = await fetch(`${baseUrl}/api/skills/${skillId}/install`, { method: 'POST' })
         if (response.ok) {
           const data = await response.json()
           await fetchSkills()
@@ -445,7 +447,7 @@ export function useSkills() {
       try {
         const baseUrl = getBaseUrl()
         const params = new URLSearchParams({ project_id: projectId })
-        const response = await fetch(`${baseUrl}/skills/${skillId}/move-to-project?${params}`, { method: 'POST' })
+        const response = await fetch(`${baseUrl}/api/skills/${skillId}/move-to-project?${params}`, { method: 'POST' })
         if (response.ok) {
           const data = await response.json()
           await fetchSkills()
@@ -465,7 +467,7 @@ export function useSkills() {
     async (skillId: string): Promise<GobbySkill | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills/${skillId}/move-to-installed`, { method: 'POST' })
+        const response = await fetch(`${baseUrl}/api/skills/${skillId}/move-to-installed`, { method: 'POST' })
         if (response.ok) {
           const data = await response.json()
           await fetchSkills()
@@ -485,7 +487,7 @@ export function useSkills() {
     async (skillId: string): Promise<GobbySkill | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/skills/${skillId}/restore`, { method: 'POST' })
+        const response = await fetch(`${baseUrl}/api/skills/${skillId}/restore`, { method: 'POST' })
         if (response.ok) {
           const data = await response.json()
           await fetchSkills()
@@ -506,12 +508,25 @@ export function useSkills() {
     fetchStats()
   }, [fetchSkills, fetchStats])
 
-  // Cleanup debounce on unmount
+  // Cleanup debounce timers on unmount
   useEffect(() => {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
+      if (wsDebounceRef.current) window.clearTimeout(wsDebounceRef.current)
     }
   }, [])
+
+  // Real-time updates via WebSocket
+  useWebSocketEvent(
+    'skill_event',
+    useCallback(() => {
+      if (wsDebounceRef.current) window.clearTimeout(wsDebounceRef.current)
+      wsDebounceRef.current = window.setTimeout(() => {
+        fetchSkills()
+        fetchStats()
+      }, 500)
+    }, [fetchSkills, fetchStats]),
+  )
 
   const refreshSkills = useCallback(() => {
     setIsLoading(true)

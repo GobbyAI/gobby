@@ -107,11 +107,11 @@ class TestAgentDefinitionBodyModel:
         assert body.enabled is False
 
     def test_field_count(self) -> None:
-        """AgentDefinitionBody has exactly 16 fields."""
+        """AgentDefinitionBody has exactly 17 fields."""
         from gobby.workflows.definitions import AgentDefinitionBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 16, f"Expected 16 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 17, f"Expected 17 fields, got {len(fields)}: {list(fields.keys())}"
 
     def test_workflows_default_empty(self) -> None:
         """Workflows defaults to empty AgentWorkflows."""
@@ -164,7 +164,7 @@ class TestAgentDefinitionBodySerialization:
             base_branch="main",
             timeout=120.0,
             max_turns=15,
-            workflows=AgentWorkflows(rules=["require-task", "require-commit"]),
+            workflows=AgentWorkflows(rules=["require-task-before-edit", "require-commit"]),
             enabled=True,
         )
 
@@ -274,9 +274,7 @@ class TestAgentDefinitionStorage:
         body = AgentDefinitionBody(**defaults)
         return body.model_dump_json()
 
-    def test_create_agent_definition(
-        self, manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_create_agent_definition(self, manager: LocalWorkflowDefinitionManager) -> None:
         """Create an agent definition stored as workflow_type='agent'."""
         row = manager.create(
             name="test-developer-agent",
@@ -290,9 +288,7 @@ class TestAgentDefinitionStorage:
         assert row.name == "test-developer-agent"
         assert row.workflow_type == "agent"
 
-    def test_round_trip_through_storage(
-        self, manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_round_trip_through_storage(self, manager: LocalWorkflowDefinitionManager) -> None:
         """Store and retrieve agent definition, deserialize definition_json."""
         from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
@@ -334,9 +330,7 @@ class TestAgentDefinitionStorage:
         assert restored.workflows.rules == original.workflows.rules
         assert restored.enabled == original.enabled
 
-    def test_list_agents_only(
-        self, manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_list_agents_only(self, manager: LocalWorkflowDefinitionManager) -> None:
         """list_all(workflow_type='agent') returns only agent definitions."""
         manager.create(
             name="test-agent-list",
@@ -354,9 +348,7 @@ class TestAgentDefinitionStorage:
         assert agents[0].name == "test-agent-list"
         assert agents[0].workflow_type == "agent"
 
-    def test_soft_delete_agent(
-        self, manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_soft_delete_agent(self, manager: LocalWorkflowDefinitionManager) -> None:
         """Soft-deleted agents are excluded from default queries."""
         row = manager.create(
             name="to-delete",
@@ -369,9 +361,7 @@ class TestAgentDefinitionStorage:
         names = [a.name for a in agents]
         assert "to-delete" not in names
 
-    def test_get_agent_by_name(
-        self, manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_get_agent_by_name(self, manager: LocalWorkflowDefinitionManager) -> None:
         """Retrieve agent definition by name via get_by_name."""
         manager.create(
             name="test-coordinator-agent",
@@ -401,9 +391,7 @@ class TestAgentDefinitionStorage:
 class TestAgentScopeStorage:
     """agent_scope on rules survives storage round-trip."""
 
-    def test_rule_with_agent_scope_storage(
-        self, manager: LocalWorkflowDefinitionManager
-    ) -> None:
+    def test_rule_with_agent_scope_storage(self, manager: LocalWorkflowDefinitionManager) -> None:
         """Rule with agent_scope stores and retrieves correctly."""
         body = RuleDefinitionBody(
             event=RuleEvent.BEFORE_TOOL,

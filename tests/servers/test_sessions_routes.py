@@ -107,7 +107,7 @@ class TestRegisterSessionEdgeCases:
             mock_git.return_value = {"git_branch": "feature/extracted-branch"}
 
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "git-branch-test",
                     "source": "claude",
@@ -134,7 +134,7 @@ class TestRegisterSessionEdgeCases:
             mock_git.return_value = {}
 
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "no-git-branch-test",
                     "source": "claude",
@@ -159,7 +159,7 @@ class TestRegisterSessionEdgeCases:
             patch("gobby.utils.git.get_git_metadata") as mock_git,
         ):
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "explicit-branch-test",
                     "source": "claude",
@@ -192,7 +192,7 @@ class TestRegisterSessionEdgeCases:
             patch.object(session_storage, "register", side_effect=RuntimeError("Database error")),
         ):
             response = test_client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "error-test",
                     "source": "claude",
@@ -212,7 +212,7 @@ class TestRegisterSessionEdgeCases:
         """Test that machine_id falls back to 'unknown-machine' when get_machine_id returns None."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value=None):
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "unknown-machine-test",
                     "source": "claude",
@@ -262,7 +262,7 @@ class TestListSessionsEdgeCases:
         server.message_manager = mock_message_manager
 
         test_client = TestClient(server.app)
-        response = test_client.get("/sessions")
+        response = test_client.get("/api/sessions")
 
         # Should still succeed, just without message counts
         assert response.status_code == 200
@@ -285,7 +285,7 @@ class TestListSessionsEdgeCases:
         test_client = TestClient(server.app)
 
         with patch.object(session_storage, "list", side_effect=RuntimeError("Database error")):
-            response = test_client.get("/sessions")
+            response = test_client.get("/api/sessions")
 
         assert response.status_code == 500
 
@@ -311,7 +311,7 @@ class TestGetSessionEdgeCases:
         test_client = TestClient(server.app)
 
         with patch.object(session_storage, "get", side_effect=RuntimeError("Database error")):
-            response = test_client.get("/sessions/some-session-id")
+            response = test_client.get("/api/sessions/some-session-id")
 
         assert response.status_code == 500
 
@@ -324,7 +324,7 @@ class TestGetSessionEdgeCases:
         )
         test_client = TestClient(server.app)
 
-        response = test_client.get("/sessions/any-session-id")
+        response = test_client.get("/api/sessions/any-session-id")
         assert response.status_code == 503
         assert "Session manager not available" in response.json()["detail"]
 
@@ -365,7 +365,7 @@ class TestGetMessagesEdgeCases:
 
         test_client = TestClient(server.app)
 
-        response = test_client.get(f"/sessions/{session.id}/messages?limit=50&offset=10&role=user")
+        response = test_client.get(f"/api/sessions/{session.id}/messages?limit=50&offset=10&role=user")
 
         assert response.status_code == 200
         data = response.json()
@@ -404,7 +404,7 @@ class TestGetMessagesEdgeCases:
         server.message_manager = mock_message_manager
 
         test_client = TestClient(server.app)
-        response = test_client.get(f"/sessions/{session.id}/messages")
+        response = test_client.get(f"/api/sessions/{session.id}/messages")
 
         assert response.status_code == 500
 
@@ -427,7 +427,7 @@ class TestFindCurrentSessionEdgeCases:
         test_client = TestClient(server.app)
 
         response = test_client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "test",
                 "machine_id": "machine",
@@ -451,7 +451,7 @@ class TestFindCurrentSessionEdgeCases:
         test_client = TestClient(server.app)
 
         response = test_client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "test",
                 "machine_id": "machine",
@@ -477,7 +477,7 @@ class TestFindCurrentSessionEdgeCases:
             session_storage, "find_by_external_id", side_effect=RuntimeError("Database error")
         ):
             response = test_client.post(
-                "/sessions/find_current",
+                "/api/sessions/find_current",
                 json={
                     "external_id": "test",
                     "machine_id": "machine",
@@ -507,7 +507,7 @@ class TestFindParentSessionEdgeCases:
         test_client = TestClient(server.app)
 
         response = test_client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "source": "claude",
                 "machine_id": "test-machine",
@@ -535,7 +535,7 @@ class TestFindParentSessionEdgeCases:
 
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-fallback"):
             response = client.post(
-                "/sessions/find_parent",
+                "/api/sessions/find_parent",
                 json={
                     "source": "claude",
                     # No machine_id - should be resolved via get_machine_id
@@ -555,7 +555,7 @@ class TestFindParentSessionEdgeCases:
         """Test find_parent uses 'unknown-machine' when get_machine_id returns None."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value=None):
             response = client.post(
-                "/sessions/find_parent",
+                "/api/sessions/find_parent",
                 json={
                     "source": "claude",
                     "project_id": test_project["id"],
@@ -584,7 +584,7 @@ class TestFindParentSessionEdgeCases:
             session_storage, "find_parent", side_effect=RuntimeError("Database error")
         ):
             response = test_client.post(
-                "/sessions/find_parent",
+                "/api/sessions/find_parent",
                 json={
                     "source": "claude",
                     "machine_id": "machine",
@@ -613,7 +613,7 @@ class TestUpdateStatusEdgeCases:
         test_client = TestClient(server.app)
 
         response = test_client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={
                 "session_id": "test-id",
                 "status": "paused",
@@ -646,7 +646,7 @@ class TestUpdateStatusEdgeCases:
             session_storage, "update_status", side_effect=RuntimeError("Database error")
         ):
             response = test_client.post(
-                "/sessions/update_status",
+                "/api/sessions/update_status",
                 json={
                     "session_id": session.id,
                     "status": "paused",
@@ -674,7 +674,7 @@ class TestUpdateSummaryEdgeCases:
         test_client = TestClient(server.app)
 
         response = test_client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={
                 "session_id": "test-id",
                 "summary_path": "/path/to/summary.md",
@@ -707,7 +707,7 @@ class TestUpdateSummaryEdgeCases:
             session_storage, "update_summary", side_effect=RuntimeError("Database error")
         ):
             response = test_client.post(
-                "/sessions/update_summary",
+                "/api/sessions/update_summary",
                 json={
                     "session_id": session.id,
                     "summary_path": "/path/to/summary.md",
@@ -803,7 +803,7 @@ class TestStopSignalEdgeCases:
 
         test_client = TestClient(server_with_stop_registry.app)
         response = test_client.post(
-            "/sessions/test-session/stop",
+            "/api/sessions/test-session/stop",
             json={"reason": "Test stop"},
         )
 
@@ -820,7 +820,7 @@ class TestStopSignalEdgeCases:
         )
 
         test_client = TestClient(server_with_stop_registry.app)
-        response = test_client.get("/sessions/test-session/stop")
+        response = test_client.get("/api/sessions/test-session/stop")
 
         assert response.status_code == 500
 
@@ -835,7 +835,7 @@ class TestStopSignalEdgeCases:
         )
 
         test_client = TestClient(server_with_stop_registry.app)
-        response = test_client.delete("/sessions/test-session/stop")
+        response = test_client.delete("/api/sessions/test-session/stop")
 
         assert response.status_code == 500
 
@@ -852,7 +852,7 @@ class TestStopSignalEdgeCases:
         # No hook_manager on app.state
 
         test_client = TestClient(server.app)
-        response = test_client.get("/sessions/test-session/stop")
+        response = test_client.get("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]
@@ -870,7 +870,7 @@ class TestStopSignalEdgeCases:
         # No hook_manager on app.state
 
         test_client = TestClient(server.app)
-        response = test_client.delete("/sessions/test-session/stop")
+        response = test_client.delete("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]
@@ -890,7 +890,7 @@ class TestStopSignalEdgeCases:
         server.app.state.hook_manager._stop_registry = None
 
         test_client = TestClient(server.app)
-        response = test_client.get("/sessions/test-session/stop")
+        response = test_client.get("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
         assert "Stop registry not available" in response.json()["detail"]
@@ -910,7 +910,7 @@ class TestStopSignalEdgeCases:
         server.app.state.hook_manager._stop_registry = None
 
         test_client = TestClient(server.app)
-        response = test_client.delete("/sessions/test-session/stop")
+        response = test_client.delete("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
         assert "Stop registry not available" in response.json()["detail"]
@@ -927,7 +927,7 @@ class TestStopSignalEdgeCases:
         signal.acknowledged_at = datetime.now(UTC)
 
         test_client = TestClient(server_with_stop_registry.app)
-        response = test_client.get("/sessions/ack-session/stop")
+        response = test_client.get("/api/sessions/ack-session/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -947,7 +947,7 @@ class TestRequestValidation:
     def test_register_missing_external_id(self, client: TestClient) -> None:
         """Test that registration fails without external_id."""
         response = client.post(
-            "/sessions/register",
+            "/api/sessions/register",
             json={
                 "source": "claude",
             },
@@ -958,11 +958,11 @@ class TestRequestValidation:
     def test_list_sessions_invalid_limit(self, client: TestClient) -> None:
         """Test that list_sessions validates limit parameter."""
         # Limit too low
-        response = client.get("/sessions?limit=0")
+        response = client.get("/api/sessions?limit=0")
         assert response.status_code == 422
 
         # Limit too high
-        response = client.get("/sessions?limit=10000")
+        response = client.get("/api/sessions?limit=10000")
         assert response.status_code == 422
 
     def test_list_sessions_valid_limit_bounds(
@@ -981,9 +981,60 @@ class TestRequestValidation:
         )
 
         # Minimum valid limit
-        response = client.get("/sessions?limit=1")
+        response = client.get("/api/sessions?limit=1")
         assert response.status_code == 200
 
         # Maximum valid limit
-        response = client.get("/sessions?limit=1000")
+        response = client.get("/api/sessions?limit=1000")
         assert response.status_code == 200
+
+
+# ============================================================================
+# _sanitize_title unit tests (#9217)
+# ============================================================================
+
+
+class TestSanitizeTitle:
+    """Tests for the _sanitize_title helper."""
+
+    def setup_method(self) -> None:
+        from gobby.servers.routes.sessions import _sanitize_title
+
+        self.sanitize = _sanitize_title
+
+    def test_strips_markdown(self) -> None:
+        assert self.sanitize("**Bold** and _italic_") == "Bold and italic"
+        assert self.sanitize("# Heading") == "Heading"
+        assert self.sanitize("[link](url)") == "linkurl"
+
+    def test_strips_emoji(self) -> None:
+        assert self.sanitize("\U0001f680 Rocket Launch") == "Rocket Launch"
+        assert self.sanitize("Hello \U0001f600\U0001f600\U0001f600") == "Hello"
+        assert self.sanitize("\U0001f525\U0001f4a5") == "Untitled Session"
+
+    def test_strips_quotes(self) -> None:
+        assert self.sanitize('"Quoted Title"') == "Quoted Title"
+        assert self.sanitize("'Single Quoted'") == "Single Quoted"
+
+    def test_first_line_only(self) -> None:
+        assert self.sanitize("First\nSecond\nThird") == "First"
+
+    def test_caps_at_100(self) -> None:
+        long = "A" * 150
+        result = self.sanitize(long)
+        assert len(result) == 100
+        assert result.endswith("...")
+
+    def test_normalizes_whitespace(self) -> None:
+        assert self.sanitize("  too   many   spaces  ") == "too many spaces"
+
+    def test_empty_returns_untitled(self) -> None:
+        assert self.sanitize("") == "Untitled Session"
+        assert self.sanitize("   ") == "Untitled Session"
+
+    def test_plain_text_unchanged(self) -> None:
+        assert self.sanitize("Fix the login bug") == "Fix the login bug"
+
+    def test_combined_junk(self) -> None:
+        result = self.sanitize('  "## \U0001f680 **My Title**"  ')
+        assert result == "My Title"

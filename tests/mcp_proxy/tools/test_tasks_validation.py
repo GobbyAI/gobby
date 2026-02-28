@@ -9,7 +9,6 @@ After extraction via Strangler Fig pattern:
 
 Tools to be extracted:
 - validate_task: Validate task completion via LLM
-- generate_validation_criteria: Generate criteria via LLM
 - get_validation_status: Get validation details
 - reset_validation_count: Reset failure count
 - get_validation_history: Full validation history
@@ -387,153 +386,6 @@ class TestValidateTaskTool:
 
 
 # ============================================================================
-# generate_validation_criteria MCP Tool Tests
-# ============================================================================
-
-
-class TestGenerateValidationCriteriaTool:
-    """Tests for generate_validation_criteria MCP tool."""
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_for_leaf_task(
-        self, mock_task_manager, mock_task_validator, validation_registry
-    ):
-        """Test generating criteria for a leaf task uses LLM."""
-        task = Task(
-            id="t1",
-            title="Add user authentication",
-            description="Implement login/logout functionality",
-            project_id="p1",
-            status="open",
-            priority=2,
-            task_type="feature",
-            validation_criteria=None,  # No criteria yet
-            created_at="now",
-            updated_at="now",
-        )
-        mock_task_manager.get_task.return_value = task
-        mock_task_manager.list_tasks.return_value = []  # No children
-
-        mock_task_validator.generate_criteria.return_value = (
-            "## Functional Requirements\n"
-            "- [ ] User can log in with valid credentials\n"
-            "- [ ] User can log out\n"
-            "- [ ] Invalid credentials show error message"
-        )
-
-        result = await validation_registry.call("generate_validation_criteria", {"task_id": "t1"})
-
-        assert result["generated"] is True
-        assert result["validation_criteria"] is not None
-        assert "log in" in result["validation_criteria"].lower()
-        assert result["is_parent_task"] is False
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_for_parent_task(self, mock_task_manager, validation_registry):
-        """Test that parent tasks get 'all children closed' criteria."""
-        task = Task(
-            id="t1",
-            title="Epic task",
-            project_id="p1",
-            status="open",
-            priority=2,
-            task_type="epic",
-            validation_criteria=None,
-            created_at="now",
-            updated_at="now",
-        )
-        mock_task_manager.get_task.return_value = task
-
-        # Has children
-        mock_task_manager.list_tasks.return_value = [
-            Task(
-                id="c1",
-                title="Child",
-                project_id="p1",
-                status="open",
-                priority=2,
-                task_type="task",
-                created_at="now",
-                updated_at="now",
-            )
-        ]
-
-        result = await validation_registry.call("generate_validation_criteria", {"task_id": "t1"})
-
-        assert result["generated"] is True
-        assert "child tasks" in result["validation_criteria"].lower()
-        assert result["is_parent_task"] is True
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_already_exists(self, mock_task_manager, validation_registry):
-        """Test that generate_validation_criteria skips if criteria already exists."""
-        task = Task(
-            id="t1",
-            title="Task with criteria",
-            project_id="p1",
-            status="open",
-            priority=2,
-            task_type="task",
-            validation_criteria="Existing criteria",
-            created_at="now",
-            updated_at="now",
-        )
-        mock_task_manager.get_task.return_value = task
-
-        result = await validation_registry.call("generate_validation_criteria", {"task_id": "t1"})
-
-        assert result["generated"] is False
-        assert result["validation_criteria"] == "Existing criteria"
-        assert "already has" in result["message"].lower()
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_not_found(self, mock_task_manager, validation_registry):
-        """Test generate_validation_criteria with non-existent task."""
-        mock_task_manager.get_task.return_value = None
-
-        result = await validation_registry.call(
-            "generate_validation_criteria", {"task_id": "nonexistent"}
-        )
-        assert "error" in result
-        assert "not found" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_passes_labels_to_validator(
-        self, mock_task_manager, mock_task_validator, validation_registry
-    ):
-        """Test that task labels are passed to generate_criteria for pattern injection."""
-        task = Task(
-            id="t1",
-            title="Implement feature with TDD",
-            description="Use test-driven development",
-            project_id="p1",
-            status="open",
-            priority=2,
-            task_type="feature",
-            validation_criteria=None,
-            labels=["tdd", "refactoring"],  # Labels should be passed to generate_criteria
-            created_at="now",
-            updated_at="now",
-        )
-        mock_task_manager.get_task.return_value = task
-        mock_task_manager.list_tasks.return_value = []  # No children
-
-        mock_task_validator.generate_criteria.return_value = (
-            "## Deliverable\n- [ ] Feature works\n\n## Tdd Pattern Criteria\n- [ ] Tests written"
-        )
-
-        result = await validation_registry.call("generate_validation_criteria", {"task_id": "t1"})
-
-        # Verify generate_criteria was called with labels
-        mock_task_validator.generate_criteria.assert_called_once()
-        call_kwargs = mock_task_validator.generate_criteria.call_args.kwargs
-        assert call_kwargs.get("labels") == ["tdd", "refactoring"]
-
-        assert result["generated"] is True
-        assert result["validation_criteria"] is not None
-
-
-# ============================================================================
 # get_validation_status MCP Tool Tests
 # ============================================================================
 
@@ -651,12 +503,6 @@ class TestValidationToolsRegistration:
         tool_names = [t["name"] for t in tools]
         assert "validate_task" in tool_names
 
-    def test_generate_validation_criteria_tool_registered(self, validation_registry) -> None:
-        """Test that generate_validation_criteria is registered."""
-        tools = validation_registry.list_tools()
-        tool_names = [t["name"] for t in tools]
-        assert "generate_validation_criteria" in tool_names
-
     def test_get_validation_status_tool_registered(self, validation_registry) -> None:
         """Test that get_validation_status is registered."""
         tools = validation_registry.list_tools()
@@ -710,15 +556,6 @@ class TestValidationToolSchemas:
         assert "task_id" in input_schema["properties"]
         assert "changes_summary" in input_schema["properties"]
         assert "context_files" in input_schema["properties"]
-
-    def test_generate_validation_criteria_schema(self, validation_registry) -> None:
-        """Test generate_validation_criteria has correct input schema."""
-        schema = validation_registry.get_schema("generate_validation_criteria")
-        assert schema is not None
-        input_schema = schema.get("inputSchema", schema)
-        assert "task_id" in input_schema["properties"]
-        assert "task_id" in input_schema.get("required", [])
-
 
 # ============================================================================
 # run_fix_attempt MCP Tool Tests

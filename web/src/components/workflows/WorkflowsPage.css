@@ -46,6 +46,56 @@
   gap: 8px;
 }
 
+/* Tab row: tabs on left, search/filter/actions on right */
+.workflows-tab-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 0 0 0;
+}
+
+.workflows-tab-row .tab-bar {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.workflows-tab-row-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  margin-bottom: 6px;
+}
+
+/* Filter icon button */
+.workflows-filter-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.workflows-filter-icon-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.workflows-filter-icon-btn--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.workflows-filter-icon-btn--active:hover {
+  color: var(--accent);
+}
+
 .workflows-filter-row {
   display: flex;
   align-items: center;
@@ -936,6 +986,16 @@
 
   .workflows-toolbar {
     padding: 12px 0 8px;
+  }
+
+  .workflows-tab-row {
+    flex-wrap: wrap;
+  }
+
+  .workflows-tab-row-right {
+    flex-wrap: wrap;
+    margin-left: 0;
+    width: 100%;
   }
 
   .workflows-filter-row {

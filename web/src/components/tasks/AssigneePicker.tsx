@@ -54,7 +54,7 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
   const fetchAgents = useCallback(async () => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/sessions?limit=50`)
+      const response = await fetch(`${baseUrl}/api/sessions?limit=50`)
       if (!response.ok) {
         console.warn(`Agent fetch returned ${response.status}`)
         return

@@ -34,6 +34,9 @@ variables:
   enforce_tool_schema_check:
     value: true
     description: Default enforce_tool_schema_check to true
+  auto_inject_handoff:
+    value: true
+    description: Default auto_inject_handoff to true (populate full_session_summary/compact_session_summary template vars on session start)
   servers_listed:
     value: false
     description: Default servers_listed to false

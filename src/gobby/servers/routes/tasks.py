@@ -117,7 +117,7 @@ class DependencyAddRequest(BaseModel):
 
 def create_tasks_router(server: "HTTPServer") -> APIRouter:
     """Create tasks router with endpoints bound to server instance."""
-    router = APIRouter(prefix="/tasks", tags=["tasks"])
+    router = APIRouter(prefix="/api/tasks", tags=["tasks"])
     metrics = get_metrics_collector()
 
     def _resolve_project(project_id: str | None) -> str:

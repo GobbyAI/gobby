@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import pytest
-
-pytestmark = pytest.mark.unit
 from pydantic import ValidationError
 
 from gobby.config.persistence import MemoryConfig
 
+pytestmark = pytest.mark.unit
+
 
 def test_qdrant_path_defaults_to_none() -> None:
-    """qdrant_path should default to None (runner sets ~/.gobby/qdrant/)."""
+    """qdrant_path should default to None."""
     config = MemoryConfig()
     assert config.qdrant_path is None
 
@@ -42,8 +42,8 @@ def test_qdrant_url_accepted() -> None:
 
 def test_qdrant_api_key_accepts_env_var_syntax() -> None:
     """qdrant_api_key should accept ${ENV_VAR} syntax."""
-    config = MemoryConfig(qdrant_api_key="${QDRANT_API_KEY}")
-    assert config.qdrant_api_key == "${QDRANT_API_KEY}"
+    config = MemoryConfig(qdrant_api_key="${qdrant_api_key}")
+    assert config.qdrant_api_key == "${qdrant_api_key}"
 
 
 def test_qdrant_path_and_url_mutual_exclusivity() -> None:

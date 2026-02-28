@@ -674,9 +674,7 @@ def sync_bundled_variables(db: DatabaseProtocol) -> dict[str, Any]:
 
             variables_dict = data.get("variables")
             if not isinstance(variables_dict, dict):
-                logger.debug(
-                    "No 'variables' key in YAML, skipping", extra={"file": str(yaml_file)}
-                )
+                logger.debug("No 'variables' key in YAML, skipping", extra={"file": str(yaml_file)})
                 result["skipped"] += 1
                 continue
 
@@ -700,9 +698,7 @@ def sync_bundled_variables(db: DatabaseProtocol) -> dict[str, Any]:
                         result=result,
                     )
                 except Exception as e:
-                    error_msg = (
-                        f"Failed to sync variable '{var_name}' from {yaml_file.name}: {e}"
-                    )
+                    error_msg = f"Failed to sync variable '{var_name}' from {yaml_file.name}: {e}"
                     logger.warning(error_msg)
                     result["errors"].append(error_msg)
 
@@ -796,9 +792,7 @@ def _sync_single_variable(
                     source="template",
                     tags=file_tags,
                 )
-                logger.info(
-                    "Restored soft-deleted bundled variable", extra={"variable": var_name}
-                )
+                logger.info("Restored soft-deleted bundled variable", extra={"variable": var_name})
                 result["updated"] += 1
             else:
                 result["skipped"] += 1

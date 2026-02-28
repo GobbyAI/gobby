@@ -158,29 +158,6 @@ class TestTaskValidator:
         assert result.status == "pending"  # JSON decode error caught
         assert "failed" in result.feedback
 
-    @pytest.mark.asyncio
-    async def test_generate_criteria_success(self, config, mock_llm):
-        validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = "- Criterion 1"
-
-        criteria = await validator.generate_criteria("Title", "Desc")
-        assert criteria == "- Criterion 1"
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_disabled(self, mock_llm):
-        config = TaskValidationConfig(enabled=False)
-        validator = TaskValidator(config, mock_llm)
-        assert await validator.generate_criteria("Title") is None
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_error(self, config, mock_llm):
-        validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.side_effect = Exception("Error")
-
-        assert await validator.generate_criteria("Title") is None
-
 
 class TestGetRecentCommits:
     """Tests for get_recent_commits function."""
@@ -676,20 +653,6 @@ class TestTaskValidatorEdgeCases:
         # Should still succeed - error is logged but validation proceeds
         assert result.status == "valid"
 
-    @pytest.mark.asyncio
-    async def test_generate_criteria_no_description(self, config, mock_llm):
-        """Test criteria generation with no description."""
-        validator = TaskValidator(config, mock_llm)
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.return_value = "- Check implementation\n- Run tests"
-
-        result = await validator.generate_criteria("Implement feature")
-
-        assert result is not None
-        call_args = mock_provider.generate_text.call_args
-        prompt = call_args.kwargs["prompt"]
-        assert "(no description)" in prompt
-
 
 class TestTaskValidatorLLMErrors:
     """Tests for LLM error handling in TaskValidator."""
@@ -755,18 +718,6 @@ class TestTaskValidatorLLMErrors:
 
         assert result.status == "pending"
         assert "failed" in result.feedback.lower()
-
-    @pytest.mark.asyncio
-    async def test_generate_criteria_llm_timeout(self, config, mock_llm):
-        """Test criteria generation when LLM times out."""
-
-        mock_provider = mock_llm.get_provider.return_value
-        mock_provider.generate_text.side_effect = TimeoutError()
-        validator = TaskValidator(config, mock_llm)
-
-        result = await validator.generate_criteria("Test Task", "Description")
-
-        assert result is None
 
 
 class TestGatherValidationContext:

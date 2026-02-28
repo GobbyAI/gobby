@@ -267,9 +267,14 @@ class MemoryBackupManager:
         count = 0
         skipped = 0
         try:
-            for line in lines:
+            for line_num, line in enumerate(lines, 1):
                 try:
                     data = json.loads(line)
+
+                    if not self._validate_memory_record(data, line_num):
+                        skipped += 1
+                        continue
+
                     content = data.get("content", "")
 
                     # Skip if memory with identical content already exists
@@ -299,6 +304,40 @@ class MemoryBackupManager:
             logger.debug(f"Skipped {skipped} duplicate memories during import")
 
         return count
+
+    def _validate_memory_record(self, data: dict[str, Any], line_num: int) -> bool:
+        """Validate a memory record before import.
+
+        Checks that required fields are present and well-formed. Auto-converts
+        comma-delimited tag strings to lists.
+
+        Args:
+            data: Parsed JSON record from JSONL line.
+            line_num: 1-based line number for log messages.
+
+        Returns:
+            True if valid (possibly after auto-fix), False if should be skipped.
+        """
+        # Verify content exists and is a non-empty string
+        content = data.get("content")
+        if not isinstance(content, str) or not content.strip():
+            logger.warning("Skipping memory at line %d: missing or empty content", line_num)
+            return False
+
+        # Verify tags is a list; auto-convert comma-delimited strings
+        tags = data.get("tags")
+        if tags is not None and not isinstance(tags, list):
+            if isinstance(tags, str):
+                logger.warning(
+                    "Auto-converting comma-delimited tags string to list at line %d",
+                    line_num,
+                )
+                data["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+            else:
+                logger.warning("Skipping memory at line %d: tags is not a list", line_num)
+                return False
+
+        return True
 
     def _sanitize_content(self, content: str) -> str:
         """Replace user home directories with ~ for privacy.

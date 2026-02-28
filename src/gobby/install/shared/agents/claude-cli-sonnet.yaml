@@ -1,8 +1,8 @@
 name: claude-cli-sonnet
 description: Claude Sonnet agent for interactive terminal use
-role: You are a helpful assistant
 provider: claude
 model: sonnet
 mode: terminal
 timeout: 120.0
 max_turns: 30
+instructions: You are a helpful assistant

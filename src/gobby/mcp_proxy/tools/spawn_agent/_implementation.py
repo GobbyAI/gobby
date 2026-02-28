@@ -117,27 +117,41 @@ async def spawn_agent_impl(
         Dict with success status, run_id, child_session_id, isolation metadata
     """
     # 1. Merge config: agent_body defaults < params
-    effective_isolation = isolation
-    if effective_isolation is None and agent_body:
-        effective_isolation = agent_body.isolation
-    if effective_isolation in (None, "inherit"):
-        effective_isolation = "none"
+    _raw_isolation: str | None = isolation
+    if _raw_isolation is None and agent_body:
+        _raw_isolation = agent_body.isolation
+    if _raw_isolation in (None, "inherit"):
+        _raw_isolation = "none"
+    effective_isolation: Literal["none", "worktree", "clone"] = (
+        _raw_isolation if _raw_isolation in ("none", "worktree", "clone") else "none"  # type: ignore[assignment]
+    )
 
-    effective_provider = provider
+    effective_provider: str = provider or "claude"
+    if effective_provider == "inherit":
+        effective_provider = "claude"
     if effective_provider is None and agent_body:
         effective_provider = agent_body.provider
     if effective_provider in (None, "inherit"):
         effective_provider = "claude"
 
-    effective_mode: Literal["terminal", "embedded", "headless", "self", "inherit"] | None = mode
-    if effective_mode is None and agent_body:
-        effective_mode = agent_body.mode
-    if effective_mode in (None, "inherit"):
-        effective_mode = "self"
+    _raw_mode: str | None = mode
+    if _raw_mode is None and agent_body:
+        _raw_mode = agent_body.mode
+    if _raw_mode in (None, "inherit"):
+        _raw_mode = "self"
+    effective_mode: Literal["terminal", "embedded", "headless", "self"] = (
+        _raw_mode if _raw_mode in ("terminal", "embedded", "headless", "self") else "self"  # type: ignore[assignment]
+    )
 
     effective_model = model
     if effective_model is None and agent_body:
         effective_model = agent_body.model
+
+    effective_timeout = timeout
+    if effective_timeout is None and agent_body and agent_body.timeout:
+        effective_timeout = agent_body.timeout
+    if effective_timeout == 0:
+        effective_timeout = None  # 0 means no timeout
 
     effective_workflow = workflow
 
@@ -198,7 +212,8 @@ async def spawn_agent_impl(
                 project_path=project_path,
             )
         else:
-            assert agent_body is not None
+            if agent_body is None:
+                return {"success": False, "error": "Agent body is required for self-persona mode"}
             return await _handle_self_persona(
                 agent_body=agent_body,
                 agent_name=agent_lookup_name or agent_body.name,
@@ -422,6 +437,8 @@ async def spawn_agent_impl(
             provider=effective_provider,
             workflow_name=effective_workflow,
             worktree_id=isolation_ctx.worktree_id,
+            clone_id=isolation_ctx.clone_id,
+            timeout_seconds=effective_timeout,
         )
     )
 
@@ -446,6 +463,8 @@ async def spawn_agent_impl(
                 provider=effective_provider,
                 workflow_name=effective_workflow,
                 worktree_id=isolation_ctx.worktree_id,
+                clone_id=isolation_ctx.clone_id,
+                timeout_seconds=effective_timeout,
             )
         )
         try:

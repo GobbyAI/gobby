@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useWebSocketEvent } from './useWebSocketEvent'
 
 export interface RuleSummary {
   id: string
@@ -231,10 +232,28 @@ export function useRules() {
   }, [rules])
 
   // Auto-fetch on mount
+  const debounceRef = useRef<number | null>(null)
+  
   useEffect(() => {
     setIsLoading(true)
     Promise.all([fetchRules(), fetchGroups()]).finally(() => setIsLoading(false))
+    
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current)
+    }
   }, [fetchRules, fetchGroups])
+
+  // Real-time updates via WebSocket
+  useWebSocketEvent(
+    'workflow_event',
+    useCallback(() => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current)
+      debounceRef.current = window.setTimeout(() => {
+        fetchRules()
+        fetchGroups()
+      }, 500)
+    }, [fetchRules, fetchGroups]),
+  )
 
   return {
     rules,

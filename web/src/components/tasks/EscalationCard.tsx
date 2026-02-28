@@ -166,7 +166,7 @@ export function EscalationCard({ task, onResolve }: EscalationCardProps) {
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(
-        `${baseUrl}/tasks/${encodeURIComponent(task.id)}/de-escalate`,
+        `${baseUrl}/api/tasks/${encodeURIComponent(task.id)}/de-escalate`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

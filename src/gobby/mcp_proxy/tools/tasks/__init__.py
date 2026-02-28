@@ -9,11 +9,10 @@ Public API:
 
 Internal (exported for test compatibility):
     - SKIP_REASONS: Reasons that skip validation on close
-    - _infer_category: Infer task category from title/description
 """
 
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
-from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS, _infer_category
+from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 
 __all__ = [
@@ -21,5 +20,4 @@ __all__ = [
     "resolve_task_id_for_mcp",
     # Internal exports for backward compatibility
     "SKIP_REASONS",
-    "_infer_category",
 ]

@@ -867,3 +867,157 @@
   padding: 4px 8px;
   z-index: 10;
 }
+
+/* ==========================================================================
+   Knowledge Graph (3D)
+   ========================================================================== */
+
+.knowledge-graph-container {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.knowledge-graph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  min-height: 400px;
+}
+
+.knowledge-graph-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 10;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.knowledge-graph-ctrl-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: calc(var(--font-size-base) * 0.85);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s;
+}
+
+.knowledge-graph-ctrl-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.knowledge-graph-ctrl-btn.active {
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+.knowledge-graph-ctrl-btn.active:hover {
+  background: var(--accent-hover, var(--accent));
+  color: var(--bg-primary);
+}
+
+.knowledge-graph-ctrl-label {
+  font-size: calc(var(--font-size-base) * 0.7);
+  color: var(--text-muted);
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-graph-legend {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 10;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: calc(var(--font-size-base) * 0.7);
+  color: var(--text-muted);
+}
+
+.knowledge-graph-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.knowledge-graph-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.knowledge-graph-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 300px;
+  color: var(--text-muted);
+  gap: 0.5rem;
+}
+
+.knowledge-graph-info {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: calc(var(--font-size-base) * 0.7);
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  z-index: 10;
+}
+
+.knowledge-graph-search {
+  position: absolute;
+  top: 36px;
+  left: 8px;
+  z-index: 10;
+}
+
+.knowledge-graph-edge-label {
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   Error Toast
+   ========================================================================== */
+
+.memory-error-toast {
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  z-index: 1000;
+  background: #dc2626;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: calc(var(--font-size-base) * 0.85);
+  cursor: pointer;
+  animation: fadeIn 0.2s ease;
+}

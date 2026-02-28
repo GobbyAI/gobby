@@ -4,6 +4,7 @@ import hashlib
 import logging
 import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,21 @@ if TYPE_CHECKING:
     from gobby.workflows.definitions import WorkflowState
 
 _derive_logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentActivationResult:
+    """Result of activating the default agent for a session."""
+
+    context: str | None  # AI-only: preamble + formatted skills
+    agent_name: str
+    description: str | None
+    role: str | None
+    goal: str | None
+    rules_count: int
+    skills_count: int
+    variables_count: int
+    injected_skill_names: list[str]  # skills with format "full" or "content"
 
 
 class SessionEventHandlerMixin(EventHandlersBase):
@@ -192,7 +208,11 @@ class SessionEventHandlerMixin(EventHandlersBase):
         workflow_name = input_data.get("workflow_name")
         agent_depth = input_data.get("agent_depth")
 
-        if not parent_session_id and session_source == "clear" and self._session_storage:
+        if (
+            not parent_session_id
+            and session_source in ("clear", "compact")
+            and self._session_storage
+        ):
             try:
                 parent = self._session_storage.find_parent(
                     machine_id=machine_id,
@@ -244,11 +264,14 @@ class SessionEventHandlerMixin(EventHandlersBase):
             self._auto_activate_workflow(workflow_name, session_id, cwd)
 
         # Step 2d: Deep load default agent (rules, skills, variables) for new session
+        agent_result: AgentActivationResult | None = None
         if session_id:
             try:
                 agent_override = input_data.get("agent_name_override")
-                self._activate_default_agent(
-                    session_id, cli_source, project_id,
+                agent_result = self._activate_default_agent(
+                    session_id,
+                    cli_source,
+                    project_id,
                     agent_name_override=agent_override,
                 )
             except Exception as e:
@@ -275,10 +298,38 @@ class SessionEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning(f"Failed to register session with message processor: {e}")
 
-        # Build additional context (task context)
-        # Note: Skill injection is handled by _activate_default_agent() which sets
-        # _active_skill_names as a session variable for the rule engine.
+        # Build additional context (agent AI context + task context)
         additional_context: list[str] = []
+        if agent_result and agent_result.context:
+            additional_context.append(agent_result.context)
+
+        # Populate handoff session variables for inject_context rule templates
+        if parent_session_id and session_id and self._session_storage:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            sv_mgr = SessionVariableManager(self._session_storage.db)
+            current_vars = sv_mgr.get_variables(session_id)
+            if current_vars.get("auto_inject_handoff", True):
+                parent = self._session_storage.get(parent_session_id)
+                if parent:
+                    handoff_vars: dict[str, Any] = {}
+                    if session_source == "clear" and parent.summary_markdown:
+                        handoff_vars["full_session_summary"] = parent.summary_markdown
+                    elif session_source == "compact" and parent.compact_markdown:
+                        handoff_vars["compact_session_summary"] = parent.compact_markdown
+                    if handoff_vars:
+                        sv_mgr.merge_variables(session_id, handoff_vars)
+
+        # Populate task_context session variable for inject_context rule templates
+        if event.task_id and session_id and self._session_storage:
+            task_title = event.metadata.get("_task_title", "Unknown Task")
+            task_context_str = f"You are working on task: {task_title} ({event.task_id})"
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            SessionVariableManager(self._session_storage.db).merge_variables(
+                session_id, {"task_context": task_context_str}
+            )
+
         if event.task_id:
             task_title = event.metadata.get("_task_title", "Unknown Task")
             additional_context.append("\n## Active Task Context\n")
@@ -299,6 +350,8 @@ class SessionEventHandlerMixin(EventHandlersBase):
             task_id=event.task_id,
             additional_context=additional_context,
             terminal_context=terminal_context,
+            agent_info=agent_result,
+            session_source=session_source,
         )
 
     def handle_session_end(self, event: HookEvent) -> HookResponse:
@@ -379,6 +432,14 @@ class SessionEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.debug(f"Failed to notify pane monitor for session {session_id}: {e}")
 
+        # Mark session as handoff_ready so the next session (via /clear or /compact)
+        # can find this session as its parent via find_parent(status="handoff_ready")
+        if session_id and self._session_storage:
+            try:
+                self._session_storage.update_status(session_id, "handoff_ready")
+            except Exception as e:
+                self.logger.warning(f"Failed to mark session as handoff_ready: {e}")
+
         return HookResponse(decision="allow")
 
     def _handle_pre_created_session(
@@ -451,6 +512,8 @@ class SessionEventHandlerMixin(EventHandlersBase):
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
+                if self._session_storage is None:
+                    raise RuntimeError("session_storage unavailable")
                 sv_mgr = SessionVariableManager(self._session_storage.db)
                 sv = sv_mgr.get_variables(session_id)
                 if sv:
@@ -466,11 +529,15 @@ class SessionEventHandlerMixin(EventHandlersBase):
             )
 
         # Deep load default agent (rules, skills, variables) for pre-created session
+        agent_result: AgentActivationResult | None = None
+        input_data = event.data if event else {}
         try:
-            self._activate_default_agent(
+            agent_override = input_data.get("agent_name_override")
+            agent_result = self._activate_default_agent(
                 session_id,
                 cli_source,
                 existing_session.project_id,
+                agent_name_override=agent_override,
             )
         except Exception as e:
             self.logger.error(
@@ -490,6 +557,11 @@ class SessionEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning(f"Failed to register with message processor: {e}")
 
+        # Build additional context (agent AI context)
+        additional_context: list[str] = []
+        if agent_result and agent_result.context:
+            additional_context.append(agent_result.context)
+
         return self._compose_session_response(
             session=existing_session,
             session_id=session_id,
@@ -498,7 +570,9 @@ class SessionEventHandlerMixin(EventHandlersBase):
             machine_id=machine_id,
             project_id=existing_session.project_id,
             task_id=event.task_id,
+            additional_context=additional_context,
             is_pre_created=True,
+            agent_info=agent_result,
         )
 
     def _activate_default_agent(
@@ -507,7 +581,7 @@ class SessionEventHandlerMixin(EventHandlersBase):
         cli_source: str,
         project_id: str | None,
         agent_name_override: str | None = None,
-    ) -> None:
+    ) -> AgentActivationResult | None:
         """Deep load the default agent and merge its properties into the session.
 
         Args:
@@ -518,7 +592,7 @@ class SessionEventHandlerMixin(EventHandlersBase):
                 the config store default. Used by web chat agent selection.
         """
         if not self._session_manager or not self._session_storage:
-            return
+            return None
 
         if agent_name_override:
             default_agent_name = agent_name_override
@@ -528,7 +602,7 @@ class SessionEventHandlerMixin(EventHandlersBase):
             config_store = ConfigStore(self._session_storage.db)
             default_agent_name = config_store.get("default_agent") or "default"
         if default_agent_name == "none":
-            return
+            return None
 
         from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
@@ -538,11 +612,11 @@ class SessionEventHandlerMixin(EventHandlersBase):
             )
         except AgentResolutionError as e:
             self.logger.error(f"Failed to resolve default agent '{default_agent_name}': {e}")
-            return
+            return None
 
         if not agent_body:
             self.logger.debug(f"Default agent '{default_agent_name}' not found in DB")
-            return
+            return None
 
         from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
@@ -577,7 +651,11 @@ class SessionEventHandlerMixin(EventHandlersBase):
             changes["_skill_format"] = agent_body.workflows.skill_format
 
         if agent_body.workflows and agent_body.workflows.variables:
-            changes.update(agent_body.workflows.variables)
+            for key, value in agent_body.workflows.variables.items():
+                if key.startswith("_"):
+                    self.logger.warning("Skipping reserved variable %r from agent definition", key)
+                    continue
+                changes[key] = value
 
         import json
 
@@ -592,11 +670,73 @@ class SessionEventHandlerMixin(EventHandlersBase):
                     if var_row.name not in changes:
                         changes[var_row.name] = var_body.get("value")
                 except json.JSONDecodeError:
-                    pass
+                    self.logger.debug("Failed to parse variable definition for %s", var_row.name)
 
         from gobby.workflows.state_manager import SessionVariableManager
 
         SessionVariableManager(self._session_storage.db).merge_variables(session_id, changes)
+
+        # --- Build injection context ---
+        context_parts: list[str] = []
+
+        # 1. Agent preamble (role, goal, personality, instructions)
+        preamble = agent_body.build_prompt_preamble()
+        if preamble:
+            context_parts.append(preamble)
+
+        # 2. Resolved skills (agent's skill_selectors + audience filtering)
+        from gobby.hooks.skill_manager import _db_skill_to_parsed
+        from gobby.skills.injector import AgentContext, SkillInjector, SkillProfile
+
+        eligible = (
+            all_skills
+            if active_skills is None
+            else [s for s in all_skills if s.name in active_skills]
+        )
+        parsed = [_db_skill_to_parsed(s) for s in eligible if s.enabled]
+        skills_count = 0
+        injected_names: list[str] = []
+
+        if parsed:
+            agent_ctx = AgentContext(
+                agent_depth=0, has_human=True, agent_type="interactive", source=cli_source
+            )
+            profile = None
+            if agent_body.workflows and agent_body.workflows.skill_format:
+                profile = SkillProfile(default_format=agent_body.workflows.skill_format)
+
+            selected = SkillInjector().select_skills(parsed, agent_ctx, profile=profile)
+            skills_count = len(selected)
+            if selected:
+                injected_names = [
+                    skill.name for skill, fmt in selected if fmt in ("full", "content")
+                ]
+                from gobby.workflows.context_actions import _format_skills_with_formats
+
+                formatted = _format_skills_with_formats(selected)
+                if formatted:
+                    context_parts.append(formatted)
+
+        # Count variables (exclude internal keys)
+        internal_keys = {
+            "_agent_type",
+            "_active_rule_names",
+            "_active_skill_names",
+            "_skill_format",
+        }
+        variables_count = len([k for k in changes if k not in internal_keys])
+
+        return AgentActivationResult(
+            context="\n\n".join(context_parts) if context_parts else None,
+            agent_name=agent_body.name,
+            description=agent_body.description,
+            role=agent_body.role,
+            goal=agent_body.goal,
+            rules_count=len(active_rules),
+            skills_count=skills_count,
+            variables_count=variables_count,
+            injected_skill_names=injected_names,
+        )
 
     def _get_step_workflow_state(self, session_id: str) -> WorkflowState | None:
         """Get the active step workflow state for a session.
@@ -630,6 +770,8 @@ class SessionEventHandlerMixin(EventHandlersBase):
         additional_context: list[str] | None = None,
         is_pre_created: bool = False,
         terminal_context: dict[str, Any] | None = None,
+        agent_info: AgentActivationResult | None = None,
+        session_source: str | None = None,
     ) -> HookResponse:
         """Build HookResponse for session start.
 
@@ -647,6 +789,7 @@ class SessionEventHandlerMixin(EventHandlersBase):
             additional_context: Additional context strings to append (e.g., task/skill context)
             is_pre_created: Whether this is a pre-created session
             terminal_context: Terminal context dict to add to metadata
+            session_source: Session source (e.g., "clear", "compact", "startup") for handoff indicator
 
         Returns:
             HookResponse with system_message, context, and metadata
@@ -663,29 +806,76 @@ class SessionEventHandlerMixin(EventHandlersBase):
         if session and session.seq_num:
             session_ref = f"#{session.seq_num}"
 
-        # Build system message (terminal display only)
-        if session_ref and session_ref != session_id:
-            system_message = f"\nGobby Session ID: {session_ref}"
-        else:
-            system_message = f"\nGobby Session ID: {session_id}"
+        # Build system message (terminal display)
+        # Session ID: prefer #N, fallback to UUID only when no seq_num
+        system_message = f"\nGobby Session ID: {session_ref}"
         system_message += " <- Use this for MCP tool calls (session_id parameter)"
+
+        # Parent Session ID (before External ID, with handoff indicator)
+        if parent_session_id and self._session_storage:
+            try:
+                parent = self._session_storage.get(parent_session_id)
+                if parent:
+                    parent_ref = f"#{parent.seq_num}" if parent.seq_num else parent_session_id
+                    # Handoff indicator based on session_source
+                    indicator = ""
+                    if session_source == "clear":
+                        indicator = " (Handoff)" if parent.summary_markdown else " (No Handoff)"
+                    elif session_source == "compact":
+                        indicator = " (Handoff)" if parent.compact_markdown else " (No Handoff)"
+                    system_message += f"\nParent Session ID: {parent_ref}{indicator}"
+                else:
+                    system_message += f"\nParent Session ID: {parent_session_id}"
+            except Exception:
+                system_message += f"\nParent Session ID: {parent_session_id}"
+
         system_message += f"\nExternal ID: {external_id} (CLI-native, rarely needed)"
 
-        # Add active step workflows from WorkflowStateManager
-        active_workflow_lines: list[str] = []
+        # Task (only if exists, as #N ref)
+        if task_id and self._task_manager:
+            try:
+                task = self._task_manager.get_task(task_id, project_id=project_id)
+                if task and task.seq_num:
+                    system_message += f"\nTask: #{task.seq_num}"
+                else:
+                    system_message += f"\nTask: {task_id}"
+            except Exception:
+                system_message += f"\nTask: {task_id}"
+
+        # Agent info (only if agent loaded — absence signals activation failure)
+        if agent_info:
+            # Agent name with optional description
+            agent_line = f"\nAgent: {agent_info.agent_name}"
+            if agent_info.description:
+                agent_line += f" — {agent_info.description}"
+            system_message += agent_line
+
+            # Build tree nodes: role, goal, rules, variables, skills
+            tree_nodes: list[str] = []
+            if agent_info.role:
+                tree_nodes.append(f"Role: {agent_info.role}")
+            if agent_info.goal:
+                tree_nodes.append(f"Goal: {agent_info.goal}")
+            tree_nodes.append(f"Rules: {agent_info.rules_count}")
+            tree_nodes.append(f"Variables: {agent_info.variables_count}")
+            # Skills is always last (may have sub-node)
+            skills_label = f"Skills: {agent_info.skills_count}"
+
+            for node in tree_nodes:
+                system_message += f"\n├─ {node}"
+            if agent_info.injected_skill_names:
+                system_message += f"\n└─ {skills_label}"
+                system_message += f"\n   └─ Injected: {', '.join(agent_info.injected_skill_names)}"
+            else:
+                system_message += f"\n└─ {skills_label}"
+
+        # Workflow (only if active step workflow)
         if session_id:
             state = self._get_step_workflow_state(session_id)
-            if state:
-                is_lifecycle = state.workflow_name in ("__lifecycle__", "__ended__")
-                if not is_lifecycle:
-                    active_workflow_lines.append(
-                        f"  - {state.workflow_name} (step, current_step={state.step})"
-                    )
-
-        if active_workflow_lines:
-            system_message += "\nActive workflows:"
-            for line in active_workflow_lines:
-                system_message += f"\n{line}"
+            if state and state.workflow_name not in ("__lifecycle__", "__ended__"):
+                system_message += (
+                    f"\nWorkflow: {state.workflow_name} (step, current_step={state.step})"
+                )
 
         # Build metadata
         metadata: dict[str, Any] = {

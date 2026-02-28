@@ -449,23 +449,30 @@ class HookManager:
         try:
             workflow_response = self._workflow_handler.handle(event)
 
-            # If workflow blocks or asks, return immediately
+            # Extract and dispatch mcp_calls BEFORE the block check —
+            # they're explicit side effects that should fire regardless of decision
+            mcp_calls = (workflow_response.metadata or {}).get("mcp_calls", [])
+            self.logger.info(
+                "Rule evaluation for %s: decision=%s, mcp_calls=%d",
+                event.event_type,
+                workflow_response.decision,
+                len(mcp_calls),
+            )
+
+            if mcp_calls:
+                self._dispatch_mcp_calls(mcp_calls, event)
+
             if workflow_response.decision != "allow":
-                self.logger.info(f"Workflow blocked/modified event: {workflow_response.decision}")
+                self.logger.info("Workflow blocked/modified event: %s", workflow_response.decision)
                 return None, workflow_response
 
             # Capture context to merge later
             workflow_context = workflow_response.context if workflow_response.context else None
 
-            # Dispatch mcp_call effects (fire-and-forget for background calls)
-            mcp_calls = (workflow_response.metadata or {}).get("mcp_calls", [])
-            if mcp_calls:
-                self._dispatch_mcp_calls(mcp_calls, event)
-
             return workflow_context, None
 
         except Exception as e:
-            self.logger.error(f"Workflow evaluation failed: {e}", exc_info=True)
+            self.logger.error("Workflow evaluation failed: %s", e, exc_info=True)
             # Fail-open for workflow errors
             return None, None
 
@@ -627,6 +634,12 @@ class HookManager:
             self.logger.debug("_dispatch_mcp_calls: no tool_proxy_getter, skipping")
             return
 
+        self.logger.info(
+            "_dispatch_mcp_calls: dispatching %d calls for %s",
+            len(mcp_calls),
+            event.event_type,
+        )
+
         # Capture in local so mypy narrows past the None guard for closures
         _get_proxy = self.tool_proxy_getter
 
@@ -640,6 +653,8 @@ class HookManager:
                 self.logger.warning("_dispatch_mcp_calls: missing server or tool in %s", call)
                 continue
 
+            self.logger.info("_dispatch_mcp_calls: %s/%s (background=%s)", server, tool, background)
+
             # Inject event context into arguments
             if "session_id" not in arguments:
                 arguments["session_id"] = event.metadata.get("_platform_session_id", "")
@@ -652,7 +667,14 @@ class HookManager:
                     if not proxy:
                         self.logger.warning("_dispatch_mcp_calls: tool_proxy_getter returned None")
                         return
-                    await proxy.call_tool(s, t, args)
+                    result = await proxy.call_tool(s, t, args, strip_unknown=True)
+                    if isinstance(result, dict) and result.get("success") is False:
+                        self.logger.warning(
+                            "_dispatch_mcp_calls: %s/%s returned failure: %s",
+                            s,
+                            t,
+                            result.get("error", "unknown"),
+                        )
                 except Exception as exc:
                     self.logger.error(
                         "_dispatch_mcp_calls: %s/%s failed: %s", s, t, exc, exc_info=True
@@ -677,8 +699,6 @@ class HookManager:
                                 e,
                             )
                     else:
-                        # No running event loop (e.g. hook manager subprocess) —
-                        # run synchronously via asyncio.run()
                         try:
                             asyncio.run(coro)
                         except Exception as e:
@@ -689,34 +709,28 @@ class HookManager:
                                 e,
                             )
             else:
-                # Blocking dispatch with timeout
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(coro)
-                except RuntimeError:
-                    if self._loop and self._loop.is_running():
-                        try:
-                            future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-                            future.result(timeout=30)
-                        except Exception as e:
-                            self.logger.error(
-                                "_dispatch_mcp_calls: blocking %s/%s failed: %s",
-                                server,
-                                tool,
-                                e,
-                            )
-                    else:
-                        # No running event loop (e.g. hook manager subprocess) —
-                        # run synchronously via asyncio.run()
-                        try:
-                            asyncio.run(coro)
-                        except Exception as e:
-                            self.logger.error(
-                                "_dispatch_mcp_calls: blocking %s/%s failed: %s",
-                                server,
-                                tool,
-                                e,
-                            )
+                # Blocking dispatch — must await completion, not fire-and-forget
+                if self._loop and self._loop.is_running():
+                    try:
+                        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+                        future.result(timeout=30)
+                    except Exception as e:
+                        self.logger.error(
+                            "_dispatch_mcp_calls: blocking %s/%s failed: %s",
+                            server,
+                            tool,
+                            e,
+                        )
+                else:
+                    try:
+                        asyncio.run(coro)
+                    except Exception as e:
+                        self.logger.error(
+                            "_dispatch_mcp_calls: blocking %s/%s failed: %s",
+                            server,
+                            tool,
+                            e,
+                        )
 
     def shutdown(self) -> None:
         """

@@ -153,7 +153,7 @@ async def main() -> int:
     try:
         async with httpx.AsyncClient() as client:
             await client.post(
-                f"{daemon_url}/hooks/execute",
+                f"{daemon_url}/api/hooks/execute",
                 json={
                     "hook_type": "AgentTurnComplete",
                     "input_data": input_data,

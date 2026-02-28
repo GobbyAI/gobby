@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useWebSocketEvent } from './useWebSocketEvent'
 
 // =============================================================================
 // Types
@@ -109,17 +110,10 @@ interface UpdateTaskParams {
 // Helpers
 // =============================================================================
 
-const POLL_INTERVAL_MS = 5000
-const WS_RECONNECT_MS = 3000
 const REFETCH_DEBOUNCE_MS = 500
 
 function getBaseUrl(): string {
   return ''
-}
-
-function getWsUrl(): string {
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${wsProtocol}//${window.location.host}/ws`
 }
 
 // =============================================================================
@@ -141,7 +135,6 @@ export function useTasks() {
   })
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const pollRef = useRef<number | null>(null)
 
   // Fetch tasks list
   const fetchTasks = useCallback(async () => {
@@ -159,7 +152,7 @@ export function useTasks() {
       if (filters.search) params.set('search', filters.search)
       if (filters.projectId) params.set('project_id', filters.projectId)
 
-      const response = await fetch(`${baseUrl}/tasks?${params}`)
+      const response = await fetch(`${baseUrl}/api/tasks?${params}`)
       if (response.ok) {
         const data: TaskListResponse = await response.json()
         setTasks(data.tasks || [])
@@ -181,7 +174,7 @@ export function useTasks() {
   const getTask = useCallback(async (taskId: string): Promise<GobbyTaskDetail | null> => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`)
+      const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}`)
       if (response.ok) {
         return await response.json()
       }
@@ -196,7 +189,7 @@ export function useTasks() {
     async (params: CreateTaskParams): Promise<GobbyTaskDetail | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/tasks`, {
+        const response = await fetch(`${baseUrl}/api/tasks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -219,7 +212,7 @@ export function useTasks() {
     async (taskId: string, params: UpdateTaskParams): Promise<GobbyTaskDetail | null> => {
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+        const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(params),
@@ -243,7 +236,7 @@ export function useTasks() {
       try {
         const baseUrl = getBaseUrl()
         const response = await fetch(
-          `${baseUrl}/tasks/${encodeURIComponent(taskId)}/close`,
+          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/close`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -269,7 +262,7 @@ export function useTasks() {
       try {
         const baseUrl = getBaseUrl()
         const response = await fetch(
-          `${baseUrl}/tasks/${encodeURIComponent(taskId)}/reopen`,
+          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/reopen`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -296,7 +289,7 @@ export function useTasks() {
         const baseUrl = getBaseUrl()
         const params = cascade ? '?cascade=true' : ''
         const response = await fetch(
-          `${baseUrl}/tasks/${encodeURIComponent(taskId)}${params}`,
+          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}${params}`,
           { method: 'DELETE' }
         )
         if (response.ok) {
@@ -316,7 +309,7 @@ export function useTasks() {
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(
-        `${baseUrl}/tasks/${encodeURIComponent(taskId)}/dependencies?direction=both`
+        `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/dependencies?direction=both`
       )
       if (response.ok) {
         return await response.json()
@@ -332,7 +325,7 @@ export function useTasks() {
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(
-        `${baseUrl}/tasks?parent_task_id=${encodeURIComponent(taskId)}&limit=100`
+        `${baseUrl}/api/tasks?parent_task_id=${encodeURIComponent(taskId)}&limit=100`
       )
       if (response.ok) {
         const data: TaskListResponse = await response.json()
@@ -348,13 +341,9 @@ export function useTasks() {
   useEffect(() => {
     setIsLoading(true)
     fetchTasks()
-  }, [fetchTasks])
-
-  // Polling (fallback for when WebSocket is unavailable)
-  useEffect(() => {
-    pollRef.current = window.setInterval(fetchTasks, POLL_INTERVAL_MS)
+    
     return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current)
+      if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
     }
   }, [fetchTasks])
 
@@ -391,51 +380,14 @@ export function useTasks() {
     debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), REFETCH_DEBOUNCE_MS)
   }
 
-  useEffect(() => {
-    const wsUrl = getWsUrl()
-    let ws: WebSocket | null = null
-    let reconnectTimeout: number | null = null
-    let closed = false
-
-    function connect() {
-      if (closed) return
-      ws = new WebSocket(wsUrl)
-
-      ws.onopen = () => {
-        ws!.send(JSON.stringify({ type: 'subscribe', events: ['task_event'] }))
-      }
-
-      ws.onmessage = (evt) => {
-        try {
-          const data = JSON.parse(evt.data)
-          if (data.type === 'task_event' && data.event && (data.task || data.task_id)) {
-            handleTaskEventRef.current(data.event, data.task || { id: data.task_id })
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
-
-      ws.onclose = () => {
-        if (!closed) {
-          reconnectTimeout = window.setTimeout(connect, WS_RECONNECT_MS)
-        }
-      }
-
-      ws.onerror = () => {
-        // onclose will fire after onerror
-      }
+  useWebSocketEvent('task_event', useCallback((data: Record<string, unknown>) => {
+    if (data.event && (data.task || data.task_id)) {
+      handleTaskEventRef.current(
+        data.event as string,
+        (data.task || { id: data.task_id }) as Record<string, unknown>,
+      )
     }
-
-    connect()
-
-    return () => {
-      closed = true
-      if (reconnectTimeout) window.clearTimeout(reconnectTimeout)
-      if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
-      if (ws) ws.close()
-    }
-  }, [])
+  }, []))
 
   const refreshTasks = useCallback(() => {
     setIsLoading(true)

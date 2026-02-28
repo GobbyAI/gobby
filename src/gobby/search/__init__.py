@@ -35,11 +35,11 @@ from gobby.search.embeddings import (
     generate_embeddings,
     is_embedding_available,
 )
-
-# Unified search (async with fallback)
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
 from gobby.search.protocol import SearchBackend, SearchResult, get_search_backend
 from gobby.search.tfidf import TFIDFSearcher
+
+# Unified search (async with fallback)
 from gobby.search.unified import UnifiedSearcher
 
 __all__ = [

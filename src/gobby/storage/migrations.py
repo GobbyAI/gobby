@@ -37,7 +37,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 128
+BASELINE_VERSION = 129
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v108) have been removed.
@@ -1313,6 +1313,54 @@ def _migrate_agent_body_schema_v2(db: LocalDatabase) -> None:
     logger.info(f"Migrated {updated}/{len(rows)} agent definition(s) to v2 schema")
 
 
+def _normalize_config_keys_lowercase(db: LocalDatabase) -> None:
+    """Normalize uppercase config_store keys to lowercase.
+
+    Follows the pattern from v127 (_normalize_secret_names_lowercase).
+    Normalizes keys like 'voice.ELEVENLABS_API_KEY' -> 'voice.elevenlabs_api_key'
+    and updates $secret: value references to match.
+    """
+    import re as _re
+
+    rows = db.fetchall("SELECT key, value, source, updated_at FROM config_store ORDER BY key")
+    if not rows:
+        return
+
+    migrated = 0
+    deleted = 0
+
+    with db.transaction() as conn:
+        for row in rows:
+            key = row["key"]
+            lower_key = key.lower()
+            if key == lower_key:
+                continue
+
+            # Check if lowercase version already exists
+            existing = db.fetchone("SELECT key FROM config_store WHERE key = ?", (lower_key,))
+
+            if existing:
+                # Lowercase already exists — delete the uppercase one
+                conn.execute("DELETE FROM config_store WHERE key = ?", (key,))
+                deleted += 1
+            else:
+                # Rename to lowercase; also lowercase $secret: references in value
+                value = row["value"]
+                if isinstance(value, str) and "$secret:" in value:
+                    value = _re.sub(
+                        r"\$secret:([A-Z_]+)",
+                        lambda m: f"$secret:{m.group(1).lower()}",
+                        value,
+                    )
+                conn.execute(
+                    "UPDATE config_store SET key = ?, value = ? WHERE key = ?",
+                    (lower_key, value, key),
+                )
+                migrated += 1
+
+    logger.info(f"Config key normalization: {migrated} lowercased, {deleted} duplicates removed")
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         108,
@@ -1455,6 +1503,11 @@ CREATE INDEX idx_skills_deleted_at ON skills(deleted_at)""",
         128,
         "Drop step_variables column from sessions (consolidated to session_variables table)",
         "ALTER TABLE sessions DROP COLUMN step_variables",
+    ),
+    (
+        129,
+        "Normalize config_store keys to lowercase",
+        _normalize_config_keys_lowercase,
     ),
 ]
 

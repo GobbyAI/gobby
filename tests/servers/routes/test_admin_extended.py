@@ -75,7 +75,7 @@ class TestAdminRoutesExtended:
         mock_litellm = MagicMock()
         mock_litellm.model_cost = mock_model_cost
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
-            response = client.get("/admin/models")
+            response = client.get("/api/admin/models")
 
         assert response.status_code == 200
         data = response.json()
@@ -114,7 +114,7 @@ class TestAdminRoutesExtended:
         mock_litellm = MagicMock()
         mock_litellm.model_cost = mock_model_cost
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
-            response = client.get("/admin/models?provider=gemini")
+            response = client.get("/api/admin/models?provider=gemini")
 
         assert response.status_code == 200
         data = response.json()
@@ -124,7 +124,7 @@ class TestAdminRoutesExtended:
 
     def test_reload_workflows_endpoint(self, client, mock_server) -> None:
         """Test POST /workflows/reload endpoint."""
-        response = client.post("/admin/workflows/reload")
+        response = client.post("/api/admin/workflows/reload")
         assert response.status_code == 200
         data = response.json()
 
@@ -144,7 +144,7 @@ class TestAdminRoutesExtended:
             mock_pm_instance.get.return_value = None
 
             payload = {"project_id": "proj-123", "name": "Test Project", "repo_path": "/tmp/test"}
-            response = client.post("/admin/test/register-project", json=payload)
+            response = client.post("/api/admin/test/register-project", json=payload)
             assert response.status_code == 200
             data = response.json()
 
@@ -166,7 +166,7 @@ class TestAdminRoutesExtended:
             "parent_session_id": "parent-test",
             "mode": "terminal",
         }
-        response = client.post("/admin/test/register-agent", json=payload)
+        response = client.post("/api/admin/test/register-agent", json=payload)
         assert response.status_code == 200
         data = response.json()
 
@@ -183,7 +183,7 @@ class TestAdminRoutesExtended:
         mock_registry.remove.return_value = mock_agent
         mock_get_registry.return_value = mock_registry
 
-        response = client.delete("/admin/test/unregister-agent/ar-test")
+        response = client.delete("/api/admin/test/unregister-agent/ar-test")
         assert response.status_code == 200
         data = response.json()
 
@@ -198,7 +198,7 @@ class TestAdminRoutesExtended:
             "output_tokens": 50,
             "total_cost_usd": 0.05,
         }
-        response = client.post("/admin/test/set-session-usage", json=payload)
+        response = client.post("/api/admin/test/set-session-usage", json=payload)
         assert response.status_code == 200
         data = response.json()
 

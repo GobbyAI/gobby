@@ -9,11 +9,11 @@ import { cn } from '../../lib/utils'
 
 interface ToolBrowserModalProps {
   filter: 'internal' | 'external'
-  onExecuteTool: (server: string, tool: string, args: Record<string, unknown>) => void
+  onSendMessage: (content: string, injectContext: string) => void
   onClose: () => void
 }
 
-export function ToolBrowserModal({ filter, onExecuteTool, onClose }: ToolBrowserModalProps) {
+export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowserModalProps) {
   const { servers, toolsByServer, fetchTools, fetchServers, fetchToolSchema, callTool, isLoading } = useMcp()
   const [search, setSearch] = useState('')
   const [selectedServer, setSelectedServer] = useState<string | null>(null)
@@ -88,13 +88,19 @@ export function ToolBrowserModal({ filter, onExecuteTool, onClose }: ToolBrowser
     try {
       const res = await callTool(selectedServer, selectedTool, formValues)
       setResult({ success: res.success, data: res.result, error: res.error })
-      onExecuteTool(selectedServer, selectedTool, formValues)
+      if (res.success) {
+        const resultStr = JSON.stringify(res.result, null, 2)
+        onSendMessage(
+          `Ran /${selectedServer}.${selectedTool}`,
+          resultStr,
+        )
+      }
     } catch (e) {
       setResult({ success: false, error: String(e) })
     } finally {
       setExecuting(false)
     }
-  }, [selectedServer, selectedTool, formValues, callTool, onExecuteTool])
+  }, [selectedServer, selectedTool, formValues, callTool, onSendMessage])
 
   const handleBack = useCallback(() => {
     setSelectedServer(null)

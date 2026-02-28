@@ -89,7 +89,7 @@ Colors extend from CSS variables — use Tailwind semantic names, not raw hex:
 
 Extended color map in `web/tailwind.config.ts`:
 
-```
+```text
 background  → var(--bg-primary)
 foreground  → var(--text-primary)
 muted       → var(--bg-tertiary)        muted-foreground → var(--text-secondary)
@@ -269,7 +269,7 @@ Do NOT add animation libraries (framer-motion, GSAP, etc.).
 
 ## File Organization
 
-```
+```text
 web/src/
 ├── components/           # PascalCase files
 │   ├── chat/ui/         # Shared UI primitives

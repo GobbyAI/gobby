@@ -4,7 +4,7 @@ Validation MCP tools for Gobby Task System.
 Extracted from tasks.py using Strangler Fig pattern.
 
 Exposes functionality for:
-- Task validation (validate_task, generate_validation_criteria)
+- Task validation (validate_task)
 - Validation status (get_validation_status, reset_validation_count)
 - Validation history (get_validation_history, get_recurring_issues, clear_validation_history)
 - De-escalation (de_escalate_task)
@@ -502,80 +502,6 @@ def create_validation_registry(
             "escalation_reason": updated_task.escalation_reason,
             "de_escalation_reason": reason,
             "validation_reset": reset_validation,
-        }
-
-    @registry.tool(
-        name="generate_validation_criteria",
-        description="Generate validation criteria for a task using AI. Updates the task with the generated criteria.",
-    )
-    async def generate_validation_criteria(task_id: str) -> dict[str, Any]:
-        """
-        Generate validation criteria for a task using AI.
-
-        For parent tasks (tasks with children), sets criteria to "All child tasks completed".
-        For leaf tasks, uses LLM to generate criteria from title/description.
-
-        Args:
-            task_id: Task reference: #N, N (seq_num), path (1.2.3), or UUID
-
-        Returns:
-            Generated criteria and updated task info
-        """
-        # Resolve task reference
-        try:
-            resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
-        except (TaskNotFoundError, ValueError) as e:
-            return {"success": False, "error": f"Invalid task_id: {e}"}
-
-        task = task_manager.get_task(resolved_task_id)
-        if not task:
-            return {"success": False, "error": f"Task not found: {task_id}"}
-
-        if task.validation_criteria:
-            return {
-                "success": True,
-                "task_id": task.id,
-                "validation_criteria": task.validation_criteria,
-                "generated": False,
-                "message": "Task already has validation criteria",
-            }
-
-        # Check if task has children (is a parent task)
-        children = task_manager.list_tasks(parent_task_id=task.id, limit=1)
-        criteria: str | None
-
-        if children:
-            # Parent task: criteria is child completion
-            criteria = "All child tasks must be completed (status: closed)."
-        else:
-            # Leaf task: use LLM to generate criteria
-            if not task_validator:
-                raise RuntimeError("Task validation is not enabled")
-
-            criteria = await task_validator.generate_criteria(
-                title=task.title,
-                description=task.description,
-                labels=task.labels,
-            )
-
-            if not criteria:
-                return {
-                    "success": False,
-                    "task_id": task.id,
-                    "validation_criteria": None,
-                    "generated": False,
-                    "error": "Failed to generate criteria",
-                }
-
-        # Update task with generated criteria
-        task_manager.update_task(task.id, validation_criteria=criteria)
-
-        return {
-            "success": True,
-            "task_id": task.id,
-            "validation_criteria": criteria,
-            "generated": True,
-            "is_parent_task": len(children) > 0,
         }
 
     @registry.tool(

@@ -249,7 +249,7 @@ class TestDaemonClientCallMcpTool:
             client.call_mcp_tool("supabase", "list_tables", {"schemas": ["public"]})
 
         mock_call.assert_called_once_with(
-            endpoint="/mcp/supabase/tools/list_tables",
+            endpoint="/api/mcp/supabase/tools/list_tables",
             method="POST",
             json_data={"schemas": ["public"]},
             timeout=None,

@@ -13,4 +13,4 @@ rules:
         ## Continuation Context
         *Injected by Gobby compact handoff*
 
-        {{ handoff }}
+        {{ compact_session_summary }}

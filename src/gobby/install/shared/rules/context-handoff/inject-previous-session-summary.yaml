@@ -13,4 +13,4 @@ rules:
         ## Previous Session Context
         *Injected by Gobby session handoff*
 
-        {{ summary }}
+        {{ full_session_summary }}

@@ -88,6 +88,15 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
 
         return LocalWorkflowDefinitionManager(server.services.database)
 
+    async def _broadcast_workflow(event: str, definition_id: str, **kwargs: Any) -> None:
+        """Broadcast a workflow event via WebSocket if available."""
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_workflow_event(event, definition_id, **kwargs)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast workflow event {event}: {e}")
+
     @router.get("/templates")
     async def list_templates() -> dict[str, Any]:
         """List available workflow templates for the 'New' button."""
@@ -162,6 +171,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             row = manager.import_from_yaml(request.yaml_content, project_id=request.project_id)
+            await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -176,6 +186,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             row = manager.duplicate(definition_id, request.new_name)
+            await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -203,6 +214,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
                 source=request.source,
                 tags=request.tags,
             )
+            await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
         except Exception as e:
             logger.error(f"Error creating workflow definition: {e}", exc_info=True)
@@ -216,6 +228,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             manager = _get_manager()
             row = manager.get(definition_id)
             updated = manager.update(definition_id, enabled=not row.enabled)
+            await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": updated.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -233,6 +246,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             if not fields:
                 raise HTTPException(status_code=400, detail="No fields to update")
             row = manager.update(definition_id, **fields)
+            await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -251,6 +265,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             deleted = manager.delete(definition_id)
             if not deleted:
                 raise HTTPException(status_code=404, detail="Definition not found")
+            await _broadcast_workflow("workflow_deleted", definition_id)
             return {"status": "success", "deleted": True}
         except HTTPException:
             raise
@@ -265,6 +280,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             row = manager.install_from_template(definition_id)
+            await _broadcast_workflow("workflow_created", row.id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -281,6 +297,8 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             rows = manager.install_all_templates(workflow_type=workflow_type)
+            if rows:
+                await _broadcast_workflow("workflows_bulk_changed", "bulk")
             return {
                 "status": "success",
                 "definitions": [r.to_dict() for r in rows],
@@ -297,6 +315,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             row = manager.move_to_project(definition_id, request.project_id)
+            await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             msg = str(e)
@@ -313,6 +332,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             row = manager.move_to_global(definition_id)
+            await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             msg = str(e)
@@ -329,6 +349,7 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
         try:
             manager = _get_manager()
             row = manager.restore(definition_id)
+            await _broadcast_workflow("workflow_updated", definition_id)
             return {"status": "success", "definition": row.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

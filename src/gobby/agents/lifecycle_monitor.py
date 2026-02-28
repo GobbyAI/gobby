@@ -19,6 +19,7 @@ from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
     from gobby.hooks.session_coordinator import SessionCoordinator
+    from gobby.storage.clones import LocalCloneManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +39,21 @@ class AgentLifecycleMonitor:
         agent_registry: RunningAgentRegistry,
         agent_run_manager: LocalAgentRunManager,
         session_coordinator: SessionCoordinator | None = None,
+        clone_storage: LocalCloneManager | None = None,
         check_interval_seconds: float = 30.0,
     ) -> None:
         self._registry = agent_registry
         self._agent_run_manager = agent_run_manager
         self._session_coordinator = session_coordinator
+        self._clone_storage = clone_storage
         self._check_interval = check_interval_seconds
         self._tmux = TmuxSessionManager()
         self._running = False
         self._task: asyncio.Task[None] | None = None
+
+    def set_session_coordinator(self, coordinator: SessionCoordinator) -> None:
+        """Inject session coordinator after construction (avoids circular init ordering)."""
+        self._session_coordinator = coordinator
 
     async def start(self) -> None:
         """Start the monitoring loop."""
@@ -79,6 +86,7 @@ class AgentLifecycleMonitor:
         while self._running:
             try:
                 await self.check_dead_agents()
+                await self.check_expired_agents()
             except Exception as e:
                 logger.error(f"Agent lifecycle check error: {e}")
 
@@ -136,6 +144,13 @@ class AgentLifecycleMonitor:
                     except Exception as e:
                         logger.warning(f"Failed to release worktrees for agent {agent.run_id}: {e}")
 
+                # Release clones
+                if self._clone_storage and agent.clone_id:
+                    try:
+                        await asyncio.to_thread(self._clone_storage.release, agent.clone_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to release clone for agent {agent.run_id}: {e}")
+
                 cleaned += 1
 
             except Exception as e:
@@ -143,6 +158,78 @@ class AgentLifecycleMonitor:
 
         if cleaned > 0:
             logger.info(f"Cleaned up {cleaned} dead agent(s)")
+
+        return cleaned
+
+    async def check_expired_agents(self) -> int:
+        """Check for agents that have exceeded their timeout and kill them.
+
+        Returns:
+            Number of expired agents cleaned up.
+        """
+        import datetime
+
+        agents = self._registry.list_all()
+        now = datetime.datetime.now(datetime.UTC)
+        cleaned = 0
+
+        for agent in agents:
+            if not agent.timeout_seconds:
+                continue
+
+            age = (now - agent.started_at).total_seconds()
+            if age <= agent.timeout_seconds:
+                continue
+
+            try:
+                logger.info(
+                    f"Agent {agent.run_id} exceeded timeout ({age:.1f}s > {agent.timeout_seconds}s). Killing..."
+                )
+
+                # Kill process via registry
+                await self._registry.kill(
+                    agent.run_id,
+                    signal_name="TERM",
+                    timeout=5.0,
+                    close_terminal=True,
+                )
+
+                # Mark DB record as timeout
+                await asyncio.to_thread(
+                    self._agent_run_manager.fail,
+                    agent.run_id,
+                    error=f"Agent exceeded {agent.timeout_seconds}s timeout",
+                )
+
+                # Remove from in-memory registry if kill() didn't
+                if self._registry.get(agent.run_id):
+                    self._registry.remove(agent.run_id, status="timeout")
+
+                # Release worktrees
+                if self._session_coordinator:
+                    try:
+                        self._session_coordinator.release_session_worktrees(agent.session_id)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to release worktrees for expired agent {agent.run_id}: {e}"
+                        )
+
+                # Release clones
+                if self._clone_storage and agent.clone_id:
+                    try:
+                        await asyncio.to_thread(self._clone_storage.release, agent.clone_id)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to release clone for expired agent {agent.run_id}: {e}"
+                        )
+
+                cleaned += 1
+
+            except Exception as e:
+                logger.warning(f"Error checking expiration for agent {agent.run_id}: {e}")
+
+        if cleaned > 0:
+            logger.info(f"Cleaned up {cleaned} expired agent(s)")
 
         return cleaned
 

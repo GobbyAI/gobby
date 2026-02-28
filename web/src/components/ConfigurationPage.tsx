@@ -95,8 +95,7 @@ function SchemaField({ name, fieldSchema, value, onChange, path, secretKeys = []
             <div className="config-field-label">{formatFieldName(name)}</div>
             {description && <span className="config-field-help">{description}</span>}
           </div>
-          <button
-            type="button"
+          <button type="button"
             className={`config-toggle ${value ? 'on' : ''}`}
             onClick={() => onChange(fullPath, !value)}
             aria-label={`Toggle ${name}`}
@@ -310,7 +309,7 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
       {showRestart && (
         <div className="config-restart-banner">
           <span>Configuration saved. Restart the daemon to apply changes.</span>
-          <button onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
+          <button type="button" onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
             Restart Now
           </button>
         </div>
@@ -337,8 +336,7 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
                       Enable or disable the rule engine globally. When disabled, no rules will be evaluated.
                     </span>
                   </div>
-                  <button
-                    type="button"
+                  <button type="button"
                     className={`config-toggle ${rulesEnforcement ? 'on' : ''}`}
                     onClick={() => onToggleRulesEnforcement(!rulesEnforcement)}
                     aria-label="Toggle rules enforcement"
@@ -392,8 +390,8 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
         })}
       </div>
       <div className="config-form-footer">
-        <button className="config-toolbar-btn danger" onClick={handleReset}>Reset to Defaults</button>
-        <button className="config-toolbar-btn primary" onClick={handleSave} disabled={saving}>
+        <button type="button" className="config-toolbar-btn danger" onClick={handleReset}>Reset to Defaults</button>
+        <button type="button" className="config-toolbar-btn primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save Configuration'}
         </button>
       </div>
@@ -452,7 +450,7 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
     <div className="config-secrets">
       <div className="config-secrets-header">
         <h3>Secrets Store</h3>
-        <button
+        <button type="button"
           className="config-toolbar-btn primary"
           onClick={() => {
             setEditingName(null)
@@ -501,8 +499,8 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
             onChange={e => setFormDescription(e.target.value)}
           />
           <div className="config-secret-form-actions">
-            <button className="config-toolbar-btn" onClick={() => setShowForm(false)}>Cancel</button>
-            <button className="config-toolbar-btn primary" onClick={handleSubmit}>
+            <button type="button" className="config-toolbar-btn" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" className="config-toolbar-btn primary" onClick={handleSubmit}>
               {editingName ? 'Update' : 'Save'}
             </button>
           </div>
@@ -533,8 +531,8 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
                 <td>{s.description || '-'}</td>
                 <td>
                   <div className="config-secret-actions">
-                    <button onClick={() => handleEdit(s)}>Update</button>
-                    <button className="delete" onClick={() => handleDelete(s.name)}>Delete</button>
+                    <button type="button" onClick={() => handleEdit(s)}>Update</button>
+                    <button type="button" className="delete" onClick={() => handleDelete(s.name)}>Delete</button>
                   </div>
                 </td>
               </tr>
@@ -642,11 +640,11 @@ function PromptsTab({ prompts, categories, onGetDetail, onSaveOverride, onDelete
                 )}
               </div>
               <div className="config-prompt-detail-actions">
-                <button className="config-toolbar-btn" onClick={() => setSelectedPrompt(null)}>Back</button>
+                <button type="button" className="config-toolbar-btn" onClick={() => setSelectedPrompt(null)}>Back</button>
                 {selectedPrompt.has_override && (
-                  <button className="config-toolbar-btn danger" onClick={handleRevert}>Revert</button>
+                  <button type="button" className="config-toolbar-btn danger" onClick={handleRevert}>Revert</button>
                 )}
-                <button className="config-toolbar-btn primary" onClick={handleSaveOverride} disabled={saving}>
+                <button type="button" className="config-toolbar-btn primary" onClick={handleSaveOverride} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Override'}
                 </button>
               </div>
@@ -809,7 +807,7 @@ function VariablesTab() {
     <div className="config-secrets">
       <div className="config-secrets-header">
         <h3>Variable Defaults</h3>
-        <button
+        <button type="button"
           className="config-toolbar-btn primary"
           onClick={() => {
             setFormName('')
@@ -845,8 +843,8 @@ function VariablesTab() {
             onChange={e => setFormDescription(e.target.value)}
           />
           <div className="config-secret-form-actions">
-            <button className="config-toolbar-btn" onClick={() => setShowForm(false)}>Cancel</button>
-            <button className="config-toolbar-btn primary" onClick={handleCreate}>Save</button>
+            <button type="button" className="config-toolbar-btn" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" className="config-toolbar-btn primary" onClick={handleCreate}>Save</button>
           </div>
         </div>
       )}
@@ -875,8 +873,7 @@ function VariablesTab() {
                 <td>{v.description || '-'}</td>
                 <td><span className={`config-prompt-badge ${v.source}`}>{v.source}</span></td>
                 <td>
-                  <button
-                    type="button"
+                  <button type="button"
                     className={`config-toggle ${v.enabled ? 'on' : ''}`}
                     onClick={() => handleToggle(v)}
                     aria-label={`Toggle ${v.name}`}
@@ -885,7 +882,7 @@ function VariablesTab() {
                 <td>
                   {v.source !== 'template' && (
                     <div className="config-secret-actions">
-                      <button className="delete" onClick={() => handleDelete(v)}>Delete</button>
+                      <button type="button" className="delete" onClick={() => handleDelete(v)}>Delete</button>
                     </div>
                   )}
                 </td>
@@ -944,7 +941,7 @@ function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
       {showRestart && (
         <div className="config-restart-banner">
           <span>Configuration saved to database. Restart the daemon to apply changes.</span>
-          <button onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
+          <button type="button" onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
             Restart Now
           </button>
         </div>
@@ -961,7 +958,7 @@ function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
         <div className="config-yaml-errors">
           {errors.map((e, i) => <span key={i}>{e}</span>)}
         </div>
-        <button className="config-toolbar-btn primary" onClick={handleSave} disabled={saving}>
+        <button type="button" className="config-toolbar-btn primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save Template'}
         </button>
       </div>
@@ -1017,7 +1014,7 @@ export function ConfigurationPage() {
           config.fetchConfig()
           config.fetchPrompts()
         } else {
-          alert(`Import failed: ${result.summary}`)
+          alert(`Import failed: ${result.summary || "Unknown error"}`)
         }
       } catch (e) {
         alert(`Import failed: ${e}`)
@@ -1040,7 +1037,7 @@ export function ConfigurationPage() {
         <div className="config-toolbar-left">
           <div className="config-tabs">
             {tabs.map(t => (
-              <button
+              <button type="button"
                 key={t.id}
                 className={`config-tab ${activeTab === t.id ? 'active' : ''}`}
                 onClick={() => setActiveTab(t.id)}
@@ -1051,8 +1048,8 @@ export function ConfigurationPage() {
           </div>
         </div>
         <div className="config-toolbar-right">
-          <button className="config-toolbar-btn" onClick={handleImport}>Import</button>
-          <button className="config-toolbar-btn" onClick={handleExport}>Export</button>
+          <button type="button" className="config-toolbar-btn" onClick={handleImport}>Import</button>
+          <button type="button" className="config-toolbar-btn" onClick={handleExport}>Export</button>
         </div>
       </div>
 

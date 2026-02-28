@@ -18,7 +18,6 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.workflows.actions import ActionExecutor
 from gobby.workflows.definitions import (
-    Observer,
     PrematureStopHandler,
     WorkflowDefinition,
     WorkflowState,

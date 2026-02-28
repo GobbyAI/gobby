@@ -134,7 +134,6 @@ export function ProjectsPage() {
         filters={{ ...sessionsHook.filters, projectId: selectedProject.id }}
         onFiltersChange={sessionsHook.setFilters}
         isLoading={sessionsHook.isLoading}
-        onRefresh={sessionsHook.refresh}
       />
     )
   }, [selectedProject, sessionsHook])

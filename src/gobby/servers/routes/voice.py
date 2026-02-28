@@ -32,7 +32,6 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             return {
                 "enabled": False,
                 "stt_available": False,
-                "tts_available": False,
                 "reason": "Voice config not found",
             }
 
@@ -41,29 +40,24 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         # Check STT availability
         stt_available = False
         stt_reason = ""
-        if voice_config.enabled:
+        if not voice_config.enabled:
+            stt_reason = "Voice not enabled in config"
+        elif not voice_config.stt_enabled:
+            stt_reason = "STT disabled in config"
+        else:
             try:
                 import faster_whisper  # noqa: F401
 
                 stt_available = True
             except ImportError:
                 stt_reason = "faster-whisper not installed (pip install faster-whisper)"
-        else:
-            stt_reason = "Voice not enabled in config"
-
-        # Check TTS availability
-        tts_available = bool(voice_config.elevenlabs_api_key)
-        tts_reason = "" if tts_available else "No ElevenLabs API key configured"
 
         return {
             "enabled": voice_config.enabled,
+            "stt_enabled": voice_config.stt_enabled,
             "stt_available": stt_available,
             "stt_reason": stt_reason,
-            "tts_available": tts_available,
-            "tts_reason": tts_reason,
             "whisper_model": voice_config.whisper_model_size,
-            "tts_voice_id": voice_config.elevenlabs_voice_id,
-            "audio_format": voice_config.audio_format,
         }
 
     @router.post("/transcribe")
@@ -75,6 +69,9 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         config = server.config
         if not config or not hasattr(config, "voice") or not config.voice.enabled:
             return {"error": "Voice not enabled", "text": ""}
+
+        if not config.voice.stt_enabled:
+            return {"error": "STT disabled in config", "text": ""}
 
         from gobby.voice.stt import WhisperSTT
 

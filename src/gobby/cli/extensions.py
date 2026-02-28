@@ -103,7 +103,7 @@ def hooks_test(ctx: click.Context, hook_type: str, source: str, json_format: boo
 
     result = call_mcp_api(
         client,
-        "/hooks/execute",
+        "/api/hooks/execute",
         method="POST",
         json_data=test_payload,
     )
@@ -456,7 +456,7 @@ def webhooks_list(ctx: click.Context, json_format: bool) -> None:
     if not check_daemon_running(client):
         sys.exit(1)
 
-    result = call_mcp_api(client, "/webhooks")
+    result = call_mcp_api(client, "/api/webhooks")
 
     if result is None:
         click.echo("Failed to list webhooks", err=True)
@@ -521,7 +521,7 @@ def webhooks_test(ctx: click.Context, webhook_name: str, event: str, json_format
 
     result = call_mcp_api(
         client,
-        "/webhooks/test",
+        "/api/webhooks/test",
         method="POST",
         json_data={
             "name": webhook_name,

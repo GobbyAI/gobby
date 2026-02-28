@@ -12,7 +12,7 @@ rules:
       template: |
         Task {{ variables.auto_task_ref or '(unknown)' }} complete! All subtasks have been closed.
         This is a good opportunity to do a quick code review of the task tree.
-        Any errors or warnings 
+        Any errors or warnings should be addressed before closing.
         You may now close the task using close_task().
 
         

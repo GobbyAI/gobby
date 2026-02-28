@@ -13,7 +13,6 @@ interface SessionsPageProps {
   filters: SessionFilters
   onFiltersChange: (filters: SessionFilters) => void
   isLoading: boolean
-  onRefresh: () => void
   onAskGobby?: (context: string) => void
   onContinueInChat?: (session: GobbySession) => void
   onWatchInChat?: (session: GobbySession) => void
@@ -35,7 +34,6 @@ export function SessionsPage({
   filters,
   onFiltersChange,
   isLoading,
-  onRefresh,
   onAskGobby,
   onContinueInChat,
   onWatchInChat,
@@ -78,16 +76,6 @@ export function SessionsPage({
         <div className="sessions-sidebar-header">
           {sidebarOpen && <span className="sessions-sidebar-title">Sessions</span>}
           <div className="sessions-sidebar-actions">
-            {sidebarOpen && (
-              <button
-                className="terminals-action-btn"
-                onClick={onRefresh}
-                title="Refresh"
-                disabled={isLoading}
-              >
-                <RefreshIcon />
-              </button>
-            )}
             <button
               className="terminals-sidebar-toggle"
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -232,7 +220,6 @@ export function SessionsPage({
           sessions={sessions}
           selectedSessionId={selectedSessionId}
           onSelectSession={setSelectedSessionId}
-          onRefresh={onRefresh}
           isLoading={isLoading}
         />
         {detail.session ? (
@@ -259,15 +246,6 @@ export function SessionsPage({
         )}
       </div>
     </div>
-  )
-}
-
-function RefreshIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="23 4 23 10 17 10" />
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-    </svg>
   )
 }
 

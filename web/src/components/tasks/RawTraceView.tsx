@@ -219,7 +219,7 @@ export function RawTraceView({ sessionId }: RawTraceViewProps) {
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(
-        `${baseUrl}/sessions/${encodeURIComponent(sessionId)}/messages?limit=500`
+        `${baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages?limit=500`
       )
       if (response.ok) {
         const data = await response.json()

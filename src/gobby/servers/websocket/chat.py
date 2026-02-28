@@ -25,6 +25,50 @@ from gobby.utils.machine_id import get_machine_id
 logger = logging.getLogger(__name__)
 
 
+def _inject_agent_skills(
+    agent_body: Any,
+    db: Any,
+    project_id: str,
+    cli_source: str = "claude_sdk_web_chat",
+) -> str | None:
+    """Run audience-aware skill injection for an agent definition.
+
+    Replicates the skill injection pipeline from _activate_default_agent
+    for use in contexts where the full session activation isn't available.
+    """
+    from gobby.hooks.skill_manager import _db_skill_to_parsed
+    from gobby.skills.injector import AgentContext, SkillInjector, SkillProfile
+    from gobby.skills.manager import SkillManager
+    from gobby.workflows.context_actions import _format_skills_with_formats
+    from gobby.workflows.selectors import resolve_skills_for_agent
+
+    skill_mgr = SkillManager(db)
+    all_skills = skill_mgr.list_skills()
+    active_skills = resolve_skills_for_agent(agent_body, all_skills)
+    eligible = (
+        all_skills if active_skills is None else [s for s in all_skills if s.name in active_skills]
+    )
+    parsed = [_db_skill_to_parsed(s) for s in eligible if s.enabled]
+    if not parsed:
+        return None
+
+    agent_ctx = AgentContext(
+        agent_depth=0,
+        has_human=True,
+        agent_type="interactive",
+        source=cli_source,
+    )
+    profile = None
+    if agent_body.workflows and agent_body.workflows.skill_format:
+        profile = SkillProfile(default_format=agent_body.workflows.skill_format)
+
+    selected = SkillInjector().select_skills(parsed, agent_ctx, profile=profile)
+    if not selected:
+        return None
+
+    return _format_skills_with_formats(selected)
+
+
 async def _resolve_git_branch(project_path: str | None) -> tuple[str | None, str | None]:
     """Resolve the current git branch for a project directory.
 
@@ -91,6 +135,13 @@ class ChatMixin:
             message: str,
             request_id: str | None = None,
             code: str = "ERROR",
+        ) -> None: ...
+
+        async def broadcast_session_event(
+            self,
+            event: str,
+            session_id: str,
+            **kwargs: Any,
         ) -> None: ...
 
     async def _cancel_active_chat(self, conversation_id: str) -> None:
@@ -212,6 +263,7 @@ class ChatMixin:
         # Register in database BEFORE start() so that db_session_id is available
         # for the CLI subprocess env vars (GOBBY_SESSION_ID) during start().
         session_manager = getattr(self, "session_manager", None)
+        _is_new_registration = False
         if session_manager:
             try:
                 db_session = await asyncio.to_thread(
@@ -223,6 +275,7 @@ class ChatMixin:
                 )
                 session.db_session_id = db_session.id
                 session.seq_num = db_session.seq_num
+                _is_new_registration = True
                 logger.info(
                     f"Registered web-chat session {db_session.id} "
                     f"(conv={conversation_id[:8]}, project={project_id or PERSONAL_PROJECT_ID})"
@@ -230,8 +283,9 @@ class ChatMixin:
             except Exception as e:
                 logger.warning(f"Failed to register web-chat session in DB: {e}")
 
-        # Override chat mode with DB-persisted value (for returning sessions)
-        if session_manager and session.db_session_id:
+        # Override chat mode with DB-persisted value (for returning sessions only —
+        # new registrations just have the column default which would clobber daemon config)
+        if session_manager and session.db_session_id and not _is_new_registration:
             try:
                 db_session = await asyncio.to_thread(session_manager.get, session.db_session_id)
                 if db_session and db_session.chat_mode:
@@ -258,6 +312,13 @@ class ChatMixin:
 
             session._on_mode_persist = _persist_mode
 
+        # Persist pending_mode to DB now that the callback is wired
+        if pending_mode and session._on_mode_persist:
+            try:
+                session._on_mode_persist(pending_mode)
+            except Exception:
+                logger.debug("Failed to persist pending chat_mode", exc_info=True)
+
         # Look up repo_path from DB so the subprocess CWD matches the selected project
         if session_manager and not session.project_path:
             try:
@@ -275,6 +336,46 @@ class ChatMixin:
         wt_override = pending_wt.pop(conversation_id, None)
         if wt_override:
             session.project_path = wt_override
+
+        # Pop pending agent override (from set_agent WS message) BEFORE start()
+        # so we can resolve agent preamble and use it as the system prompt.
+        pending_agents = getattr(self, "_pending_agents", {})
+        pending_agent = pending_agents.pop(conversation_id, None)
+        if pending_agent:
+            session._pending_agent_name = pending_agent
+
+        # Resolve agent + skills as system prompt (agent definition is single source of truth)
+        # Always resolve an agent — pending_agent if user selected one, otherwise default-web-chat
+        agent_name = pending_agent or "default-web-chat"
+        if session_manager:
+            try:
+                from gobby.workflows.agent_resolver import resolve_agent
+
+                agent_body = await asyncio.to_thread(
+                    resolve_agent,
+                    agent_name,
+                    session_manager.db,
+                    cli_source="claude_sdk_web_chat",
+                    project_id=project_id or PERSONAL_PROJECT_ID,
+                )
+                if agent_body:
+                    context_parts: list[str] = []
+                    preamble = agent_body.build_prompt_preamble()
+                    if preamble:
+                        context_parts.append(preamble)
+                    # Audience-aware skill injection (canvas, etc.)
+                    skills_text = await asyncio.to_thread(
+                        _inject_agent_skills,
+                        agent_body,
+                        session_manager.db,
+                        project_id or PERSONAL_PROJECT_ID,
+                    )
+                    if skills_text:
+                        context_parts.append(skills_text)
+                    if context_parts:
+                        session.system_prompt_override = "\n\n".join(context_parts)
+            except Exception as e:
+                logger.warning(f"Failed to resolve agent '{agent_name}': {e}")
 
         await session.start(model=model)
         self._chat_sessions[conversation_id] = session
@@ -299,17 +400,13 @@ class ChatMixin:
                     exc_info=e,
                 )
 
-        # Pop pending agent override (from set_agent WS message)
-        pending_agents = getattr(self, "_pending_agents", {})
-        pending_agent = pending_agents.pop(conversation_id, None)
-        if pending_agent:
-            session._pending_agent_name = pending_agent
-
         # Fire SESSION_START (informational, fire-and-forget)
         start_data: dict[str, Any] = {}
         if pending_agent:
             start_data["agent_name_override"] = pending_agent
-        asyncio.create_task(self._fire_lifecycle(conversation_id, HookEventType.SESSION_START, start_data))
+        asyncio.create_task(
+            self._fire_lifecycle(conversation_id, HookEventType.SESSION_START, start_data)
+        )
 
         # Broadcast authoritative mode to frontend so it can override local storage
         mode_msg = json.dumps(
@@ -346,6 +443,14 @@ class ChatMixin:
         data: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Bridge SDK hook events to workflow engine lifecycle triggers.
+
+        Mirrors HookManager.handle() for CLI parity:
+        1. Rule evaluation via workflow_handler
+        2. Blocking webhook evaluation
+        3. MCP call dispatch for rule effects
+        4. Event handler dispatch (skill interception, etc.)
+        5. Inter-session message piggyback (BEFORE_TOOL/AFTER_TOOL)
+        6. Event broadcasting for audit trail
 
         Returns a dict with HookResponse fields (decision, context, reason, etc.)
         or None if no workflow handler is available.
@@ -393,6 +498,20 @@ class ChatMixin:
                 len(response.context) if response.context else 0,
             )
 
+            # If workflow blocks, return immediately (before webhooks/handlers)
+            if response.decision != "allow":
+                return {
+                    "decision": response.decision,
+                    "context": response.context,
+                    "reason": response.reason,
+                    "system_message": response.system_message,
+                }
+
+            # --- Blocking webhook evaluation (parity with CLI path D1) ---
+            webhook_block = await self._evaluate_blocking_webhooks(event)
+            if webhook_block:
+                return webhook_block
+
             # Dispatch mcp_call effects from rule engine (parity with CLI path)
             mcp_calls = (response.metadata or {}).get("mcp_calls", [])
             if mcp_calls:
@@ -402,9 +521,7 @@ class ChatMixin:
 
                     internal_mgr = getattr(self, "internal_manager", None)
 
-                    async def _call_tool(
-                        server: str, tool: str, arguments: dict[str, Any]
-                    ) -> Any:
+                    async def _call_tool(server: str, tool: str, arguments: dict[str, Any]) -> Any:
                         """Route to internal registries first, then external."""
                         if internal_mgr and internal_mgr.is_internal(server):
                             registry = internal_mgr.get_registry(server)
@@ -414,10 +531,45 @@ class ChatMixin:
 
                     await dispatch_mcp_calls(mcp_calls, event, _call_tool, logger)
 
+            # Dispatch to event handler (parity with CLI HookManager.handle)
+            # This is where skill interception lives (handle_before_agent)
+            event_handlers = getattr(self, "event_handlers", None)
+            handler_context: str | None = None
+            if event_handlers:
+                handler = event_handlers.get_handler(event_type)
+                if handler:
+                    try:
+                        handler_response: HookResponse = await asyncio.to_thread(handler, event)
+                        if handler_response and handler_response.context:
+                            handler_context = handler_response.context
+                    except Exception as exc:
+                        logger.error(
+                            "_fire_lifecycle: event handler %s failed: %s",
+                            event_type.name,
+                            exc,
+                            exc_info=True,
+                        )
+
+            # Merge handler context with rule engine context
+            merged_context = response.context
+            if handler_context:
+                if merged_context:
+                    merged_context = merged_context + "\n\n" + handler_context
+                else:
+                    merged_context = handler_context
+
+            # --- Inter-session message piggyback (parity with CLI path D6) ---
+            msg_context = self._inject_pending_messages(db_session_id, event_type)
+            if msg_context:
+                if merged_context:
+                    merged_context = merged_context + "\n\n" + msg_context
+                else:
+                    merged_context = msg_context
+
             # Build result dict
             result: dict[str, Any] = {
                 "decision": response.decision,
-                "context": response.context,
+                "context": merged_context,
                 "reason": response.reason,
                 "system_message": response.system_message,
             }
@@ -432,10 +584,140 @@ class ChatMixin:
                     else f"Gobby Session ID: {session_ref}"
                 )
 
+            # --- Event broadcasting for audit trail (parity with CLI path D2) ---
+            hook_broadcaster = getattr(self, "hook_broadcaster", None)
+            if hook_broadcaster:
+                try:
+                    await hook_broadcaster.broadcast_event(event, response)
+                except Exception as exc:
+                    logger.debug("_fire_lifecycle: broadcast failed: %s", exc)
+
             return result
         except Exception as e:
             logger.error("Lifecycle evaluation failed for %s: %s", event_type, e, exc_info=True)
             return None
+
+    async def _evaluate_blocking_webhooks(
+        self,
+        event: HookEvent,
+    ) -> dict[str, Any] | None:
+        """Evaluate blocking webhooks before handler execution.
+
+        Async-native version of HookManager._evaluate_blocking_webhooks
+        for the web chat path. Returns a block result dict if a webhook
+        blocked the event, None otherwise.
+        """
+        webhook_dispatcher = getattr(self, "webhook_dispatcher", None)
+        if not webhook_dispatcher:
+            return None
+
+        if not webhook_dispatcher.config.enabled:
+            return None
+
+        try:
+            # Filter to blocking endpoints that match this event
+            matching_endpoints = [
+                ep
+                for ep in webhook_dispatcher.config.endpoints
+                if ep.enabled
+                and webhook_dispatcher._matches_event(ep, event.event_type.value)
+                and ep.can_block
+            ]
+
+            if not matching_endpoints:
+                return None
+
+            # Build payload and dispatch
+            payload = webhook_dispatcher._build_payload(event)
+            results = []
+            for endpoint in matching_endpoints:
+                result = await webhook_dispatcher._dispatch_single(endpoint, payload)
+                results.append(result)
+
+            decision, reason = webhook_dispatcher.get_blocking_decision(results)
+            if decision == "block":
+                logger.info("Webhook blocked web chat event: %s", reason)
+                return {
+                    "decision": "block",
+                    "context": None,
+                    "reason": reason or "Blocked by webhook",
+                    "system_message": None,
+                }
+        except Exception as exc:
+            logger.error("Blocking webhook evaluation failed: %s", exc, exc_info=True)
+            # Fail-open for webhook errors
+
+        return None
+
+    def _inject_pending_messages(
+        self,
+        db_session_id: str,
+        event_type: HookEventType,
+    ) -> str | None:
+        """Check for and inject undelivered inter-session messages.
+
+        Runs on BEFORE_TOOL, AFTER_TOOL, and BEFORE_AGENT to match the CLI
+        path's EventEnricher piggyback behavior. BEFORE_AGENT ensures messages
+        arrive at agent turn start, even before any tool calls.
+        """
+        _PIGGYBACK_EVENTS = {
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
+            HookEventType.BEFORE_AGENT,
+        }
+        if event_type not in _PIGGYBACK_EVENTS:
+            return None
+
+        inter_session_msg_manager = getattr(self, "inter_session_msg_manager", None)
+        if not inter_session_msg_manager:
+            return None
+
+        try:
+            undelivered = inter_session_msg_manager.get_undelivered_messages(db_session_id)
+            if not undelivered:
+                return None
+
+            # Group by message_type
+            groups: dict[str, list[Any]] = {}
+            for msg in undelivered:
+                msg_type = getattr(msg, "message_type", "message") or "message"
+                groups.setdefault(msg_type, []).append(msg)
+                try:
+                    inter_session_msg_manager.mark_delivered(msg.id)
+                except Exception:
+                    pass
+
+            # Format each group
+            sections: list[str] = []
+            for msg_type, msgs in groups.items():
+                header = self._message_group_header(msg_type)
+                lines = [header]
+                for msg in msgs:
+                    urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
+                    sender = self._resolve_chat_sender(getattr(msg, "from_session", None))
+                    lines.append(f"- {urgent}{sender}{msg.content}")
+                sections.append("\n".join(lines))
+
+            return "\n\n".join(sections)
+        except Exception as exc:
+            logger.debug("Inter-session message piggyback failed: %s", exc)
+            return None
+
+    @staticmethod
+    def _message_group_header(message_type: str) -> str:
+        """Return the context header for a message type group."""
+        if message_type == "web_chat":
+            return "[Pending messages from web chat user]:"
+        if message_type == "command_result":
+            return "[Pending command results]:"
+        return "[Pending P2P messages from other sessions]:"
+
+    @staticmethod
+    def _resolve_chat_sender(from_session: str | None) -> str:
+        """Resolve sender label using truncated UUID (no session storage in chat path)."""
+        if not from_session:
+            return ""
+        return f"Session {from_session[:8]}: "
 
     async def _handle_chat_message(self, websocket: Any, data: dict[str, Any]) -> None:
         """
@@ -501,13 +783,22 @@ class ChatMixin:
             logger.warning("Chat message from unregistered client")
             return
 
+        # Extract inject_context for tool result injection into LLM conversation
+        inject_context = data.get("inject_context")
+
         # Cancel any active stream for this conversation
         await self._cancel_active_chat(conversation_id)
 
         # Run streaming as a cancellable task
         task = asyncio.create_task(
             self._stream_chat_response(
-                websocket, conversation_id, content, model, request_id, project_id
+                websocket,
+                conversation_id,
+                content,
+                model,
+                request_id,
+                project_id,
+                inject_context=inject_context,
             )
         )
         task.add_done_callback(self._on_chat_task_done)
@@ -529,6 +820,7 @@ class ChatMixin:
         model: str | None,
         request_id: str = "",
         project_id: str | None = None,
+        inject_context: str | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
         from gobby.llm.claude_models import (
@@ -600,6 +892,62 @@ class ChatMixin:
             except (ConnectionClosed, ConnectionClosedError):
                 pass
 
+        # Track pending tool calls so we can persist tool_name + arguments
+        # when ToolResultEvent arrives (it only has tool_call_id)
+        pending_tool_calls: dict[str, dict[str, Any]] = {}
+
+        async def _persist_tool_call(
+            tool_call_id: str,
+            tool_name: str,
+            tool_input: dict[str, Any] | None,
+            tool_result: Any | None,
+            is_error: bool = False,
+        ) -> None:
+            """Persist a tool_use + tool_result pair as session messages."""
+            if session is None:
+                return
+            message_manager = getattr(self, "message_manager", None)
+            db_sid = getattr(session, "db_session_id", None)
+            if not message_manager or not db_sid:
+                return
+            try:
+                idx = session.message_index
+                session.message_index = idx + 1
+                tool_use_msg = ParsedMessage(
+                    index=idx,
+                    role="assistant",
+                    content=tool_name,
+                    content_type="tool_use",
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_result=None,
+                    timestamp=datetime.now(UTC),
+                    raw_json={},
+                )
+                idx2 = session.message_index
+                session.message_index = idx2 + 1
+                result_content = ""
+                if tool_result is not None:
+                    result_content = (
+                        json.dumps(tool_result) if not isinstance(tool_result, str) else tool_result
+                    )
+                if is_error:
+                    result_content = f"Error: {result_content}"
+                tool_result_msg = ParsedMessage(
+                    index=idx2,
+                    role="tool",
+                    content=result_content,
+                    content_type="tool_result",
+                    tool_name=tool_name,
+                    tool_input=None,
+                    tool_result=tool_result if not is_error else None,
+                    timestamp=datetime.now(UTC),
+                    raw_json={},
+                )
+                await message_manager.store_messages(db_sid, [tool_use_msg, tool_result_msg])
+            except Exception as e:
+                logger.warning(f"Failed to persist tool call for {conversation_id[:8]}: {e}")
+
         gen: AsyncIterator[Any] | None = None
         try:
             # Get or create ChatSession for this conversation
@@ -641,7 +989,7 @@ class ChatMixin:
                                 type="chat_error",
                                 message_id=assistant_message_id,
                                 conversation_id=conversation_id,
-                                error=f"Failed to start chat session: {e}",
+                                error="Failed to start chat session. Please try again.",
                             )
                         )
                     )
@@ -670,7 +1018,7 @@ class ChatMixin:
                                 type="chat_error",
                                 message_id=assistant_message_id,
                                 conversation_id=conversation_id,
-                                error=f"Failed to switch model: {e}",
+                                error="Failed to switch model. The previous model is still active.",
                             )
                         )
                     )
@@ -682,12 +1030,39 @@ class ChatMixin:
             user_text = content if isinstance(content, str) else json.dumps(content)
             await _persist_message(session, "user", user_text)
 
+            # Mark session as active while streaming
+            db_sid = getattr(session, "db_session_id", None)
+            if db_sid:
+                _sm = getattr(self, "session_manager", None)
+                if _sm:
+                    try:
+                        await asyncio.to_thread(_sm.update, db_sid, status="active")
+                        await self.broadcast_session_event("updated", db_sid)
+                    except Exception:
+                        logger.debug("Failed to set session status to active", exc_info=True)
+
+            # Enrich content with inject_context for SDK (invisible to chat UI)
+            sdk_content = content
+            if inject_context and isinstance(inject_context, str):
+                if isinstance(sdk_content, str):
+                    sdk_content = (
+                        f"{sdk_content}\n\n<skill-context>\n{inject_context}\n</skill-context>"
+                    )
+                elif isinstance(sdk_content, list):
+                    # For content blocks, append context as an additional text block
+                    sdk_content = sdk_content + [
+                        {
+                            "type": "text",
+                            "text": f"\n\n<skill-context>\n{inject_context}\n</skill-context>",
+                        }
+                    ]
+
             # Stream events from ChatSession.
             # Hold a reference to the generator so we can explicitly aclose()
             # it in the finally block — this prevents Python's GC from
             # finalizing it in a different asyncio task (which triggers
             # RuntimeError from anyio cancel scope mismatch).
-            gen = session.send_message(content)
+            gen = session.send_message(sdk_content)
             async for event in gen:
                 if isinstance(event, ThinkingEvent):
                     await websocket.send(
@@ -735,13 +1110,6 @@ class ChatMixin:
                             )
                         )
                     )
-                    # Feed TTS if voice mode is active
-                    _voice_hook = getattr(self, "_voice_tts_hook", None)
-                    if _voice_hook:
-                        try:
-                            await _voice_hook(websocket, conversation_id, request_id, event.content)
-                        except Exception:
-                            logger.debug("TTS hook error (non-fatal)", exc_info=True)
                 elif isinstance(event, ToolCallEvent):
                     # Flush accumulated text as a separate message before tool calls.
                     # This prevents text segments from merging across tool boundaries
@@ -749,6 +1117,11 @@ class ChatMixin:
                     if accumulated_text.strip():
                         await _persist_message(session, "assistant", accumulated_text)
                         accumulated_text = ""
+                    # Track pending tool call for persistence on result
+                    pending_tool_calls[event.tool_call_id] = {
+                        "tool_name": event.tool_name,
+                        "arguments": event.arguments,
+                    }
                     await websocket.send(
                         json.dumps(
                             _base_msg(
@@ -765,6 +1138,15 @@ class ChatMixin:
                     )
                 elif isinstance(event, ToolResultEvent):
                     after_tool_call = True
+                    # Persist tool_use + tool_result pair to DB
+                    pending = pending_tool_calls.pop(event.tool_call_id, {})
+                    await _persist_tool_call(
+                        tool_call_id=event.tool_call_id,
+                        tool_name=pending.get("tool_name", "unknown"),
+                        tool_input=pending.get("arguments"),
+                        tool_result=event.result if event.success else event.error,
+                        is_error=not event.success,
+                    )
                     await websocket.send(
                         json.dumps(
                             _base_msg(
@@ -782,14 +1164,6 @@ class ChatMixin:
                     # Persist remaining assistant text (after last tool call, if any)
                     if accumulated_text.strip():
                         await _persist_message(session, "assistant", accumulated_text)
-
-                    # Flush TTS if voice mode is active
-                    _voice_flush = getattr(self, "_voice_tts_flush", None)
-                    if _voice_flush:
-                        try:
-                            await _voice_flush(websocket, conversation_id, request_id)
-                        except Exception:
-                            logger.debug("TTS flush error (non-fatal)", exc_info=True)
 
                     done_msg = _base_msg(
                         type="chat_stream",
@@ -918,6 +1292,14 @@ class ChatMixin:
                                     db_sid,
                                     exc_info=True,
                                 )
+
+                    # Mark session as paused now that streaming is done
+                    if db_sid and session_manager:
+                        try:
+                            await asyncio.to_thread(session_manager.update, db_sid, status="paused")
+                            await self.broadcast_session_event("updated", db_sid)
+                        except Exception:
+                            logger.debug("Failed to set session status to paused", exc_info=True)
 
         except asyncio.CancelledError:
             # Stream was interrupted (stop button or new message replacing old)

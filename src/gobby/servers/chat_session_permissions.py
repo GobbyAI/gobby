@@ -84,6 +84,11 @@ class ChatSessionPermissionsMixin:
             # Read plan file content if one was written during plan mode
             plan_content = self._read_plan_file()
 
+            if not plan_content:
+                return PermissionResultDeny(
+                    message="No plan file found. Write your plan to .gobby/plans/*.md before calling ExitPlanMode."
+                )
+
             # Broadcast plan_pending_approval to frontend
             if self._on_plan_ready:
                 await self._on_plan_ready(plan_content, input_data)
@@ -297,8 +302,8 @@ class ChatSessionPermissionsMixin:
         if self._on_mode_persist:
             try:
                 self._on_mode_persist(mode)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to persist chat_mode=%s: %s", mode, e)
 
     def approve_plan(self) -> None:
         """Mark the current plan as approved, unlocking write tools."""

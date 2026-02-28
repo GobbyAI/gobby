@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent } from 'react'
 import type { QueuedFile, ChatMode, ContextUsage } from '../../types/chat'
-import type { CommandInfo } from '../../hooks/useSlashCommands'
+import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
 import { ModeSelector } from './ModeSelector'
@@ -16,8 +16,8 @@ interface ChatInputProps {
   disabled?: boolean
   viewingSession?: boolean
   onInputChange?: (value: string) => void
-  filteredCommands?: CommandInfo[]
-  onCommandSelect?: (command: CommandInfo) => void
+  paletteItems?: PaletteItem[]
+  onPaletteSelect?: (item: PaletteItem) => void
   mode?: ChatMode
   onModeChange?: (mode: ChatMode) => void
   voiceMode?: boolean
@@ -25,10 +25,8 @@ interface ChatInputProps {
   isListening?: boolean
   isSpeechDetected?: boolean
   isTranscribing?: boolean
-  isSpeaking?: boolean
   voiceError?: string | null
   onToggleVoice?: () => void
-  onStopSpeaking?: () => void
   contextUsage?: ContextUsage
   currentBranch?: string | null
   worktreePath?: string | null
@@ -51,8 +49,8 @@ export function ChatInput({
   disabled = false,
   viewingSession = false,
   onInputChange,
-  filteredCommands = [],
-  onCommandSelect,
+  paletteItems = [],
+  onPaletteSelect,
   mode = 'accept_edits',
   onModeChange,
   voiceMode = false,
@@ -60,10 +58,8 @@ export function ChatInput({
   isListening = false,
   isSpeechDetected = false,
   isTranscribing = false,
-  isSpeaking = false,
   voiceError,
   onToggleVoice,
-  onStopSpeaking,
   contextUsage,
   currentBranch,
   worktreePath,
@@ -85,7 +81,7 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
 
-  const showPalette = input.startsWith('/') && filteredCommands.length > 0
+  const showPalette = input.startsWith('/') && paletteItems.length > 0
 
   // Revoke blob URLs on unmount to prevent memory leaks
   const queuedFilesRef = useRef(queuedFiles)
@@ -106,7 +102,7 @@ export function ChatInput({
     }
   }, [input])
 
-  useEffect(() => { setSelectedIndex(0) }, [filteredCommands])
+  useEffect(() => { setSelectedIndex(0) }, [paletteItems])
 
   // Scroll selected command into view when navigating with arrow keys
   useEffect(() => {
@@ -131,10 +127,17 @@ export function ChatInput({
     onInputChange?.(value)
   }, [onInputChange])
 
-  const handleCommandSelect = useCallback((cmd: CommandInfo) => {
-    onCommandSelect?.(cmd)
-    setInput('')
-  }, [onCommandSelect])
+  const handlePaletteSelect = useCallback((item: PaletteItem) => {
+    if (item.kind === 'command') {
+      onPaletteSelect?.(item)
+      setInput('')
+    } else {
+      const completed = `/${item.parentCommand}:${item.name} `
+      setInput(completed)
+      onInputChange?.(completed)
+      textareaRef.current?.focus()
+    }
+  }, [onPaletteSelect, onInputChange])
 
   const handleFilesSelected = useCallback((files: FileList | null) => {
     if (!files) return
@@ -175,37 +178,62 @@ export function ChatInput({
       if (isStreaming && onStop) { e.preventDefault(); onStop(); return }
     }
     if (showPalette) {
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex((i) => (i > 0 ? i - 1 : filteredCommands.length - 1)); return }
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex((i) => (i < filteredCommands.length - 1 ? i + 1 : 0)); return }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex((i) => (i > 0 ? i - 1 : paletteItems.length - 1)); return }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex((i) => (i < paletteItems.length - 1 ? i + 1 : 0)); return }
+      if (e.key === 'Tab') {
         e.preventDefault()
-        const selected = filteredCommands[selectedIndex]
-        if (selected) handleCommandSelect(selected)
+        const selected = paletteItems[selectedIndex]
+        if (selected) handlePaletteSelect(selected)
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        const selected = paletteItems[selectedIndex]
+        if (selected) {
+          if (selected.kind === 'sub_item') {
+            // Complete the name, don't send
+            handlePaletteSelect(selected)
+          } else {
+            handlePaletteSelect(selected)
+          }
+        }
         return
       }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
-  }, [handleSubmit, isStreaming, onStop, showPalette, filteredCommands, selectedIndex, handleCommandSelect])
+  }, [handleSubmit, isStreaming, onStop, showPalette, paletteItems, selectedIndex, handlePaletteSelect])
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
 
   return (
     <div className="border-t border-border bg-background px-4 py-3">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-3xl mx-auto relative">
         {/* Command palette */}
         {showPalette && (
-          <div ref={paletteRef} className="mb-2 rounded-lg border border-border bg-muted overflow-hidden max-h-48 overflow-y-auto">
-            {filteredCommands.map((cmd, i) => (
+          <div ref={paletteRef} className="command-palette font-sans">
+            {paletteItems.map((item, i) => (
               <div
-                key={cmd.name}
+                key={item.kind === 'command' ? item.name : `${item.parentCommand}:${item.name}${item.serverName ? `:${item.serverName}` : ''}`}
                 className={cn(
                   'px-3 py-2 text-sm cursor-pointer',
                   i === selectedIndex ? 'bg-accent/20 text-foreground' : 'text-muted-foreground hover:bg-muted'
                 )}
-                onClick={() => handleCommandSelect(cmd)}
+                onClick={() => handlePaletteSelect(item)}
               >
-                <span className="font-mono">/{cmd.name}</span>
-                {cmd.description && <span className="ml-2 text-xs opacity-60">{cmd.description}</span>}
+                {item.kind === 'command' ? (
+                  <>
+                    <span className="font-mono">/{item.name}</span>
+                    {item.description && <span className="ml-2 text-xs opacity-60">{item.description}</span>}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-mono">{item.name}</span>
+                    {item.serverName && (
+                      <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded bg-accent/10 text-accent">{item.serverName}</span>
+                    )}
+                    {item.description && <span className="ml-2 text-xs opacity-60 truncate">{item.description}</span>}
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -293,7 +321,7 @@ export function ChatInput({
         )}
 
         {/* Listening indicator */}
-        {voiceMode && isListening && !isSpeaking && !isTranscribing && (
+        {voiceMode && isListening && !isTranscribing && (
           <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-accent/10">
             {isSpeechDetected ? (
               <>
@@ -318,21 +346,6 @@ export function ChatInput({
           <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-accent/10">
             <SpinnerIcon />
             <span className="text-sm text-muted-foreground">Transcribing...</span>
-          </div>
-        )}
-
-        {/* Speaking indicator */}
-        {voiceMode && isSpeaking && onStopSpeaking && (
-          <div
-            className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-accent/10 cursor-pointer"
-            onClick={onStopSpeaking}
-          >
-            <div className="flex gap-0.5 items-end h-4">
-              {[12, 8, 14, 10].map((h, i) => (
-                <span key={i} className="w-1 bg-accent rounded-full animate-pulse" style={{ height: `${h}px`, animationDelay: `${i * 0.1}s` }} />
-              ))}
-            </div>
-            <span className="text-sm text-accent">Speaking... (click to stop)</span>
           </div>
         )}
 

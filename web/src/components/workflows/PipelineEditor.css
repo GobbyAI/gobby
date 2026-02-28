@@ -472,3 +472,14 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
+
+/* Sidebar mode */
+.pipeline-editor--sidebar {
+  height: auto;
+  overflow: visible;
+}
+
+.pipeline-editor--sidebar .pipeline-editor-steps {
+  padding-bottom: 0;
+  overflow: visible;
+}

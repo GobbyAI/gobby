@@ -32,10 +32,14 @@ TERMINAL_CONTEXT_KEYS = [
     "terminal_alacritty_socket",
 ]
 
-# Hook events that fire frequently during execution — good piggyback candidates
+# Hook events that fire frequently during execution — good piggyback candidates.
+# BEFORE_AGENT ensures messages arrive at the start of every agent turn,
+# not just during tool calls (critical for spawned agents that haven't
+# made a tool call yet).
 _PIGGYBACK_EVENTS = {
     HookEventType.AFTER_TOOL,
     HookEventType.BEFORE_TOOL,
+    HookEventType.BEFORE_AGENT,
 }
 
 
@@ -129,7 +133,11 @@ class EventEnricher:
                 logger.debug(f"Piggyback message injection failed: {e}")
 
     def _inject_pending_messages(self, platform_session_id: str, response: HookResponse) -> None:
-        """Check for and inject undelivered messages into response context."""
+        """Check for and inject undelivered messages into response context.
+
+        Groups messages by type (P2P, web_chat, command_result) and adds
+        sender attribution for P2P messages.
+        """
         if not self._inter_session_msg_manager:
             return
 
@@ -137,18 +145,57 @@ class EventEnricher:
         if not undelivered:
             return
 
-        # Format messages for agent context
-        lines = ["[Pending messages from web chat user]:"]
+        # Group by message_type
+        groups: dict[str, list[Any]] = {}
         for msg in undelivered:
-            lines.append(f"- {msg.content}")
+            msg_type = getattr(msg, "message_type", "message") or "message"
+            groups.setdefault(msg_type, []).append(msg)
             # Mark as delivered
             try:
                 self._inter_session_msg_manager.mark_delivered(msg.id)
             except Exception:
                 pass
 
-        pending_context = "\n".join(lines)
+        # Format each group
+        sections: list[str] = []
+        for msg_type, msgs in groups.items():
+            header = self._group_header(msg_type)
+            lines = [header]
+            for msg in msgs:
+                urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
+                sender = self._resolve_sender_label(getattr(msg, "from_session", None))
+                lines.append(f"- {urgent}{sender}{msg.content}")
+            sections.append("\n".join(lines))
+
+        pending_context = "\n\n".join(sections)
         if response.context:
             response.context = f"{response.context}\n\n{pending_context}"
         else:
             response.context = pending_context
+
+    @staticmethod
+    def _group_header(message_type: str) -> str:
+        """Return the context header for a message type group."""
+        if message_type == "web_chat":
+            return "[Pending messages from web chat user]:"
+        if message_type == "command_result":
+            return "[Pending command results]:"
+        # Default: P2P messages (message_type == "message")
+        return "[Pending P2P messages from other sessions]:"
+
+    def _resolve_sender_label(self, from_session: str | None) -> str:
+        """Resolve a session ID to a human-readable sender label.
+
+        Returns 'Session #N: ' if seq_num lookup succeeds, falls back to
+        truncated UUID, or empty string if no sender.
+        """
+        if not from_session:
+            return ""
+        if self._session_storage:
+            try:
+                session_obj = self._session_storage.get(from_session)
+                if session_obj and session_obj.seq_num:
+                    return f"Session #{session_obj.seq_num}: "
+            except Exception:
+                pass
+        return f"Session {from_session[:8]}: "

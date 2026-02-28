@@ -258,12 +258,12 @@ class TestMemoryConfigEmbeddingFields:
 class TestMemoryConfigNeo4jFields:
     """Test neo4j_url and neo4j_auth fields on MemoryConfig."""
 
-    def test_neo4j_url_defaults_to_local_docker_port(self) -> None:
-        """neo4j_url should default to the local Docker port."""
+    def test_neo4j_url_defaults_to_none(self) -> None:
+        """neo4j_url should default to None (opt-in via gobby install neo4j)."""
         from gobby.config.persistence import MemoryConfig
 
         config = MemoryConfig()
-        assert config.neo4j_url == "http://localhost:8474"
+        assert config.neo4j_url is None
 
     def test_neo4j_auth_defaults_to_none(self) -> None:
         """neo4j_auth should default to None."""

@@ -75,7 +75,7 @@ class TestCrashRecovery:
             # Create some state via API (register a session)
             with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
                 # Just verify daemon is working
-                response = client.get("/admin/status")
+                response = client.get("/api/admin/status")
                 assert response.status_code == 200
 
             # Forcefully kill the daemon (simulating crash)
@@ -139,7 +139,7 @@ class TestCrashRecovery:
 
             # Get initial session count
             with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
-                response = client.get("/sessions")
+                response = client.get("/api/sessions")
                 assert response.status_code == 200
                 initial_count = response.json().get("count", 0)
 
@@ -169,7 +169,7 @@ class TestCrashRecovery:
 
                 # Sessions should be accessible (database recovered)
                 with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
-                    response = client.get("/sessions")
+                    response = client.get("/api/sessions")
                     assert response.status_code == 200
                     recovered_count = response.json().get("count", 0)
 
@@ -302,7 +302,7 @@ class TestClientReconnection:
 
             # Create a client and make a request
             with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
-                response1 = client.get("/admin/status")
+                response1 = client.get("/api/admin/status")
                 assert response1.status_code == 200
 
             # Stop daemon gracefully
@@ -330,7 +330,7 @@ class TestClientReconnection:
 
                 # New client should be able to connect
                 with httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0) as client:
-                    response2 = client.get("/admin/status")
+                    response2 = client.get("/api/admin/status")
                     assert response2.status_code == 200
 
             finally:

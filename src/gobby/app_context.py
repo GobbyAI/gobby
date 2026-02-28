@@ -62,6 +62,9 @@ class ServiceContainer:
     workflow_loader: Any | None = None  # WorkflowLoader
     pipeline_execution_manager: Any | None = None  # LocalPipelineExecutionManager
 
+    # Agent Lifecycle
+    agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor
+
     # Cron Scheduler
     cron_storage: Any | None = None  # CronJobStorage
     cron_scheduler: Any | None = None  # CronScheduler

@@ -43,17 +43,15 @@ class TestVoiceRoutes:
     # -----------------------------------------------------------------
 
     def test_status_voice_disabled_by_default(self, client: TestClient) -> None:
-        """VoiceConfig defaults: enabled=False, no API key."""
+        """VoiceConfig defaults: enabled=False."""
         response = client.get("/api/voice/status")
         assert response.status_code == 200
         data = response.json()
         assert data["enabled"] is False
         assert data["stt_available"] is False
         assert data["stt_reason"] == "Voice not enabled in config"
-        assert data["tts_available"] is False
-        assert data["tts_reason"] == "No ElevenLabs API key configured"
+        assert data["stt_enabled"] is True
         assert data["whisper_model"] == "base"
-        assert data["audio_format"] == "mp3_44100_128"
 
     def test_status_no_config(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """When server.config is None."""
@@ -62,7 +60,6 @@ class TestVoiceRoutes:
         data = response.json()
         assert data["enabled"] is False
         assert data["stt_available"] is False
-        assert data["tts_available"] is False
         assert data["reason"] == "Voice config not found"
 
     def test_status_no_voice_attr(self, client: TestClient, server_with_voice: MagicMock) -> None:
@@ -100,25 +97,15 @@ class TestVoiceRoutes:
         assert data["stt_available"] is True
         assert data["stt_reason"] == ""
 
-    def test_status_tts_with_api_key(
+    def test_status_stt_disabled(
         self, client: TestClient, server_with_voice: MagicMock
     ) -> None:
-        """TTS available when ElevenLabs API key is configured."""
-        server_with_voice.config.voice = VoiceConfig(enabled=True, elevenlabs_api_key="sk-test-key")
+        """STT unavailable when stt_enabled=False."""
+        server_with_voice.config.voice = VoiceConfig(enabled=True, stt_enabled=False)
         response = client.get("/api/voice/status")
         data = response.json()
-        assert data["tts_available"] is True
-        assert data["tts_reason"] == ""
-
-    def test_status_tts_without_api_key(
-        self, client: TestClient, server_with_voice: MagicMock
-    ) -> None:
-        """TTS unavailable when no API key."""
-        server_with_voice.config.voice = VoiceConfig(enabled=True, elevenlabs_api_key="")
-        response = client.get("/api/voice/status")
-        data = response.json()
-        assert data["tts_available"] is False
-        assert data["tts_reason"] == "No ElevenLabs API key configured"
+        assert data["stt_available"] is False
+        assert data["stt_reason"] == "STT disabled in config"
 
     def test_status_custom_whisper_model(
         self, client: TestClient, server_with_voice: MagicMock
@@ -128,15 +115,6 @@ class TestVoiceRoutes:
         response = client.get("/api/voice/status")
         data = response.json()
         assert data["whisper_model"] == "small"
-
-    def test_status_custom_voice_id(self, client: TestClient, server_with_voice: MagicMock) -> None:
-        """Custom ElevenLabs voice ID is reflected in status."""
-        server_with_voice.config.voice = VoiceConfig(
-            enabled=False, elevenlabs_voice_id="custom-voice-42"
-        )
-        response = client.get("/api/voice/status")
-        data = response.json()
-        assert data["tts_voice_id"] == "custom-voice-42"
 
     # -----------------------------------------------------------------
     # POST /api/voice/transcribe
@@ -178,6 +156,20 @@ class TestVoiceRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["error"] == "Voice not enabled"
+
+    def test_transcribe_stt_disabled(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        """Transcribe returns error when stt_enabled=False."""
+        server_with_voice.config.voice = VoiceConfig(enabled=True, stt_enabled=False)
+        response = client.post(
+            "/api/voice/transcribe",
+            files={"file": ("test.webm", b"fake audio data", "audio/webm")},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["error"] == "STT disabled in config"
+        assert data["text"] == ""
 
     def test_transcribe_stt_not_available(
         self, client: TestClient, server_with_voice: MagicMock

@@ -1,1 +1,1 @@
-"""Voice chat module: STT (Whisper) and TTS (ElevenLabs)."""
+"""Voice chat module: STT via local Whisper."""

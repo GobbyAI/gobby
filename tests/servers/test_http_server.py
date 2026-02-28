@@ -120,7 +120,7 @@ class TestAdminEndpoints:
 
     def test_status_check(self, client: TestClient) -> None:
         """Test /admin/status endpoint returns health info."""
-        response = client.get("/admin/status")
+        response = client.get("/api/admin/status")
         assert response.status_code == 200
 
         data = response.json()
@@ -131,7 +131,7 @@ class TestAdminEndpoints:
 
     def test_config_endpoint(self, client: TestClient) -> None:
         """Test /admin/config endpoint returns configuration."""
-        response = client.get("/admin/config")
+        response = client.get("/api/admin/config")
         assert response.status_code == 200
 
         data = response.json()
@@ -142,7 +142,7 @@ class TestAdminEndpoints:
 
     def test_metrics_endpoint(self, client: TestClient) -> None:
         """Test /admin/metrics endpoint returns Prometheus format."""
-        response = client.get("/admin/metrics")
+        response = client.get("/api/admin/metrics")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/plain")
 
@@ -159,7 +159,7 @@ class TestSessionEndpoints:
         """Test session registration endpoint."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"):
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "test-cli-key",
                     "source": "claude",
@@ -181,7 +181,7 @@ class TestSessionEndpoints:
     ) -> None:
         """Test session registration with all optional fields."""
         response = client.post(
-            "/sessions/register",
+            "/api/sessions/register",
             json={
                 "external_id": "full-cli-key",
                 "machine_id": "custom-machine",
@@ -213,7 +213,7 @@ class TestSessionEndpoints:
             project_id=test_project["id"],
         )
 
-        response = client.get(f"/sessions/{session.id}")
+        response = client.get(f"/api/sessions/{session.id}")
         assert response.status_code == 200
 
         data = response.json()
@@ -222,7 +222,7 @@ class TestSessionEndpoints:
 
     def test_get_session_not_found(self, client: TestClient) -> None:
         """Test getting nonexistent session returns 404."""
-        response = client.get("/sessions/nonexistent-uuid")
+        response = client.get("/api/sessions/nonexistent-uuid")
         assert response.status_code == 404
 
     def test_find_current_session(
@@ -240,7 +240,7 @@ class TestSessionEndpoints:
         )
 
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "find-current",
                 "machine_id": "my-machine",
@@ -256,7 +256,7 @@ class TestSessionEndpoints:
     def test_find_current_session_not_found(self, client: TestClient, test_project: dict) -> None:
         """Test finding nonexistent current session."""
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "nonexistent",
                 "machine_id": "machine",
@@ -272,7 +272,7 @@ class TestSessionEndpoints:
     def test_find_current_session_missing_fields(self, client: TestClient) -> None:
         """Test find_current with missing required fields."""
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={"external_id": "test"},
         )
 
@@ -281,7 +281,7 @@ class TestSessionEndpoints:
     def test_find_current_session_missing_project_id(self, client: TestClient) -> None:
         """Test find_current without project_id or cwd returns 400."""
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             json={
                 "external_id": "test",
                 "machine_id": "machine",
@@ -308,7 +308,7 @@ class TestSessionEndpoints:
         session_storage.update_status(session.id, "handoff_ready")
 
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "machine_id": "handoff-machine",
                 "source": "claude",
@@ -335,7 +335,7 @@ class TestSessionEndpoints:
         )
 
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={
                 "session_id": session.id,
                 "status": "paused",
@@ -349,7 +349,7 @@ class TestSessionEndpoints:
     def test_update_session_status_not_found(self, client: TestClient) -> None:
         """Test updating status of nonexistent session."""
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={
                 "session_id": "nonexistent-uuid",
                 "status": "paused",
@@ -373,7 +373,7 @@ class TestSessionEndpoints:
         )
 
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={
                 "session_id": session.id,
                 "summary_path": "/path/to/summary.md",
@@ -387,7 +387,7 @@ class TestSessionEndpoints:
     def test_update_session_summary_not_found(self, client: TestClient) -> None:
         """Test updating summary of nonexistent session."""
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={
                 "session_id": "nonexistent-uuid",
                 "summary_path": "/path/to/summary.md",
@@ -417,7 +417,7 @@ class TestSessionEndpoints:
             project_id=test_project["id"],
         )
 
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
         assert response.status_code == 200
 
         data = response.json()
@@ -447,7 +447,7 @@ class TestSessionEndpoints:
         )
 
         # Filter by source
-        response = client.get(f"/sessions?source=claude&project_id={test_project['id']}")
+        response = client.get(f"/api/sessions?source=claude&project_id={test_project['id']}")
         assert response.status_code == 200
 
         data = response.json()
@@ -458,7 +458,7 @@ class TestSessionEndpoints:
 
     def test_get_messages_without_manager(self, client: TestClient) -> None:
         """Test getting messages when message manager not available."""
-        response = client.get("/sessions/test-session/messages")
+        response = client.get("/api/sessions/test-session/messages")
         assert response.status_code == 503
         assert "Message manager not available" in response.json()["detail"]
 
@@ -479,7 +479,7 @@ class TestSessionEndpoints:
             test_mode=True,
         )
         client = TestClient(server.app)
-        response = client.get("/sessions")
+        response = client.get("/api/sessions")
         assert response.status_code == 503
         assert "Session manager not available" in response.json()["detail"]
 
@@ -498,7 +498,7 @@ class TestSessionEndpoints:
         )
         client = TestClient(server.app)
         response = client.post(
-            "/sessions/register",
+            "/api/sessions/register",
             json={"external_id": "test", "source": "claude"},
         )
         assert response.status_code == 503
@@ -521,7 +521,7 @@ class TestSessionEndpoints:
 
         with patch("gobby.utils.machine_id.get_machine_id", return_value="cwd-machine"):
             response = client.post(
-                "/sessions/find_parent",
+                "/api/sessions/find_parent",
                 json={
                     "source": "claude",
                     "cwd": str(temp_dir),  # Use cwd instead of project_id
@@ -535,7 +535,7 @@ class TestSessionEndpoints:
     def test_find_parent_missing_source(self, client: TestClient) -> None:
         """Test find_parent with missing source field."""
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={"machine_id": "test-machine"},
         )
 
@@ -548,7 +548,7 @@ class TestSessionEndpoints:
     ) -> None:
         """Test find_parent without project_id or cwd returns 400."""
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "source": "claude",
                 "machine_id": "test-machine",
@@ -565,7 +565,7 @@ class TestSessionEndpoints:
     ) -> None:
         """Test find_parent when no parent session exists."""
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             json={
                 "source": "claude",
                 "machine_id": "test-machine",
@@ -587,7 +587,7 @@ class TestSessionEndpoints:
         # Register via HTTP endpoint
         with patch("gobby.utils.machine_id.get_machine_id", return_value="persist-machine"):
             register_response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "persist-test-key",
                     "source": "claude",
@@ -601,7 +601,7 @@ class TestSessionEndpoints:
         session_id = register_data["id"]
 
         # Retrieve via GET endpoint
-        get_response = client.get(f"/sessions/{session_id}")
+        get_response = client.get(f"/api/sessions/{session_id}")
         assert get_response.status_code == 200
 
         get_data = get_response.json()
@@ -617,7 +617,7 @@ class TestSessionEndpoints:
         HTTPException with status 500 before the global handler runs.
         """
         response = client.post(
-            "/sessions/find_current",
+            "/api/sessions/find_current",
             content="{ invalid json",
             headers={"Content-Type": "application/json"},
         )
@@ -632,7 +632,7 @@ class TestSessionEndpoints:
         HTTPException with status 500 before the global handler runs.
         """
         response = client.post(
-            "/sessions/find_parent",
+            "/api/sessions/find_parent",
             content="not valid json {",
             headers={"Content-Type": "application/json"},
         )
@@ -647,7 +647,7 @@ class TestSessionEndpoints:
         HTTPException with status 500 before the global handler runs.
         """
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             content="[broken",
             headers={"Content-Type": "application/json"},
         )
@@ -662,7 +662,7 @@ class TestSessionEndpoints:
         HTTPException with status 500 before the global handler runs.
         """
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             content="{incomplete",
             headers={"Content-Type": "application/json"},
         )
@@ -673,7 +673,7 @@ class TestSessionEndpoints:
     def test_update_status_missing_fields(self, client: TestClient) -> None:
         """Test update_status with missing required fields."""
         response = client.post(
-            "/sessions/update_status",
+            "/api/sessions/update_status",
             json={"session_id": "test-id"},  # missing status
         )
         assert response.status_code == 400
@@ -681,7 +681,7 @@ class TestSessionEndpoints:
     def test_update_summary_missing_fields(self, client: TestClient) -> None:
         """Test update_summary with missing required fields."""
         response = client.post(
-            "/sessions/update_summary",
+            "/api/sessions/update_summary",
             json={"session_id": "test-id"},  # missing summary_path
         )
         assert response.status_code == 400
@@ -698,7 +698,7 @@ class TestSessionEndpoints:
         """
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine"):
             response = client.post(
-                "/sessions/register",
+                "/api/sessions/register",
                 json={
                     "external_id": "invalid-path-test",
                     "source": "claude",
@@ -717,7 +717,7 @@ class TestHooksEndpoint:
     def test_execute_hook_missing_hook_type(self, client: TestClient) -> None:
         """Test hook execution with missing hook_type."""
         response = client.post(
-            "/hooks/execute",
+            "/api/hooks/execute",
             json={"source": "claude"},
         )
 
@@ -727,7 +727,7 @@ class TestHooksEndpoint:
     def test_execute_hook_missing_source(self, client: TestClient) -> None:
         """Test hook execution with missing source."""
         response = client.post(
-            "/hooks/execute",
+            "/api/hooks/execute",
             json={"hook_type": "session-start"},
         )
 
@@ -737,7 +737,7 @@ class TestHooksEndpoint:
     def test_execute_hook_unsupported_source(self, client: TestClient) -> None:
         """Test hook execution with unsupported source returns error."""
         response = client.post(
-            "/hooks/execute",
+            "/api/hooks/execute",
             json={
                 "hook_type": "session-start",
                 "source": "unsupported",
@@ -753,7 +753,7 @@ class TestMCPEndpoints:
 
     def test_mcp_tools_without_manager(self, client: TestClient) -> None:
         """Test MCP tools listing when manager not available."""
-        response = client.get("/mcp/test-server/tools")
+        response = client.get("/api/mcp/test-server/tools")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -762,7 +762,7 @@ class TestMCPEndpoints:
     def test_mcp_proxy_without_manager(self, client: TestClient) -> None:
         """Test MCP proxy when manager not available."""
         response = client.post(
-            "/mcp/test-server/tools/test-tool",
+            "/api/mcp/test-server/tools/test-tool",
             json={},
         )
         assert response.status_code == 503
@@ -838,7 +838,7 @@ class TestMCPEndpointsWithManager:
         http_server_with_mcp.mcp_manager.get_client.side_effect = ValueError("Server not found")
 
         # No try/except needed if we fixed the root cause, but leaving assertion
-        response = mcp_client.get("/mcp/unknown-server/tools")
+        response = mcp_client.get("/api/mcp/unknown-server/tools")
         assert response.status_code == 404
 
     def test_mcp_proxy_tool_not_found(
@@ -858,7 +858,7 @@ class TestMCPEndpointsWithManager:
         )
 
         response = mcp_client.post(
-            "/mcp/test-server/tools/unknown-tool",
+            "/api/mcp/test-server/tools/unknown-tool",
             json={},
         )
         # Tool-level errors return 200 with error in body (application-level error)
@@ -882,7 +882,7 @@ class TestMCPEndpointsWithManager:
             http_server_with_mcp.mcp_manager.add_server = AsyncMock()
 
             response = mcp_client.post(
-                "/mcp/servers",
+                "/api/mcp/servers",
                 json={
                     "name": "new-server",
                     "transport": "http",
@@ -909,7 +909,7 @@ class TestMCPEndpointsWithManager:
         """Test adding MCP server without project context fails."""
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             response = mcp_client.post(
-                "/mcp/servers",
+                "/api/mcp/servers",
                 json={
                     "name": "new-server",
                     "transport": "http",
@@ -978,7 +978,7 @@ class TestShutdownEndpoint:
 
     def test_shutdown_initiates(self, client: TestClient) -> None:
         """Test that shutdown endpoint initiates shutdown."""
-        response = client.post("/admin/shutdown")
+        response = client.post("/api/admin/shutdown")
         assert response.status_code == 200
 
         data = response.json()
@@ -1074,7 +1074,7 @@ class TestStopSignalEndpoints:
     def test_post_stop_signal(self, stop_client: TestClient) -> None:
         """Test sending a stop signal to a session."""
         response = stop_client.post(
-            "/sessions/test-session-123/stop",
+            "/api/sessions/test-session-123/stop",
             json={"reason": "User requested stop", "source": "dashboard"},
         )
 
@@ -1089,7 +1089,7 @@ class TestStopSignalEndpoints:
 
     def test_post_stop_signal_default_values(self, stop_client: TestClient) -> None:
         """Test stop signal with default reason and source."""
-        response = stop_client.post("/sessions/test-session-456/stop")
+        response = stop_client.post("/api/sessions/test-session-456/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1102,10 +1102,10 @@ class TestStopSignalEndpoints:
     ) -> None:
         """Test checking for existing stop signal."""
         # First send a signal
-        stop_client.post("/sessions/check-session/stop", json={"reason": "Test"})
+        stop_client.post("/api/sessions/check-session/stop", json={"reason": "Test"})
 
         # Then check for it
-        response = stop_client.get("/sessions/check-session/stop")
+        response = stop_client.get("/api/sessions/check-session/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1116,7 +1116,7 @@ class TestStopSignalEndpoints:
 
     def test_get_stop_signal_absent(self, stop_client: TestClient) -> None:
         """Test checking for non-existent stop signal."""
-        response = stop_client.get("/sessions/no-signal-session/stop")
+        response = stop_client.get("/api/sessions/no-signal-session/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1126,10 +1126,10 @@ class TestStopSignalEndpoints:
     def test_delete_stop_signal(self, stop_client: TestClient) -> None:
         """Test clearing a stop signal."""
         # First send a signal
-        stop_client.post("/sessions/clear-session/stop")
+        stop_client.post("/api/sessions/clear-session/stop")
 
         # Then clear it
-        response = stop_client.delete("/sessions/clear-session/stop")
+        response = stop_client.delete("/api/sessions/clear-session/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1137,12 +1137,12 @@ class TestStopSignalEndpoints:
         assert data["was_present"] is True
 
         # Verify it's gone
-        check_response = stop_client.get("/sessions/clear-session/stop")
+        check_response = stop_client.get("/api/sessions/clear-session/stop")
         assert check_response.json()["has_signal"] is False
 
     def test_delete_stop_signal_not_present(self, stop_client: TestClient) -> None:
         """Test clearing non-existent stop signal."""
-        response = stop_client.delete("/sessions/no-signal/stop")
+        response = stop_client.delete("/api/sessions/no-signal/stop")
 
         assert response.status_code == 200
         data = response.json()
@@ -1151,7 +1151,7 @@ class TestStopSignalEndpoints:
 
     def test_stop_signal_without_hook_manager(self, client: TestClient) -> None:
         """Test stop signal endpoints when hook manager not available."""
-        response = client.post("/sessions/test-session/stop")
+        response = client.post("/api/sessions/test-session/stop")
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]
 
@@ -1175,7 +1175,7 @@ class TestStopSignalEndpoints:
             mock_hm._stop_registry = None
             client.app.state.hook_manager = mock_hm
 
-            response = client.post("/sessions/test-session/stop")
+            response = client.post("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
         assert "Stop registry not available" in response.json()["detail"]

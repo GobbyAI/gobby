@@ -72,7 +72,7 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
     setError(null)
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/memories?limit=200`)
+      const response = await fetch(`${baseUrl}/api/memories?limit=200`)
       if (!response.ok) {
         setError('Failed to load memories')
         setIsLoading(false)
@@ -107,7 +107,7 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
     setError(null)
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/memories/${memoryId}`, {
+      const response = await fetch(`${baseUrl}/api/memories/${memoryId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),

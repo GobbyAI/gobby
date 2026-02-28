@@ -1,6 +1,6 @@
 """Tests for generate_json() on LLM providers."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

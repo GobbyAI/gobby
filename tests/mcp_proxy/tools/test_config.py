@@ -104,11 +104,11 @@ class TestGetConfigSection:
     def test_get_config_section_returns_subsection(self, config_registry) -> None:
         """Test get_config_section works with deeper prefixes."""
         tool = config_registry.get_tool("get_config_section")
-        result = tool(prefix="conductor")
+        result = tool(prefix="logging")
 
         assert result["success"] is True
         section = result["section"]
-        assert "daily_budget_usd" in section
+        assert "level" in section
 
 
 class TestSetConfig:
@@ -150,11 +150,11 @@ class TestSetConfig:
     ) -> None:
         """Test set_config works with nested dotted keys."""
         tool = config_registry.get_tool("set_config")
-        result = tool(key="conductor.daily_budget_usd", value=100.0)
+        result = tool(key="logging.level", value="debug")
 
         assert result["success"] is True
-        assert config_store.get("conductor.daily_budget_usd") == 100.0
-        assert config_state["config"].conductor.daily_budget_usd == 100.0
+        assert config_store.get("logging.level") == "debug"
+        assert config_state["config"].logging.level == "debug"
 
 
 class TestListConfigKeys:
@@ -204,43 +204,43 @@ class TestEnsureDefaults:
     ) -> None:
         """Test ensure_defaults inserts Pydantic defaults for missing keys."""
         tool = config_registry.get_tool("ensure_defaults")
-        result = tool(section="conductor")
+        result = tool(section="logging")
 
         assert result["success"] is True
         assert result["inserted"] > 0
-        assert "conductor.daily_budget_usd" in result["keys_inserted"]
+        assert "logging.level" in result["keys_inserted"]
 
         # Verify persisted in DB
-        db_value = config_store.get("conductor.daily_budget_usd")
-        assert db_value == 50.0
+        db_value = config_store.get("logging.level")
+        assert db_value == "info"
 
     def test_ensure_defaults_does_not_overwrite_existing(
         self, config_registry, config_store: ConfigStore
     ) -> None:
         """Test ensure_defaults skips keys that already exist in DB."""
         # Pre-set a custom value
-        config_store.set("conductor.daily_budget_usd", 200.0)
+        config_store.set("logging.level", "debug")
 
         tool = config_registry.get_tool("ensure_defaults")
-        result = tool(section="conductor")
+        result = tool(section="logging")
 
         assert result["success"] is True
         # Should not have overwritten the existing key
-        db_value = config_store.get("conductor.daily_budget_usd")
-        assert db_value == 200.0
+        db_value = config_store.get("logging.level")
+        assert db_value == "debug"
 
         # The pre-set key should not be in keys_inserted
         if result["inserted"] > 0:
-            assert "conductor.daily_budget_usd" not in result["keys_inserted"]
+            assert "logging.level" not in result["keys_inserted"]
 
     def test_ensure_defaults_all_present(self, config_registry, config_store: ConfigStore) -> None:
         """Test ensure_defaults reports when all keys are already present."""
         # First call populates
         tool = config_registry.get_tool("ensure_defaults")
-        tool(section="conductor")
+        tool(section="logging")
 
         # Second call should find nothing to insert
-        result = tool(section="conductor")
+        result = tool(section="logging")
         assert result["success"] is True
         assert result["inserted"] == 0
         assert "already present" in result["message"]

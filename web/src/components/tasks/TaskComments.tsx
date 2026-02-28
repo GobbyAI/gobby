@@ -283,7 +283,7 @@ export function TaskComments({ taskId }: TaskCommentsProps) {
     setError(null)
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/comments`)
+      const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/comments`)
       if (response.ok) {
         const data = await response.json()
         setComments(data.comments || [])
@@ -301,7 +301,7 @@ export function TaskComments({ taskId }: TaskCommentsProps) {
   const fetchAuthors = useCallback(async () => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/sessions?limit=30`)
+      const response = await fetch(`${baseUrl}/api/sessions?limit=30`)
       if (response.ok) {
         const data = await response.json()
         const sessions: Array<{ id: string; agent_name?: string; cli_type?: string }> = data.sessions || []
@@ -329,7 +329,7 @@ export function TaskComments({ taskId }: TaskCommentsProps) {
   const handlePost = useCallback(async (body: string, parentId?: string) => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/comments`, {
+      const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -47,7 +47,7 @@ class TestMCPDiscoveryRoutes:
     # -----------------------------------------------------------------
 
     def test_list_tools_empty(self, client: TestClient) -> None:
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -63,7 +63,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.get_all_registries.return_value = [registry]
 
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -80,7 +80,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager.is_internal.return_value = True
         mock_server._internal_manager.get_registry.return_value = registry
 
-        response = client.get("/mcp/tools?server_filter=gobby-tasks")
+        response = client.get("/api/mcp/tools?server_filter=gobby-tasks")
         assert response.status_code == 200
         data = response.json()
         assert "gobby-tasks" in data["tools"]
@@ -96,7 +96,7 @@ class TestMCPDiscoveryRoutes:
         config.enabled = False
         mock_server.mcp_manager._configs = {"ext-server": config}
 
-        response = client.get("/mcp/tools?server_filter=ext-server")
+        response = client.get("/api/mcp/tools?server_filter=ext-server")
         assert response.status_code == 200
         data = response.json()
         assert data["tools"]["ext-server"] == []
@@ -123,7 +123,7 @@ class TestMCPDiscoveryRoutes:
         mock_session.list_tools.return_value = mock_tools_result
         mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
 
-        response = client.get("/mcp/tools?server_filter=ext-server")
+        response = client.get("/api/mcp/tools?server_filter=ext-server")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -146,7 +146,7 @@ class TestMCPDiscoveryRoutes:
             side_effect=RuntimeError("Connection refused")
         )
 
-        response = client.get("/mcp/tools?server_filter=ext-server")
+        response = client.get("/api/mcp/tools?server_filter=ext-server")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -162,7 +162,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.mcp_manager.has_server.return_value = True
         mock_server.mcp_manager._configs = {}  # No config for this server
 
-        response = client.get("/mcp/tools?server_filter=ext-server")
+        response = client.get("/api/mcp/tools?server_filter=ext-server")
         assert response.status_code == 200
         data = response.json()
         # No config means config is None -> enabled check not hit -> falls into ensure_connected
@@ -196,7 +196,7 @@ class TestMCPDiscoveryRoutes:
         mock_session.list_tools.return_value = mock_tools_result
         mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
 
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         assert "gobby-tasks" in data["tools"]
@@ -216,7 +216,7 @@ class TestMCPDiscoveryRoutes:
             side_effect=ConnectionError("unreachable")
         )
 
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -232,7 +232,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.mcp_manager = MagicMock()
         mock_server.mcp_manager.server_configs = [ext_config]
 
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         assert "disabled-server" not in data["tools"]
@@ -255,7 +255,7 @@ class TestMCPDiscoveryRoutes:
         mock_session.list_tools.return_value = mock_tools_result
         mock_server.mcp_manager.ensure_connected = AsyncMock(return_value=mock_session)
 
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         tool = data["tools"]["server-a"][0]
@@ -287,7 +287,7 @@ class TestMCPDiscoveryRoutes:
         }
         mock_server.metrics_manager = metrics_mgr
 
-        response = client.get("/mcp/tools?include_metrics=true")
+        response = client.get("/api/mcp/tools?include_metrics=true")
         assert response.status_code == 200
         data = response.json()
         tools = data["tools"]["gobby-tasks"]
@@ -315,7 +315,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.get_all_registries.return_value = [registry]
 
-        response = client.get("/mcp/tools?include_metrics=true")
+        response = client.get("/api/mcp/tools?include_metrics=true")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -342,7 +342,7 @@ class TestMCPDiscoveryRoutes:
         metrics_mgr.get_metrics.return_value = {"tools": []}
         mock_server.metrics_manager = metrics_mgr
 
-        response = client.get("/mcp/tools?include_metrics=true")
+        response = client.get("/api/mcp/tools?include_metrics=true")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -351,7 +351,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.get_all_registries.side_effect = RuntimeError("boom")
 
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -362,12 +362,12 @@ class TestMCPDiscoveryRoutes:
     # -----------------------------------------------------------------
 
     def test_recommend_no_task_description(self, client: TestClient) -> None:
-        response = client.post("/mcp/tools/recommend", json={"top_k": 5})
+        response = client.post("/api/mcp/tools/recommend", json={"top_k": 5})
         assert response.status_code == 400
 
     def test_recommend_no_tools_handler(self, client: TestClient) -> None:
         response = client.post(
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             json={"task_description": "create a file"},
         )
         assert response.status_code == 200
@@ -385,7 +385,7 @@ class TestMCPDiscoveryRoutes:
         )
 
         response = client.post(
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             json={"task_description": "create a file"},
         )
         assert response.status_code == 200
@@ -402,7 +402,7 @@ class TestMCPDiscoveryRoutes:
         )
 
         response = client.post(
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             json={
                 "task_description": "query db",
                 "agent_id": "agent-1",
@@ -422,7 +422,7 @@ class TestMCPDiscoveryRoutes:
 
     def test_recommend_malformed_json(self, client: TestClient) -> None:
         response = client.post(
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             content=b"not json",
             headers={"Content-Type": "application/json"},
         )
@@ -437,7 +437,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.resolve_project_id.side_effect = ValueError("No project")
 
         response = client.post(
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             json={
                 "task_description": "query db",
                 "search_mode": "semantic",
@@ -456,7 +456,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.resolve_project_id.side_effect = ValueError("No project found")
 
         response = client.post(
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             json={
                 "task_description": "analyze data",
                 "search_mode": "hybrid",
@@ -474,7 +474,7 @@ class TestMCPDiscoveryRoutes:
         )
 
         response = client.post(
-            "/mcp/tools/recommend",
+            "/api/mcp/tools/recommend",
             json={"task_description": "cause an error"},
         )
         assert response.status_code == 200
@@ -487,12 +487,12 @@ class TestMCPDiscoveryRoutes:
     # -----------------------------------------------------------------
 
     def test_search_no_query(self, client: TestClient) -> None:
-        response = client.post("/mcp/tools/search", json={"top_k": 5})
+        response = client.post("/api/mcp/tools/search", json={"top_k": 5})
         assert response.status_code == 400
 
     def test_search_no_semantic_search(self, client: TestClient) -> None:
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "create file"},
         )
         assert response.status_code == 200
@@ -504,7 +504,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.resolve_project_id.side_effect = ValueError("No project")
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "create file"},
         )
         assert response.status_code == 200
@@ -514,7 +514,7 @@ class TestMCPDiscoveryRoutes:
 
     def test_search_malformed_json(self, client: TestClient) -> None:
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             content=b"not json",
             headers={"Content-Type": "application/json"},
         )
@@ -535,7 +535,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._tools_handler._semantic_search = semantic_search
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "create file"},
         )
         assert response.status_code == 200
@@ -553,7 +553,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._tools_handler._semantic_search = semantic_search
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={
                 "query": "list files",
                 "top_k": 5,
@@ -583,7 +583,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._mcp_db_manager = MagicMock()
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "create file"},
         )
         assert response.status_code == 200
@@ -605,7 +605,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._mcp_db_manager = None  # No db manager
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "create file"},
         )
         assert response.status_code == 200
@@ -622,7 +622,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._tools_handler._semantic_search = semantic_search
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "create file"},
         )
         assert response.status_code == 200
@@ -636,7 +636,7 @@ class TestMCPDiscoveryRoutes:
         mock_server.resolve_project_id.side_effect = RuntimeError("catastrophic failure")
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "trigger error"},
         )
         assert response.status_code == 200
@@ -652,7 +652,7 @@ class TestMCPDiscoveryRoutes:
         mock_server._tools_handler._semantic_search = None
 
         response = client.post(
-            "/mcp/tools/search",
+            "/api/mcp/tools/search",
             json={"query": "create file"},
         )
         assert response.status_code == 200

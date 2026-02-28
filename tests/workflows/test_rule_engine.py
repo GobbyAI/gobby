@@ -226,18 +226,18 @@ class TestSetVariableEffect:
                 event=RuleEvent.STOP,
                 effect=RuleEffect(
                     type="set_variable",
-                    variable="stop_attempts",
-                    value="variables.get('stop_attempts', 0) + 1",
+                    variable="custom_counter",
+                    value="variables.get('custom_counter', 0) + 1",
                 ),
             ),
         )
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"stop_attempts": 2}
+        variables: dict[str, Any] = {"custom_counter": 2}
         event = _make_event(HookEventType.STOP)
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables["stop_attempts"] == 3
+        assert variables["custom_counter"] == 3
 
 
 class TestInjectContextEffect:
@@ -1132,6 +1132,167 @@ class TestToolBlockPending:
 
         assert variables.get("tool_block_pending") is True
         assert variables.get("x") == 42
+
+    @pytest.mark.asyncio
+    async def test_tool_block_pending_cleared_on_successful_after_tool(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """tool_block_pending should be auto-cleared by the engine on successful after_tool."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"tool_block_pending": True}
+        event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["tool_block_pending"] is False
+
+    @pytest.mark.asyncio
+    async def test_tool_block_pending_not_cleared_on_failed_after_tool(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """tool_block_pending should NOT be cleared on failed after_tool."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"tool_block_pending": True}
+        event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
+        event.metadata["is_failure"] = True
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["tool_block_pending"] is True
+
+
+class TestConsecutiveToolBlocks:
+    """Tests for consecutive tool block detection (engine-level safety)."""
+
+    @pytest.mark.asyncio
+    async def test_counter_increments_on_consecutive_block(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Counter should increment when tool_block_pending is already true."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        _insert_rule(
+            manager,
+            "block-edit",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effect=RuleEffect(type="block", reason="No editing", tools=["Edit"]),
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"tool_block_pending": True, "_last_blocked_tool": "Edit"}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["consecutive_tool_blocks"] == 1
+
+    @pytest.mark.asyncio
+    async def test_short_circuit_fires_at_threshold(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """At count >= 2, engine should short-circuit block without evaluating rules."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        # Insert a rule with set_variable to prove it never runs
+        _insert_rule(
+            manager,
+            "block-edit-with-side-effect",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(type="set_variable", variable="rule_ran", value=True),
+                    RuleEffect(type="block", reason="No editing", tools=["Edit"]),
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "tool_block_pending": True,
+            "consecutive_tool_blocks": 1,
+            "_last_blocked_tool": "Edit",
+        }
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "block"
+        assert "3 times consecutively" in response.reason
+        assert "STOP retrying" in response.reason
+        # Rule should NOT have been evaluated — no side effect
+        assert variables.get("rule_ran") is None
+
+    @pytest.mark.asyncio
+    async def test_counter_resets_on_successful_after_tool(
+        self, db: LocalDatabase
+    ) -> None:
+        """Counter should reset to 0 on successful after_tool."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "tool_block_pending": True,
+            "consecutive_tool_blocks": 3,
+        }
+        event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["consecutive_tool_blocks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_counter_resets_on_before_agent(self, db: LocalDatabase) -> None:
+        """Counter should reset to 0 on BEFORE_AGENT (new turn = fresh start)."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"consecutive_tool_blocks": 5}
+        event = _make_event(HookEventType.BEFORE_AGENT)
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["consecutive_tool_blocks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_counter_not_incremented_when_block_pending_false(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """First block should NOT touch the counter (tool_block_pending is false)."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        _insert_rule(
+            manager,
+            "block-edit",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effect=RuleEffect(type="block", reason="No editing", tools=["Edit"]),
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("consecutive_tool_blocks", 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_counter_not_reset_on_failed_after_tool(
+        self, db: LocalDatabase
+    ) -> None:
+        """Counter should NOT reset on failed after_tool."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {
+            "tool_block_pending": True,
+            "consecutive_tool_blocks": 2,
+        }
+        event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
+        event.metadata["is_failure"] = True
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["consecutive_tool_blocks"] == 2
 
 
 class TestNoRules:

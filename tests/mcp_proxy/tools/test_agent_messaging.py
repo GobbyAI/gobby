@@ -549,6 +549,7 @@ class TestToolRegistration:
         assert "complete_command" in tool_names
         assert "deliver_pending_messages" in tool_names
         assert "activate_command" in tool_names
+        assert "wait_for_command" in tool_names
         assert "get_inter_session_messages" in tool_names
 
 

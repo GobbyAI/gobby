@@ -181,7 +181,7 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:
-            response = httpx.get(f"http://localhost:{port}/admin/status", timeout=2.0)
+            response = httpx.get(f"http://localhost:{port}/api/admin/status", timeout=2.0)
             if response.status_code == 200:
                 return True
         except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout):
@@ -360,6 +360,9 @@ conductor:
   warning_threshold: 0.8
   throttle_threshold: 0.9
   tracking_window_days: 7
+
+metrics:
+  daily_budget_usd: 1.0
 """
 
     config_path.write_text(config_content)
@@ -519,7 +522,7 @@ class CLIEventSimulator:
         if cwd:
             payload["cwd"] = cwd
 
-        response = self.client.post("/sessions/register", json=payload)
+        response = self.client.post("/api/sessions/register", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -544,7 +547,7 @@ class CLIEventSimulator:
             "input_data": input_data,
         }
 
-        response = self.client.post("/hooks/execute", json=payload)
+        response = self.client.post("/api/hooks/execute", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -564,7 +567,7 @@ class CLIEventSimulator:
             },
         }
 
-        response = self.client.post("/hooks/execute", json=payload)
+        response = self.client.post("/api/hooks/execute", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -586,7 +589,7 @@ class CLIEventSimulator:
             },
         }
 
-        response = self.client.post("/hooks/execute", json=payload)
+        response = self.client.post("/api/hooks/execute", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -609,13 +612,13 @@ class CLIEventSimulator:
             "mode": mode,
         }
 
-        response = self.client.post("/admin/test/register-agent", json=payload)
+        response = self.client.post("/api/admin/test/register-agent", json=payload)
         response.raise_for_status()
         return response.json()
 
     def unregister_test_agent(self, run_id: str) -> dict[str, Any]:
         """Unregister a test agent from the running agent registry."""
-        response = self.client.delete(f"/admin/test/unregister-agent/{run_id}")
+        response = self.client.delete(f"/api/admin/test/unregister-agent/{run_id}")
         response.raise_for_status()
         return response.json()
 
@@ -637,7 +640,7 @@ class CLIEventSimulator:
         if repo_path:
             payload["repo_path"] = repo_path
 
-        response = self.client.post("/admin/test/register-project", json=payload)
+        response = self.client.post("/api/admin/test/register-project", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -663,7 +666,7 @@ class CLIEventSimulator:
             "total_cost_usd": total_cost_usd,
         }
 
-        response = self.client.post("/admin/test/set-session-usage", json=payload)
+        response = self.client.post("/api/admin/test/set-session-usage", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -692,7 +695,7 @@ class MCPTestClient:
 
     def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""
-        response = self.client.get("/mcp/servers")
+        response = self.client.get("/api/mcp/servers")
         response.raise_for_status()
         return response.json().get("servers", [])
 
@@ -706,7 +709,7 @@ class MCPTestClient:
             # API uses server_filter parameter
             params["server_filter"] = server_name
 
-        response = self.client.get("/mcp/tools", params=params)
+        response = self.client.get("/api/mcp/tools", params=params)
         response.raise_for_status()
         data = response.json()
 
@@ -741,7 +744,7 @@ class MCPTestClient:
         }
 
         # Endpoint is /mcp/tools/call
-        response = self.client.post("/mcp/tools/call", json=payload)
+        response = self.client.post("/api/mcp/tools/call", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -749,7 +752,7 @@ class MCPTestClient:
         """Get full schema for a tool."""
         # Endpoint is POST /mcp/tools/schema with JSON body
         response = self.client.post(
-            "/mcp/tools/schema",
+            "/api/mcp/tools/schema",
             json={"server_name": server_name, "tool_name": tool_name},
         )
         response.raise_for_status()
@@ -780,7 +783,7 @@ class AsyncMCPTestClient:
 
     async def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""
-        response = await self.client.get("/mcp/servers")
+        response = await self.client.get("/api/mcp/servers")
         response.raise_for_status()
         return response.json().get("servers", [])
 
@@ -794,7 +797,7 @@ class AsyncMCPTestClient:
             # API uses server_filter parameter
             params["server_filter"] = server_name
 
-        response = await self.client.get("/mcp/tools", params=params)
+        response = await self.client.get("/api/mcp/tools", params=params)
         response.raise_for_status()
         data = response.json()
 
@@ -829,7 +832,7 @@ class AsyncMCPTestClient:
         }
 
         # Endpoint is /mcp/tools/call
-        response = await self.client.post("/mcp/tools/call", json=payload)
+        response = await self.client.post("/api/mcp/tools/call", json=payload)
         response.raise_for_status()
         return response.json()
 
@@ -859,12 +862,34 @@ def _snapshot_dir(path: Path) -> dict[str, float]:
 
 
 def _production_daemon_running() -> bool:
-    """Check if a production gobby daemon is listening on port 60887."""
-    try:
-        with socket.create_connection(("localhost", 60887), timeout=0.2):
+    """Check if a production gobby daemon is listening on port 60887.
+
+    Uses retry logic to handle transient unresponsiveness, plus a PID file
+    fallback for when the daemon is alive but briefly unresponsive to TCP.
+    """
+    # Try TCP probe with retries (daemon may be briefly busy)
+    for _ in range(3):
+        try:
+            with socket.create_connection(("localhost", 60887), timeout=0.3):
+                return True
+        except (ConnectionRefusedError, OSError, TimeoutError):
+            time.sleep(0.3)
+
+    # Fallback: check for PID file with live process
+    pid_file = Path.home() / ".gobby" / "gobby.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)  # Check if process is alive (signal 0)
             return True
-    except (ConnectionRefusedError, OSError, TimeoutError):
-        return False
+        except (ValueError, OSError, ProcessLookupError):
+            pass
+
+    return False
+
+
+# Known daemon artifacts that the production daemon may create/touch
+_DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "watchdog.pid"}
 
 
 @pytest.fixture(autouse=True)
@@ -880,18 +905,34 @@ def assert_no_external_writes() -> Generator[None]:
     (database, logs) will be modified by that daemon — so we only flag
     *newly created* files. In CI where no production daemon runs,
     we flag both creations and modifications.
+
+    Known daemon artifacts (PID files, log files) are ignored when a
+    production daemon is detected, since these are created by the
+    daemon's watchdog cycle, not by the test.
     """
     real_gobby = Path.home() / ".gobby"
-    prod_running = _production_daemon_running()
+    prod_before = _production_daemon_running()
     before = _snapshot_dir(real_gobby)
 
     yield
 
     after = _snapshot_dir(real_gobby)
+    prod_after = _production_daemon_running()
+
+    # If production daemon was running at any point, it's the likely source
+    prod_running = prod_before or prod_after
 
     leaked: list[str] = []
     for rel_path, mtime in after.items():
         if rel_path not in before:
+            # CREATED file — check if it's a known daemon artifact
+            basename = Path(rel_path).name
+            if prod_running and (
+                basename in _DAEMON_ARTIFACTS
+                or rel_path.startswith("logs/")
+                or basename.endswith(".pid")
+            ):
+                continue  # Known production daemon artifact
             leaked.append(f"  CREATED: ~/.gobby/{rel_path}")
         elif mtime != before[rel_path] and not prod_running:
             # Only flag modifications when no production daemon is running,

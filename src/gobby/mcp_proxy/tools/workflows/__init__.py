@@ -262,7 +262,7 @@ def create_workflows_registry(
         session_id: str | None = None,
         workflow: str | None = None,
     ) -> dict[str, Any]:
-        if _state_manager is None or _session_manager is None:
+        if _state_manager is None or _session_manager is None or _db is None:
             return {"error": "Workflow tools require database connection"}
         return get_variable(
             _state_manager,

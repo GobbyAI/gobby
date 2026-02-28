@@ -7,6 +7,7 @@ Reads from PTY master file descriptors and broadcasts output via callbacks.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import logging
 import os
 import select
@@ -129,6 +130,10 @@ class PTYReaderManager:
             stop_event: Event to signal stop
         """
         loop = asyncio.get_running_loop()
+        # Incremental decoder buffers incomplete multi-byte UTF-8 sequences
+        # across read boundaries, preventing corruption when a character
+        # straddles two 4 KB chunks.
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
         try:
             while not stop_event.is_set():
@@ -157,16 +162,19 @@ class PTYReaderManager:
                     break
 
                 if not data:
-                    # EOF
+                    # EOF — flush any remaining buffered bytes
+                    text = decoder.decode(b"", final=True)
+                    if text and self._output_callback:
+                        try:
+                            await self._output_callback(run_id, text)
+                        except Exception as e:
+                            logger.warning(f"Output callback error for {run_id}: {e}")
                     break
 
-                # Decode and broadcast
-                try:
-                    text = data.decode("utf-8", errors="replace")
-                except Exception:
-                    text = data.decode("latin-1")
+                # Decode incrementally (buffers incomplete sequences)
+                text = decoder.decode(data)
 
-                if self._output_callback:
+                if text and self._output_callback:
                     try:
                         await self._output_callback(run_id, text)
                     except Exception as e:

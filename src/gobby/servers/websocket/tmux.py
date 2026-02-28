@@ -223,7 +223,35 @@ class TmuxMixin:
                 config=config,
             )
 
-            # Start PTY reader on the bridge's master_fd
+            # Hide tmux status bar and force redraw BEFORE starting the PTY reader.
+            # This prevents the reader from capturing status-bar output before it's
+            # disabled, which would corrupt the initial terminal state.
+            try:
+                args: list[str] = [config.command]
+                if config.socket_name:
+                    args.extend(["-L", config.socket_name])
+
+                # Turn off status bar
+                status_args = args + ["set-option", "-t", session_name, "status", "off"]
+                proc = await asyncio.create_subprocess_exec(
+                    *status_args,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+
+                # Force redraw clients attached to this session
+                refresh_args = args + ["refresh-client", "-t", session_name]
+                proc2 = await asyncio.create_subprocess_exec(
+                    *refresh_args,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc2.wait(), timeout=5.0)
+            except Exception as e:
+                logger.debug(f"Failed to configure/refresh tmux session: {e}")
+
+            # NOW start PTY reader — tmux state is clean
             reader = get_pty_reader_manager()
 
             # Create a lightweight RunningAgent-like object for the reader
@@ -249,32 +277,6 @@ class TmuxMixin:
                 response["request_id"] = request_id
 
             await websocket.send(json.dumps(response))
-
-            # Hide tmux status bar in web terminal view and force redraw
-            try:
-                args: list[str] = [config.command]
-                if config.socket_name:
-                    args.extend(["-L", config.socket_name])
-
-                # Turn off status bar
-                status_args = args + ["set-option", "-t", session_name, "status", "off"]
-                proc = await asyncio.create_subprocess_exec(
-                    *status_args,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-
-                # Force redraw clients attached to this session
-                refresh_args = args + ["refresh-client", "-t", session_name]
-                proc2 = await asyncio.create_subprocess_exec(
-                    *refresh_args,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await asyncio.wait_for(proc2.wait(), timeout=5.0)
-            except Exception as e:
-                logger.debug(f"Failed to configure/refresh tmux session: {e}")
 
         except Exception as e:
             logger.error(f"Failed to attach tmux session '{session_name}': {e}")
@@ -416,7 +418,26 @@ class TmuxMixin:
         if not streaming_id or not rows or not cols:
             return  # Silent failure for resize events
 
-        await self._tmux_bridge.resize(streaming_id, int(rows), int(cols))
+        bridge = await self._tmux_bridge.resize(streaming_id, int(rows), int(cols))
+
+        # After resizing the PTY, tell tmux to redraw at the new dimensions
+        if bridge:
+            try:
+                config = self._get_tmux_config(
+                    "gobby" if bridge.socket_name == "gobby" else "default"
+                )
+                args: list[str] = [config.command]
+                if config.socket_name:
+                    args.extend(["-L", config.socket_name])
+                refresh_args = args + ["refresh-client", "-t", bridge.session_name]
+                proc = await asyncio.create_subprocess_exec(
+                    *refresh_args,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except Exception as e:
+                logger.debug(f"Post-resize refresh-client failed: {e}")
 
     async def _handle_tmux_refresh_client(self, websocket: Any, data: dict[str, Any]) -> None:
         """Force tmux to redraw the clients attached to a session."""

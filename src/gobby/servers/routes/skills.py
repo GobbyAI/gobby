@@ -87,8 +87,19 @@ class HubInstallRequest(BaseModel):
 
 def create_skills_router(server: "HTTPServer") -> APIRouter:
     """Create skills router with endpoints bound to server instance."""
-    router = APIRouter(prefix="/skills", tags=["skills"])
+    router = APIRouter(prefix="/api/skills", tags=["skills"])
     metrics = get_metrics_collector()
+
+    async def _broadcast_skill(event: str, skill_id: str, **kwargs: Any) -> None:
+        """Broadcast a skill event via WebSocket if available."""
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_skill_event(event, skill_id, **kwargs)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to broadcast skill event '{event}' for skill {skill_id}: {e}"
+                )
 
     @router.get("")
     def list_skills(
@@ -118,7 +129,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("", status_code=201)
-    def create_skill(request_data: SkillCreateRequest) -> Any:
+    async def create_skill(request_data: SkillCreateRequest) -> Any:
         """Create a new skill."""
         metrics.inc_counter("http_requests_total")
         try:
@@ -137,6 +148,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 project_id=request_data.project_id,
                 source_type="local",
             )
+            await _broadcast_skill("skill_created", skill.id)
             return skill.to_dict()
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
@@ -217,20 +229,21 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/restore-defaults")
-    def restore_defaults() -> dict[str, Any]:
+    async def restore_defaults() -> dict[str, Any]:
         """Restore bundled skills to their default state."""
         metrics.inc_counter("http_requests_total")
         try:
             from gobby.skills.sync import sync_bundled_skills
 
             result = sync_bundled_skills(server.services.database)
+            await _broadcast_skill("skills_bulk_changed", "bulk")
             return result
         except Exception as e:
             logger.error(f"Failed to restore defaults: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/import")
-    def import_skill(request_data: SkillImportRequest) -> dict[str, Any]:
+    async def import_skill(request_data: SkillImportRequest) -> dict[str, Any]:
         """Import a skill from GitHub, ZIP, or local path."""
         metrics.inc_counter("http_requests_total")
         try:
@@ -275,6 +288,9 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                     imported.append(skill.to_dict())
                 except ValueError as e:
                     logger.warning(f"Skipping duplicate skill '{ps.name}': {e}")
+
+            if imported:
+                await _broadcast_skill("skills_bulk_changed", "bulk")
 
             return {
                 "imported": len(imported),
@@ -402,6 +418,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 injection_format=parsed.injection_format,
                 project_id=request_data.project_id,
             )
+            await _broadcast_skill("skill_created", skill.id)
             return {"installed": True, "skill": skill.to_dict()}
         except HTTPException:
             raise
@@ -412,13 +429,15 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/install-all-templates")
-    def install_all_templates(
+    async def install_all_templates(
         project_id: str | None = Query(None, description="Project scope"),
     ) -> dict[str, Any]:
         """Install all eligible template skills."""
         metrics.inc_counter("http_requests_total")
         try:
             count = server.skill_manager.install_all_templates(project_id=project_id)
+            if count:
+                await _broadcast_skill("skills_bulk_changed", "bulk")
             return {"installed_count": count}
         except Exception as e:
             logger.error(f"Failed to install all templates: {e}")
@@ -438,7 +457,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.put("/{skill_id}")
-    def update_skill(skill_id: str, request_data: SkillUpdateRequest) -> Any:
+    async def update_skill(skill_id: str, request_data: SkillUpdateRequest) -> Any:
         """Update an existing skill."""
         metrics.inc_counter("http_requests_total")
         try:
@@ -456,6 +475,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 always_apply=request_data.always_apply,
                 injection_format=request_data.injection_format,
             )
+            await _broadcast_skill("skill_updated", skill_id)
             return skill.to_dict()
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -464,20 +484,22 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.delete("/{skill_id}")
-    def delete_skill(skill_id: str) -> dict[str, Any]:
+    async def delete_skill(skill_id: str) -> dict[str, Any]:
         """Delete a skill."""
         metrics.inc_counter("http_requests_total")
         result = server.skill_manager.delete_skill(skill_id)
         if not result:
             raise HTTPException(status_code=404, detail="Skill not found")
+        await _broadcast_skill("skill_deleted", skill_id)
         return {"deleted": True, "id": skill_id}
 
     @router.post("/{skill_id}/install")
-    def install_from_template(skill_id: str) -> dict[str, Any]:
+    async def install_from_template(skill_id: str) -> dict[str, Any]:
         """Install a skill from its template."""
         metrics.inc_counter("http_requests_total")
         try:
             skill = server.skill_manager.install_from_template(skill_id)
+            await _broadcast_skill("skill_created", skill.id)
             return {"installed": True, "skill": skill.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -486,7 +508,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{skill_id}/move-to-project")
-    def move_to_project(
+    async def move_to_project(
         skill_id: str,
         project_id: str = Query(..., description="Target project ID"),
     ) -> dict[str, Any]:
@@ -494,6 +516,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         metrics.inc_counter("http_requests_total")
         try:
             skill = server.skill_manager.move_to_project(skill_id, project_id)
+            await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -502,11 +525,12 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{skill_id}/move-to-installed")
-    def move_to_installed(skill_id: str) -> dict[str, Any]:
+    async def move_to_installed(skill_id: str) -> dict[str, Any]:
         """Move a project-scoped skill back to installed scope."""
         metrics.inc_counter("http_requests_total")
         try:
             skill = server.skill_manager.move_to_installed(skill_id)
+            await _broadcast_skill("skill_updated", skill_id)
             return {"moved": True, "skill": skill.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -515,11 +539,12 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{skill_id}/restore")
-    def restore_skill(skill_id: str) -> dict[str, Any]:
+    async def restore_skill(skill_id: str) -> dict[str, Any]:
         """Restore a soft-deleted skill."""
         metrics.inc_counter("http_requests_total")
         try:
             skill = server.skill_manager.restore_skill(skill_id)
+            await _broadcast_skill("skill_updated", skill_id)
             return {"restored": True, "skill": skill.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

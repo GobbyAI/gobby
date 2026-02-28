@@ -1595,6 +1595,10 @@
   background: #4ade80;
 }
 
+.session-source-dot.status-paused {
+  background: #3b82f6;
+}
+
 .session-source-dot.claude {
   background: #f97316;
 }

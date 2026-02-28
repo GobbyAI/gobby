@@ -273,14 +273,16 @@ class LocalWorkflowDefinitionManager:
         event: str,
         project_id: str | None = None,
         enabled: bool | None = None,
+        include_templates: bool = False,
     ) -> list[WorkflowDefinitionRow]:
         """List rule definitions filtered by event type from definition_json."""
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            "source != 'template'",
             "json_extract(definition_json, '$.event') = ?",
         ]
+        if not include_templates:
+            conditions.append("source != 'template'")
         params: list[Any] = [event]
 
         if project_id:
@@ -303,14 +305,16 @@ class LocalWorkflowDefinitionManager:
         group: str,
         project_id: str | None = None,
         enabled: bool | None = None,
+        include_templates: bool = False,
     ) -> list[WorkflowDefinitionRow]:
         """List rule definitions filtered by group from definition_json."""
         conditions = [
             "workflow_type = 'rule'",
             "deleted_at IS NULL",
-            "source != 'template'",
             "json_extract(definition_json, '$.group') = ?",
         ]
+        if not include_templates:
+            conditions.append("source != 'template'")
         params: list[Any] = [group]
 
         if project_id:

@@ -17,7 +17,7 @@ async def check_daemon_http_health(port: int, timeout: float = 2.0) -> bool:
     """Check if daemon is healthy via HTTP."""
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://localhost:{port}/admin/status", timeout=timeout)
+            resp = await client.get(f"http://localhost:{port}/api/admin/health", timeout=timeout)
             return resp.status_code == 200
     except Exception:
         return False

@@ -276,7 +276,7 @@ class TestListMCPTools:
 
     def test_list_tools_no_mcp_manager(self, client: TestClient) -> None:
         """Test listing tools when MCP manager is not available."""
-        response = client.get("/mcp/test-server/tools")
+        response = client.get("/api/mcp/test-server/tools")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -293,7 +293,7 @@ class TestListMCPTools:
         server._internal_manager = FakeInternalManager([registry])
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/gobby-tasks/tools")
+            response = client.get("/api/mcp/gobby-tasks/tools")
 
         assert response.status_code == 200
         data = response.json()
@@ -314,7 +314,7 @@ class TestListMCPTools:
 
         with TestClient(server.app) as client:
             # No internal manager, should fall through to MCP manager check
-            response = client.get("/mcp/gobby-nonexistent/tools")
+            response = client.get("/api/mcp/gobby-nonexistent/tools")
 
         # Returns 200 with success=False because mcp_manager is None
         assert response.status_code == 200
@@ -334,7 +334,7 @@ class TestListMCPTools:
         server.mcp_manager = FakeMCPManager()
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/unknown-server/tools")
+            response = client.get("/api/mcp/unknown-server/tools")
 
         assert response.status_code == 404
         assert "Unknown MCP server" in response.json()["detail"]["error"]
@@ -356,7 +356,7 @@ class TestListMCPTools:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/external-server/tools")
+            response = client.get("/api/mcp/external-server/tools")
 
         assert response.status_code == 200
         data = response.json()
@@ -380,7 +380,7 @@ class TestListMCPTools:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/failing-server/tools")
+            response = client.get("/api/mcp/failing-server/tools")
 
         assert response.status_code == 200
         data = response.json()
@@ -408,7 +408,7 @@ class TestListMCPTools:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/error-server/tools")
+            response = client.get("/api/mcp/error-server/tools")
 
         assert response.status_code == 200
         data = response.json()
@@ -440,7 +440,7 @@ class TestListMCPTools:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/schema-server/tools")
+            response = client.get("/api/mcp/schema-server/tools")
 
         assert response.status_code == 200
         data = response.json()
@@ -476,7 +476,7 @@ class TestListMCPTools:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/model-server/tools")
+            response = client.get("/api/mcp/model-server/tools")
 
         assert response.status_code == 200
         data = response.json()
@@ -493,11 +493,11 @@ class TestListMCPServers:
 
     def test_list_servers_empty(self, client: TestClient) -> None:
         """Test listing servers when none configured."""
-        response = client.get("/mcp/servers")
+        response = client.get("/api/mcp/servers")
         assert response.status_code == 200
         data = response.json()
-        assert data["total_count"] == 0
-        assert data["connected_count"] == 0
+        assert data["total"] == 0
+        assert data["connected"] == 0
         assert data["servers"] == []
 
     def test_list_servers_with_internal_registries(
@@ -517,12 +517,12 @@ class TestListMCPServers:
         )
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/servers")
+            response = client.get("/api/mcp/servers")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["total_count"] == 2
-        assert data["connected_count"] == 2
+        assert data["total"] == 2
+        assert data["connected"] == 2
         assert all(s["transport"] == "internal" for s in data["servers"])
 
     def test_list_servers_with_external_servers(self, session_storage: LocalSessionManager) -> None:
@@ -540,12 +540,12 @@ class TestListMCPServers:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/servers")
+            response = client.get("/api/mcp/servers")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["total_count"] == 1
-        assert data["connected_count"] == 1
+        assert data["total"] == 1
+        assert data["connected"] == 1
         assert data["servers"][0]["name"] == "external-server"
         assert data["servers"][0]["transport"] == "http"
 
@@ -566,13 +566,13 @@ class TestListMCPServers:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/servers")
+            response = client.get("/api/mcp/servers")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["total_count"] == 1
-        assert data["connected_count"] == 0
-        assert data["servers"][0]["connected"] is False
+        assert data["total"] == 1
+        assert data["connected"] == 0
+        assert data["servers"][0]["state"] == "disconnected"
 
     def test_list_servers_with_unknown_health(self, session_storage: LocalSessionManager) -> None:
         """Test listing servers handles servers with no health info."""
@@ -588,7 +588,7 @@ class TestListMCPServers:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/servers")
+            response = client.get("/api/mcp/servers")
 
         assert response.status_code == 200
         data = response.json()
@@ -607,7 +607,7 @@ class TestListMCPServers:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/servers")
+            response = client.get("/api/mcp/servers")
 
         assert response.status_code == 200
         data = response.json()
@@ -624,7 +624,7 @@ class TestListAllMCPTools:
 
     def test_list_all_tools_empty(self, client: TestClient) -> None:
         """Test listing all tools when none available."""
-        response = client.get("/mcp/tools")
+        response = client.get("/api/mcp/tools")
         assert response.status_code == 200
         data = response.json()
         assert "tools" in data
@@ -645,7 +645,7 @@ class TestListAllMCPTools:
         )
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/tools?server_filter=gobby-tasks")
+            response = client.get("/api/mcp/tools?server_filter=gobby-tasks")
 
         assert response.status_code == 200
         data = response.json()
@@ -684,7 +684,7 @@ class TestListAllMCPTools:
             TestClient(server.app) as client,
             patch.object(server, "resolve_project_id", return_value="test-project-id"),
         ):
-            response = client.get("/mcp/tools?include_metrics=true")
+            response = client.get("/api/mcp/tools?include_metrics=true")
 
         assert response.status_code == 200
         data = response.json()
@@ -711,7 +711,7 @@ class TestListAllMCPTools:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/tools?server_filter=disabled-server")
+            response = client.get("/api/mcp/tools?server_filter=disabled-server")
 
         assert response.status_code == 200
         data = response.json()
@@ -735,7 +735,7 @@ class TestListAllMCPTools:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/tools")
+            response = client.get("/api/mcp/tools")
 
         assert response.status_code == 200
         data = response.json()
@@ -753,7 +753,7 @@ class TestGetToolSchema:
 
     def test_get_schema_missing_fields(self, client: TestClient) -> None:
         """Test getting schema with missing required fields."""
-        response = client.post("/mcp/tools/schema", json={"server_name": "test"})
+        response = client.post("/api/mcp/tools/schema", json={"server_name": "test"})
         assert response.status_code == 400
         assert "server_name, tool_name" in response.json()["detail"]["error"]
 
@@ -772,7 +772,7 @@ class TestGetToolSchema:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/schema",
+                "/api/mcp/tools/schema",
                 json={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
             )
 
@@ -797,7 +797,7 @@ class TestGetToolSchema:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/schema",
+                "/api/mcp/tools/schema",
                 json={"server_name": "gobby-tasks", "tool_name": "nonexistent"},
             )
 
@@ -807,7 +807,7 @@ class TestGetToolSchema:
     def test_get_schema_external_server_no_manager(self, client: TestClient) -> None:
         """Test getting schema when MCP manager not available."""
         response = client.post(
-            "/mcp/tools/schema",
+            "/api/mcp/tools/schema",
             json={"server_name": "external-server", "tool_name": "tool"},
         )
         assert response.status_code == 503
@@ -832,7 +832,7 @@ class TestGetToolSchema:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/schema",
+                "/api/mcp/tools/schema",
                 json={"server_name": "external-server", "tool_name": "get_item"},
             )
 
@@ -855,7 +855,7 @@ class TestGetToolSchema:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/schema",
+                "/api/mcp/tools/schema",
                 json={"server_name": "external-server", "tool_name": "missing"},
             )
 
@@ -874,7 +874,7 @@ class TestCallMCPTool:
 
     def test_call_tool_missing_fields(self, client: TestClient) -> None:
         """Test calling tool with missing required fields."""
-        response = client.post("/mcp/tools/call", json={"tool_name": "test"})
+        response = client.post("/api/mcp/tools/call", json={"tool_name": "test"})
         assert response.status_code == 400
         assert "server_name" in response.json()["detail"]["error"]
 
@@ -893,7 +893,7 @@ class TestCallMCPTool:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/call",
+                "/api/mcp/tools/call",
                 json={
                     "server_name": "gobby-tasks",
                     "tool_name": "list_tasks",
@@ -924,7 +924,7 @@ class TestCallMCPTool:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/call",
+                "/api/mcp/tools/call",
                 json={
                     "server_name": "gobby-tasks",
                     "tool_name": "failing_tool",
@@ -937,7 +937,7 @@ class TestCallMCPTool:
     def test_call_tool_external_server_no_manager(self, client: TestClient) -> None:
         """Test calling tool when MCP manager not available."""
         response = client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "external-server",
                 "tool_name": "tool",
@@ -960,7 +960,7 @@ class TestCallMCPTool:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/call",
+                "/api/mcp/tools/call",
                 json={
                     "server_name": "external-server",
                     "tool_name": "list_items",
@@ -987,7 +987,7 @@ class TestCallMCPTool:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/call",
+                "/api/mcp/tools/call",
                 json={
                     "server_name": "external-server",
                     "tool_name": "failing_tool",
@@ -1008,7 +1008,7 @@ class TestAddMCPServer:
 
     def test_add_server_missing_fields(self, client: TestClient) -> None:
         """Test adding server with missing required fields."""
-        response = client.post("/mcp/servers", json={"name": "test-server"})
+        response = client.post("/api/mcp/servers", json={"name": "test-server"})
         assert response.status_code == 400
         assert "transport" in response.json()["detail"]["error"]
 
@@ -1026,7 +1026,7 @@ class TestAddMCPServer:
             patch("gobby.utils.project_context.get_project_context", return_value=None),
         ):
             response = client.post(
-                "/mcp/servers",
+                "/api/mcp/servers",
                 json={
                     "name": "new-server",
                     "transport": "http",
@@ -1053,7 +1053,7 @@ class TestAddMCPServer:
             ),
         ):
             response = client.post(
-                "/mcp/servers",
+                "/api/mcp/servers",
                 json={
                     "name": "new-server",
                     "transport": "http",
@@ -1085,7 +1085,7 @@ class TestAddMCPServer:
             ),
         ):
             response = client.post(
-                "/mcp/servers",
+                "/api/mcp/servers",
                 json={
                     "name": "new-server",
                     "transport": "http",
@@ -1118,7 +1118,7 @@ class TestAddMCPServer:
             ),
         ):
             response = client.post(
-                "/mcp/servers",
+                "/api/mcp/servers",
                 json={
                     "name": "full-server",
                     "transport": "stdio",
@@ -1152,7 +1152,7 @@ class TestAddMCPServer:
             ),
         ):
             response = client.post(
-                "/mcp/servers",
+                "/api/mcp/servers",
                 json={
                     "name": "invalid-server",
                     "transport": "invalid",
@@ -1174,7 +1174,7 @@ class TestRemoveMCPServer:
 
     def test_remove_server_no_manager(self, client: TestClient) -> None:
         """Test removing server when MCP manager not available."""
-        response = client.delete("/mcp/servers/test-server")
+        response = client.delete("/api/mcp/servers/test-server")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -1193,7 +1193,7 @@ class TestRemoveMCPServer:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.delete("/mcp/servers/test-server")
+            response = client.delete("/api/mcp/servers/test-server")
 
         assert response.status_code == 200
         data = response.json()
@@ -1211,7 +1211,7 @@ class TestRemoveMCPServer:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.delete("/mcp/servers/nonexistent")
+            response = client.delete("/api/mcp/servers/nonexistent")
 
         assert response.status_code == 200
         data = response.json()
@@ -1229,7 +1229,7 @@ class TestImportMCPServer:
 
     def test_import_server_missing_source(self, client: TestClient) -> None:
         """Test importing server without specifying source."""
-        response = client.post("/mcp/servers/import", json={})
+        response = client.post("/api/mcp/servers/import", json={})
         assert response.status_code == 400
         assert "at least one" in response.json()["detail"]["error"]
 
@@ -1246,7 +1246,7 @@ class TestImportMCPServer:
             patch("gobby.utils.project_context.get_project_context", return_value=None),
         ):
             response = client.post(
-                "/mcp/servers/import",
+                "/api/mcp/servers/import",
                 json={"from_project": "other-project"},
             )
 
@@ -1269,7 +1269,7 @@ class TestRecommendMCPTools:
 
     def test_recommend_tools_missing_task(self, client: TestClient) -> None:
         """Test recommending tools without task description."""
-        response = client.post("/mcp/tools/recommend", json={})
+        response = client.post("/api/mcp/tools/recommend", json={})
         assert response.status_code == 400
         assert "task_description" in response.json()["detail"]["error"]
 
@@ -1283,7 +1283,7 @@ class TestRecommendMCPTools:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/recommend",
+                "/api/mcp/tools/recommend",
                 json={"task_description": "Query database"},
             )
 
@@ -1310,7 +1310,7 @@ class TestRecommendMCPTools:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/tools/recommend",
+                "/api/mcp/tools/recommend",
                 json={
                     "task_description": "Query database tables",
                     "search_mode": "llm",
@@ -1342,7 +1342,7 @@ class TestRecommendMCPTools:
             ),
         ):
             response = client.post(
-                "/mcp/tools/recommend",
+                "/api/mcp/tools/recommend",
                 json={
                     "task_description": "Query database",
                     "search_mode": "semantic",
@@ -1365,7 +1365,7 @@ class TestSearchMCPTools:
 
     def test_search_tools_missing_query(self, client: TestClient) -> None:
         """Test searching tools without query."""
-        response = client.post("/mcp/tools/search", json={})
+        response = client.post("/api/mcp/tools/search", json={})
         assert response.status_code == 400
         assert "query" in response.json()["detail"]["error"]
 
@@ -1388,7 +1388,7 @@ class TestSearchMCPTools:
             ),
         ):
             response = client.post(
-                "/mcp/tools/search",
+                "/api/mcp/tools/search",
                 json={"query": "create file"},
             )
 
@@ -1410,7 +1410,7 @@ class TestSearchMCPTools:
             patch.object(server, "resolve_project_id", return_value="test-project"),
         ):
             response = client.post(
-                "/mcp/tools/search",
+                "/api/mcp/tools/search",
                 json={"query": "create file"},
             )
 
@@ -1448,7 +1448,7 @@ class TestSearchMCPTools:
             patch.object(server, "resolve_project_id", return_value="test-project"),
         ):
             response = client.post(
-                "/mcp/tools/search",
+                "/api/mcp/tools/search",
                 json={
                     "query": "create file",
                     "top_k": 5,
@@ -1489,7 +1489,7 @@ class TestEmbedMCPTools:
             ),
         ):
             response = client.post(
-                "/mcp/tools/embed",
+                "/api/mcp/tools/embed",
                 json={},
             )
 
@@ -1510,7 +1510,7 @@ class TestEmbedMCPTools:
             patch.object(server, "resolve_project_id", return_value="test-project"),
         ):
             response = client.post(
-                "/mcp/tools/embed",
+                "/api/mcp/tools/embed",
                 json={"force": True},
             )
 
@@ -1541,7 +1541,7 @@ class TestEmbedMCPTools:
             patch.object(server, "resolve_project_id", return_value="test-project"),
         ):
             response = client.post(
-                "/mcp/tools/embed",
+                "/api/mcp/tools/embed",
                 json={"force": False},
             )
 
@@ -1561,7 +1561,7 @@ class TestGetMCPStatus:
 
     def test_get_status_empty(self, client: TestClient) -> None:
         """Test getting status with no servers."""
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["total_servers"] == 0
@@ -1581,7 +1581,7 @@ class TestGetMCPStatus:
         )
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/status")
+            response = client.get("/api/mcp/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -1604,7 +1604,7 @@ class TestGetMCPStatus:
         server.mcp_manager = mcp_manager
 
         with TestClient(server.app) as client:
-            response = client.get("/mcp/status")
+            response = client.get("/api/mcp/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -1624,7 +1624,7 @@ class TestMCPProxy:
     def test_proxy_invalid_json(self, client: TestClient) -> None:
         """Test proxy with invalid JSON body."""
         response = client.post(
-            "/mcp/test-server/tools/test-tool",
+            "/api/mcp/test-server/tools/test-tool",
             content="not valid json",
             headers={"Content-Type": "application/json"},
         )
@@ -1646,7 +1646,7 @@ class TestMCPProxy:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/gobby-tasks/tools/list_tasks",
+                "/api/mcp/gobby-tasks/tools/list_tasks",
                 json={"status": "open"},
             )
 
@@ -1665,7 +1665,7 @@ class TestMCPProxy:
         with TestClient(server.app) as client:
             # No internal manager, should fall through to MCP manager check
             response = client.post(
-                "/mcp/gobby-nonexistent/tools/test",
+                "/api/mcp/gobby-nonexistent/tools/test",
                 json={},
             )
 
@@ -1689,7 +1689,7 @@ class TestMCPProxy:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/gobby-tasks/tools/failing_tool",
+                "/api/mcp/gobby-tasks/tools/failing_tool",
                 json={},
             )
 
@@ -1698,7 +1698,7 @@ class TestMCPProxy:
     def test_proxy_no_mcp_manager(self, client: TestClient) -> None:
         """Test proxy when MCP manager not available."""
         response = client.post(
-            "/mcp/external-server/tools/test-tool",
+            "/api/mcp/external-server/tools/test-tool",
             json={},
         )
         assert response.status_code == 503
@@ -1717,7 +1717,7 @@ class TestMCPProxy:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/external-server/tools/list_items",
+                "/api/mcp/external-server/tools/list_items",
                 json={"limit": 10},
             )
 
@@ -1742,7 +1742,7 @@ class TestMCPProxy:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/external-server/tools/missing_tool",
+                "/api/mcp/external-server/tools/missing_tool",
                 json={},
             )
 
@@ -1762,7 +1762,7 @@ class TestMCPProxy:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/mcp/external-server/tools/failing_tool",
+                "/api/mcp/external-server/tools/failing_tool",
                 json={},
             )
 
@@ -1796,7 +1796,7 @@ class TestRefreshMCPTools:
             ),
         ):
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={},
             )
 
@@ -1817,7 +1817,7 @@ class TestRefreshMCPTools:
             patch.object(server, "resolve_project_id", return_value="test-project"),
         ):
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={},
             )
 
@@ -1866,7 +1866,7 @@ class TestRefreshMCPTools:
             patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="abc123"),
         ):
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"force": False},
             )
 
@@ -1906,7 +1906,7 @@ class TestRefreshMCPTools:
             patch("gobby.mcp_proxy.schema_hash.compute_schema_hash", return_value="abc123"),
         ):
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"force": True},
             )
 
@@ -1985,7 +1985,7 @@ class TestHooksEndpoints:
     def test_execute_hook_missing_hook_type(self, client: TestClient) -> None:
         """Test execute hook with missing hook_type."""
         response = client.post(
-            "/hooks/execute",
+            "/api/hooks/execute",
             json={"source": "claude"},
         )
         assert response.status_code == 400
@@ -1994,7 +1994,7 @@ class TestHooksEndpoints:
     def test_execute_hook_missing_source(self, client: TestClient) -> None:
         """Test execute hook with missing source."""
         response = client.post(
-            "/hooks/execute",
+            "/api/hooks/execute",
             json={"hook_type": "session-start"},
         )
         assert response.status_code == 400
@@ -2011,7 +2011,7 @@ class TestHooksEndpoints:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/hooks/execute",
+                "/api/hooks/execute",
                 json={
                     "hook_type": "session-start",
                     "source": "unsupported",
@@ -2033,7 +2033,7 @@ class TestHooksEndpoints:
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/hooks/execute",
+                "/api/hooks/execute",
                 json={"hook_type": "session-start", "source": "claude"},
             )
         assert response.status_code == 503
@@ -2058,7 +2058,7 @@ class TestHooksEndpoints:
             MockAdapter.return_value = mock_adapter
 
             response = client.post(
-                "/hooks/execute",
+                "/api/hooks/execute",
                 json={
                     "hook_type": "session-start",
                     "source": "claude",
@@ -2088,7 +2088,7 @@ class TestHooksEndpoints:
             MockAdapter.return_value = mock_adapter
 
             response = client.post(
-                "/hooks/execute",
+                "/api/hooks/execute",
                 json={
                     "hook_type": "session-start",
                     "source": "gemini",
@@ -2116,7 +2116,7 @@ class TestHooksEndpoints:
             MockAdapter.return_value = mock_adapter
 
             response = client.post(
-                "/hooks/execute",
+                "/api/hooks/execute",
                 json={
                     "hook_type": "notification",
                     "source": "codex",
@@ -2151,7 +2151,7 @@ class TestWebhooksEndpoints:
 
     def test_list_webhooks_no_config(self, webhooks_client: TestClient) -> None:
         """Test list webhooks when config is None."""
-        response = webhooks_client.get("/webhooks")
+        response = webhooks_client.get("/api/webhooks")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -2163,14 +2163,14 @@ class TestWebhooksEndpoints:
 
     def test_test_webhook_missing_name(self, webhooks_client: TestClient) -> None:
         """Test webhook test with missing name."""
-        response = webhooks_client.post("/webhooks/test", json={})
+        response = webhooks_client.post("/api/webhooks/test", json={})
         assert response.status_code == 400
         assert "Webhook name required" in response.json()["detail"]
 
     def test_test_webhook_no_config(self, webhooks_client: TestClient) -> None:
         """Test webhook test when config is None."""
         response = webhooks_client.post(
-            "/webhooks/test",
+            "/api/webhooks/test",
             json={"name": "test-webhook"},
         )
         assert response.status_code == 200

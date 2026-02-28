@@ -147,8 +147,13 @@ class TmuxPTYBridge:
         for sid in ids:
             await self.detach(sid)
 
-    async def resize(self, streaming_id: str, rows: int, cols: int) -> None:
-        """Resize the PTY (propagates to tmux client)."""
+    async def resize(self, streaming_id: str, rows: int, cols: int) -> BridgeInfo | None:
+        """Resize the PTY (propagates to tmux client).
+
+        Returns:
+            The BridgeInfo if resize succeeded (caller can use session_name/socket_name
+            to issue ``tmux refresh-client``), or None if no bridge found.
+        """
         async with self._lock:
             bridge = self._bridges.get(streaming_id)
 
@@ -159,8 +164,10 @@ class TmuxPTYBridge:
                     termios.TIOCSWINSZ,
                     struct.pack("HHHH", rows, cols, 0, 0),
                 )
+                return bridge
             except OSError as e:
                 logger.warning(f"Resize failed for {streaming_id}: {e}")
+        return None
 
     async def get_master_fd(self, streaming_id: str) -> int | None:
         """Get master_fd for writing input."""

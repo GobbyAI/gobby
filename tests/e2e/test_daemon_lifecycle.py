@@ -47,7 +47,7 @@ class TestDaemonStart:
         self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
     ) -> None:
         """Verify health endpoint responds when daemon is ready."""
-        response = daemon_client.get("/admin/status")
+        response = daemon_client.get("/api/admin/status")
         assert response.status_code == 200
 
         data = response.json()
@@ -254,7 +254,7 @@ class TestDaemonRestart:
             assert wait_for_daemon_health(http_port, timeout=20.0), "First daemon should start"
 
             # Verify initial health
-            response1 = httpx.get(f"http://localhost:{http_port}/admin/status", timeout=5.0)
+            response1 = httpx.get(f"http://localhost:{http_port}/api/admin/status", timeout=5.0)
             assert response1.status_code == 200
 
             # Stop and restart
@@ -277,7 +277,7 @@ class TestDaemonRestart:
                 assert wait_for_daemon_health(http_port, timeout=20.0), "Second daemon should start"
 
                 # Get status after restart
-                response2 = httpx.get(f"http://localhost:{http_port}/admin/status", timeout=5.0)
+                response2 = httpx.get(f"http://localhost:{http_port}/api/admin/status", timeout=5.0)
                 assert response2.status_code == 200
                 status2 = response2.json()
 
@@ -332,7 +332,7 @@ class TestDaemonMultipleInstances:
         if process2.poll() is None:
             terminate_process_tree(process2.pid)
             # If it's still running, the original daemon should still work
-            response = httpx.get(f"http://localhost:{daemon_instance.http_port}/admin/status")
+            response = httpx.get(f"http://localhost:{daemon_instance.http_port}/api/admin/status")
             assert response.status_code == 200
         else:
             # Process exited - this is expected behavior
@@ -340,5 +340,5 @@ class TestDaemonMultipleInstances:
 
         # Original daemon should still be running and healthy
         assert daemon_instance.is_alive(), "Original daemon should still be running"
-        response = httpx.get(f"http://localhost:{daemon_instance.http_port}/admin/status")
+        response = httpx.get(f"http://localhost:{daemon_instance.http_port}/api/admin/status")
         assert response.status_code == 200

@@ -159,7 +159,7 @@ class TestMemoryRecallOnPrompt:
         assert body.event.value == "before_agent"
         assert body.effect.type == "mcp_call"
         assert body.effect.server == "gobby-memory"
-        assert body.effect.tool == "recall_with_synthesis"
+        assert body.effect.tool == "digest_and_synthesize"
 
     def test_not_background(self, db, manager) -> None:
         """Recall must block to inject context."""

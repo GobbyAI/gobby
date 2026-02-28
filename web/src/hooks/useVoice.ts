@@ -7,90 +7,11 @@ interface VoiceState {
   isListening: boolean
   isSpeechDetected: boolean
   isTranscribing: boolean
-  isSpeaking: boolean
   voiceError: string | null
-}
-
-/** Sequential audio playback queue using HTMLAudioElement (iOS Safari compatible). */
-class AudioPlaybackQueue {
-  private queue: string[] = []
-  private playing = false
-  private currentAudio: HTMLAudioElement | null = null
-  onPlayingChange: ((playing: boolean) => void) | null = null
-
-  enqueue(audioBase64: string, format: string) {
-    // Convert base64 to blob URL
-    const mimeMap: Record<string, string> = {
-      'mp3_44100_128': 'audio/mpeg',
-      'mp3_22050_32': 'audio/mpeg',
-      'pcm_16000': 'audio/wav',
-      'ulaw_8000': 'audio/basic',
-    }
-    const mime = mimeMap[format] || 'audio/mpeg'
-    const binary = atob(audioBase64)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i)
-    }
-    const blob = new Blob([bytes], { type: mime })
-    const url = URL.createObjectURL(blob)
-    this.queue.push(url)
-    this.playNext()
-    this.onPlayingChange?.(this.isPlaying)
-  }
-
-  private playNext() {
-    if (this.playing || this.queue.length === 0) return
-    this.playing = true
-    const url = this.queue.shift()!
-    const audio = new Audio(url)
-    this.currentAudio = audio
-
-    audio.onended = () => {
-      URL.revokeObjectURL(url)
-      this.playing = false
-      this.currentAudio = null
-      this.playNext()
-      this.onPlayingChange?.(this.isPlaying)
-    }
-    audio.onerror = () => {
-      URL.revokeObjectURL(url)
-      this.playing = false
-      this.currentAudio = null
-      this.playNext()
-      this.onPlayingChange?.(this.isPlaying)
-    }
-    audio.play().catch(() => {
-      URL.revokeObjectURL(url)
-      this.playing = false
-      this.currentAudio = null
-      this.playNext()
-      this.onPlayingChange?.(this.isPlaying)
-    })
-  }
-
-  stop() {
-    if (this.currentAudio) {
-      this.currentAudio.pause()
-      this.currentAudio = null
-    }
-    // Revoke remaining URLs
-    for (const url of this.queue) {
-      URL.revokeObjectURL(url)
-    }
-    this.queue = []
-    this.playing = false
-    this.onPlayingChange?.(false)
-  }
-
-  get isPlaying() {
-    return this.playing || this.queue.length > 0
-  }
 }
 
 export interface UseVoiceReturn extends VoiceState {
   toggleVoiceMode: () => void
-  stopSpeaking: () => void
   handleVoiceMessage: (data: Record<string, unknown>) => void
 }
 
@@ -103,18 +24,26 @@ export function useVoice(
   const [isListening, setIsListening] = useState(false)
   const [isSpeechDetected, setIsSpeechDetected] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
 
   const vadRef = useRef<MicVAD | null>(null)
-  const playbackQueueRef = useRef(new AudioPlaybackQueue())
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Stable ref for conversationId so long-lived callbacks (e.g. VAD onSpeechEnd)
   // always see the latest value without re-subscribing.
   const conversationIdRef = useRef(conversationId)
   conversationIdRef.current = conversationId
 
-  // Check voice availability on mount
+  const voiceModeRef = useRef(false)
+
+  // Set a voice error that auto-clears after a delay
+  const setTransientError = useCallback((msg: string, ms = 3000) => {
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current)
+    setVoiceError(msg)
+    errorTimerRef.current = setTimeout(() => setVoiceError(null), ms)
+  }, [])
+
+  // Check voice availability on mount (STT availability via /api/voice/status)
   useEffect(() => {
     // getUserMedia requires a secure context (HTTPS or localhost).
     // On plain HTTP (e.g. Tailscale IP), navigator.mediaDevices is undefined.
@@ -134,50 +63,6 @@ export function useVoice(
       .catch((err) => { console.error('Voice status check failed:', err); setVoiceAvailable(false) })
   }, [])
 
-  // Track speaking state from playback queue and pause/resume VAD to prevent echo.
-  // Uses a debounced resume so VAD doesn't restart between streaming chunks or while
-  // speaker audio is still reverberating.
-  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => {
-    if (!voiceMode) return
-    const queue = playbackQueueRef.current
-    let wasPlaying = false
-
-    queue.onPlayingChange = (playing) => {
-      setIsSpeaking(playing)
-
-      if (playing && !wasPlaying && vadRef.current) {
-        // Cancel any pending resume — more audio arrived
-        if (resumeTimerRef.current) {
-          clearTimeout(resumeTimerRef.current)
-          resumeTimerRef.current = null
-        }
-        vadRef.current.pause()
-        setIsListening(false)
-      } else if (!playing && wasPlaying) {
-        // Debounce resume: wait for silence before restarting VAD.
-        // This covers the gap between streaming chunks AND lets speaker
-        // audio dissipate after TTS finishes.
-        if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
-        resumeTimerRef.current = setTimeout(() => {
-          resumeTimerRef.current = null
-          if (vadRef.current && !queue.isPlaying) {
-            vadRef.current.start()
-            setIsListening(true)
-          }
-        }, 600)
-      }
-      wasPlaying = playing
-    }
-    return () => {
-      queue.onPlayingChange = null
-      if (resumeTimerRef.current) {
-        clearTimeout(resumeTimerRef.current)
-        resumeTimerRef.current = null
-      }
-    }
-  }, [voiceMode])
-
   const toggleVoiceMode = useCallback(async () => {
     const newMode = !voiceMode
     setVoiceError(null)
@@ -191,40 +76,39 @@ export function useVoice(
     }
 
     if (newMode) {
-      // Enable: create VAD and start listening
+      // Enable: create VAD, start listening
       try {
         const vad = await MicVAD.new({
           baseAssetPath: '/',
           onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.1/dist/',
-          positiveSpeechThreshold: 0.85,
-          negativeSpeechThreshold: 0.5,
-          minSpeechFrames: 8,
+          positiveSpeechThreshold: 0.6,
+          negativeSpeechThreshold: 0.35,
+          minSpeechFrames: 6,
           redemptionFrames: 12,
           preSpeechPadFrames: 10,
           submitUserSpeechOnPause: false,
 
           onSpeechStart: () => {
             setIsSpeechDetected(true)
-            // Interrupt TTS if playing (barge-in)
-            playbackQueueRef.current.stop()
-            setIsSpeaking(false)
-            // Cancel any pending VAD resume — we're already listening
-            if (resumeTimerRef.current) {
-              clearTimeout(resumeTimerRef.current)
-              resumeTimerRef.current = null
-            }
           },
 
           onSpeechEnd: (audio: Float32Array) => {
             setIsSpeechDetected(false)
-            setIsTranscribing(true)
 
-            // Encode to WAV (16kHz mono 16-bit) and send
-            const wavBuffer = utils.encodeWAV(audio, 1, 16000, 1, 16)
-            const base64 = utils.arrayBufferToBase64(wavBuffer)
+            try {
+              const ws = wsRef.current
+              if (!ws || ws.readyState !== WebSocket.OPEN) {
+                console.warn('Voice: WebSocket not open, discarding audio')
+                setTransientError('Connection lost — try again')
+                return
+              }
 
-            const ws = wsRef.current
-            if (ws?.readyState === WebSocket.OPEN) {
+              setIsTranscribing(true)
+
+              // Encode to WAV (16kHz mono 16-bit) and send
+              const wavBuffer = utils.encodeWAV(audio, 1, 16000, 1, 16)
+              const base64 = utils.arrayBufferToBase64(wavBuffer)
+
               ws.send(JSON.stringify({
                 type: 'voice_audio',
                 conversation_id: conversationIdRef.current,
@@ -232,6 +116,10 @@ export function useVoice(
                 mime_type: 'audio/wav',
                 request_id: crypto.randomUUID?.() || `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`,
               }))
+            } catch (err) {
+              console.error('Voice: Failed to encode/send audio:', err)
+              setIsTranscribing(false)
+              setTransientError('Failed to process audio')
             }
           },
 
@@ -242,6 +130,7 @@ export function useVoice(
 
         vadRef.current = vad
         vad.start()
+        voiceModeRef.current = true
         setVoiceMode(true)
         setIsListening(true)
       } catch (err) {
@@ -249,43 +138,35 @@ export function useVoice(
           vadRef.current.destroy()
           vadRef.current = null
         }
+        voiceModeRef.current = false
         const msg = err instanceof Error ? err.message : 'Microphone access denied'
         setVoiceError(msg)
         console.error('Failed to start VAD:', err)
       }
     } else {
-      // Disable: destroy VAD and cleanup
-      if (resumeTimerRef.current) {
-        clearTimeout(resumeTimerRef.current)
-        resumeTimerRef.current = null
-      }
+      // Disable: destroy VAD, cleanup
+      voiceModeRef.current = false
       if (vadRef.current) {
         vadRef.current.destroy()
         vadRef.current = null
       }
-      playbackQueueRef.current.stop()
       setVoiceMode(false)
       setIsListening(false)
       setIsSpeechDetected(false)
-      setIsSpeaking(false)
       setIsTranscribing(false)
     }
-  }, [voiceMode, wsRef, conversationId])
+  }, [voiceMode, wsRef, conversationId, setTransientError])
 
-  // Cleanup VAD and playback on unmount
+  // Cleanup VAD on unmount
   useEffect(() => {
     return () => {
+      voiceModeRef.current = false
       if (vadRef.current) {
         vadRef.current.destroy()
         vadRef.current = null
       }
-      playbackQueueRef.current.stop()
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current)
     }
-  }, [])
-
-  const stopSpeaking = useCallback(() => {
-    playbackQueueRef.current.stop()
-    setIsSpeaking(false)
   }, [])
 
   const handleVoiceMessage = useCallback((data: Record<string, unknown>) => {
@@ -293,19 +174,7 @@ export function useVoice(
 
     if (type === 'voice_transcription') {
       setIsTranscribing(false)
-    } else if (type === 'voice_audio_chunk') {
-      const audioData = data.audio_data as string
-      const isFinal = data.is_final as boolean
-      const format = (data.format as string) || 'mp3_44100_128'
-
-      if (audioData) {
-        playbackQueueRef.current.enqueue(audioData, format)
-        setIsSpeaking(true)
-      }
-
-      if (isFinal) {
-        // Audio stream complete — speaking state will clear when queue drains
-      }
+      setVoiceError(null)
     } else if (type === 'voice_status') {
       const status = data.status as string
       if (status === 'error') {
@@ -313,11 +182,13 @@ export function useVoice(
         setIsTranscribing(false)
       } else if (status === 'empty') {
         setIsTranscribing(false)
+        setTransientError('No speech detected — try speaking louder or closer to the mic')
       } else if (status === 'transcribing') {
         setIsTranscribing(true)
+        setVoiceError(null)
       }
     }
-  }, [])
+  }, [setTransientError])
 
   return {
     voiceMode,
@@ -325,10 +196,8 @@ export function useVoice(
     isListening,
     isSpeechDetected,
     isTranscribing,
-    isSpeaking,
     voiceError,
     toggleVoiceMode,
-    stopSpeaking,
     handleVoiceMessage,
   }
 }

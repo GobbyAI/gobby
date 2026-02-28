@@ -11,8 +11,8 @@ import pytest
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import PipelineDefinition, WorkflowDefinition
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.loader_validation import _validate_pipeline_references
 

@@ -39,8 +39,8 @@ export function useSessionDetail(sessionId: string | null) {
       const baseUrl = getBaseUrl()
       try {
         const [sessionRes, messagesRes] = await Promise.all([
-          fetch(`${baseUrl}/sessions/${sessionId}`),
-          fetch(`${baseUrl}/sessions/${sessionId}/messages?limit=10000&offset=0`),
+          fetch(`${baseUrl}/api/sessions/${sessionId}`),
+          fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`),
         ])
 
         if (cancelled) return
@@ -80,7 +80,7 @@ export function useSessionDetail(sessionId: string | null) {
     const baseUrl = getBaseUrl()
     setIsGeneratingSummary(true)
     try {
-      const res = await fetch(`${baseUrl}/sessions/${sessionId}/generate-summary`, {
+      const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/generate-summary`, {
         method: 'POST',
       })
       if (res.ok) {

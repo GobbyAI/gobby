@@ -782,3 +782,108 @@ class TestCallToolBlockedToolsEnforcement:
         assert result["success"] is False
         assert "not in allowed list" in result["error"]
         assert "fetch_changes" in result["error"]
+
+
+class TestStripUnknownParameters:
+    """Tests for strip_unknown=True behavior in call_tool."""
+
+    @pytest.mark.asyncio
+    async def test_strip_unknown_removes_extra_params(self, tool_proxy, mock_mcp_manager):
+        """Verify strip_unknown=True silently removes unknown parameters."""
+
+        async def mock_get_schema(server, tool):
+            return {
+                "success": True,
+                "tool": {
+                    "name": tool,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "session_id": {"type": "string"},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["session_id"],
+                    },
+                },
+            }
+
+        tool_proxy.get_tool_schema = mock_get_schema
+        mock_mcp_manager.call_tool.return_value = {"success": True}
+
+        result = await tool_proxy.call_tool(
+            server_name="test-server",
+            tool_name="test_tool",
+            arguments={"session_id": "s1", "limit": 5, "prompt_text": "hello"},
+            strip_unknown=True,
+        )
+
+        assert result["success"] is True
+        # prompt_text should have been stripped before the call
+        actual_args = mock_mcp_manager.call_tool.call_args[0][2]
+        assert "prompt_text" not in actual_args
+        assert actual_args["session_id"] == "s1"
+        assert actual_args["limit"] == 5
+
+    @pytest.mark.asyncio
+    async def test_strip_unknown_still_fails_on_missing_required(self, tool_proxy, mock_mcp_manager):
+        """Verify strip_unknown=True still rejects missing required parameters."""
+
+        async def mock_get_schema(server, tool):
+            return {
+                "success": True,
+                "tool": {
+                    "name": tool,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "session_id": {"type": "string"},
+                            "name": {"type": "string"},
+                        },
+                        "required": ["session_id", "name"],
+                    },
+                },
+            }
+
+        tool_proxy.get_tool_schema = mock_get_schema
+
+        result = await tool_proxy.call_tool(
+            server_name="test-server",
+            tool_name="test_tool",
+            arguments={"prompt_text": "hello"},  # Missing both required params
+            strip_unknown=True,
+        )
+
+        assert result["success"] is False
+        assert "Missing required parameters" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_strip_unknown_false_rejects_unknown_params(self, tool_proxy, mock_mcp_manager):
+        """Verify strip_unknown=False (default) still rejects unknown parameters."""
+
+        async def mock_get_schema(server, tool):
+            return {
+                "success": True,
+                "tool": {
+                    "name": tool,
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "session_id": {"type": "string"},
+                        },
+                        "required": [],
+                    },
+                },
+            }
+
+        tool_proxy.get_tool_schema = mock_get_schema
+
+        result = await tool_proxy.call_tool(
+            server_name="test-server",
+            tool_name="test_tool",
+            arguments={"session_id": "s1", "prompt_text": "hello"},
+            strip_unknown=False,
+        )
+
+        assert result["success"] is False
+        assert "Invalid arguments" in result["error"]
+        assert "prompt_text" in result["error"]

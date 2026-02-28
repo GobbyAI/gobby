@@ -124,6 +124,19 @@ function TableWrapper({ children }: { children?: React.ReactNode }) {
   )
 }
 
+function ImageBlock({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) {
+  // Handle base64 data URIs and regular URLs — prevents raw text rendering (#9277)
+  return (
+    <img
+      src={src}
+      alt={alt || 'Image'}
+      className="max-w-full rounded-lg border border-border my-2"
+      loading="lazy"
+      {...props}
+    />
+  )
+}
+
 function Anchor({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
   const isExternal = href && (href.startsWith('http://') || href.startsWith('https://'))
   return (
@@ -142,6 +155,7 @@ export const codeBlockComponents: Partial<Components> = {
   code: CodeBlockInner as Components['code'],
   table: TableWrapper as Components['table'],
   a: Anchor as Components['a'],
+  img: ImageBlock as Components['img'],
 }
 
 function CopyIcon() {

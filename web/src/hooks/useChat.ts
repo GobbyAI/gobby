@@ -65,17 +65,6 @@ interface ModelSwitchedMessage {
   new_model: string;
 }
 
-interface ToolResultMessage {
-  type: "tool_result";
-  request_id: string;
-  result: unknown;
-}
-
-interface ErrorMessage {
-  type: "error";
-  request_id?: string;
-  message: string;
-}
 
 interface VoiceTranscriptionMessage {
   type: "voice_transcription";
@@ -147,6 +136,44 @@ function tryParseJSON(value: unknown): unknown {
   }
 }
 
+/** Helper: append to or create a text content block on the current assistant message. */
+function appendTextBlock(msg: ChatMessage, text: string) {
+  if (!msg.contentBlocks) msg.contentBlocks = [];
+  const last = msg.contentBlocks[msg.contentBlocks.length - 1];
+  if (last?.type === "text") {
+    last.content += (last.content ? "\n" : "") + text;
+  } else {
+    msg.contentBlocks.push({ type: "text", content: text });
+  }
+}
+
+/** Helper: append a tool call to the current tool_chain block, or start a new one. */
+function appendToolBlock(msg: ChatMessage, tc: ToolCall) {
+  if (!msg.contentBlocks) msg.contentBlocks = [];
+  const last = msg.contentBlocks[msg.contentBlocks.length - 1];
+  if (last?.type === "tool_chain") {
+    last.calls.push(tc);
+  } else {
+    msg.contentBlocks.push({ type: "tool_chain", calls: [tc] });
+  }
+}
+
+/** Find the last pending tool call across contentBlocks and flat toolCalls. */
+function findPendingToolCall(msg: ChatMessage): ToolCall | undefined {
+  // Check contentBlocks first (interleaved model)
+  if (msg.contentBlocks) {
+    for (let i = msg.contentBlocks.length - 1; i >= 0; i--) {
+      const block = msg.contentBlocks[i];
+      if (block.type === "tool_chain") {
+        const pending = block.calls.find((tc) => tc.status !== "completed");
+        if (pending) return pending;
+      }
+    }
+  }
+  // Fallback to flat toolCalls
+  return msg.toolCalls?.find((tc) => tc.status !== "completed");
+}
+
 function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
   const result: ChatMessage[] = [];
   let currentAssistant: ChatMessage | null = null;
@@ -164,10 +191,8 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
     if (m.role === "user") {
       if (m.content_type === "tool_result") {
         // Tool result in a user message — attach to the last pending tool call
-        if (currentAssistant?.toolCalls) {
-          const pending = currentAssistant.toolCalls.find(
-            (tc) => tc.status !== "completed",
-          );
+        if (currentAssistant) {
+          const pending = findPendingToolCall(currentAssistant);
           if (pending) {
             pending.result = tryParseJSON(m.content);
             pending.status = "completed";
@@ -193,22 +218,26 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
             content: "",
             timestamp: new Date(m.timestamp),
             toolCalls: [],
+            contentBlocks: [],
           };
         }
         const toolCall: ToolCall = {
           id,
           tool_name: m.tool_name || "unknown",
           server_name: "builtin",
-          status: "completed",
+          status: m.tool_result ? "completed" : "calling",
           arguments: tryParseJSON(m.tool_input) as
             | Record<string, unknown>
             | undefined,
           result: m.tool_result ? tryParseJSON(m.tool_result) : undefined,
         };
+        // Add to flat list (backward compat)
         currentAssistant.toolCalls = [
           ...(currentAssistant.toolCalls || []),
           toolCall,
         ];
+        // Add to interleaved blocks
+        appendToolBlock(currentAssistant, toolCall);
       } else if (m.content_type === "thinking") {
         if (!currentAssistant) {
           currentAssistant = {
@@ -226,6 +255,7 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
           if (m.content) {
             currentAssistant.content +=
               (currentAssistant.content ? "\n" : "") + m.content;
+            appendTextBlock(currentAssistant, m.content);
           }
         } else {
           currentAssistant = {
@@ -233,15 +263,14 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
             role: "assistant",
             content: m.content || "",
             timestamp: new Date(m.timestamp),
+            contentBlocks: m.content ? [{ type: "text", content: m.content }] : [],
           };
         }
       }
     } else if (m.role === "tool") {
       // Tool result message — attach to last pending tool call
-      if (currentAssistant?.toolCalls) {
-        const pending = currentAssistant.toolCalls.find(
-          (tc) => tc.status !== "completed",
-        );
+      if (currentAssistant) {
+        const pending = findPendingToolCall(currentAssistant);
         if (pending) {
           pending.result = tryParseJSON(m.content);
           pending.status = "completed";
@@ -268,18 +297,38 @@ export function useChat() {
 
     let cancelled = false;
     const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/sessions/${storedDbSid}/messages?limit=100&offset=0`)
+
+    // Validate session still exists before loading messages
+    fetch(`${baseUrl}/api/sessions/${storedDbSid}`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled || !data?.messages?.length) return;
-        if (conversationIdRef.current !== convId) return;
-        const mapped = mapApiMessages(data.messages);
-        if (mapped.length > 0) {
-          setMessages(mapped);
+      .then((sessionData) => {
+        if (cancelled) return;
+        // Session gone or deleted — clear stale localStorage, start fresh
+        if (!sessionData?.session || sessionData.session.status === "deleted") {
+          saveDbSessionId(null);
+          const newId = uuid();
+          conversationIdRef.current = newId;
+          setConversationId(newId);
+          saveConversationId(newId);
+          setDbSessionId(null);
+          return;
         }
+        // Session is live — fetch its messages
+        return fetch(
+          `${baseUrl}/api/sessions/${storedDbSid}/messages?limit=100&offset=0`,
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (cancelled || !data?.messages?.length) return;
+            if (conversationIdRef.current !== convId) return;
+            const mapped = mapApiMessages(data.messages);
+            if (mapped.length > 0) {
+              setMessages(mapped);
+            }
+          });
       })
       .catch((err) =>
-        console.error("Failed to fetch initial messages from DB:", err),
+        console.error("Failed to validate/fetch session from DB:", err),
       );
     return () => {
       cancelled = true;
@@ -313,7 +362,7 @@ export function useChat() {
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
 
   // Active agent tracking
-  const [activeAgent, setActiveAgent] = useState<string>("default");
+  const [activeAgent, setActiveAgent] = useState<string>("default-web-chat");
 
   // Session viewing tracking (read-only observation of CLI sessions via REST)
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(null);
@@ -397,11 +446,6 @@ export function useChat() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
-  // Track pending command request IDs for tool_result routing
-  const pendingCommandsRef = useRef<
-    Map<string, { server: string; tool: string }>
-  >(new Map());
-
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
 
@@ -424,10 +468,6 @@ export function useChat() {
   const handleModelSwitchedRef = useRef<(msg: ModelSwitchedMessage) => void>(
     () => {},
   );
-  const handleToolResultRef = useRef<(msg: ToolResultMessage) => void>(
-    () => {},
-  );
-  const handleErrorRef = useRef<(msg: ErrorMessage) => void>(() => {});
   const handleVoiceMessageRef = useRef<(data: Record<string, unknown>) => void>(
     () => {},
   );
@@ -459,6 +499,17 @@ export function useChat() {
           ],
         }),
       );
+
+      // Sync current mode to backend on every connect/reconnect
+      if (conversationIdRef.current) {
+        ws.send(
+          JSON.stringify({
+            type: "set_mode",
+            mode: currentModeRef.current,
+            conversation_id: conversationIdRef.current,
+          }),
+        );
+      }
     };
 
     ws.onclose = () => {
@@ -494,13 +545,6 @@ export function useChat() {
           handleModelSwitchedRef.current(
             data as unknown as ModelSwitchedMessage,
           );
-        } else if (data.type === "tool_result") {
-          handleToolResultRef.current(data as unknown as ToolResultMessage);
-        } else if (
-          data.type === "error" &&
-          (data as unknown as ErrorMessage).request_id
-        ) {
-          handleErrorRef.current(data as unknown as ErrorMessage);
         } else if (
           data.type === "voice_transcription" ||
           data.type === "voice_audio_chunk" ||
@@ -535,41 +579,48 @@ export function useChat() {
           const planContent = (data as Record<string, unknown>).plan_content as
             | string
             | undefined;
-          setPlanPendingApproval(true);
-          planContentRef.current = planContent ?? null;
-          onPlanReadyRef.current?.(planContent ?? null);
+          if (planContent) {
+            setPlanPendingApproval(true);
+            planContentRef.current = planContent;
+            onPlanReadyRef.current?.(planContent);
+          }
         } else if (data.type === "mode_changed") {
-          const newMode = (data as Record<string, unknown>).mode as
-            | ChatMode
-            | undefined;
-          const reason = (data as Record<string, unknown>).reason as
-            | string
-            | undefined;
-          if (newMode) {
-            currentModeRef.current = newMode;
-            // Clear plan approval UI when plan is approved or changes requested
-            if (
-              reason === "plan_approved" ||
-              reason === "plan_changes_requested"
-            ) {
-              setPlanPendingApproval(false);
-              planContentRef.current = null;
-            }
-            onModeChangedRef.current?.(newMode);
-            // After plan approval, auto-send a message to prompt the agent
-            // to begin execution. The agent's turn has already ended by the
-            // time the user clicks "Approve", so we send immediately here
-            // rather than waiting for a "done" handler that won't fire.
-            if (
-              reason === "plan_approved" &&
-              pendingPlanExecutionRef.current
-            ) {
-              pendingPlanExecutionRef.current = false;
-              setTimeout(() => {
-                sendMessageRef.current?.(
-                  "Plan approved — proceed with implementation.",
-                );
-              }, 200);
+          const msgConvId = (data as Record<string, unknown>)
+            .conversation_id as string | undefined;
+          // Only apply mode changes for the CURRENT conversation
+          if (!msgConvId || msgConvId === conversationIdRef.current) {
+            const newMode = (data as Record<string, unknown>).mode as
+              | ChatMode
+              | undefined;
+            const reason = (data as Record<string, unknown>).reason as
+              | string
+              | undefined;
+            if (newMode) {
+              currentModeRef.current = newMode;
+              // Clear plan approval UI when plan is approved or changes requested
+              if (
+                reason === "plan_approved" ||
+                reason === "plan_changes_requested"
+              ) {
+                setPlanPendingApproval(false);
+                planContentRef.current = null;
+              }
+              onModeChangedRef.current?.(newMode);
+              // After plan approval, auto-send a message to prompt the agent
+              // to begin execution. The agent's turn has already ended by the
+              // time the user clicks "Approve", so we send immediately here
+              // rather than waiting for a "done" handler that won't fire.
+              if (
+                reason === "plan_approved" &&
+                pendingPlanExecutionRef.current
+              ) {
+                pendingPlanExecutionRef.current = false;
+                setTimeout(() => {
+                  sendMessageRef.current?.(
+                    "Plan approved — proceed with implementation.",
+                  );
+                }, 200);
+              }
             }
           }
         } else if (data.type === "session_info") {
@@ -721,7 +772,7 @@ export function useChat() {
                 role === "assistant" &&
                 contentType === "tool_use"
               ) {
-                // Tool invocation — append to last assistant message's toolCalls
+                // Tool invocation — append to last assistant message's toolCalls + contentBlocks
                 setMessages((prev) => {
                   if (idx !== undefined && prev.some((m) => m.id === msgId))
                     return prev;
@@ -738,9 +789,17 @@ export function useChat() {
                   };
                   if (last?.role === "assistant") {
                     const updated = [...prev];
+                    const blocks = [...(last.contentBlocks || [])];
+                    const lastBlock = blocks[blocks.length - 1];
+                    if (lastBlock?.type === "tool_chain") {
+                      blocks[blocks.length - 1] = { ...lastBlock, calls: [...lastBlock.calls, toolCall] };
+                    } else {
+                      blocks.push({ type: "tool_chain" as const, calls: [toolCall] });
+                    }
                     updated[lastIdx] = {
                       ...last,
                       toolCalls: [...(last.toolCalls || []), toolCall],
+                      contentBlocks: blocks,
                     };
                     return updated;
                   }
@@ -752,6 +811,7 @@ export function useChat() {
                       content: "",
                       timestamp: new Date(),
                       toolCalls: [toolCall],
+                      contentBlocks: [{ type: "tool_chain" as const, calls: [toolCall] }],
                     },
                   ];
                 });
@@ -759,7 +819,7 @@ export function useChat() {
                 contentType === "tool_result" ||
                 role === "tool"
               ) {
-                // Tool result — update last pending tool call
+                // Tool result — update last pending tool call in both toolCalls and contentBlocks
                 setMessages((prev) => {
                   for (let i = prev.length - 1; i >= 0; i--) {
                     const m = prev[i];
@@ -770,14 +830,29 @@ export function useChat() {
                     if (pendingIdx < 0) continue;
                     const updated = [...prev];
                     const updatedCalls = [...m.toolCalls];
-                    updatedCalls[pendingIdx] = {
+                    const callRef = {
                       ...updatedCalls[pendingIdx],
                       result: tryParseJSON(
                         msg.tool_result ?? msg.content,
                       ),
-                      status: "completed",
+                      status: "completed" as const,
                     };
-                    updated[i] = { ...m, toolCalls: updatedCalls };
+                    updatedCalls[pendingIdx] = callRef;
+                    // Also update the call in contentBlocks
+                    const blocks = [...(m.contentBlocks || [])];
+                    for (let bi = 0; bi < blocks.length; bi++) {
+                      const block = blocks[bi];
+                      if (block.type === "tool_chain") {
+                        const tcIdx = block.calls.findIndex((c) => c.id === callRef.id);
+                        if (tcIdx >= 0) {
+                          const updatedBlockCalls = [...block.calls];
+                          updatedBlockCalls[tcIdx] = callRef;
+                          blocks[bi] = { ...block, calls: updatedBlockCalls };
+                          break;
+                        }
+                      }
+                    }
+                    updated[i] = { ...m, toolCalls: updatedCalls, contentBlocks: blocks };
                     return updated;
                   }
                   return prev;
@@ -899,9 +974,21 @@ export function useChat() {
 
       if (existingIndex >= 0) {
         const updated = [...prev];
+        const existing = updated[existingIndex];
+        // Build interleaved content blocks
+        const blocks = [...(existing.contentBlocks || [])];
+        if (chunk.content) {
+          const lastBlock = blocks[blocks.length - 1];
+          if (lastBlock?.type === "text") {
+            blocks[blocks.length - 1] = { ...lastBlock, content: lastBlock.content + chunk.content };
+          } else {
+            blocks.push({ type: "text", content: chunk.content });
+          }
+        }
         updated[existingIndex] = {
-          ...updated[existingIndex],
-          content: updated[existingIndex].content + chunk.content,
+          ...existing,
+          content: existing.content + chunk.content,
+          contentBlocks: blocks,
         };
         return updated;
       } else {
@@ -912,6 +999,7 @@ export function useChat() {
             role: "assistant" as const,
             content: chunk.content,
             timestamp: new Date(),
+            contentBlocks: chunk.content ? [{ type: "text" as const, content: chunk.content }] : [],
           },
         ];
       }
@@ -1032,27 +1120,30 @@ export function useChat() {
             content: "",
             timestamp: new Date(),
             toolCalls: [newCall],
+            contentBlocks: [{ type: "tool_chain" as const, calls: [newCall] }],
           },
         ];
       }
 
       const updated = [...prev];
-      const toolCalls = [...(updated[idx].toolCalls || [])];
+      const msg = updated[idx];
+      const toolCalls = [...(msg.toolCalls || [])];
       const existingIdx = toolCalls.findIndex(
         (t) => t.id === status.tool_call_id,
       );
 
+      let callRef: ToolCall;
       if (existingIdx >= 0) {
         const existing = toolCalls[existingIdx];
-        const merged: ToolCall = {
+        callRef = {
           ...existing,
           status: status.status,
           result: status.result,
           error: status.error,
         };
-        toolCalls[existingIdx] = merged;
+        toolCalls[existingIdx] = callRef;
       } else {
-        const newCall: ToolCall = {
+        callRef = {
           id: status.tool_call_id,
           tool_name: status.tool_name || "unknown",
           server_name: status.server_name || "builtin",
@@ -1061,10 +1152,36 @@ export function useChat() {
           result: status.result,
           error: status.error,
         };
-        toolCalls.push(newCall);
+        toolCalls.push(callRef);
       }
 
-      updated[idx] = { ...updated[idx], toolCalls };
+      // Update interleaved content blocks
+      const blocks = [...(msg.contentBlocks || [])];
+      if (existingIdx >= 0) {
+        // Update existing tool call in its block
+        for (let bi = 0; bi < blocks.length; bi++) {
+          const block = blocks[bi];
+          if (block.type === "tool_chain") {
+            const tcIdx = block.calls.findIndex((c) => c.id === status.tool_call_id);
+            if (tcIdx >= 0) {
+              const updatedCalls = [...block.calls];
+              updatedCalls[tcIdx] = callRef;
+              blocks[bi] = { ...block, calls: updatedCalls };
+              break;
+            }
+          }
+        }
+      } else {
+        // New tool call — append to last tool_chain or create new one
+        const lastBlock = blocks[blocks.length - 1];
+        if (lastBlock?.type === "tool_chain") {
+          blocks[blocks.length - 1] = { ...lastBlock, calls: [...lastBlock.calls, callRef] };
+        } else {
+          blocks.push({ type: "tool_chain" as const, calls: [callRef] });
+        }
+      }
+
+      updated[idx] = { ...msg, toolCalls, contentBlocks: blocks };
       return updated;
     });
   }, []);
@@ -1119,46 +1236,6 @@ export function useChat() {
     ]);
   }, []);
 
-  // Handle tool_result for slash commands
-  const handleToolResult = useCallback((msg: ToolResultMessage) => {
-    const pending = pendingCommandsRef.current.get(msg.request_id);
-    if (!pending) return;
-    pendingCommandsRef.current.delete(msg.request_id);
-
-    const resultStr =
-      typeof msg.result === "string"
-        ? msg.result
-        : JSON.stringify(msg.result, null, 2);
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `cmd-result-${msg.request_id}`,
-        role: "system" as const,
-        content: `**/${pending.server}.${pending.tool}**\n\`\`\`json\n${resultStr}\n\`\`\``,
-        timestamp: new Date(),
-      },
-    ]);
-  }, []);
-
-  // Handle error responses for slash commands
-  const handleError = useCallback((msg: ErrorMessage) => {
-    if (!msg.request_id) return;
-    const pending = pendingCommandsRef.current.get(msg.request_id);
-    if (!pending) return;
-    pendingCommandsRef.current.delete(msg.request_id);
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `cmd-error-${msg.request_id}`,
-        role: "system" as const,
-        content: `Error running /${pending.server}.${pending.tool}: ${msg.message}`,
-        timestamp: new Date(),
-      },
-    ]);
-  }, []);
-
   // Keep refs updated to avoid stale closures
   useEffect(() => {
     handleChatStreamRef.current = handleChatStream;
@@ -1166,16 +1243,12 @@ export function useChat() {
     handleToolStatusRef.current = handleToolStatus;
     handleChatThinkingRef.current = handleChatThinking;
     handleModelSwitchedRef.current = handleModelSwitched;
-    handleToolResultRef.current = handleToolResult;
-    handleErrorRef.current = handleError;
   }, [
     handleChatStream,
     handleChatError,
     handleToolStatus,
     handleChatThinking,
     handleModelSwitched,
-    handleToolResult,
-    handleError,
   ]);
 
   // Persist dbSessionId to localStorage so next page load can fetch from DB immediately
@@ -1231,7 +1304,7 @@ export function useChat() {
     // Fetch from server when dbSessionId is available
     if (dbSessionId) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/sessions/${dbSessionId}/messages?limit=100&offset=0`)
+      fetch(`${baseUrl}/api/sessions/${dbSessionId}/messages?limit=100&offset=0`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!data?.messages?.length || conversationIdRef.current !== id)
@@ -1246,7 +1319,7 @@ export function useChat() {
         );
 
       // Hydrate context usage and chat mode from persisted session data
-      fetch(`${baseUrl}/sessions/${dbSessionId}`)
+      fetch(`${baseUrl}/api/sessions/${dbSessionId}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           const s = data?.session;
@@ -1303,15 +1376,16 @@ export function useChat() {
     setIsStreaming(false);
     setIsThinking(false);
 
-    // Set active agent and send set_agent if non-default
-    const effectiveAgent = agentName || "default";
+    // Set active agent and always send set_agent so the backend resolves
+    // the agent definition (preamble, rules, skills) for the web chat session.
+    const effectiveAgent = agentName || "default-web-chat";
     setActiveAgent(effectiveAgent);
-    if (agentName && agentName !== "default" && wsRef.current?.readyState === WebSocket.OPEN) {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
           type: "set_agent",
           conversation_id: newId,
-          agent_name: agentName,
+          agent_name: effectiveAgent,
         }),
       );
     }
@@ -1356,7 +1430,7 @@ export function useChat() {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       try {
         const res = await fetch(
-          `${baseUrl}/sessions/${sourceDbSessionId}/messages?limit=100`,
+          `${baseUrl}/api/sessions/${sourceDbSessionId}/messages?limit=100`,
         );
         if (res.ok) {
           const data = await res.json();
@@ -1372,7 +1446,7 @@ export function useChat() {
       // Hydrate context usage and chat mode from source session
       try {
         const sessionRes = await fetch(
-          `${baseUrl}/sessions/${sourceDbSessionId}`,
+          `${baseUrl}/api/sessions/${sourceDbSessionId}`,
         );
         if (sessionRes.ok) {
           const sessionData = await sessionRes.json();
@@ -1519,8 +1593,8 @@ export function useChat() {
 
   // Send mode change to backend
   const sendMode = useCallback((mode: ChatMode) => {
+    currentModeRef.current = mode; // Always track latest intended mode
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    currentModeRef.current = mode;
     setPlanPendingApproval(false);
     wsRef.current.send(
       JSON.stringify({
@@ -1582,6 +1656,7 @@ export function useChat() {
       model?: string | null,
       files?: QueuedFile[],
       projectId?: string | null,
+      injectContext?: string,
     ): boolean => {
       console.log(
         "sendMessage called:",
@@ -1653,6 +1728,10 @@ export function useChat() {
         payload.project_id = projectId;
       }
 
+      if (injectContext) {
+        payload.inject_context = injectContext;
+      }
+
       if (files && files.length > 0) {
         const contentBlocks: Array<Record<string, unknown>> = [];
         for (const qf of files) {
@@ -1690,45 +1769,6 @@ export function useChat() {
 
   // Update sendMessageRef with the latest sendMessage callback
   sendMessageRef.current = sendMessage;
-
-  // Execute a slash command directly (no LLM round-trip)
-  const executeCommand = useCallback(
-    (server: string, tool: string, args: Record<string, string> = {}) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-      const requestId = uuid();
-
-      pendingCommandsRef.current.set(requestId, { server, tool });
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `cmd-${requestId}`,
-          role: "user" as const,
-          content: `/${server}.${tool}${
-            Object.keys(args).length
-              ? " " +
-                Object.entries(args)
-                  .map(([k, v]) => `${k}=${v}`)
-                  .join(" ")
-              : ""
-          }`,
-          timestamp: new Date(),
-        },
-      ]);
-
-      wsRef.current.send(
-        JSON.stringify({
-          type: "tool_call",
-          request_id: requestId,
-          mcp: server,
-          tool,
-          args,
-        }),
-      );
-    },
-    [],
-  );
 
   // Respond to an AskUserQuestion pending in the backend
   const respondToQuestion = useCallback(
@@ -1785,7 +1825,14 @@ export function useChat() {
   // then sends a follow-up message to prompt the agent to begin execution.
   const approvePlan = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!planContentRef.current) return;
     pendingPlanExecutionRef.current = true;
+    // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
+    setPlanPendingApproval(false);
+    planContentRef.current = null;
+    // Optimistically switch mode out of plan (WS mode_changed will confirm/correct)
+    currentModeRef.current = "accept_edits";
+    onModeChangedRef.current?.("accept_edits");
     wsRef.current.send(
       JSON.stringify({
         type: "plan_approval_response",
@@ -1793,14 +1840,15 @@ export function useChat() {
         decision: "approve",
       }),
     );
-    // Don't eagerly clear — let mode_changed be the single source of truth.
-    // The pendingPlanExecutionRef flag is consumed by the mode_changed handler
-    // to auto-send a "proceed" message once the backend confirms the switch.
   }, []);
 
   // Request changes to the plan with feedback
   const requestPlanChanges = useCallback((feedback: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!planContentRef.current) return;
+    // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
+    setPlanPendingApproval(false);
+    planContentRef.current = null;
     wsRef.current.send(
       JSON.stringify({
         type: "plan_approval_response",
@@ -1809,7 +1857,6 @@ export function useChat() {
         feedback,
       }),
     );
-    // Don't eagerly clear — let mode_changed be the single source of truth
   }, []);
 
   // View a CLI session (read-only, no WS subscription — loads via REST)
@@ -1839,7 +1886,7 @@ export function useChat() {
 
     // Fetch messages via REST
     const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/sessions/${sessionId}/messages?limit=100&offset=0`)
+    fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!data?.messages?.length) return;
@@ -1852,7 +1899,7 @@ export function useChat() {
       );
 
     // Fetch session metadata
-    fetch(`${baseUrl}/sessions/${sessionId}`)
+    fetch(`${baseUrl}/api/sessions/${sessionId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         const s = data?.session;
@@ -1923,11 +1970,11 @@ export function useChat() {
       cacheCreationTokens: 0,
     });
 
-    // Restore previous conversation messages from DB
+    // Restore previous conversation messages and chat mode from DB
     const prevDbSid = loadDbSessionId();
     if (prevDbSid) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/sessions/${prevDbSid}/messages?limit=100&offset=0`)
+      fetch(`${baseUrl}/api/sessions/${prevDbSid}/messages?limit=100&offset=0`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!data?.messages?.length) return;
@@ -1937,6 +1984,17 @@ export function useChat() {
         .catch((err) =>
           console.error("Failed to restore messages:", err),
         );
+
+      // Restore chat mode from DB (prevents stale mode from viewed session)
+      fetch(`${baseUrl}/api/sessions/${prevDbSid}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const s = data?.session;
+          if (s?.chat_mode) {
+            onModeChangedRef.current?.(s.chat_mode as ChatMode);
+          }
+        })
+        .catch(() => {});
     }
   }, []);
 
@@ -2041,7 +2099,6 @@ export function useChat() {
     stopStreaming,
     clearHistory,
     deleteConversation,
-    executeCommand,
     respondToQuestion,
     respondToApproval,
     canvasSurfaces,

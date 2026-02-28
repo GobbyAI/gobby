@@ -12,7 +12,7 @@ function formatTime(date: Date | null): string {
 }
 
 export function DashboardPage() {
-  const { data, isLoading, error, lastUpdated, refresh } = useDashboard()
+  const { data, isLoading, error, lastUpdated } = useDashboard()
 
   return (
     <main className="dash-page">
@@ -26,9 +26,6 @@ export function DashboardPage() {
               Updated {formatTime(lastUpdated)}
             </span>
           )}
-          <button className="dash-toolbar-btn" onClick={refresh} disabled={isLoading}>
-            Refresh
-          </button>
         </div>
       </div>
 

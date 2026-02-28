@@ -24,6 +24,7 @@ interface AgentEventMessage {
   provider?: string
   pid?: number
   tmux_session_name?: string
+  timestamp?: string
 }
 
 export interface RunningAgent {
@@ -34,6 +35,7 @@ export interface RunningAgent {
   provider: string
   pid?: number
   tmux_session_name?: string
+  started_at?: string
 }
 
 export function useTerminal() {
@@ -64,6 +66,7 @@ export function useTerminal() {
               provider: a.provider,
               pid: a.pid,
               tmux_session_name: a.tmux_session_name,
+              started_at: a.started_at,
             }))
           // Only update state if the list actually changed (avoid flicker)
           setAgents(prev => {
@@ -147,6 +150,7 @@ export function useTerminal() {
           provider: event.provider || 'unknown',
           pid: event.pid,
           tmux_session_name: event.tmux_session_name,
+          started_at: event.timestamp || new Date().toISOString(),
         }]
       })
       // Auto-select if no agent selected (only for embedded)

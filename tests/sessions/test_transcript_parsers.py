@@ -514,6 +514,301 @@ class TestClaudeTranscriptParser:
         assert not has_orphan, "Orphaned tool_result should have been removed"
 
 
+class TestClaudeExpandLine:
+    """Tests for _expand_line multi-block expansion."""
+
+    @pytest.fixture
+    def parser(self):
+        return ClaudeTranscriptParser()
+
+    def test_expand_user_string_content(self, parser) -> None:
+        """User message with string content produces one text message."""
+        line = json.dumps(
+            {"type": "user", "message": {"content": "Hello"}, "timestamp": "2024-01-01T12:00:00Z"}
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 1
+        assert msgs[0].role == "user"
+        assert msgs[0].content == "Hello"
+        assert msgs[0].content_type == "text"
+
+    def test_expand_user_tool_result_blocks(self, parser) -> None:
+        """User message with tool_result blocks produces tool_result messages."""
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_001",
+                            "content": "file contents here",
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_002",
+                            "content": [{"type": "text", "text": "second result"}],
+                            "is_error": True,
+                        },
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 2
+
+        assert msgs[0].role == "user"
+        assert msgs[0].content_type == "tool_result"
+        assert msgs[0].content == "file contents here"
+        assert msgs[0].tool_use_id == "toolu_001"
+        assert msgs[0].tool_result == {"content": "file contents here", "is_error": False}
+
+        assert msgs[1].role == "user"
+        assert msgs[1].content_type == "tool_result"
+        assert msgs[1].content == "second result"
+        assert msgs[1].tool_use_id == "toolu_002"
+        assert msgs[1].tool_result["is_error"] is True
+
+    def test_expand_user_mixed_text_and_tool_result(self, parser) -> None:
+        """User message with text + tool_result blocks separates them."""
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Here is the result:"},
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_abc",
+                            "content": "output data",
+                        },
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 2
+        assert msgs[0].content_type == "text"
+        assert msgs[0].content == "Here is the result:"
+        assert msgs[1].content_type == "tool_result"
+        assert msgs[1].content == "output data"
+
+    def test_expand_assistant_text_and_tool_use(self, parser) -> None:
+        """Assistant message with text + tool_use blocks expands into separate messages."""
+        line = json.dumps(
+            {
+                "type": "agent",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Let me read that file."},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_read1",
+                            "name": "Read",
+                            "input": {"file_path": "/tmp/test.txt"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_read2",
+                            "name": "Grep",
+                            "input": {"pattern": "foo"},
+                        },
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 3
+
+        assert msgs[0].role == "assistant"
+        assert msgs[0].content_type == "text"
+        assert msgs[0].content == "Let me read that file."
+
+        assert msgs[1].content_type == "tool_use"
+        assert msgs[1].tool_name == "Read"
+        assert msgs[1].tool_input == {"file_path": "/tmp/test.txt"}
+        assert msgs[1].tool_use_id == "toolu_read1"
+
+        assert msgs[2].content_type == "tool_use"
+        assert msgs[2].tool_name == "Grep"
+        assert msgs[2].tool_use_id == "toolu_read2"
+
+    def test_expand_assistant_with_thinking(self, parser) -> None:
+        """Assistant message with thinking blocks produces a thinking message."""
+        line = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "thinking", "thinking": "Let me think about this..."},
+                        {"type": "text", "text": "Here's my answer."},
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 2
+
+        # Text comes first in output order (text block before thinking in results)
+        text_msgs = [m for m in msgs if m.content_type == "text"]
+        thinking_msgs = [m for m in msgs if m.content_type == "thinking"]
+        assert len(text_msgs) == 1
+        assert len(thinking_msgs) == 1
+        assert text_msgs[0].content == "Here's my answer."
+        assert thinking_msgs[0].content == "Let me think about this..."
+
+    def test_expand_top_level_tool_result(self, parser) -> None:
+        """Top-level tool_result type produces one tool_result message."""
+        line = json.dumps(
+            {
+                "type": "tool_result",
+                "tool_name": "Read",
+                "tool_use_id": "toolu_xyz",
+                "result": "file content here",
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 1
+        assert msgs[0].role == "tool"
+        assert msgs[0].content_type == "tool_result"
+        assert msgs[0].tool_name == "Read"
+        assert msgs[0].tool_use_id == "toolu_xyz"
+
+    def test_expand_unknown_type_returns_empty(self, parser) -> None:
+        """Unknown message type returns empty list."""
+        line = json.dumps({"type": "progress", "timestamp": "2024-01-01T12:00:00Z"})
+        msgs = parser._expand_line(line, 0)
+        assert msgs == []
+
+    def test_expand_invalid_json_returns_empty(self, parser) -> None:
+        """Invalid JSON returns empty list."""
+        msgs = parser._expand_line("not json", 0)
+        assert msgs == []
+
+    def test_parse_lines_expansion_sequential_indices(self, parser) -> None:
+        """parse_lines assigns sequential indices across expanded messages."""
+        lines = [
+            # User prompt
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": "Read two files"},
+                    "timestamp": "2024-01-01T12:00:00Z",
+                }
+            ),
+            # Assistant with text + 2 tool_use blocks → 3 messages
+            json.dumps(
+                {
+                    "type": "agent",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Sure."},
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_a",
+                                "name": "Read",
+                                "input": {"file_path": "a.txt"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_b",
+                                "name": "Read",
+                                "input": {"file_path": "b.txt"},
+                            },
+                        ]
+                    },
+                    "timestamp": "2024-01-01T12:00:01Z",
+                }
+            ),
+            # User with tool results
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_a",
+                                "content": "contents of a",
+                            },
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_b",
+                                "content": "contents of b",
+                            },
+                        ]
+                    },
+                    "timestamp": "2024-01-01T12:00:02Z",
+                }
+            ),
+        ]
+        msgs = parser.parse_lines(lines, start_index=0)
+
+        # 1 user + 3 assistant (text + 2 tool_use) + 2 tool_result = 6
+        assert len(msgs) == 6
+        assert [m.index for m in msgs] == [0, 1, 2, 3, 4, 5]
+        assert msgs[0].content == "Read two files"
+        assert msgs[1].content == "Sure."
+        assert msgs[2].content_type == "tool_use"
+        assert msgs[2].tool_name == "Read"
+        assert msgs[3].content_type == "tool_use"
+        assert msgs[4].content_type == "tool_result"
+        assert msgs[4].tool_use_id == "toolu_a"
+        assert msgs[5].content_type == "tool_result"
+        assert msgs[5].tool_use_id == "toolu_b"
+
+    def test_parse_line_backward_compat_user_list_tool_results(self, parser) -> None:
+        """parse_line with user list content containing only tool_results returns tool_result."""
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_001",
+                            "content": "result text",
+                        },
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.content_type == "tool_result"
+        assert msg.content == "result text"
+        assert msg.tool_use_id == "toolu_001"
+
+    def test_parse_line_backward_compat_user_list_with_text(self, parser) -> None:
+        """parse_line with user list content extracts text when available."""
+        line = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "user prompt"},
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_001",
+                            "content": "ignored in single mode",
+                        },
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.content_type == "text"
+        assert msg.content == "user prompt"
+
+
 class TestCodexTranscriptParser:
     """Tests for Codex transcript parser."""
 

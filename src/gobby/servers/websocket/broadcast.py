@@ -41,6 +41,7 @@ class BroadcastMixin:
         event_types = {
             "hook_event",
             "session_message",
+            "session_event",
             "agent_event",
             "agent_message",
             "agent_command",
@@ -50,6 +51,11 @@ class BroadcastMixin:
             "terminal_output",
             "tmux_session_event",
             "canvas_event",
+            "skill_event",
+            "mcp_event",
+            "workflow_event",
+            "project_event",
+            "cron_event",
         }
 
         # Non-event messages pass through for any subscribed client
@@ -116,21 +122,98 @@ class BroadcastMixin:
                 f"Broadcast {message.get('type')}: {sent_count} sent, {failed_count} failed"
             )
 
-    async def broadcast_session_update(self, event: str, **kwargs: Any) -> None:
-        """Broadcast session update (as session_message for back-compat)."""
-        # Note: Logic in original broadcast() handled 'session_message' types.
-        # We'll stick to that type for consistency with original expected behavior
-        # or convert to 'session_update' if that was intended.
-        # The original broadcast_session_update sent type="session_update",
-        # but the original broadcast() loop checked "session_message".
-        # We will assume "session_update" is safe to basic-broadcast if not restricted,
-        # OR we should treat it as restricted.
-        # Adding "session_update" to restricted types in _is_subscribed would require clients to sub.
-        # Original code didn't restrict "session_update" type, only "session_message".
-        # We'll treat "session_update" as a system message (unrestricted) for now unless it's noisy.
+    async def broadcast_session_event(
+        self,
+        event: str,
+        session_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Broadcast session event (created, updated, ended)."""
         message = {
-            "type": "session_update",
+            "type": "session_event",
             "event": event,
+            "session_id": session_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **kwargs,
+        }
+        await self.broadcast(message)
+
+    async def broadcast_skill_event(
+        self,
+        event: str,
+        skill_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Broadcast skill event (created, updated, deleted, bulk_changed)."""
+        message = {
+            "type": "skill_event",
+            "event": event,
+            "skill_id": skill_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **kwargs,
+        }
+        await self.broadcast(message)
+
+    async def broadcast_mcp_event(
+        self,
+        event: str,
+        server_name: str,
+        **kwargs: Any,
+    ) -> None:
+        """Broadcast MCP server event (added, removed, imported)."""
+        message = {
+            "type": "mcp_event",
+            "event": event,
+            "server_name": server_name,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **kwargs,
+        }
+        await self.broadcast(message)
+
+    async def broadcast_workflow_event(
+        self,
+        event: str,
+        definition_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Broadcast workflow/rule/agent definition event."""
+        message = {
+            "type": "workflow_event",
+            "event": event,
+            "definition_id": definition_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **kwargs,
+        }
+        await self.broadcast(message)
+
+    async def broadcast_project_event(
+        self,
+        event: str,
+        project_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Broadcast project event (updated, deleted)."""
+        message = {
+            "type": "project_event",
+            "event": event,
+            "project_id": project_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+            **kwargs,
+        }
+        await self.broadcast(message)
+
+    async def broadcast_cron_event(
+        self,
+        event: str,
+        job_id: str,
+        **kwargs: Any,
+    ) -> None:
+        """Broadcast cron job event (created, updated, deleted, run_triggered)."""
+        message = {
+            "type": "cron_event",
+            "event": event,
+            "job_id": job_id,
+            "timestamp": datetime.now(UTC).isoformat(),
             **kwargs,
         }
         await self.broadcast(message)
@@ -289,11 +372,17 @@ class BroadcastMixin:
 
     async def broadcast_canvas_event(
         self,
+        event: str,
+        canvas_id: str,
+        conversation_id: str,
         **kwargs: Any,
     ) -> None:
         """Broadcast canvas interaction/update event."""
         message = {
             "type": "canvas_event",
+            "event": event,
+            "canvas_id": canvas_id,
+            "conversation_id": conversation_id,
             "timestamp": datetime.now(UTC).isoformat(),
             **kwargs,
         }

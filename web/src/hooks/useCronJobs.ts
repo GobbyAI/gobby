@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useWebSocketEvent } from './useWebSocketEvent'
 
 // =============================================================================
 // Types
@@ -72,7 +73,7 @@ export interface UpdateCronJobRequest {
 // Helpers
 // =============================================================================
 
-const POLL_INTERVAL = 30000
+const REFETCH_DEBOUNCE_MS = 500
 
 function getBaseUrl(): string {
   return ''
@@ -92,7 +93,7 @@ export function useCronJobs() {
   })
   const [isLoading, setIsLoading] = useState(true)
   const [isRunsLoading, setIsRunsLoading] = useState(false)
-  const intervalRef = useRef<number | null>(null)
+  const debouncedRefetchRef = useRef<number | null>(null)
 
   // Fetch jobs list
   const fetchJobs = useCallback(async () => {
@@ -243,19 +244,30 @@ export function useCronJobs() {
     }
   }, [fetchRuns])
 
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+    }
+  }, [])
+
   // Fetch on mount and when filters change
   useEffect(() => {
     setIsLoading(true)
     fetchJobs()
   }, [fetchJobs])
 
-  // Poll for updates
-  useEffect(() => {
-    intervalRef.current = window.setInterval(fetchJobs, POLL_INTERVAL)
-    return () => {
-      if (intervalRef.current) window.clearInterval(intervalRef.current)
-    }
-  }, [fetchJobs])
+  // Real-time updates via WebSocket
+  useWebSocketEvent(
+    'cron_event',
+    useCallback(() => {
+      if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+      debouncedRefetchRef.current = window.setTimeout(() => {
+        fetchJobs()
+        if (selectedJob) fetchRuns(selectedJob.id)
+      }, REFETCH_DEBOUNCE_MS)
+    }, [fetchJobs, fetchRuns, selectedJob]),
+  )
 
   const refresh = useCallback(() => {
     setIsLoading(true)

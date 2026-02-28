@@ -9,8 +9,8 @@ pytestmark = pytest.mark.unit
 
 
 class TestStatusUtils:
-    @patch("httpx.get")
-    def test_fetch_rich_status_success(self, mock_get) -> None:
+    @patch("httpx.AsyncClient.get")
+    async def test_fetch_rich_status_success(self, mock_get) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -26,7 +26,7 @@ class TestStatusUtils:
         }
         mock_get.return_value = mock_response
 
-        status = fetch_rich_status(8080)
+        status = await fetch_rich_status(8080)
 
         assert status["memory_mb"] == 100.5
         assert status["mcp_total"] == 2
@@ -37,25 +37,25 @@ class TestStatusUtils:
         assert status["tasks_open"] == 2
         assert status["memories_count"] == 10
 
-    @patch("httpx.get")
-    def test_fetch_rich_status_failure(self, mock_get) -> None:
+    @patch("httpx.AsyncClient.get")
+    async def test_fetch_rich_status_failure(self, mock_get) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_get.return_value = mock_response
 
-        status = fetch_rich_status(8080)
+        status = await fetch_rich_status(8080)
         assert status == {}
 
-    @patch("httpx.get")
-    def test_fetch_rich_status_connection_error(self, mock_get) -> None:
+    @patch("httpx.AsyncClient.get")
+    async def test_fetch_rich_status_connection_error(self, mock_get) -> None:
         mock_get.side_effect = httpx.ConnectError("Connection failed")
-        status = fetch_rich_status(8080)
+        status = await fetch_rich_status(8080)
         assert status == {}
 
-    @patch("httpx.get")
-    def test_fetch_rich_status_other_error(self, mock_get) -> None:
+    @patch("httpx.AsyncClient.get")
+    async def test_fetch_rich_status_other_error(self, mock_get) -> None:
         mock_get.side_effect = Exception("Unknown error")
-        status = fetch_rich_status(8080)
+        status = await fetch_rich_status(8080)
         assert status == {}
 
     def test_format_status_message_running(self) -> None:

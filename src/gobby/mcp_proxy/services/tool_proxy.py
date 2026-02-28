@@ -267,6 +267,7 @@ class ToolProxyService:
         arguments: dict[str, Any] | None = None,
         session_id: str | None = None,
         call_context: dict[str, Any] | None = None,
+        strip_unknown: bool = False,
     ) -> Any:
         """Execute a tool with optional pre-validation.
 
@@ -280,6 +281,13 @@ class ToolProxyService:
         When session_id is provided and a workflow is active, checks that the
         tool is not blocked by the current workflow step's blocked_tools setting.
 
+        Args:
+            strip_unknown: When True, silently strip unknown parameters instead
+                of returning a validation error.  Used by internal dispatch paths
+                (rule engine mcp_call effects) where context parameters like
+                ``prompt_text`` are injected broadly but not every tool declares
+                them.  Missing-required and type errors still fail.
+
         """
         arguments = arguments or {}
 
@@ -288,7 +296,12 @@ class ToolProxyService:
             resolved = self._resolve_server_for_tool(tool_name)
             if resolved:
                 return await self.call_tool(
-                    resolved, tool_name, arguments, session_id, call_context=call_context
+                    resolved,
+                    tool_name,
+                    arguments,
+                    session_id,
+                    call_context=call_context,
+                    strip_unknown=strip_unknown,
                 )
             return {
                 "success": False,
@@ -316,16 +329,34 @@ class ToolProxyService:
             if schema_result.get("success"):
                 input_schema = schema_result.get("tool", {}).get("inputSchema", {})
                 if input_schema:
-                    validation_errors = self._check_arguments(arguments, input_schema)
-                    if validation_errors:
-                        return {
-                            "success": False,
-                            "error": f"Invalid arguments: {validation_errors}",
-                            "hint": "Review the schema below and retry with correct parameters",
-                            "schema": input_schema,
-                            "server_name": server_name,
-                            "tool_name": tool_name,
-                        }
+                    if strip_unknown:
+                        # Silently remove parameters not in the schema
+                        properties = input_schema.get("properties", {})
+                        unknown_keys = [k for k in arguments if k not in properties]
+                        for k in unknown_keys:
+                            del arguments[k]
+                        # Still validate required params
+                        required = input_schema.get("required", [])
+                        missing = [r for r in required if r not in arguments]
+                        if missing:
+                            return {
+                                "success": False,
+                                "error": f"Missing required parameters: {missing}",
+                                "schema": input_schema,
+                                "server_name": server_name,
+                                "tool_name": tool_name,
+                            }
+                    else:
+                        validation_errors = self._check_arguments(arguments, input_schema)
+                        if validation_errors:
+                            return {
+                                "success": False,
+                                "error": f"Invalid arguments: {validation_errors}",
+                                "hint": "Review the schema below and retry with correct parameters",
+                                "schema": input_schema,
+                                "server_name": server_name,
+                                "tool_name": tool_name,
+                            }
 
         try:
             # Check internal tools first

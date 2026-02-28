@@ -104,6 +104,20 @@ class StepRenderer:
                     rendered_step.mcp.arguments, render_context
                 )
 
+            if rendered_step.invoke_pipeline and isinstance(rendered_step.invoke_pipeline, dict):
+                if "name" in rendered_step.invoke_pipeline and isinstance(
+                    rendered_step.invoke_pipeline["name"], str
+                ):
+                    rendered_step.invoke_pipeline["name"] = self.render_string(
+                        rendered_step.invoke_pipeline["name"], render_context
+                    )
+                if "arguments" in rendered_step.invoke_pipeline and isinstance(
+                    rendered_step.invoke_pipeline["arguments"], dict
+                ):
+                    rendered_step.invoke_pipeline["arguments"] = self.render_mcp_arguments(
+                        rendered_step.invoke_pipeline["arguments"], render_context
+                    )
+
         except Exception as e:
             raise ValueError(f"Failed to render step {step.id}: {e}") from e
 
@@ -218,6 +232,12 @@ class StepRenderer:
         if not step.condition:
             return True
 
+        # Strip ${{ }} wrapper (pipeline template syntax)
+        condition = step.condition.strip()
+        m = re.match(r"^\$\{\{\s*(.*?)\s*\}\}$", condition, re.DOTALL)
+        if m:
+            condition = m.group(1).strip()
+
         try:
             # Evaluate the condition using safe AST-based evaluator
             eval_context = {
@@ -233,7 +253,7 @@ class StepRenderer:
                 "int": int,
             }
             evaluator = SafeExpressionEvaluator(eval_context, allowed_funcs)
-            return evaluator.evaluate(step.condition)
+            return evaluator.evaluate(condition)
         except ValueError as e:
             if self.strict_conditions:
                 raise ValueError(f"Condition evaluation failed for step {step.id}: {e}") from e

@@ -482,9 +482,7 @@ class SessionControlMixin:
                 }
             )
         )
-        logger.info(
-            f"Agent switched for conversation {conversation_id[:8]}: {agent_name}"
-        )
+        logger.info(f"Agent switched for conversation {conversation_id[:8]}: {agent_name}")
 
     async def _handle_clear_chat(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle clear_chat message: stop session, mark completed, notify frontend.
@@ -559,16 +557,15 @@ class SessionControlMixin:
             await session.stop()
             self._chat_sessions.pop(conversation_id, None)
 
-        # Soft-delete from database (hard delete fails due to FK constraints
-        # from agent_runs, tasks, workflow_audit_log referencing sessions)
+        # Soft-delete: mark as handoff_ready (preserves messages for handoff context;
+        # hard delete fails due to FK constraints from agent_runs, tasks, etc.)
         if db_session_id:
             session_manager = getattr(self, "session_manager", None)
-            message_manager = getattr(self, "message_manager", None)
             try:
-                if message_manager:
-                    await message_manager.delete(db_session_id)
                 if session_manager:
-                    await asyncio.to_thread(session_manager.update, db_session_id, status="deleted")
+                    await asyncio.to_thread(
+                        session_manager.update, db_session_id, status="handoff_ready"
+                    )
             except Exception as e:
                 logger.warning(f"Failed to soft-delete session from DB: {e}")
 

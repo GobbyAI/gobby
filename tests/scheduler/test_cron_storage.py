@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -223,8 +223,8 @@ def test_toggle_job(cron_storage: CronJobStorage) -> None:
 
 def test_get_due_jobs(cron_storage: CronJobStorage) -> None:
     """get_due_jobs returns jobs whose next_run_at has passed."""
-    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     job1 = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Due",
@@ -280,7 +280,7 @@ def test_update_run(cron_storage: CronJobStorage) -> None:
         cron_expr="0 * * * *",
     )
     run = cron_storage.create_run(job.id)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     updated = cron_storage.update_run(
         run.id,
         status="completed",
@@ -338,7 +338,7 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     # Create a recent run
     cron_storage.create_run(job.id)
     # Simulate old run by manually inserting
-    old_time = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
+    old_time = (datetime.now(UTC) - timedelta(days=60)).isoformat()
     cron_storage.db.execute(
         """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
         VALUES (?, ?, ?, 'completed', ?)""",
@@ -391,13 +391,13 @@ def test_compute_next_run_interval_no_last_run() -> None:
     next_run = compute_next_run(job)
     assert next_run is not None
     # Should be roughly 5 minutes from now
-    diff = next_run - datetime.now(timezone.utc)
+    diff = next_run - datetime.now(UTC)
     assert 290 < diff.total_seconds() < 310
 
 
 def test_compute_next_run_interval_with_last_run() -> None:
     """compute_next_run with interval adds timedelta from last_run_at."""
-    last = datetime.now(timezone.utc).isoformat()
+    last = datetime.now(UTC).isoformat()
     job = CronJob(
         id="cj-1",
         project_id="p",
@@ -414,13 +414,13 @@ def test_compute_next_run_interval_with_last_run() -> None:
     )
     next_run = compute_next_run(job)
     assert next_run is not None
-    diff = next_run - datetime.now(timezone.utc)
+    diff = next_run - datetime.now(UTC)
     assert 50 < diff.total_seconds() < 70
 
 
 def test_compute_next_run_once_future() -> None:
     """compute_next_run with 'once' schedule uses run_at for future time."""
-    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     job = CronJob(
         id="cj-1",
         project_id="p",
@@ -440,7 +440,7 @@ def test_compute_next_run_once_future() -> None:
 
 def test_compute_next_run_once_expired() -> None:
     """compute_next_run returns None for expired one-shot."""
-    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     job = CronJob(
         id="cj-1",
         project_id="p",

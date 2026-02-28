@@ -309,8 +309,8 @@ export function AgentPortfolioPage() {
       setError(null)
       const baseUrl = getBaseUrl()
       const [sessRes, taskRes] = await Promise.all([
-        fetch(`${baseUrl}/sessions?limit=500`),
-        fetch(`${baseUrl}/tasks?limit=500`),
+        fetch(`${baseUrl}/api/sessions?limit=500`),
+        fetch(`${baseUrl}/api/tasks?limit=500`),
       ])
 
       if (sessRes.ok) {

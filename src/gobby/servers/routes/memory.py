@@ -50,7 +50,7 @@ class MemoryUpdateRequest(BaseModel):
 
 def create_memory_router(server: "HTTPServer") -> APIRouter:
     """Create memory router with endpoints bound to server instance."""
-    router = APIRouter(prefix="/memories", tags=["memories"])
+    router = APIRouter(prefix="/api/memories", tags=["memories"])
     metrics = get_metrics_collector()
 
     @router.get("")

@@ -146,8 +146,10 @@ class TestGobbyDaemonToolsListMcpServers:
     @pytest.mark.asyncio
     async def test_list_mcp_servers_empty(self, mock_mcp_manager, mock_internal_manager):
         """Test listing when no servers configured."""
-        mock_mcp_manager.get_server_health.return_value = {}
-        mock_mcp_manager.get_lazy_connection_states.return_value = {}
+        mock_internal_manager.get_all_registries.return_value = []
+        mock_mcp_manager.server_configs = []
+        mock_mcp_manager.connections = {}
+        mock_mcp_manager.health = {}
 
         handler = GobbyDaemonTools(
             mcp_manager=mock_mcp_manager,
@@ -160,21 +162,34 @@ class TestGobbyDaemonToolsListMcpServers:
         result = await handler.list_mcp_servers()
 
         assert "servers" in result
-        assert "total_count" in result
-        assert "connected_count" in result
-        assert result["total_count"] == 0
-        assert result["connected_count"] == 0
+        assert "total" in result
+        assert "connected" in result
+        assert result["total"] == 0
+        assert result["connected"] == 0
 
     @pytest.mark.asyncio
     async def test_list_mcp_servers_with_servers(self, mock_mcp_manager, mock_internal_manager):
         """Test listing with configured servers."""
-        # Setup mock health data - server2 is lazy-loaded (pending), not disconnected
-        mock_mcp_manager.get_server_health.return_value = {
-            "server1": {"state": "connected", "health": "healthy"},
-            "server2": {"state": "pending", "health": "unknown"},
-        }
-        mock_mcp_manager.get_lazy_connection_states.return_value = {}
+        mock_internal_manager.get_all_registries.return_value = []
+
+        config1 = MagicMock()
+        config1.name = "server1"
+        config1.transport = "http"
+        config1.enabled = True
+
+        config2 = MagicMock()
+        config2.name = "server2"
+        config2.transport = "stdio"
+        config2.enabled = True
+
+        health1 = MagicMock()
+        health1.state.value = "connected"
+        health2 = MagicMock()
+        health2.state.value = "pending"
+
+        mock_mcp_manager.server_configs = [config1, config2]
         mock_mcp_manager.connections = {"server1": MagicMock()}
+        mock_mcp_manager.health = {"server1": health1, "server2": health2}
 
         handler = GobbyDaemonTools(
             mcp_manager=mock_mcp_manager,
@@ -186,20 +201,17 @@ class TestGobbyDaemonToolsListMcpServers:
 
         result = await handler.list_mcp_servers()
 
-        assert result["total_count"] == 2
-        assert result["connected_count"] == 1
-        assert result["available_count"] == 2
+        assert result["total"] == 2
+        assert result["connected"] == 1
 
-        # Verify available field on each server
+        # Verify slim fields on each server
         server1 = next(s for s in result["servers"] if s["name"] == "server1")
-        assert server1["available"] is True
-        assert server1["connected"] is True
-        assert "note" not in server1
+        assert server1["state"] == "connected"
+        assert server1["transport"] == "http"
 
         server2 = next(s for s in result["servers"] if s["name"] == "server2")
-        assert server2["available"] is True
-        assert server2["connected"] is False
-        assert server2["note"] == "Connects automatically on first use"
+        assert server2["state"] == "pending"
+        assert server2["transport"] == "stdio"
 
 
 class TestGobbyDaemonToolsCallTool:
@@ -219,7 +231,7 @@ class TestGobbyDaemonToolsCallTool:
         )
 
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
-            "test-server", "test-tool", {"key": "value"}, None
+            "test-server", "test-tool", {"key": "value"}, None, call_context=None
         )
         # MCP layer strips "success" from successful responses (server.py:140-142)
         assert "success" not in result
@@ -259,7 +271,7 @@ class TestGobbyDaemonToolsCallTool:
         )
 
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
-            "server", "no-args-tool", None, None
+            "server", "no-args-tool", None, None, call_context=None
         )
 
     @pytest.mark.asyncio

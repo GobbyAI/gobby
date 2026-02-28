@@ -100,7 +100,7 @@ class TestFullWorkflowIntegration:
 
                 # ===== PHASE 3: MCP proxy discovers and invokes tools =====
                 # 3a. Discover MCP servers
-                servers_response = client.get("/mcp/servers")
+                servers_response = client.get("/api/mcp/servers")
                 assert servers_response.status_code == 200, (
                     "Phase 3a FAILED: Should list MCP servers"
                 )
@@ -110,14 +110,14 @@ class TestFullWorkflowIntegration:
                 )
 
                 # 3b. Discover tools
-                tools_response = client.get("/mcp/tools")
+                tools_response = client.get("/api/mcp/tools")
                 assert tools_response.status_code == 200, "Phase 3b FAILED: Should list MCP tools"
                 tools_data = tools_response.json()
                 assert "tools" in tools_data, "Phase 3b FAILED: Response should have tools key"
 
                 # 3c. Invoke a tool (list_ready_tasks from gobby-tasks)
                 tool_call_response = client.post(
-                    "/mcp/tools/call",
+                    "/api/mcp/tools/call",
                     json={
                         "server_name": "gobby-tasks",
                         "tool_name": "list_ready_tasks",
@@ -133,7 +133,7 @@ class TestFullWorkflowIntegration:
                 )
 
                 # ===== PHASE 4: Session state is tracked =====
-                sessions_response = client.get("/sessions")
+                sessions_response = client.get("/api/sessions")
                 assert sessions_response.status_code == 200, (
                     "Phase 4 FAILED: Sessions endpoint should work"
                 )
@@ -184,7 +184,7 @@ class TestFullWorkflowIntegration:
                 cli_events2 = CLIEventSimulator(f"http://localhost:{http_port}")
 
                 try:
-                    sessions_response2 = client2.get("/sessions")
+                    sessions_response2 = client2.get("/api/sessions")
                     assert sessions_response2.status_code == 200, (
                         "Phase 6 FAILED: Sessions endpoint should work after restart"
                     )
@@ -195,14 +195,14 @@ class TestFullWorkflowIntegration:
 
                     # ===== PHASE 7: Workflow continues successfully =====
                     # 7a. MCP proxy still works
-                    servers_response2 = client2.get("/mcp/servers")
+                    servers_response2 = client2.get("/api/mcp/servers")
                     assert servers_response2.status_code == 200, (
                         "Phase 7a FAILED: MCP servers should work after restart"
                     )
 
                     # 7b. Tool invocation still works
                     tool_call_response2 = client2.post(
-                        "/mcp/tools/call",
+                        "/api/mcp/tools/call",
                         json={
                             "server_name": "gobby-tasks",
                             "tool_name": "list_ready_tasks",
@@ -225,7 +225,7 @@ class TestFullWorkflowIntegration:
                     )
 
                     # 7d. Health endpoint confirms system is healthy
-                    health_response = client2.get("/admin/status")
+                    health_response = client2.get("/api/admin/status")
                     assert health_response.status_code == 200, (
                         "Phase 7d FAILED: Health endpoint should work"
                     )
@@ -268,7 +268,7 @@ class TestFullWorkflowIntegration:
 
         # Execute MCP tool call
         tool_result = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "gobby-tasks",
                 "tool_name": "list_ready_tasks",
@@ -278,7 +278,7 @@ class TestFullWorkflowIntegration:
         assert tool_result.status_code == 200
 
         # Query sessions
-        sessions = daemon_client.get("/sessions")
+        sessions = daemon_client.get("/api/sessions")
         assert sessions.status_code == 200
 
         # Execute more hooks
@@ -303,7 +303,7 @@ class TestFullWorkflowIntegration:
         assert end_result is not None
 
         # Final health check
-        health = daemon_client.get("/admin/status")
+        health = daemon_client.get("/api/admin/status")
         assert health.status_code == 200
         assert health.json().get("status") == "healthy"
 
@@ -330,7 +330,7 @@ class TestFullWorkflowIntegration:
         # Note: MCP errors return 200 with {success: False, ...} in body
         # for better MCP client compatibility (see execution.py _process_tool_proxy_result)
         error_response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "nonexistent-server",
                 "tool_name": "some_tool",
@@ -349,12 +349,12 @@ class TestFullWorkflowIntegration:
             assert error_data.get("success") is False
 
         # Sessions should still work
-        sessions_response = daemon_client.get("/sessions")
+        sessions_response = daemon_client.get("/api/sessions")
         assert sessions_response.status_code == 200
 
         # MCP tools should still work with valid server
         valid_response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "gobby-tasks",
                 "tool_name": "list_ready_tasks",
@@ -373,6 +373,6 @@ class TestFullWorkflowIntegration:
         assert result is not None
 
         # Health check
-        health = daemon_client.get("/admin/status")
+        health = daemon_client.get("/api/admin/status")
         assert health.status_code == 200
         assert health.json().get("status") == "healthy"

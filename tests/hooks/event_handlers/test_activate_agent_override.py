@@ -32,6 +32,7 @@ def _make_agent_body(name: str = "test-agent") -> MagicMock:
     """Create a mock agent body returned by resolve_agent."""
     body = MagicMock()
     body.name = name
+    body.build_prompt_preamble.return_value = None
     body.workflows = MagicMock()
     body.workflows.skill_format = None
     body.workflows.variables = None

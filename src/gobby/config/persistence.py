@@ -66,10 +66,11 @@ class MemoryConfig(BaseModel):
         ),
     )
     neo4j_url: str | None = Field(
-        default="http://localhost:8474",
+        default=None,
         description=(
             "Neo4j HTTP API URL for knowledge graph visualization. "
-            "Example: 'http://localhost:7474' or 'http://localhost:8474'"
+            "Example: 'http://localhost:7474' or 'http://localhost:8474'. "
+            "Set automatically by 'gobby install neo4j'."
         ),
     )
     neo4j_auth: str | None = Field(

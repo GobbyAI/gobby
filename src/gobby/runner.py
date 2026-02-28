@@ -404,6 +404,7 @@ class GobbyRunner:
             self.agent_lifecycle_monitor: AgentLifecycleMonitor | None = AgentLifecycleMonitor(
                 agent_registry=get_running_agent_registry(),
                 agent_run_manager=LocalAgentRunManager(self.database),
+                clone_storage=self.clone_storage,
             )
         except Exception as e:
             logger.warning(f"Failed to initialize AgentLifecycleMonitor: {e}")
@@ -469,6 +470,7 @@ class GobbyRunner:
             pipeline_executor=self.pipeline_executor,
             workflow_loader=self.workflow_loader,
             pipeline_execution_manager=self.pipeline_execution_manager,
+            agent_lifecycle_monitor=self.agent_lifecycle_monitor,
             cron_storage=self.cron_storage,
             cron_scheduler=self.cron_scheduler,
             skill_manager=self.skill_manager,
@@ -572,6 +574,22 @@ class GobbyRunner:
 
             # Clean up stale tmux sessions from previous runs
             await cleanup_stale_tmux_sessions()
+
+            # Neo4j health check: disable KG features if unreachable
+            if (
+                self.memory_manager
+                and hasattr(self.config, "memory")
+                and self.config.memory.neo4j_url
+            ):
+                from gobby.cli.services import is_neo4j_healthy
+
+                neo4j_url = self.config.memory.neo4j_url
+                if not await is_neo4j_healthy(neo4j_url):
+                    logger.warning(
+                        f"Neo4j configured but unreachable at {neo4j_url} — graph features disabled"
+                    )
+                    self.memory_manager._neo4j_client = None
+                    self.memory_manager._kg_service = None
 
             # Run metrics cleanup on startup
             try:

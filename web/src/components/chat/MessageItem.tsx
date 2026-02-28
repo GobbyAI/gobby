@@ -3,7 +3,7 @@ import type { ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ToolCallCards } from './ToolCallCard'
+import { ToolCallCards, ToolChainGroup } from './ToolCallCard'
 import type { A2UISurfaceState, UserAction } from '../canvas'
 
 interface MessageItemProps {
@@ -19,6 +19,13 @@ interface MessageItemProps {
 export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: MessageItemProps) {
   const isCommandResult = message.role === 'system' && message.toolCalls?.length && !message.content
   const isModelSwitch = message.role === 'system' && message.id.startsWith('model-switch-')
+
+  // Don't render empty messages (e.g. compact acknowledgements with no body)
+  const hasContent = message.content || message.thinkingContent ||
+    (message.toolCalls && message.toolCalls.length > 0) ||
+    (message.contentBlocks && message.contentBlocks.length > 0) ||
+    isStreaming || isThinking
+  if (!hasContent && !isModelSwitch) return null
 
   if (isModelSwitch) {
     return (
@@ -59,19 +66,56 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
           </div>
         )}
 
-        {message.thinkingContent && (
+        {message.thinkingContent !== undefined && (
           <ThinkingBlock content={message.thinkingContent} messageId={message.id} />
         )}
 
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <ToolCallCards toolCalls={message.toolCalls} onRespond={onRespondToQuestion} onRespondToApproval={onRespondToApproval} canvasSurfaces={canvasSurfaces} onCanvasInteraction={onCanvasInteraction} />
-        )}
-
-        {message.content && (
-          <div className="message-content text-sm leading-relaxed text-foreground">
-            <Markdown content={message.content} id={message.id} />
-            {isStreaming && <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />}
-          </div>
+        {message.contentBlocks && message.contentBlocks.length > 0 ? (
+          <>
+            {message.contentBlocks.map((block, i) => {
+              if (block.type === 'text') {
+                const isLastText = !message.contentBlocks!.slice(i + 1).some(b => b.type === 'text')
+                return (
+                  <div key={`${message.id}-b${i}`} className="message-content text-sm leading-relaxed text-foreground">
+                    <Markdown content={block.content} id={`${message.id}-${i}`} />
+                    {isStreaming && isLastText && <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />}
+                  </div>
+                )
+              }
+              if (block.type === 'tool_chain') {
+                return (
+                  <ToolChainGroup
+                    key={`${message.id}-b${i}`}
+                    toolCalls={block.calls}
+                    onRespond={onRespondToQuestion}
+                    onRespondToApproval={onRespondToApproval}
+                    canvasSurfaces={canvasSurfaces}
+                    onCanvasInteraction={onCanvasInteraction}
+                  />
+                )
+              }
+              if (block.type === 'image') {
+                return (
+                  <div key={`${message.id}-b${i}`} className="my-2">
+                    <img src={block.src} alt={block.alt || 'Image'} className="max-w-full rounded-lg border border-border" />
+                  </div>
+                )
+              }
+              return null
+            })}
+          </>
+        ) : (
+          <>
+            {message.toolCalls && message.toolCalls.length > 0 && (
+              <ToolCallCards toolCalls={message.toolCalls} onRespond={onRespondToQuestion} onRespondToApproval={onRespondToApproval} canvasSurfaces={canvasSurfaces} onCanvasInteraction={onCanvasInteraction} />
+            )}
+            {message.content && (
+              <div className="message-content text-sm leading-relaxed text-foreground">
+                <Markdown content={message.content} id={message.id} />
+                {isStreaming && <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

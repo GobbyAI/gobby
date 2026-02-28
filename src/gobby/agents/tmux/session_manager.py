@@ -293,7 +293,10 @@ class TmuxSessionManager:
     async def list_pane_ids(self) -> set[str]:
         """Return the set of all live pane IDs (e.g. {"%0", "%5"}) across all sessions."""
         rc, stdout, _stderr = await self._run(
-            "list-panes", "-a", "-F", "#{pane_id}",
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}",
         )
         if rc != 0:
             return set()

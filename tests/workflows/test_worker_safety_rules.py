@@ -52,7 +52,7 @@ class TestWorkerSafetySync:
         rules = manager.list_all(workflow_type="rule")
         rule_names = {r.name for r in rules}
 
-        expected = {"no-push", "no-force-push", "require-task", "no-destructive-git"}
+        expected = {"no-push", "no-force-push", "no-destructive-git"}
         assert expected.issubset(rule_names), f"Missing: {expected - rule_names}"
 
     def test_all_rules_have_group(self, db, manager) -> None:
@@ -62,7 +62,7 @@ class TestWorkerSafetySync:
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
             body = json.loads(row.definition_json)
-            if row.name in {"no-push", "no-force-push", "require-task", "no-destructive-git"}:
+            if row.name in {"no-push", "no-force-push", "no-destructive-git"}:
                 assert body.get("group") == "worker-safety", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
@@ -71,7 +71,7 @@ class TestWorkerSafetySync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"no-push", "no-force-push", "require-task", "no-destructive-git"}:
+            if row.name in {"no-push", "no-force-push", "no-destructive-git"}:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 assert body.event.value == "before_tool"
                 assert body.effect.type == "block"
@@ -107,22 +107,6 @@ class TestNoForcePushRule:
         assert body.effect.tools == ["Bash"]
         assert body.effect.command_pattern is not None
         assert "--force" in body.effect.command_pattern
-
-
-class TestRequireTaskRule:
-    """Verify require-task rule blocks edits without a claimed task."""
-
-    def test_blocks_edit_tools(self, db, manager) -> None:
-        """require-task should block Edit, Write, NotebookEdit."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("require-task")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert set(body.effect.tools) == {"Edit", "Write", "NotebookEdit"}
-        assert body.when is not None
-        assert "task_claimed" in body.when
 
 
 class TestNoDestructiveGitRule:

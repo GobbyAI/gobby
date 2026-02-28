@@ -42,7 +42,7 @@ class TestMCPRegistryRoutes:
     # -----------------------------------------------------------------
 
     def test_embed_no_semantic_search(self, client: TestClient, mock_server: MagicMock) -> None:
-        response = client.post("/mcp/tools/embed", json={"cwd": "/tmp/proj"})
+        response = client.post("/api/mcp/tools/embed", json={"cwd": "/tmp/proj"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -51,7 +51,7 @@ class TestMCPRegistryRoutes:
     def test_embed_project_resolve_fail(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_server.resolve_project_id.side_effect = ValueError("No project")
 
-        response = client.post("/mcp/tools/embed", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/tools/embed", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -65,7 +65,7 @@ class TestMCPRegistryRoutes:
         mock_server._tools_handler = MagicMock()
         mock_server._tools_handler._semantic_search = semantic_search
 
-        response = client.post("/mcp/tools/embed", json={"cwd": "/tmp/proj", "force": True})
+        response = client.post("/api/mcp/tools/embed", json={"cwd": "/tmp/proj", "force": True})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -77,7 +77,7 @@ class TestMCPRegistryRoutes:
         mock_server._tools_handler = MagicMock()
         mock_server._tools_handler._semantic_search = semantic_search
 
-        response = client.post("/mcp/tools/embed", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/tools/embed", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -90,7 +90,7 @@ class TestMCPRegistryRoutes:
         mock_server._tools_handler = MagicMock()
         mock_server._tools_handler._semantic_search = None
 
-        response = client.post("/mcp/tools/embed", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/tools/embed", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -101,7 +101,7 @@ class TestMCPRegistryRoutes:
         # Make request.json() work but resolve_project_id blow up with non-ValueError
         mock_server.resolve_project_id.side_effect = RuntimeError("catastrophic")
 
-        response = client.post("/mcp/tools/embed", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/tools/embed", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -112,7 +112,7 @@ class TestMCPRegistryRoutes:
     # -----------------------------------------------------------------
 
     def test_status_empty(self, client: TestClient) -> None:
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -130,7 +130,7 @@ class TestMCPRegistryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.get_all_registries.return_value = [registry]
 
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["total_servers"] == 1
@@ -155,7 +155,7 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager.health = {"github": health}
         mock_server.mcp_manager.connections = {"github": MagicMock()}
 
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["total_servers"] == 1
@@ -175,7 +175,7 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager.health = {"github": health}
         mock_server.mcp_manager.connections = {}  # Not connected
 
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["total_servers"] == 1
@@ -192,7 +192,7 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager.health = {}  # No health for this server
         mock_server.mcp_manager.connections = {}
 
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["server_health"]["unknown-server"]["state"] == "unknown"
@@ -220,7 +220,7 @@ class TestMCPRegistryRoutes:
         mock_server.mcp_manager.health = {"github": health}
         mock_server.mcp_manager.connections = {"github": MagicMock()}
 
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["total_servers"] == 2
@@ -231,7 +231,7 @@ class TestMCPRegistryRoutes:
         mock_server._internal_manager = MagicMock()
         mock_server._internal_manager.get_all_registries.side_effect = RuntimeError("boom")
 
-        response = client.get("/mcp/status")
+        response = client.get("/api/mcp/status")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -241,7 +241,7 @@ class TestMCPRegistryRoutes:
     # -----------------------------------------------------------------
 
     def test_refresh_no_db_manager(self, client: TestClient, mock_server: MagicMock) -> None:
-        response = client.post("/mcp/refresh", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/refresh", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -250,7 +250,7 @@ class TestMCPRegistryRoutes:
     def test_refresh_project_resolve_fail(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_server.resolve_project_id.side_effect = ValueError("No project")
 
-        response = client.post("/mcp/refresh", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/refresh", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -260,7 +260,7 @@ class TestMCPRegistryRoutes:
         mock_server._mcp_db_manager = MagicMock()
         mock_server._mcp_db_manager.db = MagicMock()
 
-        response = client.post("/mcp/refresh", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/refresh", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -299,7 +299,7 @@ class TestMCPRegistryRoutes:
             mock_hash.return_value = "abc123"
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp", "force": True},
             )
 
@@ -350,7 +350,7 @@ class TestMCPRegistryRoutes:
             mock_hash.return_value = "newhash"
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp", "force": False},
             )
 
@@ -396,7 +396,7 @@ class TestMCPRegistryRoutes:
             mock_shm_instance.cleanup_stale_hashes.return_value = 0
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp", "server": "gobby-tasks"},
             )
 
@@ -443,7 +443,7 @@ class TestMCPRegistryRoutes:
             mock_hash.return_value = "hash123"
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -469,7 +469,7 @@ class TestMCPRegistryRoutes:
 
         with patch("gobby.mcp_proxy.schema_hash.SchemaHashManager"):
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -518,7 +518,7 @@ class TestMCPRegistryRoutes:
             mock_hash.return_value = "newhash"
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -566,7 +566,7 @@ class TestMCPRegistryRoutes:
             mock_shm_instance.cleanup_stale_hashes.return_value = 0
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -610,7 +610,7 @@ class TestMCPRegistryRoutes:
             mock_hash.return_value = "changed_hash"
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -642,7 +642,7 @@ class TestMCPRegistryRoutes:
 
         with patch("gobby.mcp_proxy.schema_hash.SchemaHashManager"):
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -661,7 +661,7 @@ class TestMCPRegistryRoutes:
             "registry error"
         )
 
-        response = client.post("/mcp/refresh", json={"cwd": "/tmp"})
+        response = client.post("/api/mcp/refresh", json={"cwd": "/tmp"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -682,7 +682,7 @@ class TestMCPRegistryRoutes:
 
         with patch("gobby.mcp_proxy.schema_hash.SchemaHashManager"):
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -734,7 +734,7 @@ class TestMCPRegistryRoutes:
             mock_hash.return_value = "schema_hash"
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 
@@ -782,7 +782,7 @@ class TestMCPRegistryRoutes:
             mock_hash.return_value = "dict_hash"
 
             response = client.post(
-                "/mcp/refresh",
+                "/api/mcp/refresh",
                 json={"cwd": "/tmp"},
             )
 

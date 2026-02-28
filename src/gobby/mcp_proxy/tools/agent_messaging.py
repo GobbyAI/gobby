@@ -6,15 +6,18 @@ Provides P2P messaging and command coordination between sessions:
 - complete_command: Descendant completes command, clears state, sends result
 - deliver_pending_messages: Fetch and mark undelivered messages
 - activate_command: Activate a pending command, set session variables
+- wait_for_command: Block until a pending command arrives, with optional auto-activate
 - get_inter_session_messages: Read-only query of message history
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -28,6 +31,16 @@ if TYPE_CHECKING:
 BroadcastFn = Callable[..., Coroutine[Any, Any, None]]
 
 logger = logging.getLogger(__name__)
+
+
+class CommandLike(Protocol):
+    """Protocol for command objects."""
+
+    id: str
+    command_text: str
+    allowed_tools: str | None
+    allowed_mcp_tools: str | None
+    exit_condition: str | None
 
 
 def add_messaging_tools(
@@ -66,8 +79,10 @@ def add_messaging_tools(
         name="send_message",
         description=(
             "Send a P2P message between sessions. Validates both sessions "
-            "are in the same project. Auto-writes to agent_runs.result when "
-            "sending to parent."
+            "are in the same project. Messages are automatically injected "
+            "into the recipient's context on their next tool call via hook "
+            "rules — no polling or mailbox fetch needed. Also auto-writes "
+            "to agent_runs.result when sending to parent."
         ),
     )
     async def send_message(
@@ -344,6 +359,37 @@ def add_messaging_tools(
             logger.error("get_inter_session_messages failed: %s", e)
             return {"success": False, "error": str(e)}
 
+    # ── shared activation helper ────────────────────────────────
+
+    def _activate_command_impl(cmd: CommandLike, resolved_session_id: str) -> list[str]:
+        """Activate a command: mark running and set session variables.
+
+        Returns the list of variable names that were set.
+        """
+        import json as _json
+
+        command_manager.update_status(cmd.id, "running")
+
+        variables: dict[str, Any] = {
+            "command_id": cmd.id,
+            "command_text": cmd.command_text,
+        }
+        if cmd.allowed_tools:
+            try:
+                variables["allowed_tools"] = _json.loads(cmd.allowed_tools)
+            except (ValueError, TypeError):
+                variables["allowed_tools"] = cmd.allowed_tools
+        if cmd.allowed_mcp_tools:
+            try:
+                variables["allowed_mcp_tools"] = _json.loads(cmd.allowed_mcp_tools)
+            except (ValueError, TypeError):
+                variables["allowed_mcp_tools"] = cmd.allowed_mcp_tools
+        if cmd.exit_condition:
+            variables["exit_condition"] = cmd.exit_condition
+
+        session_var_manager.merge_variables(resolved_session_id, variables)
+        return list(variables.keys())
+
     # ── activate_command ──────────────────────────────────────────
 
     @registry.tool(
@@ -369,37 +415,98 @@ def add_messaging_tools(
                     "error": f"Command not assigned to session {resolved_id}",
                 }
 
-            # Mark running
-            command_manager.update_status(command_id, "running")
-
-            # Set session variables from command fields
-            import json as _json
-
-            variables: dict[str, Any] = {
-                "command_id": cmd.id,
-                "command_text": cmd.command_text,
-            }
-            if cmd.allowed_tools:
-                try:
-                    variables["allowed_tools"] = _json.loads(cmd.allowed_tools)
-                except (ValueError, TypeError):
-                    variables["allowed_tools"] = cmd.allowed_tools
-            if cmd.allowed_mcp_tools:
-                try:
-                    variables["allowed_mcp_tools"] = _json.loads(cmd.allowed_mcp_tools)
-                except (ValueError, TypeError):
-                    variables["allowed_mcp_tools"] = cmd.allowed_mcp_tools
-            if cmd.exit_condition:
-                variables["exit_condition"] = cmd.exit_condition
-
-            session_var_manager.merge_variables(resolved_id, variables)
+            variables_set = _activate_command_impl(cmd, resolved_id)
 
             return {
                 "success": True,
                 "command": cmd.to_dict(),
-                "variables_set": list(variables.keys()),
+                "variables_set": variables_set,
             }
 
         except Exception as e:
             logger.error("activate_command failed: %s", e)
+            return {"success": False, "error": str(e)}
+
+    # ── wait_for_command ──────────────────────────────────────────
+
+    @registry.tool(
+        name="wait_for_command",
+        description=(
+            "Block until a pending command arrives for the session, or timeout. "
+            "Polls the database at configurable intervals. By default, auto-activates "
+            "the command (marks running, sets session variables). Returns the command "
+            "details or a timeout indicator."
+        ),
+    )
+    async def wait_for_command(
+        session_id: str,
+        timeout: int = 600,
+        poll_interval: int = 5,
+        auto_activate: bool = True,
+    ) -> dict[str, Any]:
+        """Block until a pending command arrives for the session, or timeout.
+
+        Args:
+            session_id: The session to wait for commands on.
+            timeout: Maximum wait time in seconds (default: 600).
+            poll_interval: Time between status checks in seconds (default: 5).
+            auto_activate: If True, auto-activate the command (mark running,
+                set session variables). Default: True.
+
+        Returns:
+            Dict with:
+            - success: Always True (errors are exceptions)
+            - command: The command dict, or None if timed out
+            - timed_out: Whether the wait timed out
+            - wait_time: How long we waited in seconds
+        """
+        if poll_interval <= 0:
+            poll_interval = 5
+
+        start_time = time.monotonic()
+
+        try:
+            resolved_id = _resolve(session_id)
+
+            # Check for immediately available command
+            pending = command_manager.list_commands(to_session=resolved_id, status="pending")
+            if pending:
+                cmd = pending[0]
+                if auto_activate:
+                    _activate_command_impl(cmd, resolved_id)
+                return {
+                    "success": True,
+                    "command": cmd.to_dict(),
+                    "timed_out": False,
+                    "wait_time": time.monotonic() - start_time,
+                }
+
+            # Poll until command arrives or timeout
+            while True:
+                elapsed = time.monotonic() - start_time
+
+                if elapsed >= timeout:
+                    return {
+                        "success": True,
+                        "command": None,
+                        "timed_out": True,
+                        "wait_time": elapsed,
+                    }
+
+                await asyncio.sleep(poll_interval)
+
+                pending = command_manager.list_commands(to_session=resolved_id, status="pending")
+                if pending:
+                    cmd = pending[0]
+                    if auto_activate:
+                        _activate_command_impl(cmd, resolved_id)
+                    return {
+                        "success": True,
+                        "command": cmd.to_dict(),
+                        "timed_out": False,
+                        "wait_time": time.monotonic() - start_time,
+                    }
+
+        except Exception as e:
+            logger.error("wait_for_command failed: %s", e)
             return {"success": False, "error": str(e)}

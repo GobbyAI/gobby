@@ -10,7 +10,6 @@ to verify conditions like is_server_listed actually resolve correctly.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 import pytest

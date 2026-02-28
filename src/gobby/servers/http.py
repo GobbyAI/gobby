@@ -428,6 +428,63 @@ class HTTPServer:
                 ws_server.workflow_handler = app.state.hook_manager._workflow_handler
                 logger.debug("Workflow handler connected to WebSocket server")
 
+            # Wire event handlers to WebSocket server for skill interception
+            if (
+                ws_server
+                and hasattr(app.state, "hook_manager")
+                and hasattr(app.state.hook_manager, "_event_handlers")
+            ):
+                ws_server.event_handlers = app.state.hook_manager._event_handlers
+                logger.debug("Event handlers connected to WebSocket server")
+
+            # Wire webhook dispatcher for blocking webhook parity with CLI path
+            if (
+                ws_server
+                and hasattr(app.state, "hook_manager")
+                and hasattr(app.state.hook_manager, "_webhook_dispatcher")
+            ):
+                ws_server.webhook_dispatcher = app.state.hook_manager._webhook_dispatcher
+                logger.debug("Webhook dispatcher connected to WebSocket server")
+
+            # Wire hook event broadcaster for audit trail parity with CLI path
+            if ws_server and self.broadcaster:
+                ws_server.hook_broadcaster = self.broadcaster
+                logger.debug("Hook event broadcaster connected to WebSocket server")
+
+            # Wire inter-session message manager for message piggyback delivery
+            if (
+                ws_server
+                and hasattr(app.state, "hook_manager")
+                and hasattr(app.state.hook_manager, "_inter_session_msg_manager")
+                and app.state.hook_manager._inter_session_msg_manager
+            ):
+                ws_server.inter_session_msg_manager = (
+                    app.state.hook_manager._inter_session_msg_manager
+                )
+                logger.debug("Inter-session message manager connected to WebSocket server")
+
+            # Wire workflow handler to AgentRunner for embedded agent hooks
+            if (
+                self.services.agent_runner
+                and hasattr(app.state, "hook_manager")
+                and hasattr(app.state.hook_manager, "_workflow_handler")
+            ):
+                self.services.agent_runner.workflow_handler = (
+                    app.state.hook_manager._workflow_handler
+                )
+                logger.debug("Workflow handler connected to AgentRunner")
+
+            # Wire session_coordinator to lifecycle monitor for worktree cleanup
+            if (
+                hasattr(app.state, "hook_manager")
+                and hasattr(app.state.hook_manager, "_session_coordinator")
+                and self.services.agent_lifecycle_monitor
+            ):
+                self.services.agent_lifecycle_monitor.set_session_coordinator(
+                    app.state.hook_manager._session_coordinator
+                )
+                logger.debug("Session coordinator connected to agent lifecycle monitor")
+
             # Initialize canvas broadcaster
             from gobby.mcp_proxy.tools.canvas import set_broadcaster
 
@@ -668,9 +725,7 @@ class HTTPServer:
             # Don't intercept API, admin, MCP, or WebSocket paths
             # Normalize with trailing slash so both "api" and "api/..." are excluded
             path_check = path if path.endswith("/") else path + "/"
-            if path_check.startswith(
-                ("api/", "admin/", "mcp/", "hooks/", "sessions/", "ws/", "health/")
-            ):
+            if path_check.startswith(("api/", "ws/", "health/")):
                 raise HTTPException(status_code=404)
             # Serve static file if it exists
             static_file = dist_dir / path

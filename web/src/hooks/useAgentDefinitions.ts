@@ -11,17 +11,22 @@ export interface AgentDefInfo {
     isolation?: string | null
   }
   source: string
+  sources?: string[] | null
   db_id: string | null
 }
 
-export function useAgentDefinitions(projectId?: string | null) {
+export function useAgentDefinitions(projectId?: string | null, sourceFilter?: string) {
   const [definitions, setDefinitions] = useState<AgentDefInfo[]>([])
   const [loading, setLoading] = useState(false)
 
   const fetchDefs = useCallback(async () => {
     setLoading(true)
     try {
-      const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+      const searchParams = new URLSearchParams()
+      if (projectId) searchParams.set('project_id', projectId)
+      if (sourceFilter) searchParams.set('source_filter', sourceFilter)
+      const qs = searchParams.toString()
+      const params = qs ? `?${qs}` : ''
       const res = await fetch(`/api/agents/definitions${params}`)
       if (res.ok) {
         const data = await res.json()
@@ -32,7 +37,7 @@ export function useAgentDefinitions(projectId?: string | null) {
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, sourceFilter])
 
   useEffect(() => {
     fetchDefs()

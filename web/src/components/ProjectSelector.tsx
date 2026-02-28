@@ -95,7 +95,7 @@ export function ProjectSelector({
       {showProjectSearch && (
         <div
           className={cn(
-            "absolute left-0 w-48 rounded-md border border-border bg-background shadow-lg z-50",
+            "absolute right-0 w-48 rounded-md border border-border bg-background shadow-lg z-50",
             dropDirection === "up" ? "bottom-full mb-1" : "top-full mt-1",
           )}
           role="listbox"

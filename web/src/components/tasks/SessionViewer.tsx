@@ -85,8 +85,8 @@ export function SessionViewer({ sessionId }: SessionViewerProps) {
     try {
       const baseUrl = getBaseUrl()
       const [sessionRes, msgRes] = await Promise.all([
-        fetch(`${baseUrl}/sessions/${encodeURIComponent(sessionId)}`),
-        fetch(`${baseUrl}/sessions/${encodeURIComponent(sessionId)}/messages?limit=10`),
+        fetch(`${baseUrl}/api/sessions/${encodeURIComponent(sessionId)}`),
+        fetch(`${baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages?limit=10`),
       ])
       if (sessionRes.ok) {
         const data = await sessionRes.json()

@@ -1255,59 +1255,6 @@ class TestComplexityCommand:
         assert "subtasks" in data["reasoning"].lower()
 
 
-class TestGenerateCriteriaCommand:
-    """Tests for gobby tasks generate-criteria command."""
-
-    def test_generate_criteria_requires_task_id_or_all(self, runner: CliRunner) -> None:
-        """Test that generate-criteria requires task ID or --all."""
-        result = runner.invoke(cli, ["tasks", "generate-criteria"])
-
-        assert result.exit_code == 0
-        assert "TASK_ID is required" in result.output
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_generate_criteria_already_has_criteria(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test generate-criteria when task already has criteria."""
-        mock_task.validation_criteria = "Existing criteria"
-        mock_resolve.return_value = mock_task
-        mock_get_manager.return_value = MagicMock()
-
-        result = runner.invoke(cli, ["tasks", "generate-criteria", "gt-abc123"])
-
-        assert result.exit_code == 0
-        assert "already has validation criteria" in result.output
-        assert "Existing criteria" in result.output
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_generate_criteria_parent_task(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test generate-criteria for parent task."""
-        mock_task.validation_criteria = None
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = [MagicMock()]  # Has children
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "generate-criteria", "gt-abc123"])
-
-        assert result.exit_code == 0
-        assert "Parent task detected" in result.output
-        mock_manager.update_task.assert_called_once()
-
-
 class TestValidateCommand:
     """Tests for gobby tasks validate command - AI module."""
 
@@ -1889,78 +1836,6 @@ class TestSuggestCommandExtended:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "high priority" in data["reason"].lower()
-
-
-class TestGenerateCriteriaCommandExtended:
-    """Extended tests for generate-criteria command."""
-
-    @patch("gobby.config.app.load_config")
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_generate_criteria_leaf_task_llm_error(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        mock_config: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test generate-criteria for leaf task when LLM initialization fails."""
-        mock_task.validation_criteria = None
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []  # No children (leaf task)
-        mock_get_manager.return_value = mock_manager
-        mock_config.side_effect = Exception("LLM config error")
-
-        result = runner.invoke(cli, ["tasks", "generate-criteria", "gt-abc123"])
-
-        assert result.exit_code == 0
-        assert "Error initializing validator" in result.output
-
-    @patch("gobby.config.app.load_config")
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.get_project_context")
-    def test_generate_criteria_all(
-        self,
-        mock_project_ctx: MagicMock,
-        mock_get_manager: MagicMock,
-        mock_config: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test generate-criteria --all."""
-        mock_project_ctx.return_value = {"name": "TestProj"}
-        mock_manager = MagicMock()
-
-        # Two tasks needing criteria: one parent, one leaf
-        parent = MagicMock(id="t1", seq_num=1, title="Parent", validation_criteria=None)
-        leaf = MagicMock(
-            id="t2", seq_num=2, title="Leaf", description="Desc", validation_criteria=None
-        )
-
-        mock_manager.list_tasks.side_effect = [
-            [parent, leaf],  # First call for all open tasks
-            [leaf],  # Child check for parent (has child)
-            [],  # Child check for leaf (no child)
-        ]
-        mock_manager.update_task.return_value = None
-        mock_get_manager.return_value = mock_manager
-
-        with patch("gobby.tasks.validation.TaskValidator") as MockValidator:
-            validator = MockValidator.return_value
-
-            async def async_gen(*args, **kwargs):
-                return "AI Criteria"
-
-            validator.generate_criteria.side_effect = async_gen
-
-            result = runner.invoke(cli, ["tasks", "generate-criteria", "--all"])
-
-            assert result.exit_code == 0
-            assert "Found 2 tasks" in result.output
-            assert "[parent] TestProj-#1" in result.output
-            assert "[leaf] TestProj-#2" in result.output
-            assert "AI Criteria" in result.output
 
 
 class TestUtilsHelpers:

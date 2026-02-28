@@ -12,7 +12,6 @@ from typing import Any
 from gobby.llm.executor import ToolSchema
 from gobby.storage.agents import AgentRun
 from gobby.storage.session_models import Session
-from gobby.workflows.definitions import WorkflowDefinition, WorkflowState
 
 
 @dataclass
@@ -111,12 +110,6 @@ class AgentRunContext:
 
     run: AgentRun | None = None
     """Agent run record from the database."""
-
-    workflow_state: WorkflowState | None = None
-    """Workflow state for the child session, if workflow specified."""
-
-    workflow_config: WorkflowDefinition | None = None
-    """Loaded workflow definition, if workflow_name was specified."""
 
     # Convenience accessors for IDs
     @property

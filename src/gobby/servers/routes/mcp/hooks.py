@@ -68,7 +68,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
     Returns:
         Configured APIRouter with hooks endpoints
     """
-    router = APIRouter(prefix="/hooks", tags=["hooks"])
+    router = APIRouter(prefix="/api/hooks", tags=["hooks"])
     metrics = get_metrics_collector()
 
     @router.post("/execute")

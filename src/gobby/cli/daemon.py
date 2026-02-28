@@ -178,10 +178,15 @@ def start(
     click.echo("Initializing local storage...")
     init_local_storage()
 
-    # Start Neo4j containers if requested
+    # Start Neo4j containers if requested or if installed
     if neo4j_flag:
         click.echo("Starting Neo4j containers...")
         _neo4j_start(gobby_dir)
+    else:
+        compose_file = gobby_dir / "services" / "neo4j" / "docker-compose.yml"
+        if compose_file.exists():
+            click.echo("Neo4j installed, auto-starting containers...")
+            _neo4j_start(gobby_dir)
 
     # Check if already running
     if pid_file.exists():
@@ -275,7 +280,7 @@ def start(
 
         while (time.time() - start_time) < max_wait:
             try:
-                response = httpx.get(f"http://localhost:{http_port}/admin/health", timeout=1.0)
+                response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
                 if response.status_code == 200:
                     daemon_healthy = True
                     break
@@ -331,20 +336,8 @@ def start(
         # Brief delay to allow stats to be computed
         if daemon_healthy:
             time.sleep(1.0)
-            rich_status = fetch_rich_status(http_port, timeout=2.0)
+            rich_status = asyncio.run(fetch_rich_status(http_port, timeout=2.0))
             status_kwargs.update(rich_status)
-
-            # Check Neo4j status
-            from gobby.cli.services import get_neo4j_status
-
-            neo4j_status = asyncio.run(
-                get_neo4j_status(
-                    neo4j_url=getattr(config.memory, "neo4j_url", None),
-                )
-            )
-            status_kwargs["neo4j_installed"] = neo4j_status["installed"]
-            status_kwargs["neo4j_healthy"] = neo4j_status["healthy"]
-            status_kwargs["neo4j_url"] = neo4j_status["url"]
 
         message = format_status_message(**status_kwargs)
         click.echo("")
@@ -508,15 +501,6 @@ def status(ctx: click.Context) -> None:
         elif ui_mode == "production":
             ui_url = f"http://localhost:{http_port}/"
 
-    # Check Neo4j status
-    from gobby.cli.services import get_neo4j_status
-
-    neo4j_status = asyncio.run(
-        get_neo4j_status(
-            neo4j_url=getattr(config.memory, "neo4j_url", None),
-        )
-    )
-
     # Build status kwargs
     status_kwargs: dict[str, Any] = {
         "running": True,
@@ -531,13 +515,10 @@ def status(ctx: click.Context) -> None:
         "ui_mode": ui_mode,
         "ui_url": ui_url,
         "ui_pid": ui_pid,
-        "neo4j_installed": neo4j_status["installed"],
-        "neo4j_healthy": neo4j_status["healthy"],
-        "neo4j_url": neo4j_status["url"],
     }
 
-    # Fetch rich status from daemon API
-    rich_status = fetch_rich_status(http_port, timeout=2.0)
+    # Fetch rich status from daemon API (includes Neo4j status)
+    rich_status = asyncio.run(fetch_rich_status(http_port, timeout=2.0))
     status_kwargs.update(rich_status)
 
     # Format and display status

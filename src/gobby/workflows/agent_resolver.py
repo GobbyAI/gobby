@@ -1,8 +1,13 @@
 import json
+import logging
+
+from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+
+logger = logging.getLogger(__name__)
 
 
 class AgentResolutionError(Exception):
@@ -112,7 +117,8 @@ def resolve_agent(
             if "name" not in data:
                 data["name"] = row.name
             return AgentDefinitionBody(**data)
-        except Exception:
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger.debug("Failed to parse agent definition for %s: %s", agent_name, e)
             return None
 
     # Gather chain from leaf up to root

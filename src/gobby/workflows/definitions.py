@@ -199,6 +199,7 @@ class AgentDefinitionBody(BaseModel):
     name: str
     description: str | None = None
     extends: str | None = None
+    sources: list[str] | None = None  # Session sources this agent applies to (None = all)
     # Structured prompt fields (composed into preamble at spawn time)
     role: str | None = None
     goal: str | None = None

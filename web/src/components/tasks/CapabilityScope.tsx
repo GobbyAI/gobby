@@ -126,7 +126,7 @@ export function CapabilityScope({ sessionId: _sessionId }: CapabilityScopeProps)
       setError(null)
       try {
         const baseUrl = getBaseUrl()
-        const response = await fetch(`${baseUrl}/mcp/servers`, { signal: controller.signal })
+        const response = await fetch(`${baseUrl}/api/mcp/servers`, { signal: controller.signal })
         if (!response.ok) {
           console.warn(`MCP servers fetch returned ${response.status}`)
           setError('Failed to load capabilities')

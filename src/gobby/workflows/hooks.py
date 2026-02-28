@@ -105,7 +105,7 @@ class WorkflowHookHandler:
             return response
         except Exception as e:
             logger.error(f"RuleEngine evaluation failed: {e}", exc_info=True)
-            return HookResponse(decision="allow")
+            raise  # Propagate — don't swallow into a fake "allow"
 
     def evaluate(self, event: HookEvent) -> HookResponse:
         """Evaluate rules for a hook event.
@@ -146,7 +146,7 @@ class WorkflowHookHandler:
             return self._handle_cancelled(event)
         except Exception as e:
             logger.error(f"Error evaluating rules: {e}", exc_info=True)
-            return HookResponse(decision="allow")
+            raise  # Propagate to _evaluate_workflow_rules for hook-manager.log visibility
 
     def handle(self, event: HookEvent) -> HookResponse:
         """Handle a hook event by evaluating declarative rules.

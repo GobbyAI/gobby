@@ -180,7 +180,7 @@ async def test_get_session_messages(client, mock_db):
     await message_manager.store_messages(session.id, [msg1, msg2])
 
     # Test endpoint
-    response = client.get(f"/sessions/{session.id}/messages")
+    response = client.get(f"/api/sessions/{session.id}/messages")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
@@ -218,7 +218,7 @@ async def test_list_sessions_with_counts(client, mock_db):
     await message_manager.store_messages(session1.id, [msg1])
 
     # Test list endpoint
-    response = client.get("/sessions")
+    response = client.get("/api/sessions")
     assert response.status_code == 200
     data = response.json()
 
@@ -236,5 +236,5 @@ async def test_list_sessions_with_counts(client, mock_db):
 async def test_get_session_messages_not_found_manager(client, server):
     # Test error handling when manager missing
     server.message_manager = None
-    response = client.get("/sessions/some-id/messages")
+    response = client.get("/api/sessions/some-id/messages")
     assert response.status_code == 503

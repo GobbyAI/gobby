@@ -521,7 +521,7 @@ def rebuild_crossrefs(ctx: click.Context, project_ref: str | None) -> None:
     project_id = resolve_project_ref(project_ref, exit_on_not_found=True) if project_ref else None
     params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
     response = client.call_http_api(
-        f"/memories/crossrefs/rebuild{params}", method="POST", timeout=600.0
+        f"/api/memories/crossrefs/rebuild{params}", method="POST", timeout=600.0
     )
     if not response.ok:
         raise click.ClickException(f"Rebuild failed (HTTP {response.status_code}): {response.text}")
@@ -559,7 +559,7 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None) -> None:
     project_id = resolve_project_ref(project_ref, exit_on_not_found=True) if project_ref else None
     params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
     response = client.call_http_api(
-        f"/memories/graph/rebuild{params}", method="POST", timeout=600.0
+        f"/api/memories/graph/rebuild{params}", method="POST", timeout=600.0
     )
     if not response.ok:
         raise click.ClickException(f"Rebuild failed (HTTP {response.status_code}): {response.text}")

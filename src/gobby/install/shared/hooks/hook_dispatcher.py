@@ -314,7 +314,7 @@ async def check_daemon_running(timeout: float = 0.5) -> bool:
         daemon_url = await get_daemon_url()
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{daemon_url}/admin/status",
+                f"{daemon_url}/api/admin/health",
                 timeout=timeout,
                 follow_redirects=False,
             )
@@ -563,7 +563,7 @@ async def main() -> int:
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{daemon_url}/hooks/execute",
+                f"{daemon_url}/api/hooks/execute",
                 json={
                     "hook_type": hook_type,
                     "input_data": input_data,

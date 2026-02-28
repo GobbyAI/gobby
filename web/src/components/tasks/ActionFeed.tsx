@@ -131,7 +131,7 @@ export function ActionFeed({ sessionId }: ActionFeedProps) {
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(
-        `${baseUrl}/sessions/${encodeURIComponent(sessionId)}/messages?limit=200`,
+        `${baseUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages?limit=200`,
         { signal }
       )
       if (response.ok) {

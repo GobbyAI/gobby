@@ -459,39 +459,6 @@ def _build_digest_update_prompt(previous_digest: str, current_prompt: str) -> st
     return "\n".join(parts)
 
 
-def reset_memory_injection_tracking(state: Any | None = None) -> dict[str, Any]:
-    """Reset the memory injection tracking, allowing previously injected memories to be recalled again.
-
-    This should be called on pre_compact hook or /clear command so memories can be
-    re-injected after context loss.
-
-    Args:
-        state: WorkflowState containing the injection tracking in variables
-
-    Returns:
-        Dict with cleared count and success status
-    """
-    if state is None:
-        logger.debug("reset_memory_injection_tracking: No state provided")
-        return {"success": False, "cleared": 0, "reason": "no_state"}
-
-    variables = getattr(state, "variables", None)
-    if variables is None:
-        logger.debug("reset_memory_injection_tracking: No variables in state")
-        return {"success": True, "cleared": 0}
-
-    injected_ids = variables.get("_injected_memory_ids", [])
-    cleared_count = len(injected_ids)
-
-    if cleared_count > 0:
-        variables["_injected_memory_ids"] = []
-        logger.info(
-            "reset_memory_injection_tracking: Cleared %s injected memory IDs", cleared_count
-        )
-
-    return {"success": True, "cleared": cleared_count}
-
-
 # --- ActionHandler-compatible wrappers ---
 # These match the ActionHandler protocol: (context: ActionContext, **kwargs) -> dict | None
 
@@ -500,101 +467,6 @@ if __name__ != "__main__":
 
     if TYPE_CHECKING:
         from gobby.workflows.actions import ActionContext
-
-
-async def handle_memory_sync_import(
-    context: "ActionContext", **kwargs: Any
-) -> dict[str, Any] | None:
-    """ActionHandler wrapper for memory_sync_import."""
-    return await memory_sync_import(context.memory_sync_manager)
-
-
-async def handle_memory_sync_export(
-    context: "ActionContext", **kwargs: Any
-) -> dict[str, Any] | None:
-    """ActionHandler wrapper for memory_sync_export."""
-    return await memory_sync_export(context.memory_sync_manager)
-
-
-async def handle_memory_save(context: "ActionContext", **kwargs: Any) -> dict[str, Any] | None:
-    """ActionHandler wrapper for memory_save."""
-    return await memory_save(
-        memory_manager=context.memory_manager,
-        session_manager=context.session_manager,
-        session_id=context.session_id,
-        content=kwargs.get("content"),
-        memory_type=kwargs.get("memory_type", "fact"),
-        tags=kwargs.get("tags"),
-        project_id=kwargs.get("project_id"),
-    )
-
-
-async def handle_memory_recall_relevant(
-    context: "ActionContext", **kwargs: Any
-) -> dict[str, Any] | None:
-    """ActionHandler wrapper for memory_recall_relevant."""
-    prompt_text = None
-    if context.event_data:
-        # Check both "prompt" (from hook event) and "prompt_text" (legacy/alternative)
-        prompt_text = context.event_data.get("prompt") or context.event_data.get("prompt_text")
-
-    return await memory_recall_relevant(
-        memory_manager=context.memory_manager,
-        session_manager=context.session_manager,
-        session_id=context.session_id,
-        prompt_text=prompt_text,
-        project_id=kwargs.get("project_id"),
-        limit=kwargs.get("limit", 5),
-        state=context.state,
-    )
-
-
-async def handle_memory_recall_with_synthesis(
-    context: "ActionContext", **kwargs: Any
-) -> dict[str, Any] | None:
-    """ActionHandler wrapper for memory_recall_with_synthesis."""
-    prompt_text = None
-    if context.event_data:
-        prompt_text = context.event_data.get("prompt") or context.event_data.get("prompt_text")
-
-    return await memory_recall_with_synthesis(
-        memory_manager=context.memory_manager,
-        session_manager=context.session_manager,
-        session_id=context.session_id,
-        prompt_text=prompt_text,
-        project_id=kwargs.get("project_id"),
-        limit=kwargs.get("limit", 5),
-        state=context.state,
-        db=context.db,
-    )
-
-
-async def handle_memory_background_digest_and_synthesize(
-    context: "ActionContext", **kwargs: Any
-) -> dict[str, Any] | None:
-    """ActionHandler wrapper for memory_background_digest_and_synthesize."""
-    prompt_text = None
-    if context.event_data:
-        prompt_text = context.event_data.get("prompt") or context.event_data.get("prompt_text")
-
-    return await memory_background_digest_and_synthesize(
-        memory_manager=context.memory_manager,
-        session_manager=context.session_manager,
-        session_id=context.session_id,
-        prompt_text=prompt_text,
-        project_id=kwargs.get("project_id"),
-        limit=kwargs.get("limit", 20),
-        llm_service=context.llm_service,
-        db=context.db,
-        config=context.config,
-    )
-
-
-async def handle_reset_memory_injection_tracking(
-    context: "ActionContext", **kwargs: Any
-) -> dict[str, Any] | None:
-    """ActionHandler wrapper for reset_memory_injection_tracking."""
-    return reset_memory_injection_tracking(state=context.state)
 
 
 async def handle_memory_extraction_gate(
@@ -665,6 +537,52 @@ async def handle_memory_inject_project_context(
         session_id=context.session_id,
         limit=kwargs.get("limit", 10),
         state=context.state,
+    )
+
+
+async def handle_memory_save(context: "ActionContext", **kwargs: Any) -> dict[str, Any] | None:
+    """Save a memory directly from workflow context."""
+    return await memory_save(
+        memory_manager=context.memory_manager,
+        session_manager=context.session_manager,
+        session_id=context.session_id,
+        content=kwargs.get("content"),
+        memory_type=kwargs.get("memory_type", "fact"),
+        tags=kwargs.get("tags"),
+        project_id=kwargs.get("project_id"),
+    )
+
+
+async def handle_memory_recall_relevant(
+    context: "ActionContext", **kwargs: Any
+) -> dict[str, Any] | None:
+    """Recall memories relevant to the current user prompt."""
+    return await memory_recall_relevant(
+        memory_manager=context.memory_manager,
+        session_manager=context.session_manager,
+        session_id=context.session_id,
+        prompt_text=kwargs.get("prompt_text") or (context.event_data or {}).get("prompt_text"),
+        project_id=kwargs.get("project_id"),
+        limit=kwargs.get("limit", 5),
+        state=context.state,
+    )
+
+
+async def handle_memory_sync_import(
+    context: "ActionContext", **kwargs: Any
+) -> dict[str, Any] | None:
+    """Import memories from filesystem."""
+    return await memory_sync_import(
+        memory_sync_manager=context.memory_sync_manager,
+    )
+
+
+async def handle_memory_sync_export(
+    context: "ActionContext", **kwargs: Any
+) -> dict[str, Any] | None:
+    """Export memories to filesystem."""
+    return await memory_sync_export(
+        memory_sync_manager=context.memory_sync_manager,
     )
 
 

@@ -8,7 +8,6 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._helpers import _infer_category
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_dependencies import DependencyCycleError
@@ -35,6 +34,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
     async def create_task(
         title: str,
         session_id: str,
+        category: str,
         description: str | None = None,
         priority: int = 2,
         task_type: str = "task",
@@ -42,7 +42,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         blocks: list[str] | None = None,
         depends_on: list[str] | None = None,
         labels: list[str] | None = None,
-        category: str | None = None,
         validation_criteria: str | None = None,
         claim: bool = False,
         project: str | None = None,
@@ -94,10 +93,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}"}
 
-        # Auto-infer category if not provided
-        effective_category = category
-        if effective_category is None:
-            effective_category = _infer_category(title, description)
+        # Enforce validation_criteria for code tasks
+        if category == "code" and not validation_criteria:
+            return {
+                "error": "Code tasks require validation_criteria. "
+                "Describe what 'done' looks like so validate_task can check your diff against it."
+            }
 
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         resolved_session_id = session_id
@@ -115,7 +116,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             task_type=task_type,
             parent_task_id=parent_task_id,
             labels=labels,
-            category=effective_category,
+            category=category,
             validation_criteria=validation_criteria,
             created_in_session_id=resolved_session_id,
         )
@@ -285,11 +286,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Task domain: 'code' (implementation), 'config' (configuration files), 'docs' (documentation), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification).",
                     "enum": ["code", "config", "docs", "test", "research", "planning", "manual"],
-                    "default": None,
                 },
                 "validation_criteria": {
                     "type": "string",
-                    "description": "Acceptance criteria for validating task completion (optional). If not provided and generate_validation is True, criteria will be auto-generated.",
+                    "description": "Acceptance criteria for task completion. Required for code tasks. Describe what 'done' looks like — validate_task checks the diff against this.",
                     "default": None,
                 },
                 "session_id": {
@@ -317,7 +317,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "default": None,
                 },
             },
-            "required": ["title", "session_id"],
+            "required": ["title", "session_id", "category"],
         },
         func=create_task,
     )

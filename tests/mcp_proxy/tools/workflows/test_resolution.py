@@ -33,7 +33,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def real_session_manager(temp_db: "LocalDatabase") -> "LocalSessionManager":
+def real_session_manager(temp_db: LocalDatabase) -> LocalSessionManager:
     """Create a real LocalSessionManager backed by a temp database."""
     from gobby.storage.sessions import LocalSessionManager
 
@@ -42,7 +42,7 @@ def real_session_manager(temp_db: "LocalDatabase") -> "LocalSessionManager":
 
 @pytest.fixture
 def sample_session(
-    real_session_manager: "LocalSessionManager",
+    real_session_manager: LocalSessionManager,
     sample_project: dict,
 ) -> MagicMock:
     """Create a real session in the database and return it."""
@@ -68,7 +68,7 @@ class TestResolveSessionId:
     def test_resolves_with_project_id_from_context(
         self,
         mock_ctx: MagicMock,
-        real_session_manager: "LocalSessionManager",
+        real_session_manager: LocalSessionManager,
         sample_session: MagicMock,
     ) -> None:
         """When project context has an ID, it's passed to resolve_session_reference."""
@@ -82,7 +82,7 @@ class TestResolveSessionId:
     def test_resolves_with_no_project_context(
         self,
         mock_ctx: MagicMock,
-        real_session_manager: "LocalSessionManager",
+        real_session_manager: LocalSessionManager,
         sample_session: MagicMock,
     ) -> None:
         """When no project context, None is passed as project_id."""
@@ -96,7 +96,7 @@ class TestResolveSessionId:
     def test_resolves_with_context_missing_id_key(
         self,
         mock_ctx: MagicMock,
-        real_session_manager: "LocalSessionManager",
+        real_session_manager: LocalSessionManager,
         sample_session: MagicMock,
     ) -> None:
         """When context dict exists but has no 'id' key."""
@@ -165,8 +165,8 @@ class TestResolveSessionTaskValueHashRef:
 
     def test_hash_ref_resolved_with_real_db(
         self,
-        temp_db: "LocalDatabase",
-        real_session_manager: "LocalSessionManager",
+        temp_db: LocalDatabase,
+        real_session_manager: LocalSessionManager,
         sample_project: dict,
         sample_session: MagicMock,
     ) -> None:
@@ -190,8 +190,8 @@ class TestResolveSessionTaskValueHashRef:
 
     def test_numeric_ref_resolved_with_real_db(
         self,
-        temp_db: "LocalDatabase",
-        real_session_manager: "LocalSessionManager",
+        temp_db: LocalDatabase,
+        real_session_manager: LocalSessionManager,
         sample_project: dict,
         sample_session: MagicMock,
     ) -> None:
@@ -223,8 +223,8 @@ class TestResolveSessionTaskValueNoSession:
 
     def test_session_not_found_returns_original(
         self,
-        real_session_manager: "LocalSessionManager",
-        temp_db: "LocalDatabase",
+        real_session_manager: LocalSessionManager,
+        temp_db: LocalDatabase,
     ) -> None:
         result = resolve_session_task_value(
             "#42",

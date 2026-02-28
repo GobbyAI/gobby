@@ -29,7 +29,6 @@ class SessionCoordinator:
 
     Provides centralized tracking for:
     - Session registration with daemon
-    - Title synthesis status
     - Agent message caching between hooks
     - Session lifecycle transitions (completion, cleanup)
 
@@ -66,11 +65,6 @@ class SessionCoordinator:
         # Tracks which sessions have been registered with daemon
         self._registered_sessions: set[str] = set()
         self._registered_sessions_lock = threading.Lock()
-
-        # Session title synthesis tracking
-        # Tracks which sessions have had titles synthesized
-        self._title_synthesized_sessions: set[str] = set()
-        self._title_synthesized_lock = threading.Lock()
 
         # Agent message cache (session_id -> (message, timestamp))
         # Used to pass agent responses from stop hook to post-tool-use hook
@@ -119,31 +113,6 @@ class SessionCoordinator:
         """Clear all session registrations."""
         with self._registered_sessions_lock:
             self._registered_sessions.clear()
-
-    # ==================== TITLE SYNTHESIS TRACKING ====================
-
-    def mark_title_synthesized(self, session_id: str) -> None:
-        """
-        Mark a session as having had its title synthesized.
-
-        Args:
-            session_id: The session ID to mark
-        """
-        with self._title_synthesized_lock:
-            self._title_synthesized_sessions.add(session_id)
-
-    def is_title_synthesized(self, session_id: str) -> bool:
-        """
-        Check if a session has had its title synthesized.
-
-        Args:
-            session_id: The session ID to check
-
-        Returns:
-            True if title has been synthesized, False otherwise
-        """
-        with self._title_synthesized_lock:
-            return session_id in self._title_synthesized_sessions
 
     # ==================== MESSAGE CACHING ====================
 

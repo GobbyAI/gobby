@@ -110,14 +110,14 @@ class TestBundledVariablesSync:
         """Bundled variable definitions should sync to DB without errors."""
         result = sync_bundled_variables(db)
         assert result["errors"] == [], f"Sync errors: {result['errors']}"
-        assert result["synced"] == 14
+        assert result["synced"] == 15
 
     def test_synced_variables_have_correct_type(self, db) -> None:
         """All synced variables should have workflow_type='variable'."""
         sync_bundled_variables(db)
         mgr = LocalWorkflowDefinitionManager(db)
         rows = mgr.list_all(workflow_type="variable", include_deleted=False)
-        assert len(rows) >= 14
+        assert len(rows) >= 15
         for row in rows:
             assert row.workflow_type == "variable"
             assert row.source == "template"
@@ -168,11 +168,11 @@ variables:
     def test_variable_idempotent_resync(self, db) -> None:
         """Running sync twice should skip already-synced variables."""
         result1 = sync_bundled_variables(db)
-        assert result1["synced"] == 14
+        assert result1["synced"] == 15
 
         result2 = sync_bundled_variables(db)
         assert result2["synced"] == 0
-        assert result2["skipped"] == 14
+        assert result2["skipped"] == 15
 
     def test_variable_orphan_cleanup(self, db, tmp_path) -> None:
         """Variables removed from disk should be soft-deleted."""
@@ -224,6 +224,7 @@ variables:
             "require_commit_before_close",
             "pre_existing_errors_triaged",
             "enforce_tool_schema_check",
+            "auto_inject_handoff",
             "servers_listed",
             "listed_servers",
             "unlocked_tools",

@@ -131,20 +131,21 @@ async def _handle_self_persona(
         "_agent_type": agent_name,
     }
 
-    # Preset variables
+    # Preset variables (skip _-prefixed reserved keys)
     if agent_body.workflows and agent_body.workflows.variables:
-        changes.update(agent_body.workflows.variables)
+        for key, value in agent_body.workflows.variables.items():
+            if key.startswith("_"):
+                logger.warning("Skipping reserved variable %r from agent definition", key)
+                continue
+            changes[key] = value
 
     if db:
         from gobby.skills.manager import SkillManager
-        from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
         from gobby.workflows.selectors import resolve_rules_for_agent, resolve_skills_for_agent
 
-        # Load all enabled rules manually
-        rows = db.fetchall(
-            "SELECT * FROM workflow_definitions WHERE workflow_type = 'rule' AND enabled = 1 AND deleted_at IS NULL"
-        )
-        all_rules = [WorkflowDefinitionRow.from_row(r) for r in rows]
+        def_manager = LocalWorkflowDefinitionManager(db)
+        all_rules = def_manager.list_all(workflow_type="rule", enabled=True)
 
         active_rules = resolve_rules_for_agent(agent_body, all_rules)
         changes["_active_rule_names"] = list(active_rules)

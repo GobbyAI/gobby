@@ -103,7 +103,7 @@ class TestMCPProxyToolInvocation:
         # Use the list_ready_tasks tool from gobby-tasks via HTTP directly
         # Endpoint is /mcp/tools/call (not /mcp/call)
         response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "gobby-tasks",
                 "tool_name": "list_ready_tasks",
@@ -124,7 +124,7 @@ class TestMCPProxyToolInvocation:
         """Verify tool invocation with parameters works."""
         # Use get_task which takes a task_id parameter
         response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "gobby-tasks",
                 "tool_name": "get_task",
@@ -140,7 +140,7 @@ class TestMCPProxyToolInvocation:
     ) -> None:
         """Verify calling tool on invalid server returns error."""
         response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "nonexistent-server",
                 "tool_name": "some_tool",
@@ -167,7 +167,7 @@ class TestMCPProxyToolInvocation:
     ) -> None:
         """Verify calling invalid tool returns error in response body."""
         response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "server_name": "gobby-tasks",
                 "tool_name": "nonexistent_tool",
@@ -196,7 +196,7 @@ class TestMCPProxyConcurrency:
             async_tasks = []
             for _ in range(5):
                 task = client.post(
-                    "/mcp/tools/call",
+                    "/api/mcp/tools/call",
                     json={
                         "server_name": "gobby-tasks",
                         "tool_name": "list_ready_tasks",
@@ -233,7 +233,7 @@ class TestMCPProxyConcurrency:
             async_tasks = []
             for server, tool, args in tool_calls:
                 task = client.post(
-                    "/mcp/tools/call",
+                    "/api/mcp/tools/call",
                     json={
                         "server_name": server,
                         "tool_name": tool,
@@ -261,7 +261,7 @@ class TestMCPProxyErrorHandling:
         """Verify missing required parameters returns error."""
         # Call endpoint without required server_name
         response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             json={
                 "tool_name": "some_tool",
                 "arguments": {},
@@ -278,7 +278,7 @@ class TestMCPProxyErrorHandling:
     ) -> None:
         """Verify malformed JSON returns error."""
         response = daemon_client.post(
-            "/mcp/tools/call",
+            "/api/mcp/tools/call",
             content="not valid json",
             headers={"Content-Type": "application/json"},
         )
@@ -295,7 +295,7 @@ class TestMCPProxyErrorHandling:
         self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
     ) -> None:
         """Verify empty request returns error."""
-        response = daemon_client.post("/mcp/tools/call", json={})
+        response = daemon_client.post("/api/mcp/tools/call", json={})
 
         # Should get 400 for missing required fields
         assert response.status_code == 400, (
@@ -312,7 +312,7 @@ class TestMCPProxyToolSchema:
         """Verify tool schema can be retrieved."""
         # Schema endpoint is POST /mcp/tools/schema with JSON body
         response = daemon_client.post(
-            "/mcp/tools/schema",
+            "/api/mcp/tools/schema",
             json={
                 "server_name": "gobby-tasks",
                 "tool_name": "create_task",
@@ -333,7 +333,7 @@ class TestMCPProxyToolSchema:
     ) -> None:
         """Verify getting schema for invalid tool returns error."""
         response = daemon_client.post(
-            "/mcp/tools/schema",
+            "/api/mcp/tools/schema",
             json={
                 "server_name": "gobby-tasks",
                 "tool_name": "nonexistent_tool",
@@ -353,7 +353,7 @@ class TestMCPProxyServerManagement:
         self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
     ) -> None:
         """Verify servers endpoint returns list of servers."""
-        response = daemon_client.get("/mcp/servers")
+        response = daemon_client.get("/api/mcp/servers")
         assert response.status_code == 200
 
         data = response.json()
@@ -364,7 +364,7 @@ class TestMCPProxyServerManagement:
         self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
     ) -> None:
         """Verify tools endpoint returns tools data."""
-        response = daemon_client.get("/mcp/tools")
+        response = daemon_client.get("/api/mcp/tools")
         assert response.status_code == 200
 
         data = response.json()

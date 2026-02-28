@@ -1,0 +1,14 @@
+tags: [pipeline-enforcement, enforcement, agents]
+
+rules:
+  pipeline-enforce-tools:
+    description: "Block non-MCP tools for pipeline agents"
+    event: before_tool
+    enabled: false
+    priority: 5
+    when: "variables.get('_assigned_pipeline') and not event.data.get('tool_name', '').startswith('mcp__gobby__')"
+    effect:
+      type: block
+      reason: >
+        Pipeline agent: only MCP discovery and pipeline execution tools are allowed.
+        Use progressive disclosure to discover servers, then call run_pipeline.

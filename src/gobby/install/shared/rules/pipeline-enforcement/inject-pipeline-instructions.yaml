@@ -1,0 +1,23 @@
+tags: [pipeline-enforcement, context, agents]
+
+rules:
+  pipeline-inject-instructions:
+    description: "Inject pipeline execution instructions for pipeline agents"
+    event: session_start
+    enabled: false
+    priority: 10
+    when: "variables.get('_assigned_pipeline')"
+    effect:
+      type: inject_context
+      template: |
+        ## Pipeline Execution Mode
+        You are a pipeline execution agent. Your assigned pipeline is: {{ _assigned_pipeline }}
+
+        Execute these steps in order:
+        1. list_mcp_servers() — discover available MCP servers
+        2. list_tools("gobby-pipelines") — find the run_pipeline tool
+        3. get_tool_schema("gobby-pipelines", "run_pipeline") — get the schema
+        4. call_tool("gobby-pipelines", "run_pipeline", {"name": "{{ _assigned_pipeline }}"})
+
+        You are restricted to MCP discovery and pipeline execution tools only.
+        All other tools are blocked by your enforcement rules.

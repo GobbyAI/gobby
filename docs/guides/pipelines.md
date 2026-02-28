@@ -1,34 +1,33 @@
-# Gobby Pipelines
+# Pipelines
 
-Pipelines are a third workflow type in Gobby that provide **typed, sequential execution** with explicit data flow between steps. Unlike step-based workflows (which are event-driven state machines), pipelines run to completion or pause at approval gates.
+Pipelines provide **deterministic, sequential execution** with typed data flow between steps. They run to completion or pause at approval gates — no event-driven state machine, no interactive agent guidance. Think CI/CD, not chatbot orchestration.
 
-## Overview
+## When to Use Pipelines
 
-### When to Use Pipelines
+| Use Case | System |
+|----------|--------|
+| Deterministic automation (CI/CD, deploy, data processing) | **Pipeline** |
+| Interactive agent guidance with tool restrictions | Step Workflow |
+| Stateless event-driven enforcement (block tools, inject context) | Rule |
 
-- **Deterministic automation**: CI/CD, deployment, data processing
-- **Approval workflows**: Human-in-the-loop for sensitive operations
-- **Multi-step orchestration**: Chained operations with data dependencies
-- **LLM-powered automation**: AI steps with tool restrictions
+### Pipeline vs Step Workflow vs Rule
 
-### Pipeline vs Step Workflow
-
-| Feature | Pipeline | Step Workflow |
-|---------|----------|---------------|
-| Execution model | Sequential, runs to completion | Event-driven state machine |
-| Data flow | Explicit `$step.output` references | Via workflow variables |
-| Approval gates | Built-in with resume tokens | Custom via actions |
-| Tool restrictions | Per-step `tools` field | Via `allowed_tools`/`blocked_tools` |
-| Typical use | Automation, CI/CD | Interactive agent guidance |
+| Feature | Pipeline | Step Workflow | Rule |
+|---------|----------|---------------|------|
+| Execution model | Sequential, runs to completion | Event-driven state machine | Single-pass event handler |
+| Data flow | Explicit `$step.output` references | Workflow variables | `set_variable` effect |
+| Approval gates | Built-in with resume tokens | Custom via actions | N/A |
+| State persistence | DB records (survives restarts) | Workflow instances | Stateless |
+| Typical use | Automation, orchestration | Agent guidance | Enforcement, blocking |
 
 ## Quick Start
 
-Create a pipeline file at `.gobby/workflows/deploy.yaml`:
+Create a pipeline YAML:
 
 ```yaml
 name: deploy
 type: pipeline
-description: Deploy to production
+description: Build, test, and deploy
 
 steps:
   - id: build
@@ -44,71 +43,131 @@ steps:
       message: "Approve production deployment?"
 ```
 
-Run it:
+Install and run:
 
 ```bash
+gobby pipelines import deploy.yaml
 gobby pipelines run deploy
 ```
 
-## YAML Schema Reference
+## YAML Schema
 
 ### Pipeline Definition
 
 ```yaml
-name: string              # Required: Pipeline name
-type: pipeline            # Required: Must be "pipeline"
-version: string           # Optional: Version (default: "1.0")
-description: string       # Optional: Description
+name: string              # Required. Pipeline name (unique)
+type: pipeline            # Required. Must be "pipeline"
+version: string           # Optional. Default: "1.0"
+description: string       # Optional
 
-inputs:                   # Optional: Input parameters
-  env:
-    type: string
-    default: staging
-    description: Target environment
+inputs:                   # Optional. Default input values (overridden at runtime)
+  timeout: 300
+  environment: staging
 
-outputs:                  # Optional: Output mapping
+outputs:                  # Optional. Output mapping using $step.output references
   result: $deploy.output
+  version: $build.output.version
 
-steps:                    # Required: List of steps
+steps:                    # Required. At least one step
   - id: step1
     exec: echo hello
+
+webhooks:                 # Optional. Event notifications
+  on_approval_pending: ...
+  on_complete: ...
+  on_failure: ...
+
+expose_as_tool: false     # Optional. Register as dynamic MCP tool
 ```
 
-### Step Types
+**Source**: `src/gobby/workflows/definitions.py` — `PipelineDefinition` (line 464)
 
-Each step must have exactly one execution type: `exec`, `prompt`, `invoke_pipeline`, `mcp`, `spawn_session`, or `activate_workflow`.
+### Step Fields
 
-#### exec - Shell Command
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | **Required.** Unique identifier within the pipeline |
+| `exec` | string | Shell command (mutually exclusive with other types) |
+| `prompt` | string | LLM prompt template |
+| `invoke_pipeline` | string \| dict | Nested pipeline name or `{name, arguments}` |
+| `mcp` | object | MCP tool call: `{server, tool, arguments?}` |
+| `activate_workflow` | object | Activate workflow: `{name, session_id, variables?}` |
+| `condition` | string | Expression; step skipped if false |
+| `input` | string | Explicit input reference (Lobster compat) |
+| `approval` | object | Approval gate: `{required, message?, timeout_seconds?}` |
+| `tools` | list | Tool restrictions for prompt steps |
+
+Each step must have **exactly one** execution type. Validation enforces this at parse time.
+
+**Source**: `src/gobby/workflows/definitions.py` — `PipelineStep` (line 420)
+
+## Step Types
+
+### exec — Shell Command
+
+Runs a command via `asyncio.create_subprocess_exec` with `shlex.split`. No shell features (pipes, redirects, globs) — the command is executed directly.
 
 ```yaml
 - id: build
   exec: npm run build
-  condition: $inputs.skip_build != 'true'
+  condition: "${{ inputs.skip_build != 'true' }}"
 ```
 
-#### prompt - LLM Step
+**Output format**: `{stdout: string, stderr: string, exit_code: int}`
+
+Default timeout: 300 seconds (configurable via `context.timeout_seconds`).
+
+**Source**: `src/gobby/workflows/pipeline/handlers.py` — `execute_exec_step` (line 102)
+
+### prompt — LLM Step
+
+Sends a prompt to the default LLM provider. Requires `llm_service` to be configured (available when running via daemon, not CLI fallback).
 
 ```yaml
 - id: analyze
   prompt: |
-    Analyze the test results in $test.output.
+    Analyze the test results: ${{ steps.test.output.stdout }}
     Summarize failures and suggest fixes.
   tools:
     - Read
     - Grep
 ```
 
-#### invoke_pipeline - Nested Pipeline
+**Output format**: `{response: string, error?: string}`
 
+**Source**: `src/gobby/workflows/pipeline/handlers.py` — `execute_prompt_step` (line 152)
+
+### invoke_pipeline — Nested Pipeline
+
+Invokes another pipeline definition. Two forms:
+
+**Simple** — inherits parent inputs:
 ```yaml
 - id: run_tests
   invoke_pipeline: test-suite
-  condition: $build.status == 'success'
 ```
 
-#### mcp - MCP Tool Call
+**Dict form** — explicit arguments:
+```yaml
+- id: run_tests
+  invoke_pipeline:
+    name: test-suite
+    arguments:
+      filter: "test_api"
+      verbose: true
+```
 
-Calls an MCP tool directly. Configure with `server`, `tool`, and optional `arguments`.
+When using dict form, `arguments` replace the parent's inputs entirely. The `session_id` is always propagated.
+
+**Output format**: `{pipeline: string, execution_id?: string, status?: string, error?: string}`
+
+**Limitation**: Nested pipeline outputs (the inner pipeline's `outputs` map) are not propagated to the parent context. Downstream steps can only see `execution_id` and `status`, not the nested pipeline's actual data.
+
+**Source**: `src/gobby/workflows/pipeline_executor.py` — `_execute_nested_pipeline` (line 433)
+
+### mcp — MCP Tool Call
+
+Calls an MCP tool directly via the tool proxy.
 
 ```yaml
 - id: create-issue
@@ -117,146 +176,134 @@ Calls an MCP tool directly. Configure with `server`, `tool`, and optional `argum
     tool: create_issue
     arguments:
       title: "Bug report from pipeline"
-      body: ${{ steps.analyze.output.summary }}
+      body: "${{ steps.analyze.output.response }}"
 ```
 
-#### spawn_session - Spawn CLI Session
+The `arguments` dict supports template rendering and automatic type coercion (see [Type Coercion](#type-coercion-in-mcp-arguments)).
 
-Spawns a CLI session via tmux. Configure with `cli` (default `"claude"`), `prompt`, `cwd`, `workflow_name`, and `agent_depth` (default `1`).
+If the MCP tool returns `isError: true` or `success: false`, a `RuntimeError` is raised and the step fails.
 
-```yaml
-- id: worker
-  spawn_session:
-    cli: claude
-    prompt: "Fix the bug described in $analyze.output"
-    cwd: /path/to/project
-    workflow_name: developer
-    agent_depth: 1
-```
+**Output format**: `{result: string}` for SDK responses, or the raw dict for internal tools.
 
-#### activate_workflow - Activate Workflow
+**Source**: `src/gobby/workflows/pipeline/handlers.py` — `execute_mcp_step` (line 11)
 
-Activates a workflow on a session. Configure with `name` (required), `session_id` (required), and optional `variables`.
+### activate_workflow — Activate Workflow on Session
+
+Activates an on-demand workflow on a specific session.
 
 ```yaml
 - id: setup-workflow
   activate_workflow:
     name: developer
-    session_id: ${{ steps.worker.output.session_id }}
+    session_id: "${{ steps.spawn.output.session_id }}"
     variables:
       session_task: "#123"
 ```
 
-### Step Fields
+**Required fields**: `name`, `session_id`. Optional: `variables`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Required. Unique step identifier |
-| `exec` | string | Shell command to execute |
-| `prompt` | string | LLM prompt template |
-| `invoke_pipeline` | string | Pipeline name to invoke |
-| `mcp` | object | MCP tool call config (`server`, `tool`, `arguments`) |
-| `spawn_session` | object | Spawn CLI session config (`cli`, `prompt`, `cwd`, `workflow_name`, `agent_depth`) |
-| `activate_workflow` | object | Activate workflow config (`name`, `session_id`, `variables`) |
-| `condition` | string | Condition for step execution |
-| `input` | string | Explicit input reference (e.g., `$prev_step.output`) |
-| `approval` | object | Approval gate configuration |
-| `tools` | list | Tool restrictions for prompt steps |
+**Source**: `src/gobby/workflows/pipeline/handlers.py` — `execute_activate_workflow_step` (line 59)
 
 ## Data Flow
 
-Steps communicate via `$step.output` references:
-
-```yaml
-steps:
-  - id: fetch
-    exec: curl -s https://api.example.com/data
-
-  - id: process
-    exec: jq '.items[]'
-    input: $fetch.output
-
-  - id: analyze
-    prompt: |
-      Analyze the processed data: $process.output
-      Identify trends and anomalies.
-```
+Steps communicate through the execution context. Each completed step's output is stored at `context["steps"][step_id]["output"]`.
 
 ### Reference Syntax
 
-- `$step_id.output` - Output from a previous step
-- `$step_id.output.field` - Nested field within a step's output
-- `$inputs.param` - Pipeline input parameter
-- `$step_id.status` - Step execution status
+Two reference mechanisms:
 
-## Template Syntax
-
-Pipelines support Jinja2-style template expressions for dynamic values in step fields.
-
-### Expression Syntax
-
-Use `${{ expression }}` to embed template expressions. Internally, `${{ }}` is converted to `{{ }}` for Jinja2 rendering.
-
+**Output references** (`$step.output`) — Used in pipeline `outputs` mapping:
 ```yaml
-- id: greet
-  exec: echo "Deploying to ${{ inputs.environment }}"
+outputs:
+  result: $deploy.output
+  version: $build.output.version
 ```
 
-### Available Variables
+Resolved by `StepRenderer.resolve_reference()`. Supports dotted field paths for nested dict access.
+
+**Template expressions** (`${{ expr }}`) — Used in step fields (`exec`, `prompt`, `mcp.arguments`, `invoke_pipeline.arguments`):
+```yaml
+- id: deploy
+  exec: "deploy --env ${{ inputs.environment }} --version ${{ steps.build.output.version }}"
+```
+
+Converted to Jinja2 `{{ expr }}` internally and rendered with the full context.
+
+### Available Template Variables
 
 | Variable | Description |
 |----------|-------------|
-| `inputs.<param>` | Pipeline input parameters |
+| `inputs.<param>` | Pipeline input parameters (merged: definition defaults + runtime overrides) |
 | `steps.<step_id>.output` | Output from a completed step |
-| `steps.<step_id>.output.<field>` | Nested field from step output |
-| `env.<VAR_NAME>` | Environment variable (with filtering, see below) |
+| `steps.<step_id>.output.<field>` | Nested field from step output (dict access) |
+| `env.<VAR_NAME>` | Environment variables (sensitive values filtered) |
+| `session_id` | Session that triggered execution |
 
-### Environment Variable Access
+**Source**: `src/gobby/workflows/pipeline/renderer.py` — `StepRenderer` (line 57)
 
-Environment variables are available via `${{ env.VAR_NAME }}` in templates. Sensitive variables are automatically filtered out and will not be available.
+## Template Rendering
+
+### Expression Syntax
+
+Use `${{ expression }}` in step fields. The renderer converts `${{ }}` to `{{ }}` for Jinja2:
+
+```yaml
+- id: greet
+  exec: "echo Deploying ${{ inputs.app }} to ${{ inputs.environment }}"
+```
+
+### Environment Variable Filtering
+
+Environment variables are available via `${{ env.VAR_NAME }}` but sensitive values are stripped.
 
 **Filtered by suffix** (case-insensitive): `_SECRET`, `_KEY`, `_TOKEN`, `_PASSWORD`, `_CREDENTIAL`, `_PRIVATE_KEY`, `_AUTH`, `_OAUTH`, `_API_KEY`
 
 **Filtered by name**: `DATABASE_URL`, `AWS_SECRET_ACCESS_KEY`, `API_KEY`, `AUTH_TOKEN`, `OAUTH_TOKEN`
 
-```yaml
-- id: notify
-  mcp:
-    server: slack
-    tool: post_message
-    arguments:
-      channel: "#deploys"
-      text: "Deployed version ${{ steps.build.output.version }}"
-      # This would be filtered: ${{ env.SLACK_API_TOKEN }}
-```
-
 ### Type Coercion in MCP Arguments
 
-After template rendering, all values are strings. For MCP tool arguments, string values are automatically coerced to native types:
+After Jinja2 rendering, all values are strings. For `mcp.arguments`, the renderer automatically coerces:
 
-| String Value | Coerced To | Type |
-|-------------|------------|------|
+| String | Coerced To | Type |
+|--------|-----------|------|
 | `"true"` / `"false"` | `True` / `False` | bool |
 | `"null"` / `"none"` | `None` | NoneType |
+| `""` (empty) | `None` | NoneType |
 | `"600"` | `600` | int |
 | `"3.14"` | `3.14` | float |
 
-This ensures MCP tools receive the correct types even when values come from template expressions:
+This coercion applies recursively to nested dicts and lists within MCP arguments.
+
+**Source**: `src/gobby/workflows/pipeline/renderer.py` — `_coerce_value` (line 137)
+
+## Conditions
+
+Steps can be conditionally skipped using the `condition` field:
 
 ```yaml
-- id: configure
-  mcp:
-    server: myserver
-    tool: set_config
-    arguments:
-      timeout: ${{ inputs.timeout }}     # "600" -> 600
-      verbose: ${{ inputs.verbose }}     # "true" -> True
-      threshold: ${{ inputs.threshold }} # "3.14" -> 3.14
+- id: deploy-prod
+  exec: deploy --env production
+  condition: "${{ inputs.environment == 'production' }}"
 ```
+
+Conditions are evaluated using `SafeExpressionEvaluator` — a secure AST-based evaluator (not `eval()`).
+
+### Available in Conditions
+
+- **Comparisons**: `==`, `!=`, `<`, `>`, `<=`, `>=`, `in`, `not in`
+- **Boolean ops**: `and`, `or`, `not`
+- **Attribute access**: `inputs.param`, `steps.build.output.field`
+- **Functions**: `len()`, `bool()`, `str()`, `int()`
+
+### Fail-Open Behavior
+
+If condition evaluation fails (syntax error, missing variable), the step **runs by default**. Set `strict_conditions: true` on the renderer to raise errors instead.
+
+**Source**: `src/gobby/workflows/pipeline/renderer.py` — `should_run_step` (line 229)
 
 ## Approval Gates
 
-Approval gates pause execution until human approval:
+Approval gates pause execution until human approval via token.
 
 ```yaml
 - id: deploy
@@ -264,85 +311,87 @@ Approval gates pause execution until human approval:
   approval:
     required: true
     message: "Approve production deployment?"
-    timeout_seconds: 3600  # Optional: 1 hour timeout
+    timeout_seconds: 3600  # Field exists but not enforced at runtime
 ```
 
-When a pipeline hits an approval gate:
+### Approval Flow
 
-1. Execution pauses and returns a **resume token**
-2. Pipeline status becomes `waiting_approval`
-3. Use CLI or API to approve/reject with the token
-4. On approval, execution resumes from that step
+1. Pipeline reaches a step with `approval.required: true`
+2. `ApprovalManager` generates a unique token (`secrets.token_urlsafe(24)`)
+3. Step status → `WAITING_APPROVAL`, execution status → `WAITING_APPROVAL`
+4. If webhooks configured, notification sent with approve/reject URLs
+5. `ApprovalRequired` exception raised — execution pauses
+6. External actor approves or rejects via token
 
-### Approval CLI
+### Approve/Reject
 
+**CLI**:
 ```bash
-# Approve
 gobby pipelines approve <token>
-
-# Reject
 gobby pipelines reject <token>
 ```
 
-### Approval API
-
+**HTTP API**:
 ```bash
-# Approve
 curl -X POST http://localhost:60887/api/pipelines/approve/<token>
-
-# Reject
 curl -X POST http://localhost:60887/api/pipelines/reject/<token>
 ```
 
-## Webhook Configuration
+**MCP Tools**:
+```python
+call_tool("gobby-pipelines", "approve_pipeline", {"token": "<token>"})
+call_tool("gobby-pipelines", "reject_pipeline", {"token": "<token>"})
+```
 
-Pipelines can trigger webhooks on events:
+On approval, the pipeline resumes from where it paused. If another approval gate is hit, a new token is returned. On rejection, the step is marked `FAILED` and execution is `CANCELLED`.
+
+**Source**: `src/gobby/workflows/pipeline/gatekeeper.py` — `ApprovalManager` (line 25)
+
+## Webhooks
+
+Pipelines can trigger HTTP notifications on events:
 
 ```yaml
-name: deploy
-type: pipeline
-
 webhooks:
   on_approval_pending:
-    url: https://slack.com/webhook/xxx
+    url: https://hooks.slack.com/services/xxx
     method: POST
-    headers: {}
+    headers:
+      Authorization: "Bearer ${SLACK_TOKEN}"
 
   on_complete:
     url: https://api.example.com/notify
-    headers:
-      Authorization: "Bearer ${{ env.API_TOKEN }}"
+    method: POST
 
   on_failure:
-    url: https://api.example.com/notify-failure
-
-steps:
-  - id: deploy
-    exec: deploy-app
-    approval:
-      required: true
+    url: https://api.example.com/alert
 ```
 
-### Webhook Config Fields
+### Header Environment Variable Expansion
 
-The `WebhookConfig` model supports these fields:
+Webhook headers support `${VAR_NAME}` patterns (note: `${}`, not `${{}}`) that expand from environment variables at send time.
 
-- `on_approval_pending` -- Fires when a pipeline step is waiting for approval
-- `on_complete` -- Fires when the pipeline finishes successfully
-- `on_failure` -- Fires when the pipeline fails
+### Event Payloads
 
-Each webhook endpoint accepts `url` (required), `method` (default `"POST"`), and `headers` (optional dict).
+**on_approval_pending**: `{execution_id, pipeline_name, step_id, token, message, approve_url, reject_url, status}`
+
+**on_complete**: `{execution_id, pipeline_name, status, outputs, completed_at}`
+
+**on_failure**: `{execution_id, pipeline_name, status, error}`
+
+Webhook failures are logged but do not fail the pipeline.
+
+**Source**: `src/gobby/workflows/pipeline_webhooks.py` — `WebhookNotifier` (line 25)
 
 ## MCP Tool Exposure
 
-Pipelines can be exposed as MCP tools for LLM agents:
+Pipelines with `expose_as_tool: true` are registered as dynamic MCP tools:
 
 ```yaml
 name: run-tests
 type: pipeline
 description: Run the test suite
-
-expose_as_tool: true  # Makes this available as MCP tool
+expose_as_tool: true
 
 inputs:
   test_filter:
@@ -351,62 +400,88 @@ inputs:
 
 steps:
   - id: test
-    exec: pytest -k "{{ inputs.test_filter }}"
+    exec: "pytest -k ${{ inputs.test_filter }}"
 ```
 
-When exposed, agents can invoke the pipeline:
+The pipeline becomes available as `pipeline:run-tests` in the MCP tool registry. Agents can invoke it:
 
 ```python
-# Agent can call via MCP
-result = mcp__gobby__call_tool(
-    server_name="gobby-pipelines",
-    tool_name="run-tests",
-    arguments={"test_filter": "test_api"}
-)
+call_tool("gobby-pipelines", "pipeline:run-tests", {"test_filter": "test_api"})
 ```
 
-## MCP Tools
+## Execution Model
 
-The `gobby-pipelines` MCP server registers the following tools for pipeline management:
+### State Machine
 
-| Tool | Description |
-|------|-------------|
-| `list_pipelines` | List available pipeline definitions |
-| `get_pipeline` | Get details about a specific pipeline (steps, inputs) |
-| `run_pipeline` | Run a pipeline by name with inputs |
-| `approve_pipeline` | Approve a waiting pipeline execution |
-| `reject_pipeline` | Reject a waiting pipeline execution |
-| `get_pipeline_status` | Get execution status including step details |
-| `create_pipeline` | Create from YAML content (must have `type: pipeline`) |
-| `update_pipeline` | Update by name or ID |
-| `delete_pipeline` | Delete by name or ID (bundled protected unless `force=True`) |
-| `export_pipeline` | Export as YAML content |
+**ExecutionStatus** (pipeline-level):
+```
+PENDING → RUNNING → COMPLETED
+                  → FAILED
+                  → WAITING_APPROVAL → (resume) → RUNNING → ...
+                  → CANCELLED (via reject)
+```
 
-Additionally, pipelines with `expose_as_tool: true` are automatically registered as dynamic MCP tools named `pipeline:<name>`. These tools accept the pipeline's declared inputs as arguments and run the pipeline when invoked.
+**StepStatus** (step-level):
+```
+PENDING → RUNNING → COMPLETED
+                  → FAILED
+                  → WAITING_APPROVAL
+                  → SKIPPED (condition false)
+```
 
-## Execution Status Reference
+### Background Execution
 
-### ExecutionStatus (pipeline-level)
+When run via MCP tools (`run_pipeline`), pipelines execute as background `asyncio` tasks:
 
-| Status | Description |
-|--------|-------------|
-| `pending` | Pipeline created, not yet started |
-| `running` | Pipeline is executing steps |
-| `waiting_approval` | Paused at an approval gate |
-| `completed` | All steps finished successfully |
-| `failed` | A step failed |
-| `cancelled` | Pipeline was rejected/cancelled |
+- `wait=False` (default): Returns `execution_id` immediately. Poll with `get_pipeline_status`.
+- `wait=True`: Blocks up to `wait_timeout` seconds (default 300). If timeout, returns partial status and pipeline continues in background.
 
-### StepStatus (step-level)
+Background tasks are tracked in a module-level set and cleaned up on daemon shutdown.
 
-| Status | Description |
-|--------|-------------|
-| `pending` | Step not yet started |
-| `running` | Step is executing |
-| `waiting_approval` | Step waiting for approval |
-| `completed` | Step finished successfully |
-| `failed` | Step failed |
-| `skipped` | Step skipped (condition was false) |
+### Resume After Approval
+
+When execution pauses at an approval gate, the full execution state is persisted to the database. On approval, the executor reloads the pipeline definition and replays from the beginning — but completed/skipped steps are detected from DB records and skipped automatically.
+
+**Source**: `src/gobby/workflows/pipeline_executor.py` — `PipelineExecutor` (line 38)
+
+## Storage
+
+### Database Tables
+
+**pipeline_executions**:
+```sql
+id TEXT PRIMARY KEY,          -- Format: pe-{12hex}
+pipeline_name TEXT,
+project_id TEXT,
+status TEXT,                  -- pending/running/waiting_approval/completed/failed/cancelled
+inputs_json TEXT,
+outputs_json TEXT,
+created_at TEXT,
+updated_at TEXT,
+completed_at TEXT,
+resume_token TEXT UNIQUE,     -- Current approval token
+session_id TEXT,              -- Session that triggered execution
+parent_execution_id TEXT      -- For nested pipeline invocations
+```
+
+**step_executions**:
+```sql
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+execution_id TEXT,            -- FK to pipeline_executions
+step_id TEXT,                 -- Step ID from pipeline definition
+status TEXT,                  -- pending/running/waiting_approval/completed/failed/skipped
+started_at TEXT,
+completed_at TEXT,
+input_json TEXT,
+output_json TEXT,
+error TEXT,
+approval_token TEXT UNIQUE,   -- Per-step approval token
+approved_by TEXT,
+approved_at TEXT,
+UNIQUE(execution_id, step_id)
+```
+
+**Source**: `src/gobby/storage/pipelines.py` — `LocalPipelineExecutionManager`
 
 ## CLI Reference
 
@@ -440,6 +515,8 @@ gobby pipelines run --lobster ci.lobster
 gobby pipelines run deploy --json
 ```
 
+The CLI tries the daemon HTTP API first (full-featured: MCP tools, LLM prompts). If the daemon is unavailable, it falls back to a local executor that can only run `exec` steps.
+
 ### Check Status
 
 ```bash
@@ -465,40 +542,29 @@ gobby pipelines history deploy --json
 ### Import Lobster Files
 
 ```bash
-# Import to .gobby/workflows/
 gobby pipelines import ci.lobster
-
-# Import to custom location
 gobby pipelines import ci.lobster -o custom/path.yaml
 ```
 
-## HTTP API Reference
+**Source**: `src/gobby/cli/pipelines.py`
 
-### Run Pipeline
+## HTTP API
 
-```
-POST /api/pipelines/run
-```
+### POST /api/pipelines/run
 
-Request:
+Run a pipeline.
+
+**Request**:
 ```json
-{
-  "name": "deploy",
-  "inputs": {"env": "prod"},
-  "project_id": "optional-project-id"
-}
+{"name": "deploy", "inputs": {"env": "prod"}, "project_id": "optional"}
 ```
 
-Response (200 - completed):
+**200** (completed):
 ```json
-{
-  "status": "completed",
-  "execution_id": "pe-abc123",
-  "pipeline_name": "deploy"
-}
+{"status": "completed", "execution_id": "pe-abc123", "pipeline_name": "deploy"}
 ```
 
-Response (202 - waiting approval):
+**202** (waiting approval):
 ```json
 {
   "status": "waiting_approval",
@@ -509,71 +575,77 @@ Response (202 - waiting approval):
 }
 ```
 
-### Get Execution Status
+### GET /api/pipelines/{execution_id}
 
-```
-GET /api/pipelines/{execution_id}
-```
+Get execution status with step details.
 
-Response:
+**200**:
 ```json
 {
   "id": "pe-abc123",
   "pipeline_name": "deploy",
-  "project_id": "proj-1",
   "status": "completed",
-  "created_at": "2026-01-01T00:00:00Z",
-  "updated_at": "2026-01-01T00:01:00Z",
   "steps": [
-    {"id": 1, "step_id": "build", "status": "completed"},
-    {"id": 2, "step_id": "test", "status": "completed"},
-    {"id": 3, "step_id": "deploy", "status": "completed"}
+    {"step_id": "build", "status": "completed"},
+    {"step_id": "test", "status": "completed"},
+    {"step_id": "deploy", "status": "completed"}
   ]
 }
 ```
 
-### Approve Execution
+### POST /api/pipelines/approve/{token}
 
-```
-POST /api/pipelines/approve/{token}
+**200** (completed) or **202** (needs another approval).
+
+### POST /api/pipelines/reject/{token}
+
+**200**: `{"status": "cancelled", "execution_id": "pe-abc123"}`
+
+**Source**: `src/gobby/servers/routes/pipelines.py`
+
+## MCP Tools
+
+The `gobby-pipelines` MCP server provides:
+
+| Tool | Description |
+|------|-------------|
+| `list_pipelines` | List available pipeline definitions |
+| `run_pipeline` | Run a pipeline with inputs. Supports `wait` and `wait_timeout` params |
+| `approve_pipeline` | Approve a waiting execution by token |
+| `reject_pipeline` | Reject a waiting execution by token |
+| `get_pipeline_status` | Get execution status with step details |
+
+Pipeline CRUD operations (`create_pipeline`, `update_pipeline`, `delete_pipeline`, `export_pipeline`) are on the `gobby-workflows` server, not `gobby-pipelines`.
+
+**Source**: `src/gobby/mcp_proxy/tools/pipelines/`
+
+## Lobster Compatibility
+
+The `LobsterImporter` converts Lobster-format pipeline YAML to Gobby format.
+
+### Field Mappings
+
+| Lobster | Gobby |
+|---------|-------|
+| `command` | `exec` |
+| `stdin: $step.stdout` | `input: $step.output` |
+| `approval: true` | `approval: {required: true}` |
+| `args` | `inputs` |
+| `condition` | `condition` (preserved as-is) |
+
+### Usage
+
+```bash
+# Import and convert
+gobby pipelines import ci.lobster
+
+# Run directly without importing
+gobby pipelines run --lobster ci.lobster
 ```
 
-Response (200 - completed):
-```json
-{
-  "status": "completed",
-  "execution_id": "pe-abc123",
-  "pipeline_name": "deploy"
-}
-```
+**Source**: `src/gobby/workflows/lobster_compat.py` — `LobsterImporter`
 
-Response (202 - needs another approval):
-```json
-{
-  "status": "waiting_approval",
-  "execution_id": "pe-abc123",
-  "step_id": "next-approval-step",
-  "token": "new-approval-token",
-  "message": "Next approval needed"
-}
-```
-
-### Reject Execution
-
-```
-POST /api/pipelines/reject/{token}
-```
-
-Response:
-```json
-{
-  "status": "cancelled",
-  "execution_id": "pe-abc123",
-  "pipeline_name": "deploy"
-}
-```
-
-## Complete Examples
+## Examples
 
 ### CI/CD Pipeline
 
@@ -583,9 +655,7 @@ type: pipeline
 description: Build, test, and deploy
 
 inputs:
-  environment:
-    type: string
-    default: staging
+  environment: staging
 
 steps:
   - id: install
@@ -601,87 +671,88 @@ steps:
     exec: npm run build
 
   - id: deploy-staging
-    exec: deploy --env staging
-    condition: $inputs.environment == 'staging'
+    exec: "deploy --env staging"
+    condition: "${{ inputs.environment == 'staging' }}"
 
   - id: deploy-prod
-    exec: deploy --env production
-    condition: $inputs.environment == 'production'
+    exec: "deploy --env production"
+    condition: "${{ inputs.environment == 'production' }}"
     approval:
       required: true
       message: "Deploy to production?"
 ```
 
-### Data Processing Pipeline
+### MCP-Driven Pipeline
 
 ```yaml
-name: etl-pipeline
+name: triage-issue
 type: pipeline
-description: Extract, transform, load data
+description: Auto-triage a GitHub issue
+
+inputs:
+  issue_number: 0
 
 steps:
-  - id: extract
-    exec: |
-      curl -s https://api.source.com/data \
-        -H "Authorization: Bearer $SOURCE_API_KEY"
+  - id: fetch
+    mcp:
+      server: github
+      tool: get_issue
+      arguments:
+        issue_number: "${{ inputs.issue_number }}"
 
-  - id: validate
+  - id: classify
     prompt: |
-      Validate the extracted data: $extract.output
-      Check for required fields and data types.
-      Return JSON: {"valid": true/false, "errors": [...]}
-    tools:
-      - Read
+      Classify this GitHub issue:
+      ${{ steps.fetch.output.result }}
 
-  - id: transform
-    exec: jq '.items | map({id, name, value})'
-    input: $extract.output
-    condition: $validate.output.valid == true
+      Return JSON: {"priority": "high|medium|low", "labels": ["..."], "summary": "..."}
 
-  - id: load
-    exec: |
-      curl -X POST https://api.dest.com/import \
-        -H "Content-Type: application/json" \
-        -d @-
-    input: $transform.output
+  - id: label
+    mcp:
+      server: github
+      tool: add_labels
+      arguments:
+        issue_number: "${{ inputs.issue_number }}"
+        labels: "${{ steps.classify.output.response }}"
 ```
 
-### Multi-Agent Orchestration
+### Nested Pipeline with Arguments
 
 ```yaml
-name: task-orchestration
+name: deploy-all
 type: pipeline
-description: Orchestrate multiple agents for parallel task work
+description: Deploy to staging then production
 
 steps:
-  - id: find_tasks
-    exec: gobby task list --status=open --type=task --json
+  - id: deploy-staging
+    invoke_pipeline:
+      name: deploy
+      arguments:
+        environment: staging
 
-  - id: spawn_workers
-    prompt: |
-      For each task in $find_tasks.output, spawn a worker agent:
-      - Use spawn_agent with isolation=worktree
-      - Assign one task per worker
-      - Track spawned agent IDs
-    tools:
-      - mcp__gobby__call_tool
+  - id: verify-staging
+    exec: "curl -sf https://staging.example.com/health"
 
-  - id: monitor
-    exec: gobby agent list --status=running --json
-
-  - id: review
+  - id: deploy-prod
+    invoke_pipeline:
+      name: deploy
+      arguments:
+        environment: production
     approval:
       required: true
-      message: "All workers complete. Review and finalize?"
+      message: "Staging verified. Deploy to production?"
 
-  - id: merge
-    exec: |
-      gobby worktree merge --all --strategy=squash
+outputs:
+  staging: $deploy-staging.output
+  production: $deploy-prod.output
 ```
 
 ## See Also
 
-- [Workflows Guide](./workflows.md) - Lifecycle and step-based workflows
-- [Webhook Actions](./webhook-action-schema.md) - Webhook configuration
-- [CLI Commands](./cli-commands.md) - Full CLI reference
-- [HTTP Endpoints](./http-endpoints.md) - API documentation
+- [Workflows Guide](./workflows.md) — Step-based workflows and rule engine
+- [Workflow Rules](./workflow-rules.md) — Declarative rule enforcement
+- [Workflow Actions](./workflow-actions.md) — Action handlers
+- [Pipeline Issues](./pipeline-issues.md) — Known issues, bugs, and limitations
+- [Lobster Migration](./lobster-migration.md) — Migrating from Lobster format
+- [CLI Commands](./cli-commands.md) — Full CLI reference
+- [HTTP Endpoints](./http-endpoints.md) — API documentation

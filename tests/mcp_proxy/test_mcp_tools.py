@@ -101,7 +101,8 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
-            "create_task", {"title": "Test Task", "priority": 1, "session_id": "test-session"}
+            "create_task",
+            {"title": "Test Task", "priority": 1, "session_id": "test-session", "category": "research"},
         )
 
         mock_task_manager.create_task_with_decomposition.assert_called_with(
@@ -112,7 +113,7 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
             task_type="task",
             parent_task_id=None,
             labels=None,
-            category=None,
+            category="research",
             validation_criteria=None,
             created_in_session_id="test-session",
         )
@@ -147,7 +148,7 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
             "create_task",
-            {"title": "Test Task", "session_id": "session-abc123"},
+            {"title": "Test Task", "session_id": "session-abc123", "category": "research"},
         )
 
         mock_task_manager.create_task_with_decomposition.assert_called_with(
@@ -158,7 +159,7 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
             task_type="task",
             parent_task_id=None,
             labels=None,
-            category=None,
+            category="research",
             validation_criteria=None,
             created_in_session_id="session-abc123",
         )

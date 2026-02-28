@@ -1,8 +1,9 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import * as yaml from 'js-yaml'
 import { useRules } from '../../hooks/useRules'
-import type { RuleSummary } from '../../hooks/useRules'
-import { YamlEditorModal } from './WorkflowsPage'
+import type { RuleSummary, RuleDetail } from '../../hooks/useRules'
+import { RuleEditForm, DEFAULT_RULE_FORM } from '../rules/RuleEditForm'
+import type { RuleFormData } from '../rules/RuleEditForm'
 
 const NEW_RULE_TEMPLATE = yaml.dump({
   name: 'my-rule',
@@ -11,8 +12,33 @@ const NEW_RULE_TEMPLATE = yaml.dump({
   effect: { type: 'block', message: 'Blocked by rule' },
 }, { lineWidth: 120, noRefs: true })
 
-// Sentinel object used to indicate "create new rule" mode in the YAML editor
-const NEW_RULE_SENTINEL: RuleSummary = { id: '__new__', name: 'New Rule', event: '', source: 'installed', enabled: true, priority: 100, effect: null, tags: [], description: null, group: null, when: null }
+function detailToForm(detail: RuleDetail): RuleFormData {
+  return {
+    name: detail.name,
+    event: detail.event || 'before_tool',
+    description: detail.description || '',
+    priority: detail.priority,
+    enabled: detail.enabled,
+    group: detail.group || '',
+    tags: detail.tags || [],
+    when: detail.when || '',
+    effect: (detail.effect as RuleFormData['effect']) || { type: 'block', reason: '' },
+  }
+}
+
+function formToDefinition(form: RuleFormData): Record<string, unknown> {
+  const def: Record<string, unknown> = {
+    event: form.event,
+    priority: form.priority,
+    enabled: form.enabled,
+  }
+  if (form.description) def.description = form.description
+  if (form.group) def.group = form.group
+  if (form.when) def.when = form.when
+  if (form.tags.length > 0) def.tags = form.tags
+  def.effect = form.effect
+  return def
+}
 
 interface RulesTabProps {
   searchText: string
@@ -53,17 +79,20 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     fetchRules()
   }, [refreshKey, fetchRules])
 
-  // YAML editor state
-  const [yamlRule, setYamlRule] = useState<RuleSummary | null>(null)
-  const [yamlContent, setYamlContent] = useState('')
-  const [yamlLoading, setYamlLoading] = useState(false)
+  // Sidebar state
+  const [sidebarRule, setSidebarRule] = useState<RuleSummary | null>(null)
+  const [sidebarView, setSidebarView] = useState<'form' | 'yaml'>('form')
+  const [ruleForm, setRuleForm] = useState<RuleFormData>({ ...DEFAULT_RULE_FORM })
+  const [sidebarYaml, setSidebarYaml] = useState('')
+  const [sidebarLoading, setSidebarLoading] = useState(false)
 
-  // Open YAML editor in create mode when "+ Rule" is clicked
+  // Open sidebar in create mode when "+ Rule" is clicked
   useEffect(() => {
     if (showCreateModal) {
-      setYamlRule(NEW_RULE_SENTINEL)
-      setYamlContent(NEW_RULE_TEMPLATE)
-      setYamlLoading(false)
+      setRuleForm({ ...DEFAULT_RULE_FORM })
+      setSidebarYaml(NEW_RULE_TEMPLATE)
+      setSidebarView('form')
+      setSidebarRule({ id: '__new__', name: '', event: '', source: 'installed', enabled: true, priority: 100, effect: null, tags: [], description: null, group: null, when: null })
       onCloseCreateModal()
     }
   }, [showCreateModal, onCloseCreateModal])
@@ -128,60 +157,83 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     await deleteRule(rule.name, isTemplate)
   }, [deleteRule])
 
-  const handleYamlEdit = useCallback(async (rule: RuleSummary) => {
-    setYamlLoading(true)
-    setYamlRule(rule)
+  const openSidebar = useCallback(async (rule: RuleSummary, view: 'form' | 'yaml') => {
+    setSidebarLoading(true)
+    setSidebarRule(rule)
+    setSidebarView(view)
     try {
       const detail = await fetchRuleDetail(rule.name)
       if (detail) {
-        const obj: Record<string, unknown> = {
-          name: detail.name,
-          event: detail.event,
-          priority: detail.priority,
-        }
+        setRuleForm(detailToForm(detail))
+        const obj: Record<string, unknown> = { name: detail.name, event: detail.event, priority: detail.priority }
         if (detail.description) obj.description = detail.description
         if (detail.when) obj.when = detail.when
-        if (detail.match) obj.match = detail.match
         if (detail.effect) obj.effect = detail.effect
         if (detail.tags && detail.tags.length > 0) obj.tags = detail.tags
         if (detail.group) obj.group = detail.group
         obj.enabled = detail.enabled
-        setYamlContent(yaml.dump(obj, { lineWidth: 120, noRefs: true }))
+        setSidebarYaml(yaml.dump(obj, { lineWidth: 120, noRefs: true }))
       } else {
-        setYamlContent('')
         window.alert('Failed to load rule details')
-        setYamlRule(null)
+        setSidebarRule(null)
       }
     } catch (e) {
-      console.error('Failed to export rule YAML:', e)
-      setYamlContent('')
-      setYamlRule(null)
+      console.error('Failed to load rule:', e)
+      setSidebarRule(null)
     } finally {
-      setYamlLoading(false)
+      setSidebarLoading(false)
     }
   }, [fetchRuleDetail])
 
-  const handleYamlSave = useCallback(async () => {
-    if (!yamlRule) return
+  const handleCardClick = useCallback((rule: RuleSummary) => openSidebar(rule, 'form'), [openSidebar])
+
+  const handleFormSave = useCallback(async () => {
+    if (!sidebarRule) return
+    const isCreating = sidebarRule.id === '__new__'
+    const def = formToDefinition(ruleForm)
+    try {
+      if (isCreating) {
+        if (!ruleForm.name.trim()) { window.alert('Rule name is required'); return }
+        await createRule(ruleForm.name.trim(), def)
+      } else {
+        await updateRule(sidebarRule.name, { ...def, name: ruleForm.name })
+      }
+      setSidebarRule(null)
+    } catch (e) {
+      window.alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }, [sidebarRule, ruleForm, createRule, updateRule])
+
+  const handleSidebarYamlSave = useCallback(async () => {
+    if (!sidebarRule) return
+    const isCreating = sidebarRule.id === '__new__'
     let parsed: Record<string, unknown>
     try {
-      parsed = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>
+      parsed = yaml.load(sidebarYaml, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>
     } catch (e) {
-      throw new Error(`Invalid YAML: ${e instanceof Error ? e.message : String(e)}`)
+      window.alert(`Invalid YAML: ${e instanceof Error ? e.message : String(e)}`)
+      return
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Invalid YAML: expected an object')
+      window.alert('Invalid YAML: expected an object')
+      return
     }
-    if (yamlRule.id === '__new__') {
-      const name = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : ''
-      if (!name) throw new Error('Rule must have a "name" field')
-      const { name: _name, ...definition } = parsed
-      await createRule(name, definition)
-    } else {
-      await updateRule(yamlRule.name, parsed)
+    try {
+      if (isCreating) {
+        const name = typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : ''
+        if (!name) { window.alert('Rule must have a "name" field'); return }
+        const { name: _name, ...definition } = parsed
+        await createRule(name, definition)
+      } else {
+        await updateRule(sidebarRule.name, parsed)
+      }
+      setSidebarRule(null)
+    } catch (e) {
+      window.alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`)
     }
-    setYamlRule(null)
-  }, [yamlRule, yamlContent, updateRule, createRule])
+  }, [sidebarRule, sidebarYaml, createRule, updateRule])
+
+  const closeSidebar = useCallback(() => setSidebarRule(null), [])
 
   const handleDuplicate = useCallback(async (rule: RuleSummary) => {
     const newName = window.prompt('New rule name:', `${rule.name}-copy`)
@@ -192,7 +244,6 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     if (detail.event) definition.event = detail.event
     if (detail.description) definition.description = detail.description
     if (detail.when) definition.when = detail.when
-    if (detail.match) definition.match = detail.match
     if (detail.effect) definition.effect = detail.effect
     if (detail.tags && detail.tags.length > 0) definition.tags = detail.tags
     if (detail.group) definition.group = detail.group
@@ -211,7 +262,6 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     }
     if (detail.description) obj.description = detail.description
     if (detail.when) obj.when = detail.when
-    if (detail.match) obj.match = detail.match
     if (detail.effect) obj.effect = detail.effect
     if (detail.tags && detail.tags.length > 0) obj.tags = detail.tags
     if (detail.group) obj.group = detail.group
@@ -278,9 +328,9 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
                 rule={rule}
                 devMode={devMode}
                 projectId={projectId}
+                onCardClick={() => handleCardClick(rule)}
                 onToggle={() => handleToggle(rule)}
                 onDelete={() => handleDelete(rule)}
-                onYamlEdit={() => handleYamlEdit(rule)}
                 onDuplicate={() => handleDuplicate(rule)}
                 onDownload={() => handleDownload(rule)}
                 isInstalled={installedNames.has(rule.name)}
@@ -293,17 +343,22 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
         )}
       </div>
 
-      {/* YAML editor modal */}
-      {yamlRule && (
-        <YamlEditorModal
-          workflowName={yamlRule.id === '__new__' ? 'New Rule' : yamlRule.name}
-          yamlContent={yamlContent}
-          loading={yamlLoading}
-          onChange={setYamlContent}
-          onSave={handleYamlSave}
-          onClose={() => setYamlRule(null)}
-        />
-      )}
+      {/* Rule sidebar editor */}
+      <RuleEditForm
+        isOpen={!!sidebarRule}
+        readOnly={sidebarRule?.source === 'template'}
+        form={ruleForm}
+        onChange={setRuleForm}
+        onSave={handleFormSave}
+        onCancel={closeSidebar}
+        isEditing={!!sidebarRule && sidebarRule.id !== '__new__'}
+        saveDisabled={sidebarLoading}
+        sidebarView={sidebarView}
+        onViewChange={setSidebarView}
+        yamlContent={sidebarYaml}
+        onYamlChange={setSidebarYaml}
+        onYamlSave={handleSidebarYamlSave}
+      />
     </div>
   )
 }
@@ -320,14 +375,14 @@ function getEffectType(effect: Record<string, unknown> | null): string | null {
   return null
 }
 
-function RuleCard({ rule, devMode, projectId, isInstalled, onToggle, onDelete, onYamlEdit, onDuplicate, onDownload, onInstall, onMoveToProject, onMoveToGlobal }: {
+function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle, onDelete, onDuplicate, onDownload, onInstall, onMoveToProject, onMoveToGlobal }: {
   rule: RuleSummary
   devMode: boolean
   projectId?: string
   isInstalled: boolean
+  onCardClick: () => void
   onToggle: () => void
   onDelete: () => void
-  onYamlEdit: () => void
   onDuplicate: () => void
   onDownload: () => void
   onInstall: () => void
@@ -340,7 +395,7 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onToggle, onDelete, o
 
   return (
     <div className={`rules-card${isTemplate ? ' workflows-card--template' : ''}${isDeleted ? ' rules-card--deleted' : ''}`}>
-      <div className="rules-card-main">
+      <div className="rules-card-main" onClick={onCardClick} style={{ cursor: 'pointer' }}>
         <div className="rules-card-header">
           <span className="rules-card-name">{rule.name}</span>
           <span className="workflows-card-type workflows-card-type--rule">rule</span>
@@ -376,7 +431,6 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onToggle, onDelete, o
                       ? <button type="button" className="workflows-action-btn" disabled title="Already installed">Installed</button>
                       : <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onInstall() }} title="Create an installed copy">Install</button>
                   )}
-                  <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onYamlEdit() }} title="Edit as YAML">YAML</button>
                   <button type="button" className="workflows-action-icon" onClick={e => { e.stopPropagation(); onDuplicate() }} title="Duplicate" aria-label="Duplicate rule">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
                   </button>
@@ -420,7 +474,6 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onToggle, onDelete, o
               {rule.source === 'project' && (
                 <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onMoveToGlobal() }} title="Move to global scope">To Global</button>
               )}
-              <button type="button" className="workflows-action-btn" onClick={e => { e.stopPropagation(); onYamlEdit() }} title="Edit as YAML">YAML</button>
               <button type="button" className="workflows-action-icon" onClick={e => { e.stopPropagation(); onDuplicate() }} title="Duplicate" aria-label="Duplicate rule">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="9" height="9" rx="1.5" /><path d="M10.5 5.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3" /></svg>
               </button>

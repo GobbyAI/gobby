@@ -54,7 +54,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
 
   // Fetch dev_mode from admin status
   useEffect(() => {
-    fetch('/admin/status')
+    fetch('/api/admin/status')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data?.dev_mode) setDevMode(true)
@@ -128,8 +128,64 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
         <div className="workflows-toolbar-left">
           <h2 className="workflows-toolbar-title">Workflows</h2>
         </div>
-        <div className="workflows-toolbar-right">
-          {/* Bulk actions */}
+      </div>
+
+      {/* Tab bar + search/filter/actions */}
+      <div className="workflows-tab-row">
+        <TabBar
+          tabs={TABS}
+          activeTab={activeTab}
+          onTabChange={(id) => setActiveTab(id as ActiveTab)}
+        />
+        <div className="workflows-tab-row-right">
+          <input
+            className="workflows-search"
+            type="text"
+            placeholder={`Search ${activeTab}...`}
+            value={searchText}
+            onChange={e => setSearchText(e.target.value)}
+          />
+          <div className="workflows-filter-wrapper" ref={filterRef}>
+            <button
+              type="button"
+              className={`workflows-filter-icon-btn ${activeFilterCount > 0 ? 'workflows-filter-icon-btn--active' : ''}`}
+              onClick={() => setShowFilterPopover(v => !v)}
+              title="Filter"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <line x1="2" y1="4" x2="14" y2="4" />
+                <line x1="4" y1="8" x2="12" y2="8" />
+                <line x1="6" y1="12" x2="10" y2="12" />
+              </svg>
+            </button>
+            {showFilterPopover && (
+              <FilterPopover
+                sourceFilter={sourceFilter}
+                onSourceFilterChange={setSourceFilter}
+                hideGobby={hideGobby}
+                onHideGobbyChange={setHideGobby}
+                hideInstalled={hideInstalled}
+                onHideInstalledChange={setHideInstalled}
+                activeTab={activeTab}
+                pipelineEnabledFilter={pipelineEnabledFilter}
+                onPipelineEnabledFilterChange={setPipelineEnabledFilter}
+                agentProviderFilter={agentProviderFilter}
+                onAgentProviderFilterChange={setAgentProviderFilter}
+                agentProviders={agentProviders}
+                ruleEventFilter={ruleEventFilter}
+                onRuleEventFilterChange={setRuleEventFilter}
+                ruleEventTypes={ruleEventTypes}
+              />
+            )}
+          </div>
+          <button
+            type="button"
+            className={`workflows-toolbar-btn ${refreshing ? 'workflows-toolbar-btn--spinning' : ''}`}
+            onClick={handleRefresh}
+            title="Refresh"
+          >
+            &#x21bb;
+          </button>
           {sourceFilter === 'templates' && (
             <button
               type="button"
@@ -147,8 +203,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
               <span>Enable All</span>
             </div>
           )}
-
-          {/* Create buttons */}
           {activeTab === 'pipelines' && (
             <div className="workflows-new-wrapper">
               <button
@@ -204,63 +258,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           )}
         </div>
       </div>
-
-      {/* Filter row */}
-      <div className="workflows-filter-row">
-        <input
-          className="workflows-search"
-          type="text"
-          placeholder={`Search ${activeTab}...`}
-          value={searchText}
-          onChange={e => setSearchText(e.target.value)}
-        />
-        <div className="workflows-filter-wrapper" ref={filterRef}>
-          <button
-            type="button"
-            className="workflows-filter-btn"
-            onClick={() => setShowFilterPopover(v => !v)}
-          >
-            Filter
-            {activeFilterCount > 0 && (
-              <span className="workflows-filter-badge">{activeFilterCount}</span>
-            )}
-          </button>
-          {showFilterPopover && (
-            <FilterPopover
-              sourceFilter={sourceFilter}
-              onSourceFilterChange={setSourceFilter}
-              hideGobby={hideGobby}
-              onHideGobbyChange={setHideGobby}
-              hideInstalled={hideInstalled}
-              onHideInstalledChange={setHideInstalled}
-              activeTab={activeTab}
-              pipelineEnabledFilter={pipelineEnabledFilter}
-              onPipelineEnabledFilterChange={setPipelineEnabledFilter}
-              agentProviderFilter={agentProviderFilter}
-              onAgentProviderFilterChange={setAgentProviderFilter}
-              agentProviders={agentProviders}
-              ruleEventFilter={ruleEventFilter}
-              onRuleEventFilterChange={setRuleEventFilter}
-              ruleEventTypes={ruleEventTypes}
-            />
-          )}
-        </div>
-        <button
-          type="button"
-          className={`workflows-toolbar-btn ${refreshing ? 'workflows-toolbar-btn--spinning' : ''}`}
-          onClick={handleRefresh}
-          title="Refresh"
-        >
-          &#x21bb;
-        </button>
-      </div>
-
-      {/* Tab bar */}
-      <TabBar
-        tabs={TABS}
-        activeTab={activeTab}
-        onTabChange={(id) => setActiveTab(id as ActiveTab)}
-      />
 
       {/* Tab content */}
       {activeTab === 'pipelines' && (

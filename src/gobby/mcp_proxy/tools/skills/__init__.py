@@ -14,6 +14,7 @@ These tools use LocalSkillManager for storage and SkillSearch for search.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +30,8 @@ from gobby.storage.skills import ChangeEvent, LocalSkillManager, SkillChangeNoti
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["create_skills_registry", "SkillsToolRegistry"]
 
@@ -105,12 +108,15 @@ def create_skills_registry(
                     sv = sv_mgr.get_variables(resolved_id)
                     active_names = sv.get("_active_skill_names") if sv else None
                 except Exception:
-                    pass
+                    logger.debug("Failed to resolve active skill names for session %s", session_id)
 
             skills = storage.list_skills(
                 project_id=project_id,
                 category=category,
                 enabled=enabled,
+                # Over-fetch by 5x when filtering by active_names, since the DB
+                # query doesn't know about the session-scoped allowlist and we
+                # need enough candidates to fill `limit` after filtering.
                 limit=limit * 5 if active_names is not None else limit,
                 include_global=True,
                 include_templates=include_templates,
@@ -239,11 +245,15 @@ def create_skills_registry(
     # Expose search instance on registry for testing/manual indexing
     registry.search = search
 
+    # Upper bound for skill index queries — high enough to get all installed
+    # skills without unbounded queries. Actual counts are typically < 200.
+    _MAX_SKILL_INDEX = 10_000
+
     def _index_skills() -> None:
         """Index all skills for search."""
         skills = storage.list_skills(
             project_id=project_id,
-            limit=10000,
+            limit=_MAX_SKILL_INDEX,
             include_global=True,
         )
         search.index_skills(skills)

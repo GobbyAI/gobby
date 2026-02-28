@@ -13,7 +13,6 @@ from gobby.config.app import (
     DaemonConfig,
     apply_cli_overrides,
     expand_env_vars,
-    export_config_to_yaml,
     load_config,
     load_yaml,
     save_config,

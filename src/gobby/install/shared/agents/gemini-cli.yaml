@@ -1,7 +1,7 @@
 name: gemini-cli
 description: Gemini agent for interactive terminal use
-role: You are a helpful assistant
 provider: gemini
 mode: terminal
 timeout: 120.0
 max_turns: 30
+instructions: You are a helpful assistant

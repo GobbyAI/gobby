@@ -6,14 +6,12 @@ This module defines the core data structures for the unified search layer:
 - FallbackEvent: Event emitted when falling back to TF-IDF
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchMode(str, Enum):
@@ -41,20 +39,22 @@ class SearchConfig(BaseModel):
     - Weights for hybrid mode
     - Whether to notify on fallback
 
-    Example configs:
-        # OpenAI (default - just needs OPENAI_API_KEY env var)
-        SearchConfig(mode="auto", embedding_model="text-embedding-3-small")
+    Supported modes:
+    - tfidf: TF-IDF only (always works, no API needed)
+    - embedding: Embedding-based search only (fails if unavailable)
+    - auto: Try embedding, fallback to TF-IDF if unavailable
+    - hybrid: Combine both with weighted scores
 
-        # Ollama (local, no API key needed)
-        SearchConfig(
-            mode="auto",
-            embedding_model="openai/nomic-embed-text",
-            embedding_api_base="http://localhost:11434/v1"
-        )
-
-        # Gemini
-        SearchConfig(mode="hybrid", embedding_model="gemini/text-embedding-004")
+    LiteLLM model format examples:
+    - OpenAI: text-embedding-3-small (needs OPENAI_API_KEY)
+    - Ollama: openai/nomic-embed-text (with embedding_api_base)
+    - Azure: azure/azure-embedding-model
+    - Vertex AI: vertex_ai/text-embedding-004
+    - Gemini: gemini/text-embedding-004 (needs GEMINI_API_KEY)
+    - Mistral: mistral/mistral-embed (needs MISTRAL_API_KEY)
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     mode: str = Field(
         default="auto",
@@ -89,10 +89,6 @@ class SearchConfig(BaseModel):
         description="Log warning when falling back to TF-IDF",
     )
 
-    def get_mode_enum(self) -> SearchMode:
-        """Get the mode as a SearchMode enum."""
-        return SearchMode(self.mode)
-
     def get_normalized_weights(self) -> tuple[float, float]:
         """Get normalized weights that sum to 1.0.
 
@@ -104,6 +100,23 @@ class SearchConfig(BaseModel):
             # Default to equal weights if both are 0
             return (0.5, 0.5)
         return (self.tfidf_weight / total, self.embedding_weight / total)
+
+    def get_mode_enum(self) -> SearchMode:
+        """Get the SearchMode enum instance for the configured mode.
+
+        Returns:
+            SearchMode enum corresponding to the mode string value
+
+        Raises:
+            ValueError: If the configured mode is not a valid SearchMode
+        """
+        try:
+            return SearchMode(self.mode)
+        except ValueError as e:
+            valid_modes = [m.value for m in SearchMode]
+            raise ValueError(
+                f"Invalid search mode '{self.mode}'. Valid modes are: {', '.join(valid_modes)}"
+            ) from e
 
 
 @dataclass

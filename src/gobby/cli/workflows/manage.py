@@ -126,7 +126,7 @@ def reload_workflows(ctx: click.Context) -> None:
         if is_running:
             try:
                 response = httpx.post(
-                    f"http://localhost:{port}/admin/workflows/reload", timeout=2.0
+                    f"http://localhost:{port}/api/admin/workflows/reload", timeout=2.0
                 )
                 if response.status_code == 200:
                     data = response.json()

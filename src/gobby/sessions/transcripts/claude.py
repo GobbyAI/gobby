@@ -269,17 +269,8 @@ class ClaudeTranscriptParser:
 
         return cleaned, removed
 
-    def parse_line(self, line: str, index: int) -> ParsedMessage | None:
-        """
-        Parse a single line from the transcript JSONL.
-
-        Args:
-            line: Raw JSON line string
-            index: Line index (0-based)
-
-        Returns:
-            ParsedMessage object or None if line should be skipped
-        """
+    def _parse_data(self, line: str, index: int) -> tuple[dict[str, Any], str, datetime] | None:
+        """Parse raw JSON line into (data, msg_type, timestamp) or None if invalid."""
         if not line.strip():
             return None
 
@@ -289,12 +280,10 @@ class ClaudeTranscriptParser:
             self.logger.warning(f"Invalid JSON at line {index}")
             return None
 
-        # Ensure data is a dict (JSON could be a string, number, etc.)
         if not isinstance(data, dict):
             self.logger.debug(f"Skipping non-object JSON at line {index}")
             return None
 
-        # Extract basic fields
         msg_type = data.get("type", "unknown")
         timestamp_str = data.get("timestamp") or datetime.now(UTC).isoformat()
         try:
@@ -302,7 +291,184 @@ class ClaudeTranscriptParser:
         except ValueError:
             timestamp = datetime.now(UTC)
 
-        # Claude Code format handling
+        return data, msg_type, timestamp
+
+    def _expand_line(self, line: str, index: int) -> list[ParsedMessage]:
+        """
+        Expand a single JSONL line into one or more ParsedMessages.
+
+        Multi-block messages (user messages with tool_result blocks, assistant
+        messages with multiple tool_use blocks) are split into separate messages
+        so the frontend can render them correctly.
+        """
+        parsed = self._parse_data(line, index)
+        if parsed is None:
+            return []
+
+        data, msg_type, timestamp = parsed
+        usage, model = self._extract_usage(data)
+        results: list[ParsedMessage] = []
+
+        def _make_msg(
+            *,
+            role: str,
+            content: str,
+            content_type: str = "text",
+            tool_name: str | None = None,
+            tool_input: dict[str, Any] | None = None,
+            tool_result: dict[str, Any] | None = None,
+            tool_use_id: str | None = None,
+        ) -> ParsedMessage:
+            return ParsedMessage(
+                index=index,  # caller reassigns sequential indices
+                role=role,
+                content=content,
+                content_type=content_type,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                tool_result=tool_result,
+                timestamp=timestamp,
+                raw_json=data,
+                usage=usage,
+                tool_use_id=tool_use_id,
+                model=model,
+            )
+
+        if msg_type == "user":
+            msg_data = data.get("message", {})
+            content_val = msg_data.get("content", "")
+
+            if isinstance(content_val, list):
+                text_parts: list[str] = []
+                for block in content_val:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get("type")
+                    if btype == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif btype == "tool_result":
+                        # Emit accumulated text first
+                        if text_parts:
+                            results.append(_make_msg(role="user", content=" ".join(text_parts)))
+                            text_parts = []
+                        tr_content = self._extract_tool_result_content(block)
+                        results.append(
+                            _make_msg(
+                                role="user",
+                                content=tr_content,
+                                content_type="tool_result",
+                                tool_result={
+                                    "content": tr_content,
+                                    "is_error": block.get("is_error", False),
+                                },
+                                tool_use_id=block.get("tool_use_id"),
+                            )
+                        )
+                # Remaining text
+                if text_parts:
+                    results.append(_make_msg(role="user", content=" ".join(text_parts)))
+            else:
+                results.append(_make_msg(role="user", content=str(content_val)))
+
+        elif msg_type in ("agent", "assistant"):
+            msg_data = data.get("message", {})
+            content_blocks = msg_data.get("content", [])
+
+            if isinstance(content_blocks, list):
+                text_parts = []
+                thinking_parts: list[str] = []
+                for block in content_blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get("type")
+                    if btype == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif btype == "tool_use":
+                        # Emit accumulated text first
+                        if text_parts:
+                            results.append(
+                                _make_msg(role="assistant", content=" ".join(text_parts))
+                            )
+                            text_parts = []
+                        results.append(
+                            _make_msg(
+                                role="assistant",
+                                content="",
+                                content_type="tool_use",
+                                tool_name=block.get("name"),
+                                tool_input=block.get("input"),
+                                tool_use_id=block.get("id"),
+                            )
+                        )
+                    elif btype == "thinking":
+                        thinking_parts.append(block.get("thinking", ""))
+                # Remaining text
+                if text_parts:
+                    results.append(_make_msg(role="assistant", content=" ".join(text_parts)))
+                if thinking_parts:
+                    results.append(
+                        _make_msg(
+                            role="assistant",
+                            content="\n".join(thinking_parts),
+                            content_type="thinking",
+                        )
+                    )
+            else:
+                results.append(_make_msg(role="assistant", content=str(content_blocks)))
+
+        elif msg_type == "tool_result":
+            tr = data.get("result")
+            results.append(
+                _make_msg(
+                    role="tool",
+                    content=str(tr),
+                    content_type="tool_result",
+                    tool_name=data.get("tool_name"),
+                    tool_result=tr,
+                    tool_use_id=data.get("tool_use_id"),
+                )
+            )
+        # else: unknown type, return empty list
+
+        return results
+
+    @staticmethod
+    def _extract_tool_result_content(block: dict[str, Any]) -> str:
+        """Extract string content from a tool_result block."""
+        tr_content = block.get("content", "")
+        if isinstance(tr_content, list):
+            parts = []
+            for sub in tr_content:
+                if isinstance(sub, dict) and sub.get("type") == "text":
+                    parts.append(sub.get("text", ""))
+                elif isinstance(sub, str):
+                    parts.append(sub)
+            return "\n".join(parts) if parts else str(block.get("content", ""))
+        if not isinstance(tr_content, str):
+            return str(tr_content)
+        return tr_content
+
+    def parse_line(self, line: str, index: int) -> ParsedMessage | None:
+        """
+        Parse a single line from the transcript JSONL.
+
+        Returns a single ParsedMessage for backward compatibility. For full
+        multi-block expansion, use parse_lines() which calls _expand_line().
+
+        Args:
+            line: Raw JSON line string
+            index: Line index (0-based)
+
+        Returns:
+            ParsedMessage object or None if line should be skipped
+        """
+        parsed = self._parse_data(line, index)
+        if parsed is None:
+            return None
+
+        data, msg_type, timestamp = parsed
+        usage, model = self._extract_usage(data)
+
         role = "unknown"
         content = ""
         content_type = "text"
@@ -314,36 +480,53 @@ class ClaudeTranscriptParser:
         if msg_type == "user":
             role = "user"
             msg_data = data.get("message", {})
-            content = str(msg_data.get("content", ""))
+            content_val = msg_data.get("content", "")
+
+            if isinstance(content_val, list):
+                # Extract text from blocks, handle tool_result blocks gracefully
+                text_parts: list[str] = []
+                first_tool_result = None
+                for block in content_val:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get("type")
+                    if btype == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif btype == "tool_result" and first_tool_result is None:
+                        first_tool_result = block
+
+                if text_parts:
+                    content = " ".join(text_parts)
+                elif first_tool_result:
+                    content_type = "tool_result"
+                    tr_content = self._extract_tool_result_content(first_tool_result)
+                    content = tr_content
+                    tool_use_id = first_tool_result.get("tool_use_id")
+                    tool_result = {
+                        "content": content,
+                        "is_error": first_tool_result.get("is_error", False),
+                    }
+            else:
+                content = str(content_val)
 
         elif msg_type in ("agent", "assistant"):
             role = "assistant"
             msg_data = data.get("message", {})
             content_blocks = msg_data.get("content", [])
 
-            # Handle list of blocks (Claude 3 format)
             if isinstance(content_blocks, list):
                 text_parts = []
                 for block in content_blocks:
                     if not isinstance(block, dict):
                         continue
-
                     block_type = block.get("type")
-
                     if block_type == "text":
                         text_parts.append(block.get("text", ""))
-
                     elif block_type == "tool_use":
                         content_type = "tool_use"
                         tool_name = block.get("name")
                         tool_input = block.get("input")
                         tool_use_id = block.get("id")
-
-                    elif block_type == "tool_result":
-                        content_type = "tool_result"
-                        # Tool results usually come in a separate message or block
-                        # For now we map strictly to transcript lines
-
                 content = " ".join(text_parts)
             else:
                 content = str(content_blocks)
@@ -357,10 +540,7 @@ class ClaudeTranscriptParser:
             content = str(tool_result)
 
         else:
-            # Skip unknown message types (e.g., 'progress', 'error' internal events)
             return None
-
-        usage, model = self._extract_usage(data)
 
         return ParsedMessage(
             index=index,
@@ -432,7 +612,11 @@ class ClaudeTranscriptParser:
 
     def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:
         """
-        Parse a list of transcript lines.
+        Parse a list of transcript lines, expanding multi-block messages.
+
+        Each JSONL line may produce multiple ParsedMessages (e.g. an assistant
+        message with text + two tool_use blocks becomes three messages). Indices
+        are assigned sequentially starting from start_index.
 
         Args:
             lines: List of JSON line strings
@@ -441,13 +625,14 @@ class ClaudeTranscriptParser:
         Returns:
             List of parsed ParsedMessage objects
         """
-        parsed_messages = []
+        parsed_messages: list[ParsedMessage] = []
         current_index = start_index
 
         for line in lines:
-            message = self.parse_line(line, current_index)
-            if message:
-                parsed_messages.append(message)
+            expanded = self._expand_line(line, current_index)
+            for msg in expanded:
+                msg.index = current_index
+                parsed_messages.append(msg)
                 current_index += 1
 
         return parsed_messages

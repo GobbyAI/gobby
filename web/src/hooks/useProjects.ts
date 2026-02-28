@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useWebSocketEvent } from './useWebSocketEvent'
 
 export interface ProjectWithStats {
   id: string
@@ -48,6 +49,14 @@ export function useProjects() {
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
+
+  // Real-time updates via WebSocket
+  useWebSocketEvent(
+    'project_event',
+    useCallback(() => {
+      fetchProjects()
+    }, [fetchProjects]),
+  )
 
   const selectedProject = useMemo(
     () => projects.find(p => p.id === selectedProjectId) ?? null,

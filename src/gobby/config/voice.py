@@ -6,15 +6,18 @@ from pydantic import BaseModel, Field
 
 
 class VoiceConfig(BaseModel):
-    """Configuration for voice chat (STT + TTS).
+    """Configuration for voice chat (STT via local Whisper).
 
     STT uses local Whisper (faster-whisper) for privacy and low latency.
-    TTS uses ElevenLabs streaming WebSocket API for natural speech.
     """
 
     enabled: bool = Field(
         default=False,
-        description="Enable voice chat features (STT + TTS).",
+        description="Enable voice chat features (master switch).",
+    )
+    stt_enabled: bool = Field(
+        default=True,
+        description="Enable speech-to-text (requires enabled=True).",
     )
     whisper_model_size: str = Field(
         default="base",
@@ -27,46 +30,6 @@ class VoiceConfig(BaseModel):
     whisper_compute_type: str = Field(
         default="int8",
         description="Compute type for Whisper: int8, float16, float32.",
-    )
-    elevenlabs_api_key: str = Field(
-        default="",
-        description="ElevenLabs API key. Supports ${ELEVENLABS_API_KEY} env var expansion.",
-    )
-    elevenlabs_voice_id: str = Field(
-        default="21m00Tcm4TlvDq8ikWAM",
-        description="ElevenLabs voice ID (default: Rachel).",
-    )
-    elevenlabs_model_id: str = Field(
-        default="eleven_flash_v2_5",
-        description="ElevenLabs model ID for TTS (must support WebSocket streaming). Note: eleven_v3 does NOT support WebSocket streaming.",
-    )
-    elevenlabs_stability: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="ElevenLabs voice stability (0.0–1.0).",
-    )
-    elevenlabs_similarity_boost: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description="ElevenLabs voice similarity boost (0.0–1.0).",
-    )
-    elevenlabs_style: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="ElevenLabs style exaggeration (0.0–1.0).",
-    )
-    elevenlabs_speed: float = Field(
-        default=0.9,
-        ge=0.5,
-        le=2.0,
-        description="ElevenLabs TTS speed (0.5–2.0).",
-    )
-    audio_format: str = Field(
-        default="mp3_44100_128",
-        description="Audio output format for TTS.",
     )
     whisper_prompt: str = Field(
         default="Gobby",

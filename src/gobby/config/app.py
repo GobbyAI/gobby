@@ -40,7 +40,6 @@ from gobby.config.features import (
 from gobby.config.llm_providers import LLMProvidersConfig
 from gobby.config.logging import LoggingSettings
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
-from gobby.config.search import SearchConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
@@ -56,6 +55,7 @@ from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowC
 from gobby.config.tmux import TmuxConfig
 from gobby.config.voice import VoiceConfig
 from gobby.config.watchdog import WatchdogConfig
+from gobby.search.models import SearchConfig
 
 
 class ToolApprovalPolicy(BaseModel):
@@ -147,7 +147,6 @@ class UIConfig(BaseModel):
 
 __all__ = [
     # Local definitions only - no re-exports
-    "ConductorConfig",
     "DaemonConfig",
     "deep_merge",
     "expand_env_vars",
@@ -168,37 +167,6 @@ ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 # Pattern for secret references (secrets-store-only, no env fallback):
 # $secret:NAME - resolved from encrypted secrets store
 SECRET_REF_PATTERN = re.compile(r"\$secret:([A-Za-z_][A-Za-z0-9_]*)")
-
-
-class ConductorConfig(BaseModel):
-    """
-    Configuration for the Conductor orchestration system.
-
-    Controls token budget management and agent spawning throttling.
-    """
-
-    daily_budget_usd: float = Field(
-        default=50.0,
-        ge=0.0,
-        description="Daily budget limit in USD. Set to 0 for unlimited.",
-    )
-    warning_threshold: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Budget percentage at which to issue warnings (0.0-1.0).",
-    )
-    throttle_threshold: float = Field(
-        default=0.9,
-        ge=0.0,
-        le=1.0,
-        description="Budget percentage at which to throttle agent spawning (0.0-1.0).",
-    )
-    tracking_window_days: int = Field(
-        default=7,
-        gt=0,
-        description="Number of days to track usage for reporting.",
-    )
 
 
 def expand_env_vars(
@@ -422,10 +390,6 @@ class DaemonConfig(BaseModel):
     verification_defaults: ProjectVerificationConfig = Field(
         default_factory=ProjectVerificationConfig,
         description="Default verification commands for projects without auto-detected config",
-    )
-    conductor: ConductorConfig = Field(
-        default_factory=ConductorConfig,
-        description="Conductor orchestration system configuration",
     )
     search: SearchConfig = Field(
         default_factory=SearchConfig,

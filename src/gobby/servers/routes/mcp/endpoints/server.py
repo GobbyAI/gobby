@@ -39,7 +39,6 @@ async def list_mcp_servers(
     Returns:
         List of servers with connection status
     """
-    start_time = time.perf_counter()
     _metrics.inc_counter("http_requests_total")
 
     try:
@@ -52,47 +51,39 @@ async def list_mcp_servers(
                     {
                         "name": registry.name,
                         "state": "connected",
-                        "connected": True,
-                        "available": True,
                         "transport": "internal",
                     }
                 )
 
         # Add external MCP servers
+        connected_count = len(server_list)  # all internal servers are connected
         if mcp_manager:
             for config in mcp_manager.server_configs:
                 health = mcp_manager.health.get(config.name)
                 state = health.state.value if health else "unknown"
                 is_connected = config.name in mcp_manager.connections
-                available = config.enabled and state in ("connected", "pending", "configured")
+                if is_connected:
+                    connected_count += 1
                 entry: dict[str, Any] = {
                     "name": config.name,
                     "state": state,
-                    "connected": is_connected,
-                    "available": available,
                     "transport": config.transport,
-                    "enabled": config.enabled,
                 }
-                if state in ("pending", "configured"):
-                    entry["note"] = "Connects automatically on first use"
+                if not config.enabled:
+                    entry["enabled"] = False
                 server_list.append(entry)
-
-        response_time_ms = (time.perf_counter() - start_time) * 1000
 
         return {
             "success": True,
             "servers": server_list,
-            "total_count": len(server_list),
-            "connected_count": len([s for s in server_list if s.get("connected")]),
-            "available_count": len([s for s in server_list if s.get("available")]),
-            "response_time_ms": response_time_ms,
+            "total": len(server_list),
+            "connected": connected_count,
         }
 
     except Exception as e:
         _metrics.inc_counter("http_requests_errors_total")
         logger.error(f"List MCP servers error: {e}", exc_info=True)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def add_mcp_server(
@@ -160,6 +151,14 @@ async def add_mcp_server(
             }
 
         await server.mcp_manager.add_server(config)
+
+        # Broadcast MCP server added event
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_mcp_event("server_added", name)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast mcp event server_added: {e}")
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {
@@ -263,6 +262,14 @@ async def import_mcp_server(
             # query must be truthy due to earlier validation
             result = await importer.import_from_query(query)
 
+        # Broadcast MCP server imported event
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_mcp_event("server_imported", "bulk")
+            except Exception as e:
+                logger.debug(f"Failed to broadcast mcp event server_imported: {e}")
+
         response_time_ms = (time.perf_counter() - start_time) * 1000
         if isinstance(result, dict):
             result["response_time_ms"] = response_time_ms
@@ -304,6 +311,14 @@ async def remove_mcp_server(
             }
 
         await server.mcp_manager.remove_server(name)
+
+        # Broadcast MCP server removed event
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_mcp_event("server_removed", name)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast mcp event server_removed: {e}")
 
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {

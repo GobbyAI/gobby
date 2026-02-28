@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useWebSocketEvent } from './useWebSocketEvent'
 
 export interface WorkflowSummary {
   id: string
@@ -325,6 +326,21 @@ export function useWorkflows() {
     setIsLoading(true)
     fetchWorkflows().finally(() => setIsLoading(false))
   }, [fetchWorkflows])
+
+  // Real-time updates via WebSocket
+  const debounceRef = useRef<number | null>(null)
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current)
+    }
+  }, [])
+  useWebSocketEvent(
+    'workflow_event',
+    useCallback(() => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current)
+      debounceRef.current = window.setTimeout(() => fetchWorkflows(), 500)
+    }, [fetchWorkflows]),
+  )
 
   return {
     workflows,

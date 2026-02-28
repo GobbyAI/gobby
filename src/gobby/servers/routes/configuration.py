@@ -239,6 +239,11 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             )
             server.services.config = DaemonConfig(**resolved)
 
+            # Propagate updated config to WebSocket server (needed for STT)
+            ws_server = getattr(server.services, "websocket_server", None)
+            if ws_server is not None and hasattr(ws_server, "daemon_config"):
+                ws_server.daemon_config = server.services.config
+
             return JSONResponse(
                 content={
                     "ok": True,
@@ -792,6 +797,26 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             return JSONResponse(content={"ok": True})
         except Exception as e:
             logger.error(f"Failed to save UI settings: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.delete("/ui-settings/{key}")
+    async def delete_ui_setting(key: str) -> JSONResponse:
+        """Delete a single UI setting by key name."""
+        metrics.inc_counter("http_requests_total")
+        if key not in _UI_SETTINGS_KEYS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown UI setting '{key}'. Valid keys: {', '.join(_UI_SETTINGS_KEYS)}",
+            )
+        try:
+            config_store = _get_config_store()
+            if not config_store.delete(f"{_UI_SETTINGS_PREFIX}{key}"):
+                raise HTTPException(status_code=404, detail=f"UI setting '{key}' not found")
+            return JSONResponse(content={"ok": True})
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to delete UI setting '{key}': {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

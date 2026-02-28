@@ -1,0 +1,20 @@
+tags: [error-recovery, resilience, stop-gates]
+
+rules:
+  inject-tool-error-recovery:
+    description: "Set stop block and inject recovery guidance when a tool call fails"
+    event: after_tool
+    enabled: false
+    priority: 50
+    when: "event.metadata.get('is_failure', False) or event.data.get('is_error', False)"
+    effects:
+      - type: set_variable
+        variable: tool_block_pending
+        value: true
+      - type: inject_context
+        template: |
+          The previous tool call failed. You MUST change your approach — do NOT retry with identical or near-identical arguments.
+          1. Read the error message — it tells you what went wrong
+          2. Try a different approach (different command, different arguments, different tool)
+          3. If you assumed something (column exists, file path, API shape), verify it first
+          4. If stuck after 2 failed attempts at the same goal, step back and reconsider entirely

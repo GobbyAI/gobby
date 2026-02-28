@@ -67,6 +67,7 @@ class SessionSource(str, Enum):
     CURSOR = "cursor"
     WINDSURF = "windsurf"
     COPILOT = "copilot"
+    EMBEDDED = "embedded"  # Daemon-internal spawned agents (AgentRunner)
 
 
 @dataclass

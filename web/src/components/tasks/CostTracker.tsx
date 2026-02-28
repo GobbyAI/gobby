@@ -54,7 +54,7 @@ export function CostTracker({ sessionId }: CostTrackerProps) {
       try {
         const baseUrl = getBaseUrl()
         const response = await fetch(
-          `${baseUrl}/sessions/${encodeURIComponent(sid)}`,
+          `${baseUrl}/api/sessions/${encodeURIComponent(sid)}`,
           { signal: controller.signal }
         )
         if (!response.ok) {

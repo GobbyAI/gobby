@@ -62,44 +62,13 @@ class EventHandlersBase:
         project_path: str | None,
         variables: dict[str, Any] | None = None,
     ) -> None:
-        """Shared method for auto-activating workflows."""
-        if not self._workflow_handler:
-            return
+        """Pipeline workflows are executed by the agent via run_pipeline MCP tool.
 
-        try:
-            result = self._workflow_handler.activate_workflow(
-                workflow_name=workflow_name,
-                session_id=session_id,
-                project_path=project_path,
-                variables=variables,
-            )
-            if result.get("success"):
-                self.logger.info(
-                    "Auto-activated workflow for session",
-                    extra={
-                        "workflow_name": workflow_name,
-                        "session_id": session_id,
-                        "project_path": project_path,
-                    },
-                )
-            else:
-                self.logger.warning(
-                    "Failed to auto-activate workflow",
-                    extra={
-                        "workflow_name": workflow_name,
-                        "session_id": session_id,
-                        "project_path": project_path,
-                        "error": result.get("error"),
-                    },
-                )
-        except Exception as e:
-            self.logger.warning(
-                "Failed to auto-activate workflow",
-                extra={
-                    "workflow_name": workflow_name,
-                    "session_id": session_id,
-                    "project_path": project_path,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
+        Legacy step workflow activation is no longer needed. Agent rules enforce
+        pipeline execution by blocking all tools except progressive disclosure
+        and run_pipeline.
+        """
+        self.logger.debug(
+            "Pipeline workflow registered for session — agent will execute via run_pipeline",
+            extra={"workflow_name": workflow_name, "session_id": session_id},
+        )

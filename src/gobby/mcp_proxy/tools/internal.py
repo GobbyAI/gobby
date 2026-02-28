@@ -260,9 +260,7 @@ class InternalToolRegistry:
             coerced_arguments["_context"] = types.SimpleNamespace(**context)
 
         # Strip unknown kwargs (unless function accepts **kwargs)
-        has_var_keyword = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
+        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
         if not has_var_keyword:
             accepted = {
                 p.name

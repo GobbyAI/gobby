@@ -12,7 +12,6 @@ interface MobileSessionDrawerProps {
   sessions: GobbySession[]
   selectedSessionId: string | null
   onSelectSession: (id: string) => void
-  onRefresh: () => void
   isLoading: boolean
 }
 
@@ -20,7 +19,6 @@ export function MobileSessionDrawer({
   sessions,
   selectedSessionId,
   onSelectSession,
-  onRefresh,
   isLoading,
 }: MobileSessionDrawerProps) {
   const [isOpen, setIsOpen] = useState(false)
@@ -43,17 +41,6 @@ export function MobileSessionDrawer({
           {isOpen ? 'Sessions' : activeTitle}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {isOpen && (
-            <button
-              type="button"
-              className="mobile-drawer-action"
-              onClick={(e) => { e.stopPropagation(); onRefresh() }}
-              title="Refresh"
-              disabled={isLoading}
-            >
-              <RefreshIcon />
-            </button>
-          )}
           <span>{isOpen ? '\u25B2' : '\u25BC'}</span>
         </div>
       </div>
@@ -117,11 +104,3 @@ function SessionsIcon() {
   )
 }
 
-function RefreshIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="23 4 23 10 17 10" />
-      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-    </svg>
-  )
-}

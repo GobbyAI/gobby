@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.cron_models import CronJob
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase

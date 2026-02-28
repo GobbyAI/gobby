@@ -234,6 +234,9 @@ class MCPClientManager:
                 except Exception as e:
                     logger.warning(f"Failed to list tools for {config.name}: {e}")
 
+            if tool_schemas:
+                self._cache_discovered_tools(config.name, tool_schemas)
+
         return {
             "success": True,
             "name": config.name,
@@ -711,7 +714,7 @@ class MCPClientManager:
                 # Inspecting mcp-python-sdk, list_tools returns ListToolsResult.
                 # Let's return the raw object or access .tools
                 if hasattr(tools, "tools"):
-                    results[name] = [
+                    tool_list = [
                         {
                             "name": t.name,
                             "description": getattr(t, "description", "") or "",
@@ -719,6 +722,8 @@ class MCPClientManager:
                         }
                         for t in tools.tools
                     ]
+                    results[name] = tool_list
+                    self._cache_discovered_tools(name, tool_list)
                 else:
                     results[name] = []
 
@@ -729,6 +734,20 @@ class MCPClientManager:
                 results[name] = []
 
         return results
+
+    def _cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
+        """Cache discovered tools to DB and update in-memory config."""
+        config = self._configs.get(server_name)
+        if not config or not self.mcp_db_manager or not config.project_id:
+            return
+
+        try:
+            self.mcp_db_manager.cache_tools(server_name, tools, project_id=config.project_id)
+            config.tools = [
+                {"name": t["name"], "brief": (t.get("description", "") or "")[:100]} for t in tools
+            ]
+        except Exception as e:
+            logger.debug(f"Failed to cache tools for {server_name}: {e}")
 
     async def get_tool_input_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
         """Get full inputSchema for a specific tool."""

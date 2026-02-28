@@ -17,7 +17,6 @@ export function McpPage() {
     status,
     isLoading,
     totalToolCount,
-    refreshAll,
     addServer,
     importServer,
     removeServer,
@@ -150,18 +149,10 @@ export function McpPage() {
           />
           <button
             className="mcp-toolbar-btn"
-            onClick={refreshAll}
-            title="Refresh all"
-            disabled={isLoading}
-          >
-            &#x21bb;
-          </button>
-          <button
-            className="mcp-toolbar-btn"
             onClick={handleRefreshTools}
-            title="Refresh tool cache"
+            title="Clear Cache"
           >
-            &#x27f3; Tools
+            &#x27f3; Clear Cache
           </button>
           <button
             className="mcp-toolbar-btn"

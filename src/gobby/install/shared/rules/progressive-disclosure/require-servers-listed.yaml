@@ -11,4 +11,4 @@ rules:
       type: block
       tools: ["mcp__gobby__list_tools"]
       reason: |
-        You did not follow progressive disclosure.
+        You must call list_mcp_servers first. Steps: list_mcp_servers → list_tools → get_tool_schema → call_tool.

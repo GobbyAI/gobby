@@ -15,7 +15,10 @@ import { useVoice } from "./hooks/useVoice";
 import { useSettings } from "./hooks/useSettings";
 import { useTerminal } from "./hooks/useTerminal";
 import { useTmuxSessions } from "./hooks/useTmuxSessions";
-import { useSlashCommands } from "./hooks/useSlashCommands";
+import { useMcp } from "./hooks/useMcp";
+import { useSkills } from "./hooks/useSkills";
+import { useColonAutocomplete } from "./hooks/useColonAutocomplete";
+import type { PaletteItem } from "./hooks/useColonAutocomplete";
 import { useSessions } from "./hooks/useSessions";
 import { useAgentDefinitions } from "./hooks/useAgentDefinitions";
 import type { QueuedFile, ChatMode } from "./types/chat";
@@ -223,7 +226,6 @@ export default function App() {
     stopStreaming,
     clearHistory,
     deleteConversation,
-    executeCommand,
     respondToQuestion,
     respondToApproval,
     planPendingApproval,
@@ -264,7 +266,19 @@ export default function App() {
   } = useSettings();
   const { agents, refreshAgents } = useTerminal();
   const tmux = useTmuxSessions();
-  const { filteredCommands, filterCommands } = useSlashCommands();
+  const mcp = useMcp();
+  const skillsHook = useSkills();
+  const {
+    paletteItems,
+    filterInput: filterColonInput,
+    parseColonCommand,
+    resolveInjectContext,
+  } = useColonAutocomplete(
+    skillsHook.skills,
+    mcp.servers,
+    mcp.toolsByServer,
+    mcp.fetchToolSchema,
+  );
   const [activeModal, setActiveModal] = useState<
     "skills" | "gobby" | "mcp" | null
   >(null);
@@ -308,7 +322,7 @@ export default function App() {
         if (needsTitle || periodicUpdate) {
           titleSynthesisCountRef.current = 0;
           const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-          fetch(`${baseUrl}/sessions/${sessionId}/synthesize-title`, {
+          fetch(`${baseUrl}/api/sessions/${sessionId}/synthesize-title`, {
             method: "POST",
           })
             .then((res) => {
@@ -404,7 +418,7 @@ export default function App() {
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
-  const agentDefs = useAgentDefinitions(effectiveProjectId);
+  const agentDefs = useAgentDefinitions(effectiveProjectId, "claude_sdk_web_chat");
 
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {
@@ -498,12 +512,19 @@ export default function App() {
     switchConversation,
   ]);
 
-  // Wrap sendMessage to include the selected model
+  // Wrap sendMessage to include the selected model + colon command interception
   const handleSendMessage = useCallback(
-    (content: string, files?: QueuedFile[]) => {
-      sendMessage(content, settings.model, files, effectiveProjectId);
+    async (content: string, files?: QueuedFile[]) => {
+      const parsed = parseColonCommand(content);
+      if (parsed) {
+        const ctx = await resolveInjectContext(parsed);
+        const visibleMessage = parsed.intent.trim() || `Use ${parsed.command}:${parsed.subItem}`;
+        sendMessage(visibleMessage, settings.model, files, effectiveProjectId, ctx ?? undefined);
+      } else {
+        sendMessage(content, settings.model, files, effectiveProjectId);
+      }
     },
-    [sendMessage, settings.model, effectiveProjectId],
+    [sendMessage, settings.model, effectiveProjectId, parseColonCommand, resolveInjectContext],
   );
 
   // View a CLI session from the sidebar (read-only, no WS subscription)
@@ -596,22 +617,49 @@ export default function App() {
 
   /* Navigate to Terminals tab and attach agent's tmux session */
   const handleNavigateToAgent = useCallback(
-    (agent: { run_id: string; tmux_session_name?: string }) => {
-      if (!agent.tmux_session_name) return;
-      // Verify the tmux session still exists before navigating
-      const sessionExists = tmux.sessions.some(
-        (s) => s.name === agent.tmux_session_name,
-      );
-      if (!sessionExists) {
-        // Agent's session is gone — refresh agent list to clear stale entries and notify user
-        refreshAgents();
-        showToast("Agent session has ended");
-        return;
+    (agent: { run_id: string; session_id?: string; mode?: string; tmux_session_name?: string }) => {
+      if (agent.tmux_session_name) {
+        // Verify the tmux session still exists before navigating
+        const sessionExists = tmux.sessions.some(
+          (s) => s.name === agent.tmux_session_name,
+        );
+        if (!sessionExists) {
+          // Agent's session is gone — refresh agent list to clear stale entries and notify user
+          refreshAgents();
+          showToast("Agent session has ended");
+          return;
+        }
+        setActiveTab("terminals");
+        tmux.attachSession(agent.tmux_session_name, "gobby");
+      } else if (agent.session_id) {
+        // Non-tmux agent — view its child session read-only in chat
+        setActiveTab("chat");
+        viewSession(agent.session_id);
+      } else {
+        showToast("Agent has no viewable session");
       }
-      setActiveTab("terminals");
-      tmux.attachSession(agent.tmux_session_name, "gobby");
     },
-    [tmux, refreshAgents, showToast],
+    [tmux, refreshAgents, showToast, viewSession],
+  );
+
+  /* Kill a running agent via the cancel endpoint */
+  const handleKillAgent = useCallback(
+    async (runId: string) => {
+      try {
+        const res = await fetch(
+          `/api/agents/runs/${encodeURIComponent(runId)}/cancel`,
+          { method: "POST" },
+        );
+        if (res.ok) {
+          showToast("Agent cancelled");
+        } else {
+          showToast("Failed to cancel agent");
+        }
+      } catch {
+        showToast("Failed to cancel agent");
+      }
+    },
+    [showToast],
   );
 
   /* "Ask Gobby about this session" from Sessions page */
@@ -680,46 +728,49 @@ export default function App() {
 
   const handleInputChange = useCallback(
     (value: string) => {
-      filterCommands(value);
+      filterColonInput(value);
     },
-    [filterCommands],
+    [filterColonInput],
   );
 
-  const handleCommandSelect = useCallback(
-    (cmd: { name: string; action: string }) => {
-      if (cmd.action === "open_skills") {
+  const handlePaletteSelect = useCallback(
+    (item: PaletteItem) => {
+      // Sub-items are handled inline by ChatInput (Tab-complete into input)
+      if (item.kind !== 'command') return;
+
+      if (item.action === "open_skills") {
         setActiveModal("skills");
         return;
       }
-      if (cmd.action === "open_gobby") {
+      if (item.action === "open_gobby") {
         setActiveModal("gobby");
         return;
       }
-      if (cmd.action === "open_mcp") {
+      if (item.action === "open_mcp") {
         setActiveModal("mcp");
         return;
       }
-      if (cmd.action === "open_settings") {
+      if (item.action === "open_settings") {
         setSettingsOpen(true);
         return;
       }
-      if (cmd.action === "clear_history") {
+      if (item.action === "clear_history") {
         clearHistory();
         return;
       }
-      if (cmd.action === "compact_chat") {
+      if (item.action === "compact_chat") {
         sendMessage("/compact", settings.model, undefined, effectiveProjectId);
         return;
       }
-      if (cmd.action === "restart_daemon") {
+      if (item.action === "restart_daemon") {
         addSystemMessage("Restarting daemon...");
         const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-        fetch(`${baseUrl}/admin/restart`, { method: "POST" }).catch((err) =>
+        fetch(`${baseUrl}/api/admin/restart`, { method: "POST" }).catch((err) =>
           console.error("Restart request failed:", err),
         );
         return;
       }
-      if (cmd.action === "show_plan") {
+      if (item.action === "show_plan") {
         if (settings.chatMode !== "plan") {
           updateChatMode("plan");
           sendMode("plan");
@@ -879,8 +930,8 @@ export default function App() {
                 onRespondToQuestion: respondToQuestion,
                 onRespondToApproval: respondToApproval,
                 onInputChange: handleInputChange,
-                filteredCommands,
-                onCommandSelect: handleCommandSelect,
+                paletteItems,
+                onPaletteSelect: handlePaletteSelect,
                 mode: settings.chatMode,
                 onModeChange: (mode) => {
                   updateChatMode(mode);
@@ -913,9 +964,9 @@ export default function App() {
                 onSelectSession: handleSelectConversation,
                 onDeleteSession: handleDeleteConversation,
                 onRenameSession: sessionsHook.renameSession,
-                onRefresh: sessionsHook.refresh,
                 agents,
                 onNavigateToAgent: handleNavigateToAgent,
+                onKillAgent: handleKillAgent,
                 // cliSessions hidden — agent-spawned terminals bleed into list (#9219).
                 // Backend code intact; re-enable by uncommenting and passing cliSessions.
                 // See commits: 65433c67, 401f2751, 206b27d1, 2769d980, 46ad405b
@@ -936,10 +987,8 @@ export default function App() {
                 isListening: voice.isListening,
                 isSpeechDetected: voice.isSpeechDetected,
                 isTranscribing: voice.isTranscribing,
-                isSpeaking: voice.isSpeaking,
                 voiceError: voice.voiceError,
                 onToggleVoice: voice.toggleVoiceMode,
-                onStopSpeaking: voice.stopSpeaking,
               }}
             />
           ) : activeTab === "sessions" ? (
@@ -948,7 +997,6 @@ export default function App() {
               filters={sessionsHook.filters}
               onFiltersChange={sessionsHook.setFilters}
               isLoading={sessionsHook.isLoading}
-              onRefresh={sessionsHook.refresh}
               onAskGobby={handleAskGobby}
               onContinueInChat={handleContinueInChat}
               onWatchInChat={handleWatchInChat}
@@ -959,12 +1007,10 @@ export default function App() {
               sessions={tmux.sessions}
               attachedSession={tmux.attachedSession}
               streamingId={tmux.streamingId}
-              isLoading={tmux.isLoading}
               sessionEnded={tmux.sessionEnded}
               attachSession={tmux.attachSession}
               createSession={tmux.createSession}
               killSession={tmux.killSession}
-              refreshSessions={tmux.refreshSessions}
               refreshTerminal={tmux.refreshTerminal}
               dismissEndedSession={tmux.dismissEndedSession}
               sendInput={tmux.sendInput}
@@ -1020,21 +1066,8 @@ export default function App() {
       <SlashCommandModal
         modal={activeModal}
         onClose={() => setActiveModal(null)}
-        onExecuteTool={(server, tool, args) => {
-          const strArgs: Record<string, string> = {};
-          for (const [k, v] of Object.entries(args)) {
-            if (v !== undefined && v !== null)
-              strArgs[k] = typeof v === "string" ? v : JSON.stringify(v);
-          }
-          executeCommand(server, tool, strArgs);
-        }}
-        onRunSkill={(skillName) => {
-          sendMessage(
-            `/gobby:${skillName}`,
-            settings.model,
-            undefined,
-            effectiveProjectId,
-          );
+        onSendMessage={(content, context) => {
+          sendMessage(content, settings.model, undefined, effectiveProjectId, context);
         }}
       />
 

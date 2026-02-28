@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ToolCall } from '../../../types/chat'
-import { groupToolCalls } from '../ToolCallCard'
+import { groupToolCalls, extractBase64Image } from '../ToolCallCard'
 import type { ToolCallGroup, ToolCallSingle } from '../ToolCallCard'
 
 function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string }): ToolCall {
@@ -202,5 +202,53 @@ describe('groupToolCalls', () => {
     expect(result).toHaveLength(1)
     expect(result[0].kind).toBe('group')
     expect((result[0] as ToolCallGroup).calls).toHaveLength(10)
+  })
+})
+
+describe('extractBase64Image', () => {
+  it('returns null for non-image values', () => {
+    expect(extractBase64Image(null)).toBeNull()
+    expect(extractBase64Image(undefined)).toBeNull()
+    expect(extractBase64Image(42)).toBeNull()
+    expect(extractBase64Image('just a string')).toBeNull()
+    expect(extractBase64Image({ foo: 'bar' })).toBeNull()
+  })
+
+  it('detects data URI strings', () => {
+    const uri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+    expect(extractBase64Image(uri)).toBe(uri)
+  })
+
+  it('detects jpeg data URI', () => {
+    const uri = 'data:image/jpeg;base64,/9j/4AAQ=='
+    expect(extractBase64Image(uri)).toBe(uri)
+  })
+
+  it('detects svg+xml data URI', () => {
+    const uri = 'data:image/svg+xml;base64,PHN2Zz4='
+    expect(extractBase64Image(uri)).toBe(uri)
+  })
+
+  it('detects MCP/Anthropic image content block', () => {
+    const result = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+    }
+    expect(extractBase64Image(result)).toBe('data:image/png;base64,iVBORw0KGgo=')
+  })
+
+  it('detects image in array of content blocks', () => {
+    const result = [
+      { type: 'text', text: 'Here is the screenshot' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/4AAQ==' } },
+    ]
+    expect(extractBase64Image(result)).toBe('data:image/jpeg;base64,/9j/4AAQ==')
+  })
+
+  it('returns null for malformed image objects', () => {
+    expect(extractBase64Image({ type: 'image' })).toBeNull()
+    expect(extractBase64Image({ type: 'image', source: null })).toBeNull()
+    expect(extractBase64Image({ type: 'image', source: { type: 'url' } })).toBeNull()
+    expect(extractBase64Image({ type: 'image', source: { type: 'base64', data: 123 } })).toBeNull()
   })
 })

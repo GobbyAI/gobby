@@ -4,10 +4,10 @@ When auth is configured (username + password set), this middleware
 protects UI routes and their backing API endpoints. It does NOT protect:
 - /api/auth/* (login, logout, status)
 - /api/health* (health checks)
-- /hooks/* (CLI agent hooks)
-- /sessions/* (CLI agent session endpoints)
-- /mcp/* (MCP protocol endpoints)
-- /admin/* (admin endpoints)
+- /api/hooks/* (CLI agent hooks)
+- /api/sessions/* (CLI agent session endpoints)
+- /api/mcp/* (MCP protocol endpoints)
+- /api/admin/health, /api/admin/status, /api/admin/metrics, /api/admin/config (read-only admin)
 - /assets/* (static assets)
 - WebSocket connections (agents need open access)
 
@@ -30,11 +30,14 @@ logger = logging.getLogger(__name__)
 _PUBLIC_PREFIXES = (
     "/api/auth/",
     "/api/health",
-    "/hooks/",
-    "/sessions/",
-    "/mcp/",
-    "/mcp",
-    "/admin/",
+    "/api/hooks/",
+    "/api/sessions/",
+    "/api/mcp/",
+    "/api/mcp",
+    "/api/admin/health",
+    "/api/admin/status",
+    "/api/admin/metrics",
+    "/api/admin/config",
     "/assets/",
     "/ws/",
     "/ws",

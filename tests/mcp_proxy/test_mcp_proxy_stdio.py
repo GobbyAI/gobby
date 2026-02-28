@@ -466,11 +466,11 @@ class TestDaemonProxy:
                 mock_request.return_value = {"success": True}
                 await proxy.call_tool("server", "normal_tool", {})
                 mock_request.assert_called_with(
-                    "POST", "/mcp/server/tools/normal_tool", json={}, timeout=30.0
+                    "POST", "/api/mcp/server/tools/normal_tool", json={}, timeout=30.0
                 )
                 await proxy.call_tool("server", "expand_task", {})
                 mock_request.assert_called_with(
-                    "POST", "/mcp/server/tools/expand_task", json={}, timeout=300.0
+                    "POST", "/api/mcp/server/tools/expand_task", json={}, timeout=300.0
                 )
 
 
@@ -510,11 +510,12 @@ class TestDaemonProxyMethods:
         proxy = DaemonProxy(60887)
         with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_req:
             mock_req.return_value = {
-                "total_count": 1,
-                "servers": [{"name": "srv1", "status": "connected"}],
+                "total": 1,
+                "connected": 1,
+                "servers": [{"name": "srv1", "state": "connected", "transport": "http"}],
             }
             result = await proxy.list_mcp_servers()
-            assert result["total_count"] == 1
+            assert result["total"] == 1
             assert result["servers"][0]["name"] == "srv1"
 
     @pytest.mark.asyncio

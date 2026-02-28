@@ -36,7 +36,7 @@ class TestSessionEndpoint:
         self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
     ) -> None:
         """Verify sessions endpoint returns session data."""
-        response = daemon_client.get("/sessions")
+        response = daemon_client.get("/api/sessions")
         assert response.status_code == 200
 
         data = response.json()
@@ -50,7 +50,7 @@ class TestSessionEndpoint:
     ) -> None:
         """Verify sessions endpoint supports query parameters."""
         # Test with limit parameter
-        response = daemon_client.get("/sessions", params={"limit": 10})
+        response = daemon_client.get("/api/sessions", params={"limit": 10})
         assert response.status_code == 200
 
         data = response.json()
@@ -60,7 +60,7 @@ class TestSessionEndpoint:
         self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
     ) -> None:
         """Verify sessions endpoint includes response time metrics."""
-        response = daemon_client.get("/sessions")
+        response = daemon_client.get("/api/sessions")
         assert response.status_code == 200
 
         data = response.json()
@@ -148,7 +148,7 @@ class TestSessionState:
         )
 
         # Sessions endpoint should still work
-        response = cli_events.client.get("/sessions")
+        response = cli_events.client.get("/api/sessions")
         assert response.status_code == 200
 
         data = response.json()
@@ -168,7 +168,7 @@ class TestSessionState:
             )
 
         # Sessions endpoint should still work
-        response = cli_events.client.get("/sessions")
+        response = cli_events.client.get("/api/sessions")
         assert response.status_code == 200
 
         data = response.json()
@@ -215,7 +215,7 @@ class TestSessionPersistence:
             # Verify sessions endpoint works
             client = httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0)
             try:
-                response = client.get("/sessions")
+                response = client.get("/api/sessions")
                 assert response.status_code == 200
             finally:
                 client.close()
@@ -243,7 +243,7 @@ class TestSessionPersistence:
                 # Verify sessions endpoint still works
                 client = httpx.Client(base_url=f"http://localhost:{http_port}", timeout=10.0)
                 try:
-                    response = client.get("/sessions")
+                    response = client.get("/api/sessions")
                     assert response.status_code == 200
 
                     data = response.json()

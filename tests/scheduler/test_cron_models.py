@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +20,7 @@ def test_croniter_import_and_basic_parsing() -> None:
     """Verify croniter is installed and can parse a basic cron expression."""
     from croniter import croniter
 
-    base = datetime(2026, 2, 10, 12, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 2, 10, 12, 0, 0, tzinfo=UTC)
     cron = croniter("0 7 * * *", base)
     next_run = cron.get_next(datetime)
     assert next_run.hour == 7
@@ -31,7 +31,7 @@ def test_croniter_every_5_minutes() -> None:
     """Verify croniter handles minute-level expressions."""
     from croniter import croniter
 
-    base = datetime(2026, 2, 10, 12, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 2, 10, 12, 0, 0, tzinfo=UTC)
     cron = croniter("*/5 * * * *", base)
     next_run = cron.get_next(datetime)
     assert next_run.minute == 5

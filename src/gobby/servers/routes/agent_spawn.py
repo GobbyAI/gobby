@@ -7,7 +7,6 @@ including single-task and batch spawning, plus per-category launch defaults.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
@@ -15,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.utils.metrics import get_metrics_collector
 
 if TYPE_CHECKING:
@@ -98,7 +98,9 @@ _BUILT_IN_DEFAULTS: dict[str, Any] = {
 _BATCH_SEMAPHORE = asyncio.Semaphore(5)
 
 
-def _build_task_prompt(task: Any, deps: list[Any] | None = None, comments: list[Any] | None = None) -> str:
+def _build_task_prompt(
+    task: Any, deps: list[Any] | None = None, comments: list[Any] | None = None
+) -> str:
     """Build an auto-generated prompt from task context."""
     parts: list[str] = []
 
@@ -165,7 +167,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         """Get or create a persistent web_launcher session for HTTP-initiated spawns."""
         sm = server.services.session_manager
         # Look for existing launcher session
-        sessions = sm.list_sessions(project_id=project_id)
+        sessions = sm.list(project_id=project_id)
         for s in sessions:
             if getattr(s, "source", None) == "web_launcher":
                 return s.id
@@ -183,46 +185,55 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             agent_depth=0,
         )
         # Fetch the just-created session to get its DB id
-        sessions = sm.list_sessions(project_id=project_id)
+        sessions = sm.list(project_id=project_id)
         for s in sessions:
             if getattr(s, "source", None) == "web_launcher":
                 return s.id
         return session_id
 
-    async def _do_spawn(req: AgentSpawnRequest, project_id: str | None = None) -> AgentSpawnResponse:
+    async def _do_spawn(
+        req: AgentSpawnRequest, project_id: str | None = None
+    ) -> AgentSpawnResponse:
         """Execute a single spawn request."""
         task_manager = server.services.task_manager
         if not task_manager:
-            return AgentSpawnResponse(success=False, mode=req.mode, error="Task manager unavailable")
+            return AgentSpawnResponse(
+                success=False, mode=req.mode, error="Task manager unavailable"
+            )
 
         # Resolve task
         try:
             task = task_manager.get_task(req.task_id)
-        except (ValueError, Exception):
+        except Exception as e:
+            logger.debug(f"Failed to get task {req.task_id}: {e}")
             task = None
         if not task:
-            return AgentSpawnResponse(success=False, mode=req.mode, error=f"Task '{req.task_id}' not found")
+            return AgentSpawnResponse(
+                success=False, mode=req.mode, error=f"Task '{req.task_id}' not found"
+            )
 
         effective_project_id = project_id or getattr(task, "project_id", None)
         if not effective_project_id:
-            return AgentSpawnResponse(success=False, mode=req.mode, error="Could not determine project_id")
+            return AgentSpawnResponse(
+                success=False, mode=req.mode, error="Could not determine project_id"
+            )
 
         # Build prompt
         prompt = req.prompt
         if not prompt:
             deps = None
-            comments = None
             try:
-                dep_ids = task_manager.get_dependencies(req.task_id)
-                if dep_ids:
-                    deps = [task_manager.get_task(d) for d in dep_ids if task_manager.get_task(d)]
+                dep_manager = TaskDependencyManager(task_manager.db)
+                dep_records = dep_manager.get_all_dependencies(req.task_id)
+                if dep_records:
+                    deps = [
+                        task_manager.get_task(d.depends_on)
+                        for d in dep_records
+                        if task_manager.get_task(d.depends_on)
+                    ]
             except Exception:
                 pass
-            try:
-                comments = task_manager.get_comments(req.task_id)
-            except Exception:
-                pass
-            prompt = _build_task_prompt(task, deps, comments)
+            prompt = _build_task_prompt(task, deps)
 
         # Handle web_chat mode — return conversation_id for frontend to open
         if req.mode == "web_chat":
@@ -230,7 +241,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             # Update task status
             try:
-                task_manager.update_task(req.task_id, status="in_progress", assignee=conversation_id)
+                task_manager.update_task(
+                    req.task_id, status="in_progress", assignee=conversation_id
+                )
             except Exception as e:
                 logger.warning(f"Failed to update task status: {e}")
 
@@ -247,7 +260,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         # Terminal / headless mode — use spawn_agent_impl
         runner = server.services.agent_runner
         if not runner:
-            return AgentSpawnResponse(success=False, mode=req.mode, error="Agent runner unavailable")
+            return AgentSpawnResponse(
+                success=False, mode=req.mode, error="Agent runner unavailable"
+            )
 
         # Get parent session for spawning
         parent_session_id = await _get_or_create_launcher_session(effective_project_id)
@@ -257,11 +272,15 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         agent_body = None
         try:
-            agent_body = resolve_agent(req.agent_name, server.services.database, project_id=effective_project_id)
+            agent_body = resolve_agent(
+                req.agent_name, server.services.database, project_id=effective_project_id
+            )
         except AgentResolutionError:
             if req.agent_name != "default":
                 return AgentSpawnResponse(
-                    success=False, mode=req.mode, error=f"Agent definition '{req.agent_name}' not found"
+                    success=False,
+                    mode=req.mode,
+                    error=f"Agent definition '{req.agent_name}' not found",
                 )
 
         # Compose prompt with preamble
@@ -351,9 +370,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             try:
                 import asyncio as _asyncio
 
-                _asyncio.ensure_future(
-                    ws.broadcast(json.dumps({"type": "task_updated", "task_id": task_id}))
-                )
+                _asyncio.ensure_future(ws.broadcast({"type": "task_updated", "task_id": task_id}))
             except Exception as e:
                 logger.debug(f"Failed to broadcast task update: {e}")
 
@@ -485,19 +502,19 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
             deps = None
-            comments = None
             try:
-                dep_ids = task_manager.get_dependencies(task_id)
-                if dep_ids:
-                    deps = [task_manager.get_task(d) for d in dep_ids if task_manager.get_task(d)]
-            except Exception:
-                pass
-            try:
-                comments = task_manager.get_comments(task_id)
+                dep_manager = TaskDependencyManager(task_manager.db)
+                dep_records = dep_manager.get_all_dependencies(task_id)
+                if dep_records:
+                    deps = [
+                        task_manager.get_task(d.depends_on)
+                        for d in dep_records
+                        if task_manager.get_task(d.depends_on)
+                    ]
             except Exception:
                 pass
 
-            prompt = _build_task_prompt(task, deps, comments)
+            prompt = _build_task_prompt(task, deps)
 
             # Optionally prepend agent preamble
             preamble = None
@@ -510,7 +527,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                     ctx = get_project_context()
                     pid = ctx.get("id") if ctx else None
                     agent_body = resolve_agent(agent_name, server.services.database, project_id=pid)
-                    preamble = agent_body.build_prompt_preamble()
+                    if agent_body:
+                        preamble = agent_body.build_prompt_preamble()
                 except (AgentResolutionError, Exception):
                     pass
 

@@ -5,8 +5,71 @@ Extracted from src/gobby/llm/claude.py as part of the Strangler Fig
 decomposition.
 """
 
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Default context window for all Claude models (200K tokens).
+# litellm incorrectly returns 1M for some Claude models (the beta
+# context-1m-2025-08-07 window), so we never trust litellm for Claude.
+CLAUDE_DEFAULT_CONTEXT_WINDOW = 200_000
+
+# Substrings that identify a model as Claude.
+# This list is used to identify Claude model variants and should be extended
+# when new naming conventions appear (e.g., "claude" as a fallback).
+# A more robust detection strategy (prefix/suffix check for "claude") could be implemented later.
+_CLAUDE_IDENTIFIERS = ("opus", "sonnet", "haiku", "claude")
+
+
+def resolve_context_window(
+    model: str | None,
+    model_usage: dict[str, Any] | None,
+) -> int | None:
+    """Resolve the context window size for a model.
+
+    Priority order:
+    1. SDK-reported ``contextWindow`` from ``model_usage`` (authoritative from CLI)
+    2. Static 200K for Claude models — never trust litellm for these
+    3. litellm lookup for non-Claude models only
+
+    Args:
+        model: Model name (e.g. "claude-opus-4-6", "gemini-2.0-flash").
+        model_usage: The ``_model_usage`` dict stashed by sdk_compat, or None.
+
+    Returns:
+        Context window size in tokens, or None if unknown.
+    """
+    # 1. SDK-reported contextWindow (most authoritative)
+    if isinstance(model_usage, dict):
+        ctx = model_usage.get("contextWindow")
+        if ctx is not None:
+            return int(ctx)
+
+    if not model:
+        return None
+
+    model_lower = model.lower()
+
+    # 2. Static 200K for Claude models
+    if any(k in model_lower for k in _CLAUDE_IDENTIFIERS):
+        return CLAUDE_DEFAULT_CONTEXT_WINDOW
+
+    # 3. litellm for non-Claude models only
+    try:
+        import litellm
+
+        model_info = litellm.get_model_info(model=model)
+        val = model_info.get("max_input_tokens")
+        if val is not None:
+            return int(val)
+    except Exception as e:
+        logger.debug("Could not derive context window for %s: %s", model, e)
+
+    return None
 
 
 @dataclass

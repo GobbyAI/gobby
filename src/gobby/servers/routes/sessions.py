@@ -6,6 +6,7 @@ Provides session registration, listing, lookup, and update endpoints.
 
 import asyncio
 import logging
+import re
 import subprocess  # nosec B404 - subprocess needed for git commit counting
 import time
 from datetime import UTC, datetime
@@ -145,6 +146,24 @@ def _get_commit_count(db: "DatabaseProtocol", session: Any) -> int:
     return 0
 
 
+def _sanitize_title(raw: str) -> str:
+    """Strip markdown, emoji, normalize whitespace from LLM title."""
+    title = raw.strip().strip('"').strip("'").split("\n")[0]
+    title = re.sub(r"[#*_~`\[\]()]", "", title)
+    title = re.sub(
+        "[\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff"
+        "\U0001f1e0-\U0001f1ff\U00002702-\U000027b0\U0000fe00-\U0000fe0f"
+        "\U0000200d\U000024c2-\U0001f251\U0001f900-\U0001f9ff"
+        "\U0001fa00-\U0001fa6f\U0001fa70-\U0001faff]+",
+        "",
+        title,
+    )
+    title = re.sub(r"\s+", " ", title).strip()
+    if len(title) > 100:
+        title = title[:97] + "..."
+    return title or "Untitled Session"
+
+
 def create_sessions_router(server: "HTTPServer") -> APIRouter:
     """
     Create sessions router with endpoints bound to server instance.
@@ -155,8 +174,19 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
     Returns:
         Configured APIRouter with session endpoints
     """
-    router = APIRouter(prefix="/sessions", tags=["sessions"])
+    router = APIRouter(prefix="/api/sessions", tags=["sessions"])
     metrics = get_metrics_collector()
+
+    async def _broadcast_session(event: str, session_id: str, **kwargs: Any) -> None:
+        """Broadcast a session event via WebSocket if available."""
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_session_event(event, session_id, **kwargs)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to broadcast session event '{event}' for session {session_id}: {e}"
+                )
 
     @router.post("/register")
     async def register_session(request_data: SessionRegisterRequest) -> dict[str, Any]:
@@ -210,6 +240,8 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
                 git_branch=git_branch,
                 parent_session_id=request_data.parent_session_id,
             )
+
+            await _broadcast_session("session_created", session.id)
 
             return {
                 "status": "registered",
@@ -525,6 +557,8 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
+            await _broadcast_session("session_updated", session_id)
+
             return {"session": session.to_dict()}
 
         except HTTPException:
@@ -555,6 +589,8 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
 
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
+
+            await _broadcast_session("session_updated", session_id)
 
             return {"session": session.to_dict()}
 
@@ -652,16 +688,13 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
                 ),
                 timeout=10,
             )
-            # Sanitize: first line only, strip quotes, cap at 100 chars
-            title = title.strip().strip('"').strip("'").split("\n")[0]
-            if len(title) > 100:
-                title = title[:97] + "..."
-            if not title:
-                title = "Untitled Session"
+            title = _sanitize_title(title)
 
             result = server.session_manager.update_title(session_id, title)
             if result is None:
                 raise HTTPException(status_code=404, detail="Session not found")
+
+            await _broadcast_session("session_updated", session_id)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
@@ -676,7 +709,7 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             metrics.inc_counter("http_requests_errors_total")
             logger.error(f"Synthesize title error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(status_code=500, detail="Failed to synthesize title") from e
 
     @router.post("/{session_id}/rename")
     async def rename_session(session_id: str, request: Request) -> dict[str, Any]:
@@ -710,6 +743,8 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
             result = server.session_manager.update_title(session_id, title)
             if result is None:
                 raise HTTPException(status_code=404, detail="Session not found")
+
+            await _broadcast_session("session_updated", session_id)
 
             return {"status": "success", "title": title}
 
@@ -765,6 +800,9 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
 
             # Refetch session to get updated summary_markdown
             updated_session = server.session_manager.get(session_id)
+
+            await _broadcast_session("session_updated", session_id)
+
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             return {
@@ -827,6 +865,8 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
             )
 
             logger.info(f"Stop signal sent to session {session_id}: {reason}")
+
+            await _broadcast_session("session_stop_signaled", session_id)
 
             return {
                 "status": "stop_signaled",
@@ -925,6 +965,9 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
             stop_registry = hook_manager._stop_registry
 
             cleared = stop_registry.clear(session_id)
+
+            if cleared:
+                await _broadcast_session("session_stop_cleared", session_id)
 
             return {
                 "status": "cleared" if cleared else "no_signal",

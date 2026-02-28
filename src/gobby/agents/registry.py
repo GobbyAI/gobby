@@ -87,6 +87,12 @@ class RunningAgent:
     worktree_id: str | None = None
     """Associated worktree, if any."""
 
+    clone_id: str | None = None
+    """Associated clone, if any."""
+
+    timeout_seconds: float | None = None
+    """Timeout in seconds — lifecycle monitor kills agent when exceeded. 0 or None = no timeout."""
+
     # In-process agent tracking
     task: Any | None = None
     """Async task object for in-process agents (asyncio.Task)."""
@@ -109,6 +115,8 @@ class RunningAgent:
             "provider": self.provider,
             "workflow_name": self.workflow_name,
             "worktree_id": self.worktree_id,
+            "clone_id": self.clone_id,
+            "timeout_seconds": self.timeout_seconds,
             "has_task": self.task is not None,
         }
 

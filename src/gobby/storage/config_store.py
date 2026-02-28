@@ -43,14 +43,14 @@ def config_key_to_secret_name(key: str) -> str:
 
     Examples:
         ``voice.elevenlabs_api_key`` -> ``elevenlabs_api_key``
-        ``secrets.OPENAI_API_KEY`` -> ``OPENAI_API_KEY``
+        ``secrets.openai_api_key`` -> ``openai_api_key``
     """
     return key.rsplit(".", 1)[-1]
 
 
 def is_secret_key_name(key: str) -> bool:
     """Check if a config key name matches common secret patterns."""
-    last_part = key.rsplit(".", 1)[-1]
+    last_part = key.rsplit(".", 1)[-1].lower()
     return any(last_part.endswith(suffix) for suffix in _SECRET_SUFFIXES)
 
 

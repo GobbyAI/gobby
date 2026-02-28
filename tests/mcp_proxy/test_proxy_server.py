@@ -143,15 +143,26 @@ async def test_status_tool(daemon_tools):
 
 @pytest.mark.asyncio
 async def test_list_mcp_servers(daemon_tools, mock_mcp_manager):
-    # Mock the health response that get_status uses
-    mock_mcp_manager.get_server_health.return_value = {
-        "server1": {"state": "connected", "health": "healthy"}
-    }
+    # Set up server config and health for direct access
+    config = MagicMock()
+    config.name = "server1"
+    config.transport = "http"
+    config.enabled = True
+    mock_mcp_manager.server_configs = [config]
+
+    health = MagicMock()
+    health.state.value = "connected"
+    mock_mcp_manager.health = {"server1": health}
+    mock_mcp_manager.connections = {"server1": MagicMock()}
+
+    # Internal manager returns no registries
+    daemon_tools.internal_manager.get_all_registries.return_value = []
 
     result = await daemon_tools.list_mcp_servers()
     assert len(result["servers"]) == 1
     assert result["servers"][0]["name"] == "server1"
-    assert result["servers"][0]["connected"] is True
+    assert result["servers"][0]["state"] == "connected"
+    assert result["connected"] == 1
 
 
 @pytest.mark.asyncio

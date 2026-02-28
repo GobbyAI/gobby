@@ -70,7 +70,7 @@ class TestListMemories:
             _make_memory(id="mm-1", content="Memory one"),
             _make_memory(id="mm-2", content="Memory two"),
         ]
-        response = client.get("/memories")
+        response = client.get("/api/memories")
         assert response.status_code == 200
         data = response.json()
         assert len(data["memories"]) == 2
@@ -80,7 +80,7 @@ class TestListMemories:
         """GET /memories supports query parameter filters."""
         mock_server.memory_manager.list_memories.return_value = []
         response = client.get(
-            "/memories",
+            "/api/memories",
             params={
                 "project_id": "proj-1",
                 "memory_type": "fact",
@@ -98,7 +98,7 @@ class TestListMemories:
     def test_list_empty(self, client, mock_server) -> None:
         """GET /memories returns empty list when no memories."""
         mock_server.memory_manager.list_memories.return_value = []
-        response = client.get("/memories")
+        response = client.get("/api/memories")
         assert response.status_code == 200
         assert response.json()["memories"] == []
 
@@ -117,7 +117,7 @@ class TestCreateMemory:
             return_value=_make_memory(id="mm-new-123")
         )
         response = client.post(
-            "/memories",
+            "/api/memories",
             json={
                 "content": "User prefers dark mode",
                 "memory_type": "preference",
@@ -132,14 +132,14 @@ class TestCreateMemory:
 
     def test_create_requires_content(self, client, mock_server) -> None:
         """POST /memories requires content field."""
-        response = client.post("/memories", json={})
+        response = client.post("/api/memories", json={})
         assert response.status_code == 422
 
     def test_create_memory_server_error(self, client, mock_server) -> None:
         """POST /memories returns 500 when manager raises error."""
         mock_server.memory_manager.create_memory.side_effect = RuntimeError("Backend failure")
         response = client.post(
-            "/memories",
+            "/api/memories",
             json={"content": "test"},
         )
         assert response.status_code == 500
@@ -157,7 +157,7 @@ class TestGetMemory:
     def test_get_memory(self, client, mock_server) -> None:
         """GET /memories/{id} returns memory detail."""
         mock_server.memory_manager.get_memory.return_value = _make_memory()
-        response = client.get("/memories/mm-abc123")
+        response = client.get("/api/memories/mm-abc123")
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "mm-abc123"
@@ -167,7 +167,7 @@ class TestGetMemory:
     def test_get_memory_not_found(self, client, mock_server) -> None:
         """GET /memories/{id} returns 404 when not found."""
         mock_server.memory_manager.get_memory.return_value = None
-        response = client.get("/memories/nonexistent")
+        response = client.get("/api/memories/nonexistent")
         assert response.status_code == 404
 
 
@@ -185,7 +185,7 @@ class TestUpdateMemory:
             content="Updated content"
         )
         response = client.put(
-            "/memories/mm-abc123",
+            "/api/memories/mm-abc123",
             json={"content": "Updated content"},
         )
         assert response.status_code == 200
@@ -195,7 +195,7 @@ class TestUpdateMemory:
     def test_update_not_found(self, client, mock_server) -> None:
         """PUT /memories/{id} returns 404 when not found."""
         mock_server.memory_manager.update_memory.side_effect = ValueError("Memory not found")
-        response = client.put("/memories/nonexistent", json={"content": "new content"})
+        response = client.put("/api/memories/nonexistent", json={"content": "new content"})
         assert response.status_code == 404
 
 
@@ -210,7 +210,7 @@ class TestDeleteMemory:
     def test_delete_memory(self, client, mock_server) -> None:
         """DELETE /memories/{id} removes memory."""
         mock_server.memory_manager.delete_memory.return_value = True
-        response = client.delete("/memories/mm-abc123")
+        response = client.delete("/api/memories/mm-abc123")
         assert response.status_code == 200
         assert response.json()["deleted"] is True
         mock_server.memory_manager.delete_memory.assert_called_once_with("mm-abc123")
@@ -218,7 +218,7 @@ class TestDeleteMemory:
     def test_delete_not_found(self, client, mock_server) -> None:
         """DELETE /memories/{id} returns 404 when not found."""
         mock_server.memory_manager.delete_memory.return_value = False
-        response = client.delete("/memories/nonexistent")
+        response = client.delete("/api/memories/nonexistent")
         assert response.status_code == 404
 
 
@@ -235,7 +235,7 @@ class TestSearchMemories:
         mock_server.memory_manager.search_memories.return_value = [
             _make_memory(id="mm-1", content="Dark mode preference"),
         ]
-        response = client.get("/memories/search", params={"q": "dark mode"})
+        response = client.get("/api/memories/search", params={"q": "dark mode"})
         assert response.status_code == 200
         data = response.json()
         assert len(data["results"]) == 1
@@ -244,14 +244,14 @@ class TestSearchMemories:
 
     def test_search_requires_query(self, client, mock_server) -> None:
         """GET /memories/search requires q parameter."""
-        response = client.get("/memories/search")
+        response = client.get("/api/memories/search")
         assert response.status_code == 422
 
     def test_search_with_filters(self, client, mock_server) -> None:
         """GET /memories/search supports project_id and limit filters."""
         mock_server.memory_manager.search_memories.return_value = []
         response = client.get(
-            "/memories/search",
+            "/api/memories/search",
             params={"q": "test", "project_id": "proj-1", "limit": 5},
         )
         assert response.status_code == 200
@@ -277,7 +277,7 @@ class TestMemoryStats:
             "by_type": {"fact": 30, "preference": 12},
             "project_id": None,
         }
-        response = client.get("/memories/stats")
+        response = client.get("/api/memories/stats")
         assert response.status_code == 200
         data = response.json()
         assert data["total_count"] == 42
@@ -290,6 +290,6 @@ class TestMemoryStats:
             "by_type": {"fact": 10},
             "project_id": "proj-1",
         }
-        response = client.get("/memories/stats", params={"project_id": "proj-1"})
+        response = client.get("/api/memories/stats", params={"project_id": "proj-1"})
         assert response.status_code == 200
         mock_server.memory_manager.get_stats.assert_called_once_with(project_id="proj-1")

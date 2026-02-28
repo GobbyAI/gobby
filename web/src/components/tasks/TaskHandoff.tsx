@@ -76,7 +76,7 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
     try {
       // Post handoff comment
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}/comments`, {
+      const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

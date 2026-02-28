@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -108,7 +108,7 @@ async def test_check_due_jobs_dispatches(
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
-    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_job(job.id, next_run_at=past)
 
     await scheduler._check_due_jobs()
@@ -148,7 +148,7 @@ async def test_respects_max_concurrent(
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
-    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_job(job2.id, next_run_at=past)
 
     await scheduler._check_due_jobs()
@@ -176,8 +176,8 @@ async def test_backoff_on_consecutive_failures(
         cron_expr="0 * * * *",
     )
     # Set it as having failed recently with 2 consecutive failures
-    now = datetime.now(timezone.utc).isoformat()
-    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    now = datetime.now(UTC).isoformat()
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_job(
         job.id,
         next_run_at=past,

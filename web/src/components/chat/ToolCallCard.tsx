@@ -33,6 +33,83 @@ function formatToolName(fullName: string): string {
   return parts[parts.length - 1] || fullName
 }
 
+function truncStr(str: string | undefined | null, max: number): string | null {
+  if (!str) return null
+  return str.length > max ? str.slice(0, max - 1) + '\u2026' : str
+}
+
+function pathBasename(path: string): string {
+  const parts = path.split('/')
+  return parts[parts.length - 1] || path
+}
+
+const FILE_TOOLS = new Set(['Read', 'Write', 'Edit'])
+const COMPACT_HEADER_TOOLS = new Set(['Read', 'Bash', 'Grep', 'Glob', 'list_mcp_servers', 'ExitPlanMode'])
+
+function getToolSummary(call: ToolCall): string | null {
+  const args = call.arguments || {}
+  const name = formatToolName(call.tool_name)
+
+  switch (name) {
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+      return (args.file_path as string) || null
+
+    case 'Bash':
+      return truncStr(args.command as string, 80)
+
+    case 'Grep': {
+      const pattern = args.pattern as string
+      const path = args.path as string
+      if (!pattern) return null
+      return path ? `"${pattern}" in ${path}` : `"${pattern}"`
+    }
+
+    case 'Glob':
+      return (args.pattern as string) || null
+
+    case 'Task': {
+      const agentType = args.subagent_type as string
+      const desc = args.description as string
+      if (!agentType) return null
+      return desc ? `${agentType} (${truncStr(desc, 40)})` : agentType
+    }
+
+    case 'WebFetch':
+      return truncStr(args.url as string, 60)
+
+    case 'WebSearch':
+      return args.query ? `"${truncStr(args.query as string, 60)}"` : null
+
+    case 'list_mcp_servers':
+    case 'ExitPlanMode':
+      return null
+
+    case 'list_tools':
+      return (args.server_name as string) || null
+
+    case 'get_tool_schema':
+    case 'call_tool': {
+      const server = args.server_name as string
+      const tool = args.tool_name as string
+      return server && tool ? `${server}.${tool}` : null
+    }
+
+    case 'recommend_tools':
+      return args.task_description ? `"${truncStr(args.task_description as string, 60)}"` : null
+
+    case 'search_tools':
+      return args.query ? `"${truncStr(args.query as string, 60)}"` : null
+
+    default:
+      if (call.server_name && call.server_name !== 'builtin') {
+        return `${call.server_name}.${name}`
+      }
+      return null
+  }
+}
+
 // --- Tool call grouping types and logic ---
 
 export interface ToolCallGroup {
@@ -146,6 +223,70 @@ const highlighterTheme = {
   },
 }
 
+/** Compute a minimal line-level diff using Myers-style LCS. */
+function computeLineDiff(oldStr: string, newStr: string): { type: 'keep' | 'add' | 'remove'; line: string }[] {
+  const oldLines = oldStr.split('\n')
+  const newLines = newStr.split('\n')
+  const n = oldLines.length
+  const m = newLines.length
+
+  // Build LCS table
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0))
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = oldLines[i - 1] === newLines[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1])
+    }
+  }
+
+  // Backtrack to produce diff
+  const result: { type: 'keep' | 'add' | 'remove'; line: string }[] = []
+  let i = n, j = m
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      result.push({ type: 'keep', line: oldLines[i - 1] })
+      i--; j--
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push({ type: 'add', line: newLines[j - 1] })
+      j--
+    } else {
+      result.push({ type: 'remove', line: oldLines[i - 1] })
+      i--
+    }
+  }
+  result.reverse()
+  return result
+}
+
+function InlineDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
+  const diff = useMemo(() => computeLineDiff(oldStr, newStr), [oldStr, newStr])
+
+  return (
+    <pre className="bg-[#0d0d0d] rounded text-xs overflow-auto max-h-96 p-3 m-0" style={{ fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" }}>
+      {diff.map((entry, i) => {
+        const prefix = entry.type === 'add' ? '+' : entry.type === 'remove' ? '-' : ' '
+        const bg = entry.type === 'add' ? 'rgba(63, 185, 80, 0.15)' : entry.type === 'remove' ? 'rgba(248, 81, 73, 0.15)' : 'transparent'
+        const color = entry.type === 'add' ? '#3fb950' : entry.type === 'remove' ? '#f85149' : '#e6edf3'
+        return (
+          <div key={i} style={{ background: bg, color, margin: '0 -0.75rem', padding: '0 0.75rem' }}>
+            <span style={{ color: '#555', userSelect: 'none', display: 'inline-block', width: '1.5em' }}>{prefix}</span>
+            {entry.line}
+          </div>
+        )
+      })}
+    </pre>
+  )
+}
+
+const lineNumberStyle = {
+  minWidth: '2.5em',
+  paddingRight: '1em',
+  textAlign: 'right' as const,
+  userSelect: 'none' as const,
+  color: '#555',
+}
+
 function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
   const filePath = args.file_path as string | undefined
 
@@ -161,6 +302,9 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
           style={highlighterTheme}
           language={language}
           PreTag="div"
+          showLineNumbers
+          startingLineNumber={1}
+          lineNumberStyle={lineNumberStyle}
           customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
         >
           {args.content as string}
@@ -169,32 +313,14 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
     )
   }
 
-  // Edit pattern: file_path + old_string + new_string
+  // Edit pattern: file_path + old_string + new_string — unified diff
   if (filePath && typeof args.old_string === 'string' && typeof args.new_string === 'string') {
-    const language = getLanguageFromPath(filePath)
     return (
       <div>
         <div className="text-muted-foreground mb-1 font-medium">
           Edit <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <div className="text-muted-foreground mb-0.5 text-[0.65rem] uppercase tracking-wide">Old</div>
-        <SyntaxHighlighter
-          style={highlighterTheme}
-          language={language}
-          PreTag="div"
-          customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '12rem', overflow: 'auto', marginBottom: '0.5rem' }}
-        >
-          {args.old_string as string}
-        </SyntaxHighlighter>
-        <div className="text-muted-foreground mb-0.5 text-[0.65rem] uppercase tracking-wide">New</div>
-        <SyntaxHighlighter
-          style={highlighterTheme}
-          language={language}
-          PreTag="div"
-          customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '12rem', overflow: 'auto' }}
-        >
-          {args.new_string as string}
-        </SyntaxHighlighter>
+        <InlineDiff oldStr={args.old_string as string} newStr={args.new_string as string} />
       </div>
     )
   }
@@ -215,7 +341,40 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
   )
 }
 
+const DATA_URI_RE = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/
+
+/** Extract a renderable image src from a tool result, or null. */
+export function extractBase64Image(result: unknown): string | null {
+  // Direct data URI string
+  if (typeof result === 'string' && DATA_URI_RE.test(result)) return result
+
+  if (typeof result !== 'object' || result === null) return null
+
+  const obj = result as Record<string, unknown>
+
+  // MCP / Anthropic content-block format:
+  // { type: "image", source: { type: "base64", media_type: "image/png", data: "..." } }
+  if (obj.type === 'image' && typeof obj.source === 'object' && obj.source !== null) {
+    const src = obj.source as Record<string, unknown>
+    if (src.type === 'base64' && typeof src.data === 'string' && typeof src.media_type === 'string') {
+      return `data:${src.media_type};base64,${src.data}`
+    }
+  }
+
+  // Array of content blocks — find first image block
+  if (Array.isArray(result)) {
+    for (const item of result) {
+      const found = extractBase64Image(item)
+      if (found) return found
+    }
+  }
+
+  return null
+}
+
 function ToolResultContent({ call }: { call: ToolCall }) {
+  const imageSrc = useMemo(() => extractBase64Image(call.result), [call.result])
+
   const resultStr = useMemo(() => {
     try {
       if (typeof call.result === 'string') {
@@ -233,6 +392,17 @@ function ToolResultContent({ call }: { call: ToolCall }) {
     }
   }, [call.result])
   const filePath = call.arguments?.file_path as string | undefined
+
+  // Base64 image — render inline
+  if (imageSrc) {
+    return (
+      <img
+        src={imageSrc}
+        alt="Tool result image"
+        className="max-w-full max-h-96 rounded-lg border border-border"
+      />
+    )
+  }
 
   if (filePath) {
     const parsed = parseReadOutput(resultStr)
@@ -285,8 +455,11 @@ function ToolResultContent({ call }: { call: ToolCall }) {
 }
 
 const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => void; canvasSurfaces?: Map<string, A2UISurfaceState>; onCanvasInteraction?: (canvasId: string, action: UserAction) => void; nested?: boolean }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const displayName = formatToolName(call.tool_name)
+  const summary = useMemo(() => getToolSummary(call), [call])
+  const isCompact = summary !== null && COMPACT_HEADER_TOOLS.has(displayName)
+  const isFileHeader = FILE_TOOLS.has(displayName)
 
   if (call.tool_name === 'render_surface') {
     return <CanvasSurfaceCard call={call} canvasSurfaces={canvasSurfaces} onCanvasInteraction={onCanvasInteraction} />
@@ -315,7 +488,14 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
       >
         <StatusIcon status={call.status} />
         <span className="font-mono text-foreground">{displayName}</span>
-        <span className="text-muted-foreground text-xs">{call.server_name}</span>
+        {summary && isFileHeader ? (
+          <>
+            <span className="text-muted-foreground text-xs truncate hidden sm:inline">{summary}</span>
+            <span className="text-muted-foreground text-xs truncate sm:hidden">{pathBasename(summary)}</span>
+          </>
+        ) : summary ? (
+          <span className="text-muted-foreground text-xs truncate max-w-[12rem] sm:max-w-[24rem]">{summary}</span>
+        ) : null}
         <div className="flex-1" />
         {hasDetails && (
           <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
@@ -323,7 +503,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
       </div>
       {expanded && hasDetails && (
         <div className="border-t border-border px-3 py-2 text-xs space-y-2">
-          {call.arguments && Object.keys(call.arguments).length > 0 && (
+          {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
             <ToolArgumentsContent args={call.arguments} />
           )}
           {call.status === 'completed' && call.result !== undefined && (
@@ -618,12 +798,12 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
         <GroupStatusIcon hasErrors={group.hasErrors} allCompleted={group.allCompleted} hasInFlight={group.hasInFlight} />
         <span className="font-mono text-foreground">{group.displayName}</span>
         <Badge variant="default">×{group.calls.length}</Badge>
-        {serverName && <span className="text-muted-foreground text-xs">{serverName}</span>}
+        {serverName && serverName !== 'builtin' && <span className="text-muted-foreground text-xs">{serverName}</span>}
         <div className="flex-1" />
         <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
       </div>
       {expanded && (
-        <div className="border-t border-border">
+        <div className="border-t border-border pl-4">
           {group.calls.map(call => (
             <ToolCallItem
               key={call.id}
@@ -641,12 +821,90 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   )
 }
 
+// --- Tier 1: Tool Chain wrapper (collapsible group of all calls between text blocks) ---
+
+function buildChainSummary(toolCalls: ToolCall[]): string {
+  const counts = new Map<string, number>()
+  for (const tc of toolCalls) {
+    const name = formatToolName(tc.tool_name)
+    counts.set(name, (counts.get(name) || 0) + 1)
+  }
+  const parts = Array.from(counts.entries()).map(([name, count]) =>
+    count > 1 ? `${count} ${name}` : name
+  )
+  return parts.join(', ')
+}
+
+interface ToolChainGroupProps {
+  toolCalls: ToolCall[]
+  onRespond?: (toolCallId: string, answers: Record<string, string>) => void
+  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => void
+  canvasSurfaces?: Map<string, A2UISurfaceState>
+  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
+}
+
+export const ToolChainGroup = memo(function ToolChainGroup({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolChainGroupProps) {
+  const hasInFlight = toolCalls.some(tc => tc.status === 'calling')
+  const hasErrors = toolCalls.some(tc => tc.status === 'error')
+  const allCompleted = toolCalls.every(tc => tc.status === 'completed')
+  const [expanded, setExpanded] = useState(true)
+
+  const summary = useMemo(() => buildChainSummary(toolCalls), [toolCalls])
+  const count = toolCalls.length
+
+  if (!count) return null
+
+  // Single call — no point wrapping in a "1 tool call" group, render directly
+  if (count === 1) {
+    return (
+      <ToolCallCards
+        toolCalls={toolCalls}
+        onRespond={onRespond}
+        onRespondToApproval={onRespondToApproval}
+        canvasSurfaces={canvasSurfaces}
+        onCanvasInteraction={onCanvasInteraction}
+      />
+    )
+  }
+
+  return (
+    <div className={cn(
+      'rounded-lg border overflow-hidden my-1.5',
+      hasErrors ? 'border-destructive-foreground/30' : hasInFlight ? 'border-accent/30' : 'border-border'
+    )}>
+      <div
+        className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/50 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <GroupStatusIcon hasErrors={hasErrors} allCompleted={allCompleted} hasInFlight={hasInFlight} />
+        <span className="text-muted-foreground">
+          {count} tool call{count !== 1 ? 's' : ''}
+        </span>
+        <span className="text-muted-foreground/60 text-xs truncate">{summary}</span>
+        <div className="flex-1" />
+        <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
+      </div>
+      {expanded && (
+        <div className="border-t border-border px-3">
+          <ToolCallCards
+            toolCalls={toolCalls}
+            onRespond={onRespond}
+            onRespondToApproval={onRespondToApproval}
+            canvasSurfaces={canvasSurfaces}
+            onCanvasInteraction={onCanvasInteraction}
+          />
+        </div>
+      )}
+    </div>
+  )
+})
+
 export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolCallCardProps) {
   const segments = useMemo(() => groupToolCalls(toolCalls), [toolCalls])
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set())
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
 
   const toggleGroup = useCallback((key: string) => {
-    setExpandedGroups(prev => {
+    setCollapsedGroups(prev => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
       else next.add(key)
@@ -676,7 +934,7 @@ export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond,
           <ToolCallGroupHeader
             key={groupKey}
             group={segment}
-            expanded={expandedGroups.has(groupKey)}
+            expanded={!collapsedGroups.has(groupKey)}
             onToggle={() => toggleGroup(groupKey)}
             onRespond={onRespond}
             onRespondToApproval={onRespondToApproval}

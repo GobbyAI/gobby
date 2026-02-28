@@ -24,14 +24,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from gobby.search.backends import EmbeddingBackend, TFIDFBackend
 from gobby.search.embeddings import is_embedding_available
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
