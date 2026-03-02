@@ -253,45 +253,35 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         # the tool result, so the detection_helpers can't verify close succeeded
         if resolved_session_id:
             try:
-                state = ctx.workflow_state_manager.get_state(resolved_session_id)
-                if state:
-                    # Resolve claimed_task_id to UUID if it's a ref (backward compat)
-                    claimed_task_id = state.variables.get("claimed_task_id")
-                    if claimed_task_id and not _is_uuid(claimed_task_id):
-                        try:
-                            claimed_task = ctx.task_manager.get_task(claimed_task_id)
-                            if claimed_task:
-                                claimed_task_id = claimed_task.id
-                        except Exception as e:
-                            logger.debug("Raw ref resolution failed (handled later): %s", e)
+                session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
+                # Always resolve ref before UUID comparison
+                claimed_task_id = session_vars.get("claimed_task_id")
+                if claimed_task_id:
+                    try:
+                        claimed_task_id = resolve_task_id_for_mcp(ctx.task_manager, claimed_task_id)
+                    except Exception as e:
+                        logger.debug("Resolution of claimed_task_id failed: %s", e)
 
-                    # Compare with normalized UUIDs to handle format differences
-                    ids_match = False
-                    if claimed_task_id and resolved_id:
-                        try:
-                            ids_match = str(uuid.UUID(claimed_task_id)) == str(
-                                uuid.UUID(resolved_id)
-                            )
-                        except (ValueError, TypeError):
-                            ids_match = claimed_task_id == resolved_id
+                # Compare with normalized UUIDs to handle format differences
+                ids_match = False
+                if claimed_task_id and resolved_id:
+                    try:
+                        ids_match = str(uuid.UUID(claimed_task_id)) == str(uuid.UUID(resolved_id))
+                    except (ValueError, TypeError):
+                        ids_match = claimed_task_id == resolved_id
 
-                    if ids_match:
-                        clear_on_close = state.variables.get("clear_task_on_close", True)
-                        if clear_on_close:
-                            state.variables["task_claimed"] = False
-                            state.variables["claimed_task_id"] = None
-                            state.variables["task_ref"] = ""
-                            ctx.workflow_state_manager.save_state(state)
-                            # Mirror to session_variables (authoritative store for rule evaluation)
-                            ctx.session_var_manager.merge_variables(
-                                resolved_session_id,
-                                {
-                                    "task_claimed": False,
-                                    "claimed_task_id": None,
-                                    "task_ref": "",
-                                },
-                            )
-                            logger.debug("Cleared task_claimed for session %s", resolved_session_id)
+                if ids_match:
+                    clear_on_close = session_vars.get("clear_task_on_close", True)
+                    if clear_on_close:
+                        ctx.session_var_manager.merge_variables(
+                            resolved_session_id,
+                            {
+                                "task_claimed": False,
+                                "claimed_task_id": None,
+                                "task_ref": "",
+                            },
+                        )
+                        logger.debug("Cleared task_claimed for session %s", resolved_session_id)
             except Exception as e:
                 logger.warning(
                     "Failed to clear task_claimed for session %s: %s",
@@ -631,24 +621,9 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except Exception as e:
             logger.debug("Best-effort session claim linking failed: %s", e)
 
-        # Set task_claimed workflow variable (enables Edit/Write hooks)
+        # Set task_claimed session variable (enables Edit/Write hooks)
         # This mirrors create_task behavior in _crud.py
         try:
-            from gobby.workflows.definitions import WorkflowState
-
-            state = ctx.workflow_state_manager.get_state(resolved_session_id)
-            if not state:
-                state = WorkflowState(
-                    session_id=resolved_session_id,
-                    workflow_name="__lifecycle__",
-                    step="global",
-                    variables={},
-                )
-            state.variables["task_claimed"] = True
-            state.variables["claimed_task_id"] = resolved_id  # Always use UUID
-            state.variables["task_ref"] = f"#{task.seq_num}" if task.seq_num else resolved_id
-            ctx.workflow_state_manager.save_state(state)
-            # Mirror to session_variables (authoritative store for rule evaluation)
             ctx.session_var_manager.merge_variables(
                 resolved_session_id,
                 {
@@ -658,7 +633,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
             )
         except Exception as e:
-            logger.debug("Best-effort workflow variable setting failed: %s", e)
+            logger.debug("Best-effort session variable setting failed: %s", e)
 
         return {}
 

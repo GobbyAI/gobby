@@ -487,11 +487,17 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     async def delete_skill(skill_id: str) -> dict[str, Any]:
         """Delete a skill."""
         metrics.inc_counter("http_requests_total")
-        result = server.skill_manager.delete_skill(skill_id)
-        if not result:
-            raise HTTPException(status_code=404, detail="Skill not found")
-        await _broadcast_skill("skill_deleted", skill_id)
-        return {"deleted": True, "id": skill_id}
+        try:
+            result = server.skill_manager.delete_skill(skill_id)
+            if not result:
+                raise HTTPException(status_code=404, detail="Skill not found")
+            await _broadcast_skill("skill_deleted", skill_id)
+            return {"deleted": True, "id": skill_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to delete skill {skill_id}: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{skill_id}/install")
     async def install_from_template(skill_id: str) -> dict[str, Any]:

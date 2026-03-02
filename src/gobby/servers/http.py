@@ -23,7 +23,6 @@ from gobby.llm import create_llm_service
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
-from gobby.mcp_proxy.services.tool_filter import ToolFilterService
 from gobby.utils.metrics import get_metrics_collector
 from gobby.utils.version import get_version
 
@@ -179,12 +178,6 @@ class HTTPServer:
                 )
                 logger.debug("Semantic tool search initialized")
 
-            # Create tool filter for workflow phase restrictions
-            tool_filter = None
-            if services.mcp_db_manager:
-                tool_filter = ToolFilterService(db=services.mcp_db_manager.db)
-                logger.debug("Tool filter service initialized")
-
             # Create fallback resolver for alternative tool suggestions on error
             fallback_resolver = None
             if semantic_search and services.metrics_manager:
@@ -209,7 +202,6 @@ class HTTPServer:
                 memory_manager=services.memory_manager,
                 config_manager=services.mcp_db_manager,
                 semantic_search=semantic_search,
-                tool_filter=tool_filter,
                 fallback_resolver=fallback_resolver,
             )
             self._mcp_server = create_mcp_server(self._tools_handler)

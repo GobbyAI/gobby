@@ -14,7 +14,6 @@ from gobby.storage.sessions import LocalSessionManager
 from gobby.workflows.state_manager import (
     SessionVariableManager,
     WorkflowInstanceManager,
-    WorkflowStateManager,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +43,6 @@ def _coerce_value(value: str | int | float | bool | None) -> str | int | float |
 
 
 def set_variable(
-    state_manager: WorkflowStateManager,
     session_manager: LocalSessionManager,
     db: DatabaseProtocol,
     name: str,
@@ -59,10 +57,9 @@ def set_variable(
 
     When `workflow` is provided, writes to that workflow instance's variables.
     When `workflow` is not provided, writes to session-scoped shared variables
-    (via SessionVariableManager), falling back to workflow_states for backward compat.
+    (via SessionVariableManager).
 
     Args:
-        state_manager: WorkflowStateManager instance
         session_manager: LocalSessionManager instance
         db: LocalDatabase instance
         name: Variable name (e.g., "session_epic", "is_worktree")
@@ -129,7 +126,6 @@ def set_variable(
 
 
 def get_variable(
-    state_manager: WorkflowStateManager,
     session_manager: LocalSessionManager,
     db: DatabaseProtocol,
     name: str | None = None,
@@ -142,11 +138,9 @@ def get_variable(
     Get variable(s) scoped to a workflow instance or session.
 
     When `workflow` is provided, reads from that workflow instance's variables.
-    When `workflow` is not provided, reads from session-scoped shared variables,
-    falling back to workflow_states for backward compat.
+    When `workflow` is not provided, reads from session-scoped shared variables.
 
     Args:
-        state_manager: WorkflowStateManager instance
         session_manager: LocalSessionManager instance
         db: LocalDatabase instance
         name: Variable name to get (if None, returns all variables)

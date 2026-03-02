@@ -1,0 +1,67 @@
+name: merge-workflow
+description: "Merge agent step workflow — batch merge approved tasks"
+version: "2.0"
+enabled: false
+
+variables:
+  merge_complete: false
+
+steps:
+  - name: merge
+    description: "Merge all approved tasks sequentially"
+    status_message: |
+      Merge all review_approved tasks into the target branch.
+      For each task (in seq_num order):
+      1. list_worktrees(task_id=...) to find the worktree
+      2. merge_worktree(worktree_id=...) to merge
+      3. Run the push_command from the result
+      4. auto_link_commits(task_id=..., since="1 hour ago")
+      5. close_task(task_id=..., changes_summary="Merged to {target}")
+      6. delete_worktree(worktree_id=..., force=true)
+      7. git fetch origin (before next merge)
+      When all tasks merged, call kill_agent to terminate.
+    allowed_tools:
+      - Bash
+      - Read
+      - Glob
+      - Grep
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    blocked_tools:
+      - Write
+      - Edit
+    allowed_mcp_tools:
+      - "gobby-worktrees:list_worktrees"
+      - "gobby-worktrees:merge_worktree"
+      - "gobby-worktrees:delete_worktree"
+      - "gobby-tasks:list_tasks"
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:auto_link_commits"
+      - "gobby-tasks:escalate_task"
+      - "gobby-merge:*"
+      - "gobby-agents:kill_agent"
+    transitions:
+      - to: terminate
+        when: "vars.merge_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "All merges complete. Call kill_agent to terminate."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:kill_agent"
+
+exit_condition: "current_step == 'terminate'"
+
+rule_definitions:
+  no_agent_spawn:
+    mcp_tools:
+      - gobby-agents:spawn_agent
+    reason: "Spawning agents is not allowed in merge workflow."
+    action: block

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 def register_commits_tools(
     registry: InternalToolRegistry,
     session_manager: LocalSessionManager,
+    db: Any | None = None,
 ) -> None:
     """
     Register commits and workflow tools with a registry.
@@ -25,6 +26,7 @@ def register_commits_tools(
     Args:
         registry: The InternalToolRegistry to register tools with
         session_manager: LocalSessionManager instance for session operations
+        db: Database for dependency injection (optional)
     """
 
     def _resolve_session_id(ref: str) -> str:
@@ -96,8 +98,8 @@ def register_commits_tools(
             until_time = datetime.now(UTC)
 
         # Format as ISO 8601 for git
-        since_str = since_time.strftime("%Y-%m-%dT%H:%M:%S")
-        until_str = until_time.strftime("%Y-%m-%dT%H:%M:%S")
+        since_str = since_time.isoformat()
+        until_str = until_time.isoformat()
 
         try:
             # Get commits within timeframe
@@ -160,14 +162,10 @@ def register_commits_tools(
             return {
                 "success": False,
                 "session_id": session.id,
-                "error": "Git not found or not a git repository",
+                "error": "Git executable not found in PATH",
             }
         except Exception as e:
-            return {
-                "success": False,
-                "session_id": session.id,
-                "error": f"Failed to get commits: {e!s}",
-            }
+            return {"success": False, "session_id": session.id, "error": str(e)}
 
     @registry.tool(
         name="mark_loop_complete",
@@ -214,31 +212,18 @@ Args:
                 "session_id": session_id,
             }
 
-        # Load and update workflow state
-        from gobby.storage.database import LocalDatabase
-        from gobby.workflows.definitions import WorkflowState
-        from gobby.workflows.state_manager import WorkflowStateManager
+        # Set stop_reason via session variables
+        from gobby.workflows.state_manager import SessionVariableManager
 
-        db = LocalDatabase()
-        state_manager = WorkflowStateManager(db)
+        if db is None:
+            from gobby.storage.database import LocalDatabase
 
-        # Get or create state for session
-        state = state_manager.get_state(session.id)
-        if not state:
-            # Create minimal state just to hold the variable
-            state = WorkflowState(
-                session_id=session.id,
-                workflow_name="auto-loop",
-                step="active",
-            )
+            local_db = LocalDatabase()
+            session_var_manager = SessionVariableManager(local_db)
+        else:
+            session_var_manager = SessionVariableManager(db)
 
-        # Mark loop complete using the action function
-        from gobby.workflows.state_actions import mark_loop_complete as action_mark_complete
-
-        action_mark_complete(state)
-
-        # Save updated state
-        state_manager.save_state(state)
+        session_var_manager.set_variable(session.id, "stop_reason", "completed")
 
         return {
             "success": True,

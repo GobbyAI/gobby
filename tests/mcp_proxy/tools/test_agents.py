@@ -540,12 +540,9 @@ class TestKillAgent:
         runner = MagicMock()
         runner.cancel_run.return_value = True
 
-        workflow_state_manager = MagicMock()
-
         registry = create_agents_registry(
             runner,
             running_registry=running_registry,
-            workflow_state_manager=workflow_state_manager,
         )
         kill_agent = registry._tools["kill_agent"].func
 
@@ -553,9 +550,6 @@ class TestKillAgent:
         result = await kill_agent(run_id="run-123")
 
         assert result["success"] is True
-        # Workflow state should be deleted by default
-        workflow_state_manager.delete_state.assert_called_once_with("sess-456")
-        assert result.get("workflow_deleted") is True
 
     @pytest.mark.asyncio
     async def test_debug_preserves_state(self):
@@ -574,12 +568,9 @@ class TestKillAgent:
         runner = MagicMock()
         runner.cancel_run.return_value = True
 
-        workflow_state_manager = MagicMock()
-
         registry = create_agents_registry(
             runner,
             running_registry=running_registry,
-            workflow_state_manager=workflow_state_manager,
         )
         kill_agent = registry._tools["kill_agent"].func
 
@@ -587,9 +578,6 @@ class TestKillAgent:
         result = await kill_agent(run_id="run-123", debug=True)
 
         assert result["success"] is True
-        # Workflow state should NOT be deleted when debugging
-        workflow_state_manager.delete_state.assert_not_called()
-        assert result.get("workflow_deleted") is None
 
 
 class TestRunningAgentStats:
@@ -725,7 +713,6 @@ class TestFireSyntheticStop:
         registry = create_agents_registry(
             runner,
             running_registry=running_registry,
-            workflow_state_manager=MagicMock(),
             hook_manager_resolver=mock_resolver,
         )
         kill_agent = registry._tools["kill_agent"].func

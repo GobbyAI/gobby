@@ -35,7 +35,6 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_client import DaemonClient
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.loader import WorkflowLoader
-from gobby.workflows.state_manager import WorkflowStateManager
 
 if TYPE_CHECKING:
     import asyncio
@@ -75,7 +74,6 @@ class _WorkflowComponents:
     """Container for workflow engine components."""
 
     loader: WorkflowLoader
-    state_manager: WorkflowStateManager
     template_engine: TemplateEngine
     skill_manager: HookSkillManager
     pipeline_executor: PipelineExecutor | None
@@ -106,7 +104,6 @@ class HookManagerComponents:
     stuck_detector: StuckDetector
     memory_manager: MemoryManager
     workflow_loader: WorkflowLoader
-    workflow_state_manager: WorkflowStateManager
     template_engine: Any  # TemplateEngine
     skill_manager: HookSkillManager
     pipeline_executor: Any  # PipelineExecutor | None
@@ -267,7 +264,6 @@ class HookManagerFactory:
             stuck_detector=autonomous.stuck_detector,
             memory_manager=mem_manager,
             workflow_loader=workflow_components.loader,
-            workflow_state_manager=workflow_components.state_manager,
             template_engine=workflow_components.template_engine,
             skill_manager=workflow_components.skill_manager,
             pipeline_executor=workflow_components.pipeline_executor,
@@ -350,7 +346,6 @@ class HookManagerFactory:
 
         loader = WorkflowLoader(db=database)
         rule_engine = RuleEngine(db=database)
-        state_manager = WorkflowStateManager(database)
         template_engine = TemplateEngine()
         skill_manager = HookSkillManager(db=database)
 
@@ -394,7 +389,6 @@ class HookManagerFactory:
         )
         return _WorkflowComponents(
             loader=loader,
-            state_manager=state_manager,
             template_engine=template_engine,
             skill_manager=skill_manager,
             pipeline_executor=pipeline_executor,

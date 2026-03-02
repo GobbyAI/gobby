@@ -1057,6 +1057,188 @@ class TestSessionStartHandoff:
         )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_task_claim_vars_carried_over_on_compact(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Test task claim variables are copied from parent to child on compact."""
+        parent_vars = {
+            "task_claimed": True,
+            "claimed_task_id": "uuid-123",
+            "task_ref": "#42",
+            "session_had_task": True,
+        }
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.side_effect = lambda sid: (
+            parent_vars if sid == "parent-sess-123" else {"auto_inject_handoff": True}
+        )
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+
+        mock_parent_obj = MagicMock()
+        mock_parent_obj.id = "parent-sess-123"
+        mock_parent_obj.seq_num = 42
+        mock_parent_obj.summary_markdown = None
+        mock_parent_obj.compact_markdown = "# Compact\nContinuation"
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,  # pre-created session check
+            mock_parent_obj,  # handoff variable population
+            mock_new_session,  # fetch session for seq_num
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+        mock_dependencies["session_task_manager"] = MagicMock()
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={"source": "compact", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_sv_mgr.merge_variables.assert_any_call(
+            "new-sess-456",
+            {
+                "task_claimed": True,
+                "claimed_task_id": "uuid-123",
+                "task_ref": "#42",
+                "session_had_task": True,
+            },
+        )
+        mock_dependencies["task_manager"].update_task.assert_called_once_with(
+            "uuid-123", assignee="new-sess-456"
+        )
+        mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
+            "new-sess-456", "uuid-123", "claimed"
+        )
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_closed_task_not_carried_over(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Test that closed task (task_claimed=False) is not carried over on compact."""
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.side_effect = lambda sid: (
+            {"task_claimed": False, "claimed_task_id": "uuid-123"}
+            if sid == "parent-sess-123"
+            else {"auto_inject_handoff": True}
+        )
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+
+        mock_parent_obj = MagicMock()
+        mock_parent_obj.id = "parent-sess-123"
+        mock_parent_obj.seq_num = 42
+        mock_parent_obj.summary_markdown = None
+        mock_parent_obj.compact_markdown = "# Compact\nDone"
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,
+            mock_parent_obj,
+            mock_new_session,
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+        mock_dependencies["session_task_manager"] = MagicMock()
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={"source": "compact", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        # Only the compact summary merge should have happened, not task claim vars
+        for call in mock_sv_mgr.merge_variables.call_args_list:
+            args = call[0]
+            if len(args) >= 2:
+                merged_dict = args[1]
+                assert "task_claimed" not in merged_dict
+        mock_dependencies["task_manager"].update_task.assert_not_called()
+        mock_dependencies["session_task_manager"].link_task.assert_not_called()
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_task_claim_vars_carried_over_on_clear(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Test task claim variables are copied from parent to child on /clear."""
+        parent_vars = {
+            "task_claimed": True,
+            "claimed_task_id": "uuid-789",
+            "task_ref": "#99",
+        }
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.side_effect = lambda sid: (
+            parent_vars if sid == "parent-sess-500" else {"auto_inject_handoff": True}
+        )
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-500"
+
+        mock_parent_obj = MagicMock()
+        mock_parent_obj.id = "parent-sess-500"
+        mock_parent_obj.seq_num = 50
+        mock_parent_obj.summary_markdown = "# Summary\nCleared session"
+        mock_parent_obj.compact_markdown = None
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 51
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,  # pre-created session check
+            mock_parent_obj,  # handoff variable population
+            mock_new_session,  # fetch session for seq_num
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-600"
+        mock_dependencies["session_task_manager"] = MagicMock()
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-456",
+            data={"source": "clear", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_sv_mgr.merge_variables.assert_any_call(
+            "new-sess-600",
+            {
+                "task_claimed": True,
+                "claimed_task_id": "uuid-789",
+                "task_ref": "#99",
+            },
+        )
+        mock_dependencies["task_manager"].update_task.assert_called_once_with(
+            "uuid-789", assignee="new-sess-600"
+        )
+        mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
+            "new-sess-600", "uuid-789", "claimed"
+        )
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_task_context_variable(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
     ) -> None:

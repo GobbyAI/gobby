@@ -1,22 +1,14 @@
 import { useState } from 'react'
 import type { GobbySession } from '../../hooks/useSessions'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import type { ChatMode } from '../../types/chat'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { AgentPickerDropdown } from './AgentPickerDropdown'
-
-const MODE_DOT: Record<ChatMode, { dot: string; label: string }> = {
-  plan: { dot: 'bg-blue-400', label: 'Plan' },
-  accept_edits: { dot: 'bg-green-400', label: 'Act' },
-  bypass: { dot: 'bg-amber-400', label: 'Auto' },
-}
 
 interface MobileChatDrawerProps {
   sessions: GobbySession[]
   activeSessionId: string | null
   sessionRef: string | null
   title: string | null
-  mode: ChatMode
   onNewChat: (agentName?: string) => void
   onSelectSession: (session: GobbySession) => void
   onDeleteSession?: (session: GobbySession) => void
@@ -33,7 +25,6 @@ export function MobileChatDrawer({
   activeSessionId,
   sessionRef,
   title,
-  mode,
   onNewChat,
   onSelectSession,
   onDeleteSession,
@@ -46,7 +37,6 @@ export function MobileChatDrawer({
 }: MobileChatDrawerProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
-  const { dot, label } = MODE_DOT[mode]
 
   const activeSession = sessions.find((s) => s.external_id === activeSessionId)
 
@@ -79,12 +69,6 @@ export function MobileChatDrawer({
           )}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {!isOpen && (
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              <span className={`inline-block w-1.5 h-1.5 rounded-full ${dot}`} />
-              <span className="text-muted-foreground text-xs">{label}</span>
-            </span>
-          )}
           {!isOpen && onDeleteSession && activeSession && (
             <button
               type="button"

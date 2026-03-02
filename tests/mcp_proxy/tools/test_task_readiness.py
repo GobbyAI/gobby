@@ -577,7 +577,7 @@ class TestSuggestNextTaskWithSessionId:
     ) -> None:
         """Test suggest_next_task auto-scopes when session_id has session_task variable."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
-        from gobby.workflows.definitions import WorkflowState
+
 
         task_manager = MagicMock()
 
@@ -613,16 +613,10 @@ class TestSuggestNextTaskWithSessionId:
 
         task_manager.list_tasks.side_effect = list_tasks_side_effect
 
-        # Patch WorkflowStateManager.get_state to return a workflow with session_task
-        mock_workflow_state = WorkflowState(
-            session_id="test-session-123",
-            workflow_name="auto-task",
-            step="work",
-            variables={"session_task": "epic-1"},
-        )
+        # Patch SessionVariableManager.get_variables to return session_task
         monkeypatch.setattr(
-            "gobby.workflows.state_manager.WorkflowStateManager.get_state",
-            lambda self, sid: mock_workflow_state if sid == "test-session-123" else None,
+            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            lambda self, sid: {"session_task": "epic-1"} if sid == "test-session-123" else {},
         )
 
         # Monkeypatch resolve_task_id_for_mcp to pass through unchanged
@@ -650,7 +644,6 @@ class TestSuggestNextTaskWithSessionId:
     ) -> None:
         """If parent_task_id is explicit, session context is ignored."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
-        from gobby.workflows.definitions import WorkflowState
 
         task_manager = MagicMock()
 
@@ -675,16 +668,10 @@ class TestSuggestNextTaskWithSessionId:
 
         task_manager.list_tasks.side_effect = list_tasks_side_effect
 
-        # Patch WorkflowStateManager - session_task is set but parent_id takes precedence
-        mock_workflow_state = WorkflowState(
-            session_id="test-session",
-            workflow_name="auto-task",
-            step="work",
-            variables={"session_task": "epic-1"},  # Different from explicit-parent
-        )
+        # Patch SessionVariableManager - session_task is set but parent_id takes precedence
         monkeypatch.setattr(
-            "gobby.workflows.state_manager.WorkflowStateManager.get_state",
-            lambda self, sid: mock_workflow_state,
+            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            lambda self, sid: {"session_task": "epic-1"},  # Different from explicit-parent
         )
 
         registry = create_readiness_registry(task_manager=task_manager)
@@ -701,7 +688,7 @@ class TestSuggestNextTaskWithSessionId:
     ) -> None:
         """Test suggest_next_task returns session_task_complete when scoped epic is closed."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
-        from gobby.workflows.definitions import WorkflowState
+
 
         task_manager = MagicMock()
 
@@ -714,16 +701,10 @@ class TestSuggestNextTaskWithSessionId:
         task_manager.list_tasks.return_value = []  # No descendants
         task_manager.get_task.return_value = closed_epic
 
-        # Patch WorkflowStateManager - session_task points to the closed epic
-        mock_workflow_state = WorkflowState(
-            session_id="test-session-123",
-            workflow_name="auto-task",
-            step="work",
-            variables={"session_task": "epic-1"},
-        )
+        # Patch SessionVariableManager - session_task points to the closed epic
         monkeypatch.setattr(
-            "gobby.workflows.state_manager.WorkflowStateManager.get_state",
-            lambda self, sid: mock_workflow_state if sid == "test-session-123" else None,
+            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            lambda self, sid: {"session_task": "epic-1"} if sid == "test-session-123" else {},
         )
         monkeypatch.setattr(
             "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
@@ -748,7 +729,6 @@ class TestSuggestNextTaskWithSessionId:
     ) -> None:
         """Test session_task='*' does not scope (allows all tasks)."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
-        from gobby.workflows.definitions import WorkflowState
 
         task_manager = MagicMock()
 
@@ -763,16 +743,10 @@ class TestSuggestNextTaskWithSessionId:
         task_manager.list_ready_tasks.return_value = [task]
         task_manager.list_tasks.return_value = []
 
-        # Patch WorkflowStateManager - session_task set to "*" (no scoping)
-        mock_workflow_state = WorkflowState(
-            session_id="test-session",
-            workflow_name="auto-task",
-            step="work",
-            variables={"session_task": "*"},
-        )
+        # Patch SessionVariableManager - session_task set to "*" (no scoping)
         monkeypatch.setattr(
-            "gobby.workflows.state_manager.WorkflowStateManager.get_state",
-            lambda self, sid: mock_workflow_state,
+            "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+            lambda self, sid: {"session_task": "*"},
         )
 
         registry = create_readiness_registry(task_manager=task_manager)

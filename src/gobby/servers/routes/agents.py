@@ -109,6 +109,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         return {
             "definition": body.model_dump(exclude_none=True),
             "source": row.source,
+            "enabled": row.enabled,
             "db_id": row.id,
             "deleted_at": row.deleted_at,
             "tags": row.tags,

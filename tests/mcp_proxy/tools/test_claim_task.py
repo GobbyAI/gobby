@@ -390,27 +390,24 @@ class TestClaimTaskSchema:
         assert "claim" in description or "assignee" in description or "in_progress" in description
 
 
-class TestClaimTaskWorkflowState:
-    """Tests for claim_task setting task_claimed workflow variable."""
+class TestClaimTaskSessionVariables:
+    """Tests for claim_task setting task_claimed session variable."""
 
     @pytest.mark.asyncio
-    async def test_claim_task_sets_task_claimed_when_no_workflow_state_exists(
+    async def test_claim_task_sets_task_claimed_via_session_variables(
         self, mock_task_manager, mock_sync_manager, sample_task
-    ):
-        """claim_task must create workflow state and set task_claimed even when
-        no workflow_states row exists for the session (get_state returns None).
+    ) -> None:
+        """claim_task must set task_claimed via session_var_manager.merge_variables.
 
         Regression test for #8642: PreToolUse hook blocked edits despite claimed task
-        because task_claimed was never persisted when state was None.
+        because task_claimed was never persisted.
         """
         with (
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
             patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.WorkflowStateManager"
-            ) as MockWSManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -419,10 +416,9 @@ class TestClaimTaskWorkflowState:
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
             MockSessionManager.return_value = mock_session_manager
 
-            # Workflow state manager returns None (no row exists)
-            mock_ws_manager = MagicMock()
-            mock_ws_manager.get_state.return_value = None
-            MockWSManager.return_value = mock_ws_manager
+            mock_sv_manager = MagicMock()
+            mock_sv_manager.get_variables.return_value = {}
+            MockSVManager.return_value = mock_sv_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
@@ -436,69 +432,13 @@ class TestClaimTaskWorkflowState:
 
             assert "error" not in result
 
-            # save_state must have been called with a new WorkflowState
-            mock_ws_manager.save_state.assert_called_once()
-            saved_state = mock_ws_manager.save_state.call_args[0][0]
-            assert saved_state.variables["task_claimed"] is True
-            assert saved_state.variables["claimed_task_id"] == sample_task.id
-            assert saved_state.session_id == "my-session-id"
-            assert saved_state.workflow_name == "__lifecycle__"
-
-    @pytest.mark.asyncio
-    async def test_claim_task_sets_task_claimed_when_workflow_state_exists(
-        self, mock_task_manager, mock_sync_manager, sample_task
-    ):
-        """claim_task updates existing workflow state with task_claimed."""
-        from gobby.workflows.definitions import WorkflowState
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
-            ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.WorkflowStateManager"
-            ) as MockWSManager,
-        ):
-            mock_st_instance = MagicMock()
-            MockSessionTaskManager.return_value = mock_st_instance
-
-            mock_session_manager = MagicMock()
-            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
-            MockSessionManager.return_value = mock_session_manager
-
-            # Existing workflow state
-            existing_state = WorkflowState(
-                session_id="my-session-id",
-                workflow_name="developer",
-                step="working",
-                variables={"some_var": "value"},
-            )
-            mock_ws_manager = MagicMock()
-            mock_ws_manager.get_state.return_value = existing_state
-            MockWSManager.return_value = mock_ws_manager
-
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-            mock_task_manager.get_task.return_value = sample_task
-            mock_task_manager.update_task.return_value = sample_task
-
-            result = await registry.call(
-                "claim_task",
-                {"task_id": sample_task.id, "session_id": "my-session-id"},
-            )
-
-            assert "error" not in result
-
-            # Should update the existing state, not create a new one
-            mock_ws_manager.save_state.assert_called_once()
-            saved_state = mock_ws_manager.save_state.call_args[0][0]
-            assert saved_state.variables["task_claimed"] is True
-            assert saved_state.variables["claimed_task_id"] == sample_task.id
-            # Existing variables preserved
-            assert saved_state.variables["some_var"] == "value"
-            # Original workflow_name preserved
-            assert saved_state.workflow_name == "developer"
+            # merge_variables must have been called with task_claimed
+            mock_sv_manager.merge_variables.assert_called_once()
+            call_args = mock_sv_manager.merge_variables.call_args
+            assert call_args[0][0] == "my-session-id"
+            merged_vars = call_args[0][1]
+            assert merged_vars["task_claimed"] is True
+            assert merged_vars["claimed_task_id"] == sample_task.id
 
 
 class TestClaimTaskVsUpdateTask:

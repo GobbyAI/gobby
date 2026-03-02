@@ -1,0 +1,57 @@
+name: qa-workflow
+description: "QA reviewer step workflow with per-step tool enforcement"
+version: "2.0"
+enabled: false
+
+variables:
+  review_complete: false
+
+steps:
+  - name: review
+    description: "Review code, run tests, fix minor issues"
+    status_message: |
+      Review the code changes for the assigned task.
+      1. Check diff: git diff, git log
+      2. Run tests: uv run pytest <test_file> -v
+      3. Fix minor issues if needed, commit fixes
+      4. APPROVE: call mark_task_review_approved
+      5. REJECT (significant issues): call reopen_task with detailed reason
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: mark_task_review_approved
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: reopen_task
+        action: set_variable
+        variable: review_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.review_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call kill_agent to terminate."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:kill_agent"
+
+exit_condition: "current_step == 'terminate'"
+
+rule_definitions:
+  no_push:
+    tools: [Bash]
+    command_pattern: "git\\s+push"
+    reason: "Push is blocked. The merge agent handles pushing."
+    action: block

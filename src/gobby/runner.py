@@ -370,16 +370,6 @@ class GobbyRunner:
                     session_manager=self.session_manager,
                 )
                 logger.info("Pipeline executor initialized at startup")
-
-                # Recover stale running executions from previous daemon lifecycle
-                try:
-                    stale_count = self.pipeline_execution_manager.fail_stale_running_executions()
-                    if stale_count > 0:
-                        logger.info(
-                            f"Recovered {stale_count} stale pipeline executions from previous run"
-                        )
-                except Exception as e2:
-                    logger.warning(f"Failed to recover stale pipeline executions: {e2}")
             except Exception as e:
                 logger.warning(f"Failed to initialize pipeline executor at startup: {e}")
 
@@ -677,6 +667,32 @@ class GobbyRunner:
                     ),
                     name="approval-timeout-expiry",
                 )
+
+            # Resume interrupted pipelines and fail non-resumable stale executions
+            if self.pipeline_executor and self.pipeline_execution_manager and self.workflow_loader:
+                try:
+                    from gobby.mcp_proxy.tools.pipelines._execution import (
+                        resume_interrupted_pipelines,
+                    )
+
+                    resumed_ids = await resume_interrupted_pipelines(
+                        loader=self.workflow_loader,
+                        executor=self.pipeline_executor,
+                        execution_manager=self.pipeline_execution_manager,
+                        project_id=self.project_id,
+                    )
+                    if resumed_ids:
+                        logger.info(
+                            f"Resumed {len(resumed_ids)} pipeline(s) after restart: {resumed_ids}"
+                        )
+
+                    stale_count = self.pipeline_execution_manager.fail_stale_running_executions(
+                        exclude_ids=set(resumed_ids),
+                    )
+                    if stale_count > 0:
+                        logger.info(f"Failed {stale_count} non-resumable stale pipeline executions")
+                except Exception as e:
+                    logger.warning(f"Pipeline recovery after restart failed: {e}")
 
             # Start WebSocket server
             websocket_task = None

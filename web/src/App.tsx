@@ -213,6 +213,7 @@ export default function App() {
   const {
     messages,
     conversationId,
+    conversationSwitchKey,
     sessionRef,
     dbSessionId,
     currentBranch,
@@ -716,7 +717,10 @@ export default function App() {
     setOnModeChanged(updateChatMode);
   }, [updateChatMode, setOnModeChanged]);
 
-  // Restore persisted mode on conversation switch (DB value > user default > plan)
+  // Restore persisted mode on conversation switch (DB value > user default > plan).
+  // Keyed on conversationSwitchKey (not conversationId) so that SDK session ID
+  // adoption — which changes conversationId but is the same logical conversation
+  // — does NOT reset the user's mode back to the default.
   useEffect(() => {
     if (sessionsHook.isLoading) return;
     const session = webChatSessions.find(
@@ -726,7 +730,7 @@ export default function App() {
       (session?.chat_mode as ChatMode | null) || settings.defaultChatMode;
     updateChatMode(restoredMode);
     sendMode(restoredMode);
-  }, [conversationId, sessionsHook.isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversationSwitchKey, sessionsHook.isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = useCallback(
     (value: string) => {

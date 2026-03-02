@@ -409,15 +409,16 @@ class SessionControlMixin:
             # cancel the pending approval to unblock the streaming loop.
             if mode != "plan" and session.has_pending_plan:
                 session.provide_plan_decision("request_changes")
-            # Sync mode_level to workflow state
-            workflow_handler = getattr(self, "workflow_handler", None)
+            # Sync mode_level to session variables
             db_sid = getattr(session, "db_session_id", None)
-            if workflow_handler and db_sid:
+            if db_sid:
                 try:
+                    from gobby.storage.database import LocalDatabase
                     from gobby.workflows.observers import compute_mode_level
+                    from gobby.workflows.state_manager import SessionVariableManager
 
-                    sm = workflow_handler.engine.state_manager
-                    sm.merge_variables(
+                    svm = SessionVariableManager(LocalDatabase())
+                    svm.merge_variables(
                         db_sid,
                         {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
                     )
@@ -502,7 +503,7 @@ class SessionControlMixin:
         """
         import os
 
-        from gobby.servers.websocket.chat import _resolve_git_branch
+        from gobby.servers.websocket.chat._session import _resolve_git_branch
 
         conversation_id = data.get("conversation_id")
         worktree_path = data.get("worktree_path")

@@ -635,7 +635,6 @@ class TestWorkflowToolsAvailability:
         tool_names = [t["name"] for t in tools]
 
         expected_tools = [
-            "activate_workflow",
             "get_workflow_status",
             "set_variable",
             "get_variable",

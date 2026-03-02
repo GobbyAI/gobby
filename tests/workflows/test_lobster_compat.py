@@ -201,6 +201,35 @@ class TestLobsterImporterConvertPipeline:
         assert result.name == "my-pipeline"
         assert result.description == "Test description"
 
+    def test_convert_pipeline_passes_resume_on_restart(self) -> None:
+        """Verify resume_on_restart is passed through from Lobster format."""
+        from gobby.workflows.lobster_compat import LobsterImporter
+
+        importer = LobsterImporter()
+
+        lobster_pipeline = {
+            "name": "resumable-pipeline",
+            "steps": [{"id": "step1", "command": "echo test"}],
+            "resume_on_restart": True,
+        }
+
+        result = importer.convert_pipeline(lobster_pipeline)
+        assert result.resume_on_restart is True
+
+    def test_convert_pipeline_resume_on_restart_defaults_false(self) -> None:
+        """Verify resume_on_restart defaults to False when not specified."""
+        from gobby.workflows.lobster_compat import LobsterImporter
+
+        importer = LobsterImporter()
+
+        lobster_pipeline = {
+            "name": "basic-pipeline",
+            "steps": [{"id": "step1", "command": "echo test"}],
+        }
+
+        result = importer.convert_pipeline(lobster_pipeline)
+        assert result.resume_on_restart is False
+
 
 class TestLobsterImporterImportFile:
     """Tests for LobsterImporter.import_file() method."""

@@ -14,7 +14,7 @@ These are enforced by hooks and workflows.
 6. **No closing without commits.** If your session has diffs, commit before closing.
 7. **No stopping until done.** Task must be closed before stopping. If you claim a task, you close a task.
 8. **Embrace your autonomy.** Only mark tasks with the needs_review if you genuinely need the user to review your work. Do not use it as a workaround to not committing/closing. Escalate to the user if you are genuinely stuck or need guidance.
-9. **Triage what you find.** Create bug tasks for unrelated errors or issues you discover WHEN YOU ENCOUNTER THEM, then continue with your current task. Every error is your error, even if you didn't cause it.
+9. **Triage errors and issues you find.** Create bug tasks for unrelated errors or issues you discover WHEN YOU ENCOUNTER THEM, then continue with your current task. Every error is your error, even if you didn't cause it.
 10. **Use gobby-memory often.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
 11. **No sycophantic behavior.** Do not agree with the user just for the sake of agreement. If you disagree with the user, voice your concerns and provide alternative solutions.
 12. **We don't leave options in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.

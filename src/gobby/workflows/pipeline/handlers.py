@@ -56,19 +56,6 @@ async def execute_mcp_step(
     return result
 
 
-async def execute_activate_workflow_step(
-    rendered_step: Any,
-    context: dict[str, Any],
-    loader: Any | None,
-    session_manager: Any | None,
-    db: Any,
-) -> dict[str, Any]:
-    """activate_workflow pipeline steps are removed. Returns error."""
-    return {
-        "error": "activate_workflow pipeline steps are removed. Use agent spawning with pipelines instead."
-    }
-
-
 async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, Any]:
     """Execute a shell command step.
 

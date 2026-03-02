@@ -13,7 +13,7 @@ from gobby.hooks.events import HookEvent, HookResponse
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
-    from gobby.workflows.definitions import WorkflowState
+    from gobby.workflows.definitions import AgentDefinitionBody
 
 _derive_logger = logging.getLogger(__name__)
 
@@ -31,6 +31,52 @@ class AgentActivationResult:
     skills_count: int
     variables_count: int
     injected_skill_names: list[str]  # skills with format "full" or "content"
+
+
+def select_and_format_agent_skills(
+    agent_body: AgentDefinitionBody,
+    all_skills: list[Any],
+    active_skills: set[str] | None,
+    cli_source: str,
+) -> tuple[str | None, int, list[str]]:
+    """Audience-aware skill selection and formatting for agent activation.
+
+    Shared between session activation and web chat skill injection.
+
+    Args:
+        agent_body: Resolved agent definition body
+        all_skills: All skills from the database
+        active_skills: Set of active skill names (None = all eligible)
+        cli_source: CLI source name for audience filtering
+
+    Returns:
+        (formatted_text, skills_count, injected_skill_names)
+    """
+    from gobby.hooks.skill_manager import _db_skill_to_parsed
+    from gobby.skills.formatting import _format_skills_with_formats
+    from gobby.skills.injector import AgentContext, SkillInjector, SkillProfile
+
+    eligible = (
+        all_skills if active_skills is None else [s for s in all_skills if s.name in active_skills]
+    )
+    parsed = [_db_skill_to_parsed(s) for s in eligible if s.enabled]
+    if not parsed:
+        return None, 0, []
+
+    agent_ctx = AgentContext(
+        agent_depth=0, has_human=True, agent_type="interactive", source=cli_source
+    )
+    profile = None
+    if agent_body.workflows and agent_body.workflows.skill_format:
+        profile = SkillProfile(default_format=agent_body.workflows.skill_format)
+
+    selected = SkillInjector().select_skills(parsed, agent_ctx, profile=profile)
+    if not selected:
+        return None, 0, []
+
+    injected_names = [skill.name for skill, fmt in selected if fmt in ("full", "content")]
+    formatted = _format_skills_with_formats(selected)
+    return formatted, len(selected), injected_names
 
 
 class SessionEventHandlerMixin(EventHandlersBase):
@@ -373,6 +419,44 @@ class SessionEventHandlerMixin(EventHandlersBase):
                     if handoff_vars:
                         sv_mgr.merge_variables(session_id, handoff_vars)
 
+                    # Preserve task claim state across compaction/clear
+                    parent_vars = sv_mgr.get_variables(parent_session_id)
+                    if session_source in ("compact", "clear"):
+                        _TASK_CLAIM_KEYS = (
+                            "task_claimed",
+                            "claimed_task_id",
+                            "task_ref",
+                            "session_had_task",
+                        )
+                        task_handoff = {
+                            k: parent_vars[k] for k in _TASK_CLAIM_KEYS if parent_vars.get(k)
+                        }
+                        if task_handoff:
+                            sv_mgr.merge_variables(session_id, task_handoff)
+                            # Re-assign task and re-link to new session
+                            if task_handoff.get("task_claimed") and task_handoff.get(
+                                "claimed_task_id"
+                            ):
+                                claimed_id = task_handoff["claimed_task_id"]
+                                if self._task_manager:
+                                    try:
+                                        self._task_manager.update_task(
+                                            claimed_id, assignee=session_id
+                                        )
+                                    except Exception as e:
+                                        self.logger.debug(
+                                            f"Best-effort task re-assignment failed for session={session_id} task={claimed_id}: {e}"
+                                        )
+                                if self._session_task_manager:
+                                    try:
+                                        self._session_task_manager.link_task(
+                                            session_id, claimed_id, "claimed"
+                                        )
+                                    except Exception as e:
+                                        self.logger.debug(
+                                            f"Best-effort session-task link failed for session={session_id} task={claimed_id}: {e}"
+                                        )
+
         # Populate task_context session variable for inject_context rule templates
         if event.task_id and session_id and self._session_storage:
             task_title = event.metadata.get("_task_title", "Unknown Task")
@@ -623,6 +707,99 @@ class SessionEventHandlerMixin(EventHandlersBase):
             agent_info=agent_result,
         )
 
+    def _resolve_agent_name(
+        self,
+        session_id: str,
+        agent_name_override: str | None,
+    ) -> str:
+        """Determine which agent to activate.
+
+        Priority: override param > existing _agent_type variable > ConfigStore default.
+
+        Only called from _activate_default_agent after the session_storage None guard.
+        """
+        assert self._session_storage is not None
+        if agent_name_override:
+            return agent_name_override
+
+        # Check if the session already has _agent_type set (e.g., from spawn_agent).
+        # If so, use that instead of the global default — spawned agents should
+        # keep the agent type assigned by the parent.
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        sv_mgr = SessionVariableManager(self._session_storage.db)
+        existing_vars = sv_mgr.get_variables(session_id)
+        existing_agent_type = existing_vars.get("_agent_type") if existing_vars else None
+
+        if existing_agent_type and existing_agent_type != "default":
+            return str(existing_agent_type)
+
+        from gobby.storage.config_store import ConfigStore
+
+        config_store = ConfigStore(self._session_storage.db)
+        return config_store.get("default_agent") or "default"
+
+    def _build_agent_changes(
+        self,
+        agent_body: Any,
+        session_id: str,
+        enabled_rules: list[Any],
+        all_skills: list[Any],
+        enabled_variables: list[Any],
+    ) -> tuple[dict[str, Any], set[str], set[str] | None]:
+        """Build session variable changes from agent definition, rules, skills, and variables.
+
+        Returns:
+            (changes_dict, active_rule_names, active_skill_names)
+
+        Only called from _activate_default_agent after the session_storage None guard.
+        """
+        assert self._session_storage is not None
+        import json
+
+        from gobby.workflows.selectors import (
+            resolve_rules_for_agent,
+            resolve_skills_for_agent,
+            resolve_variables_for_agent,
+        )
+
+        active_rules = resolve_rules_for_agent(agent_body, enabled_rules)
+
+        session = self._session_storage.get(session_id)
+        is_spawned = bool(session and session.agent_run_id)
+
+        changes: dict[str, Any] = {
+            "_agent_type": agent_body.name,
+            "_active_rule_names": list(active_rules),
+            "is_spawned_agent": is_spawned,
+        }
+
+        active_skills = resolve_skills_for_agent(agent_body, all_skills)
+        if active_skills is not None:
+            changes["_active_skill_names"] = list(active_skills)
+
+        if agent_body.workflows and agent_body.workflows.skill_format:
+            changes["_skill_format"] = agent_body.workflows.skill_format
+
+        if agent_body.workflows and agent_body.workflows.variables:
+            for key, value in agent_body.workflows.variables.items():
+                if key.startswith("_"):
+                    self.logger.warning("Skipping reserved variable %r from agent definition", key)
+                    continue
+                changes[key] = value
+
+        active_variable_names = resolve_variables_for_agent(agent_body, enabled_variables)
+        for var_row in enabled_variables:
+            if active_variable_names is None or var_row.name in active_variable_names:
+                try:
+                    var_body = json.loads(var_row.definition_json)
+                    if var_row.name not in changes:
+                        changes[var_row.name] = var_body.get("value")
+                except json.JSONDecodeError:
+                    self.logger.debug("Failed to parse variable definition for %s", var_row.name)
+
+        return changes, active_rules, active_skills
+
     def _activate_default_agent(
         self,
         session_id: str,
@@ -630,37 +807,15 @@ class SessionEventHandlerMixin(EventHandlersBase):
         project_id: str | None,
         agent_name_override: str | None = None,
     ) -> AgentActivationResult | None:
-        """Deep load the default agent and merge its properties into the session.
+        """Activate the default agent for a session, merging its properties.
 
-        Args:
-            session_id: Session ID to activate agent for
-            cli_source: CLI source name
-            project_id: Project ID for agent resolution
-            agent_name_override: If provided, use this agent name instead of
-                the config store default. Used by web chat agent selection.
+        Orchestrates: name resolution -> agent resolution -> changes building ->
+        variable persistence -> context building.
         """
         if not self._session_manager or not self._session_storage:
             return None
 
-        if agent_name_override:
-            default_agent_name = agent_name_override
-        else:
-            # Check if the session already has _agent_type set (e.g., from spawn_agent).
-            # If so, use that instead of the global default — spawned agents should
-            # keep the agent type assigned by the parent.
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            sv_mgr = SessionVariableManager(self._session_storage.db)
-            existing_vars = sv_mgr.get_variables(session_id)
-            existing_agent_type = existing_vars.get("_agent_type") if existing_vars else None
-
-            if existing_agent_type and existing_agent_type != "default":
-                default_agent_name = existing_agent_type
-            else:
-                from gobby.storage.config_store import ConfigStore
-
-                config_store = ConfigStore(self._session_storage.db)
-                default_agent_name = config_store.get("default_agent") or "default"
+        default_agent_name = self._resolve_agent_name(session_id, agent_name_override)
         if default_agent_name == "none":
             return None
 
@@ -678,111 +833,36 @@ class SessionEventHandlerMixin(EventHandlersBase):
             self.logger.debug(f"Default agent '{default_agent_name}' not found in DB")
             return None
 
+        # Fetch rules, skills, and variables from DB
+        from gobby.skills.manager import SkillManager
         from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
         def_manager = LocalWorkflowDefinitionManager(self._session_storage.db)
+        enabled_rules = [r for r in def_manager.list_all(workflow_type="rule") if r.enabled]
+        enabled_variables = [v for v in def_manager.list_all(workflow_type="variable") if v.enabled]
+        all_skills = SkillManager(self._session_storage.db).list_skills()
 
-        all_rules = def_manager.list_all(workflow_type="rule")
-        enabled_rules = [r for r in all_rules if r.enabled]
-
-        from gobby.workflows.selectors import (
-            resolve_rules_for_agent,
-            resolve_skills_for_agent,
-            resolve_variables_for_agent,
+        # Build and persist session variables
+        changes, active_rules, active_skills = self._build_agent_changes(
+            agent_body, session_id, enabled_rules, all_skills, enabled_variables
         )
-
-        active_rules = resolve_rules_for_agent(agent_body, enabled_rules)
-
-        # Detect whether this is a spawned agent (has agent_run_id) vs user terminal
-        session = self._session_storage.get(session_id)
-        is_spawned = bool(session and session.agent_run_id)
-
-        changes: dict[str, Any] = {
-            "_agent_type": agent_body.name,
-            "_active_rule_names": list(active_rules),
-            "is_spawned_agent": is_spawned,
-        }
-
-        from gobby.skills.manager import SkillManager
-
-        skill_mgr = SkillManager(self._session_storage.db)
-        all_skills = skill_mgr.list_skills()
-
-        active_skills = resolve_skills_for_agent(agent_body, all_skills)
-        if active_skills is not None:
-            changes["_active_skill_names"] = list(active_skills)
-
-        if agent_body.workflows and agent_body.workflows.skill_format:
-            changes["_skill_format"] = agent_body.workflows.skill_format
-
-        if agent_body.workflows and agent_body.workflows.variables:
-            for key, value in agent_body.workflows.variables.items():
-                if key.startswith("_"):
-                    self.logger.warning("Skipping reserved variable %r from agent definition", key)
-                    continue
-                changes[key] = value
-
-        import json
-
-        all_variables = def_manager.list_all(workflow_type="variable")
-        enabled_variables = [v for v in all_variables if v.enabled]
-
-        active_variables = resolve_variables_for_agent(agent_body, enabled_variables)
-        for var_row in enabled_variables:
-            if active_variables is None or var_row.name in active_variables:
-                try:
-                    var_body = json.loads(var_row.definition_json)
-                    if var_row.name not in changes:
-                        changes[var_row.name] = var_body.get("value")
-                except json.JSONDecodeError:
-                    self.logger.debug("Failed to parse variable definition for %s", var_row.name)
 
         from gobby.workflows.state_manager import SessionVariableManager
 
         SessionVariableManager(self._session_storage.db).merge_variables(session_id, changes)
 
-        # --- Build injection context ---
+        # Build injection context
         context_parts: list[str] = []
-
-        # 1. Agent preamble (role, goal, personality, instructions)
         preamble = agent_body.build_prompt_preamble()
         if preamble:
             context_parts.append(preamble)
 
-        # 2. Resolved skills (agent's skill_selectors + audience filtering)
-        from gobby.hooks.skill_manager import _db_skill_to_parsed
-        from gobby.skills.injector import AgentContext, SkillInjector, SkillProfile
-
-        eligible = (
-            all_skills
-            if active_skills is None
-            else [s for s in all_skills if s.name in active_skills]
+        formatted, skills_count, injected_names = select_and_format_agent_skills(
+            agent_body, all_skills, active_skills, cli_source
         )
-        parsed = [_db_skill_to_parsed(s) for s in eligible if s.enabled]
-        skills_count = 0
-        injected_names: list[str] = []
+        if formatted:
+            context_parts.append(formatted)
 
-        if parsed:
-            agent_ctx = AgentContext(
-                agent_depth=0, has_human=True, agent_type="interactive", source=cli_source
-            )
-            profile = None
-            if agent_body.workflows and agent_body.workflows.skill_format:
-                profile = SkillProfile(default_format=agent_body.workflows.skill_format)
-
-            selected = SkillInjector().select_skills(parsed, agent_ctx, profile=profile)
-            skills_count = len(selected)
-            if selected:
-                injected_names = [
-                    skill.name for skill, fmt in selected if fmt in ("full", "content")
-                ]
-                from gobby.workflows.context_actions import _format_skills_with_formats
-
-                formatted = _format_skills_with_formats(selected)
-                if formatted:
-                    context_parts.append(formatted)
-
-        # Count variables (exclude internal keys)
         internal_keys = {
             "_agent_type",
             "_active_rule_names",
@@ -802,27 +882,6 @@ class SessionEventHandlerMixin(EventHandlersBase):
             variables_count=variables_count,
             injected_skill_names=injected_names,
         )
-
-    def _get_step_workflow_state(self, session_id: str) -> WorkflowState | None:
-        """Get the active step workflow state for a session.
-
-        Safely navigates the workflow_handler -> engine -> state_manager chain,
-        returning None if any component is missing or an error occurs.
-        """
-        if (
-            not self._workflow_handler
-            or not hasattr(self._workflow_handler, "engine")
-            or self._workflow_handler.engine is None
-            or not hasattr(self._workflow_handler.engine, "state_manager")
-            or self._workflow_handler.engine.state_manager is None
-        ):
-            return None
-        try:
-            state: WorkflowState | None = self._workflow_handler.engine.state_manager.get_state(session_id)
-            return state
-        except Exception as e:
-            self.logger.debug(f"Failed to get step workflow state: {e}")
-            return None
 
     def _compose_session_response(
         self,
@@ -931,14 +990,6 @@ class SessionEventHandlerMixin(EventHandlersBase):
                 system_message += f"\n   └─ Injected: {', '.join(agent_info.injected_skill_names)}"
             else:
                 system_message += f"\n└─ {skills_label}"
-
-        # Workflow (only if active step workflow)
-        if session_id:
-            state = self._get_step_workflow_state(session_id)
-            if state and state.workflow_name not in ("__lifecycle__", "__ended__"):
-                system_message += (
-                    f"\nWorkflow: {state.workflow_name} (step, current_step={state.step})"
-                )
 
         # Build metadata
         metadata: dict[str, Any] = {

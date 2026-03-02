@@ -164,6 +164,11 @@ class SessionTitleConfig(BaseModel):
         default="haiku",
         description="Model to use for title synthesis (fast/cheap recommended)",
     )
+    timeout: int = Field(
+        default=30,
+        gt=0,
+        description="Timeout in seconds for the LLM call (default 30s to accommodate CLI subprocess cold start)",
+    )
 
 
 class MessageTrackingConfig(BaseModel):

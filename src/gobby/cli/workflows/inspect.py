@@ -152,11 +152,6 @@ def show_workflow(ctx: click.Context, name: str, json_format: bool) -> None:
                 elif pstep.prompt:
                     click.echo(f"      prompt: {pstep.prompt[:60]}...")
 
-    if isinstance(definition, WorkflowDefinition) and definition.triggers:
-        click.echo("\nTriggers:")
-        for trigger_name, actions in definition.triggers.items():
-            click.echo(f"  {trigger_name}: {len(actions)} action(s)")
-
 
 @click.command("status")
 @click.option("--session", "-s", "session_id", help="Session ID (defaults to current)")
@@ -164,17 +159,17 @@ def show_workflow(ctx: click.Context, name: str, json_format: bool) -> None:
 @click.pass_context
 def workflow_status(ctx: click.Context, session_id: str | None, json_format: bool) -> None:
     """Show current workflow state for a session."""
-    state_manager = common.get_state_manager()
+    session_var_manager = common.get_session_var_manager()
 
     session_id = common.resolve_session_id(session_id)
 
-    state = state_manager.get_state(session_id)
+    variables = session_var_manager.get_variables(session_id)
 
-    if not state:
+    if not variables:
         if json_format:
-            click.echo(json.dumps({"session_id": session_id, "has_workflow": False}))
+            click.echo(json.dumps({"session_id": session_id, "has_variables": False}))
         else:
-            click.echo(f"No workflow active for session: {common.truncate_id(session_id)}")
+            click.echo(f"No variables set for session: {common.truncate_id(session_id)}")
         return
 
     if json_format:
@@ -182,14 +177,8 @@ def workflow_status(ctx: click.Context, session_id: str | None, json_format: boo
             json.dumps(
                 {
                     "session_id": session_id,
-                    "has_workflow": True,
-                    "workflow_name": state.workflow_name,
-                    "step": state.step,
-                    "step_action_count": state.step_action_count,
-                    "total_action_count": state.total_action_count,
-                    "disabled": state.disabled,
-                    "disabled_reason": state.disabled_reason,
-                    "updated_at": state.updated_at.isoformat() if state.updated_at else None,
+                    "has_variables": True,
+                    "variables": variables,
                 },
                 indent=2,
             )
@@ -197,14 +186,7 @@ def workflow_status(ctx: click.Context, session_id: str | None, json_format: boo
         return
 
     click.echo(f"Session: {common.truncate_id(session_id)}")
-    click.echo(f"Workflow: {state.workflow_name}")
-    click.echo(f"Step: {state.step}")
-    click.echo(f"Actions in step: {state.step_action_count}")
-    click.echo(f"Total actions: {state.total_action_count}")
-
-    if state.disabled:
-        click.echo(f"⚠️  DISABLED{f': {state.disabled_reason}' if state.disabled_reason else ''}")
-        click.echo("   Use 'gobby workflows enable' to re-enable enforcement.")
-
-    if state.task_list:
-        click.echo(f"Task progress: {state.current_task_index + 1}/{len(state.task_list)}")
+    click.echo(f"Variables ({len(variables)}):")
+    for var_name, var_value in sorted(variables.items()):
+        value_display = repr(var_value) if isinstance(var_value, str) else str(var_value)
+        click.echo(f"  {var_name} = {value_display}")

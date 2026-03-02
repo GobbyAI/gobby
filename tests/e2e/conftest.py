@@ -934,9 +934,11 @@ def assert_no_external_writes() -> Generator[None]:
             ):
                 continue  # Known production daemon artifact
             leaked.append(f"  CREATED: ~/.gobby/{rel_path}")
-        elif mtime != before[rel_path] and not prod_running:
+        elif mtime != before[rel_path] and not prod_running and not rel_path.startswith("logs/"):
             # Only flag modifications when no production daemon is running,
             # since a running daemon continuously writes to its db and logs.
+            # Log file mtime changes are always the production daemon (test
+            # daemon writes to its temp dir), so exempt them unconditionally.
             leaked.append(f"  MODIFIED: ~/.gobby/{rel_path}")
 
     if leaked:

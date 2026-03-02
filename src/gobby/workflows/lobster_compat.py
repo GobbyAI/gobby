@@ -107,11 +107,14 @@ class LobsterImporter:
         for lobster_step in lobster_pipeline.get("steps", []):
             steps.append(self.convert_step(lobster_step))
 
+        resume_on_restart = lobster_pipeline.get("resume_on_restart", False)
+
         return PipelineDefinition(
             name=name,
             description=description,
             inputs=inputs,
             steps=steps,
+            resume_on_restart=resume_on_restart,
         )
 
     def import_file(self, path: str | Path) -> PipelineDefinition:

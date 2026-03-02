@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import './SidebarPanel.css'
 
 interface SidebarPanelProps {
@@ -11,12 +12,31 @@ interface SidebarPanelProps {
 }
 
 export function SidebarPanel({ isOpen, onClose, title, width = 480, headerContent, footer, children }: SidebarPanelProps) {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    panelRef.current?.focus()
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen])
+
   return (
     <>
       {isOpen && <div className="sidebar-backdrop" onClick={onClose} />}
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={`sidebar-panel ${isOpen ? 'sidebar-panel--open' : ''}`}
-        style={{ width }}
+        style={{ width, outline: 'none' }}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="sidebar-header">
           <div className="sidebar-header-top">

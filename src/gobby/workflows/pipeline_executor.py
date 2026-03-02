@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.pipeline.gatekeeper import ApprovalManager
 from gobby.workflows.pipeline.handlers import (
-    execute_activate_workflow_step,
     execute_exec_step,
     execute_mcp_step,
     execute_prompt_step,
@@ -444,14 +443,11 @@ class PipelineExecutor:
             # Execute MCP tool call
             return await execute_mcp_step(rendered_step, context, self.tool_proxy_getter)
         elif step.activate_workflow:
-            # Activate a workflow on a session
-            return await execute_activate_workflow_step(
-                rendered_step,
-                context,
-                self.loader,
-                self.session_manager,
-                self.db,
-            )
+            # activate_workflow steps are not supported in pipeline execution
+            return {
+                "error": "activate_workflow pipeline steps are not supported",
+                "step_id": step.id,
+            }
         else:
             logger.warning(f"Step {step.id} has no action defined")
             return None

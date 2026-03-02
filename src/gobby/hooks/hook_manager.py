@@ -29,6 +29,7 @@ Example:
 
 import asyncio
 import logging
+import os
 import sqlite3
 import time
 from logging.handlers import RotatingFileHandler
@@ -108,7 +109,8 @@ class HookManager:
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
         self.daemon_url = f"http://{daemon_host}:{daemon_port}"
-        self.log_file = log_file or str(Path.home() / ".gobby" / "logs" / "hook-manager.log")
+        gobby_home = os.environ.get("GOBBY_HOME", str(Path.home() / ".gobby"))
+        self.log_file = log_file or str(Path(gobby_home) / "logs" / "hook-manager.log")
         self.log_max_bytes = log_max_bytes
         self.log_backup_count = log_backup_count
         self.broadcaster = broadcaster
@@ -168,7 +170,6 @@ class HookManager:
         self._stuck_detector = components.stuck_detector
         self._memory_manager = components.memory_manager
         self._workflow_loader = components.workflow_loader
-        self._workflow_state_manager = components.workflow_state_manager
         self._skill_manager = components.skill_manager
         self._pipeline_executor = components.pipeline_executor
         self._workflow_handler = components.workflow_handler
@@ -747,7 +748,7 @@ class HookManager:
             session_id: Platform session ID.
             background: If True, fire-and-forget. If False, block until complete.
         """
-        from gobby.workflows.memory_actions import generate_session_boundary_summaries
+        from gobby.memory.digest import generate_session_boundary_summaries
 
         async def _run() -> None:
             try:

@@ -251,7 +251,7 @@ class TestWorktreeLifecycle:
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
     ) -> None:
-        """Test deleting a non-existent worktree returns error."""
+        """Test deleting a non-existent worktree is idempotent."""
         raw_result = mcp_client.call_tool(
             server_name="gobby-worktrees",
             tool_name="delete_worktree",
@@ -259,8 +259,8 @@ class TestWorktreeLifecycle:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is False
-        assert "not found" in result.get("error", "").lower()
+        assert result.get("success") is True
+        assert result.get("already_deleted") is True
 
 
 class TestCloneMergeWorkflow:

@@ -490,22 +490,3 @@ async def generate_summary(
     if summary_file_path:
         result["summary_file"] = summary_file_path
     return result
-
-
-# --- ActionHandler-compatible wrappers ---
-# These match the ActionHandler protocol: (context: Any, **kwargs) -> dict | None
-
-
-async def handle_generate_summary(context: Any, **kwargs: Any) -> dict[str, Any] | None:
-    """ActionHandler wrapper for generate_summary."""
-    return await generate_summary(
-        session_manager=context.session_manager,
-        session_id=context.session_id,
-        llm_service=context.llm_service,
-        transcript_processor=context.transcript_processor,
-        template=kwargs.get("template"),
-        mode=kwargs.get("mode", "clear"),
-        previous_summary=kwargs.get("previous_summary"),
-        write_file=kwargs.get("write_file", False),
-        output_path=kwargs.get("output_path"),
-    )

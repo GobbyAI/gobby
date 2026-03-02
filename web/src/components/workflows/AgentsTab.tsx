@@ -43,6 +43,7 @@ interface AgentDefInfo {
   source: string
   source_path: string | null
   db_id: string | null
+  enabled: boolean
   overridden_by: string | null
   deleted_at: string | null
   tags: string[] | null
@@ -1052,7 +1053,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         pipelines={pipelineList}
         editSkills={editSkills}
         onSkillsChange={setEditSkills}
-        agentNames={definitions.filter(d => !d.deleted_at).map(d => d.definition.name)}
+        agentNames={definitions.filter(d => !d.deleted_at && d.source !== 'template' && d.enabled !== false).map(d => d.definition.name)}
       />
     </div>
   )

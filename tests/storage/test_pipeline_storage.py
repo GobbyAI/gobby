@@ -442,6 +442,50 @@ class TestFailStaleRunningExecutions:
         count = manager.fail_stale_running_executions()
         assert count == 0
 
+    def test_exclude_ids_skips_excluded_executions(self, manager) -> None:
+        """Excluded execution IDs are not failed."""
+        resumable = manager.create_execution(pipeline_name="resumable-pipeline")
+        manager.update_execution_status(
+            execution_id=resumable.id, status=ExecutionStatus.RUNNING
+        )
+        non_resumable = manager.create_execution(pipeline_name="non-resumable-pipeline")
+        manager.update_execution_status(
+            execution_id=non_resumable.id, status=ExecutionStatus.RUNNING
+        )
+
+        count = manager.fail_stale_running_executions(exclude_ids={resumable.id})
+
+        assert count == 1
+        # Resumable should still be RUNNING
+        assert manager.get_execution(resumable.id).status == ExecutionStatus.RUNNING
+        # Non-resumable should be FAILED
+        assert manager.get_execution(non_resumable.id).status == ExecutionStatus.FAILED
+
+    def test_exclude_ids_skips_steps_of_excluded_executions(self, manager) -> None:
+        """Steps belonging to excluded executions are not failed."""
+        resumable = manager.create_execution(pipeline_name="resumable-pipeline")
+        manager.update_execution_status(
+            execution_id=resumable.id, status=ExecutionStatus.RUNNING
+        )
+        step = manager.create_step_execution(execution_id=resumable.id, step_id="s1")
+        manager.update_step_execution(step_execution_id=step.id, status=StepStatus.RUNNING)
+
+        manager.fail_stale_running_executions(exclude_ids={resumable.id})
+
+        updated_step = manager.get_steps_for_execution(resumable.id)[0]
+        assert updated_step.status == StepStatus.RUNNING
+
+    def test_exclude_ids_empty_set_fails_all(self, manager) -> None:
+        """Empty exclude_ids set fails all running executions."""
+        execution = manager.create_execution(pipeline_name="test-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.RUNNING
+        )
+
+        count = manager.fail_stale_running_executions(exclude_ids=set())
+        assert count == 1
+        assert manager.get_execution(execution.id).status == ExecutionStatus.FAILED
+
 
 class TestApprovalTimeout:
     """Tests for approval timeout expiry."""

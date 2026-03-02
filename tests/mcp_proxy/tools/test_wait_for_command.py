@@ -226,7 +226,14 @@ class TestWaitForCommandTimeout:
             patch("time.monotonic") as mock_time,
         ):
             # Start at 0, then jump past timeout on first poll check
-            mock_time.side_effect = [0.0, 0.0, 601.0, 601.0]
+            call_count = 0
+
+            def mock_monotonic():
+                nonlocal call_count
+                call_count += 1
+                return 0.0 if call_count <= 2 else 601.0
+
+            mock_time.side_effect = mock_monotonic
 
             result = await messaging_registry.call(
                 "wait_for_command",

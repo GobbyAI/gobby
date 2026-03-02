@@ -69,7 +69,6 @@ def _fire_synthetic_stop(
 def create_agents_registry(
     runner: AgentRunner,
     running_registry: RunningAgentRegistry | None = None,
-    workflow_state_manager: Any | None = None,
     session_manager: Any | None = None,
     # spawn_agent dependencies
     task_manager: Any | None = None,
@@ -88,8 +87,6 @@ def create_agents_registry(
     Args:
         runner: AgentRunner instance for executing agents.
         running_registry: Optional in-memory registry for running agents.
-        workflow_state_manager: Optional WorkflowStateManager for stopping workflows
-            when agents are killed. If not provided, workflow stop will be skipped.
         session_manager: Optional LocalSessionManager for resolving session references.
         task_manager: Task manager for spawn_agent task resolution.
         worktree_storage: Worktree storage for spawn_agent isolation.
@@ -344,15 +341,7 @@ def create_agents_registry(
                 except Exception as e:
                     logger.debug(f"tmux session cleanup failed for {tmux_session_name}: {e}")
 
-            # Delete workflow state unless debugging
             if not debug and agent_session_id:
-                if workflow_state_manager is not None:
-                    try:
-                        workflow_state_manager.delete_state(agent_session_id)
-                        result["workflow_deleted"] = True
-                    except Exception as e:
-                        result["workflow_delete_error"] = str(e)
-
                 # Mark session as 'expired' so transcript gets processed
                 # (Gemini sessions don't transition to expired via normal flow)
                 if session_manager is not None:
@@ -578,7 +567,6 @@ def create_agents_registry(
             project_path=project_path,
             db=db,
             runner=runner,
-            state_manager=workflow_state_manager,
             session_manager=session_manager,
             git_manager=git_manager,
             worktree_storage=worktree_storage,
@@ -804,8 +792,6 @@ def create_agents_registry(
         clone_storage=clone_storage,
         clone_manager=clone_manager,
         session_manager=session_manager,
-        # For mode=self (workflow activation on caller session)
-        state_manager=workflow_state_manager,
         db=db,
     )
 

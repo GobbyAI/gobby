@@ -339,9 +339,15 @@ class TestAutoApprove:
             await runner.run()
 
         options = captured_options["options"]
-        # can_use_tool should return True for any tool/input
-        assert options.can_use_tool("Edit", {"file": "test.py"}) is True
-        assert options.can_use_tool("Bash", {"command": "rm -rf /"}) is True
+        # can_use_tool is async and returns PermissionResultAllow
+        from unittest.mock import MagicMock as _MagicMock
+
+        from claude_agent_sdk.types import PermissionResultAllow
+
+        result1 = await options.can_use_tool("Edit", {"file": "test.py"}, _MagicMock())
+        result2 = await options.can_use_tool("Bash", {"command": "rm -rf /"}, _MagicMock())
+        assert isinstance(result1, PermissionResultAllow)
+        assert isinstance(result2, PermissionResultAllow)
 
 
 # ---------------------------------------------------------------------------

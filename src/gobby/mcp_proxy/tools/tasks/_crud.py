@@ -158,24 +158,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     logger.warning(f"Failed to link claimed task {task.id}: {e}")
                     pass  # nosec B110 - best-effort linking
 
-            # Set workflow state for Claude Code (CC doesn't include tool results in PostToolUse)
+            # Set session variables for Claude Code (CC doesn't include tool results in PostToolUse)
             # This mirrors close_task behavior in _lifecycle.py
             try:
-                from gobby.workflows.definitions import WorkflowState
-
-                state = ctx.workflow_state_manager.get_state(resolved_session_id)
-                if not state:
-                    state = WorkflowState(
-                        session_id=resolved_session_id,
-                        workflow_name="__lifecycle__",
-                        step="global",
-                        variables={},
-                    )
-                state.variables["task_claimed"] = True
-                state.variables["claimed_task_id"] = task.id  # Always use UUID
-                state.variables["task_ref"] = f"#{task.seq_num}" if task.seq_num else task.id
-                ctx.workflow_state_manager.save_state(state)
-                # Mirror to session_variables (authoritative store for rule evaluation)
                 ctx.session_var_manager.merge_variables(
                     resolved_session_id,
                     {
@@ -185,7 +170,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     },
                 )
             except Exception as e:
-                logger.debug("Best-effort workflow state update failed: %s", e)
+                logger.debug("Best-effort session variable update failed: %s", e)
 
         # Handle 'blocks' argument if provided (syntactic sugar)
         # Collect errors consistently with depends_on handling below

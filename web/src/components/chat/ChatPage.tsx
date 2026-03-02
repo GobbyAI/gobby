@@ -166,7 +166,6 @@ export function ChatPage({
           activeSessionId={conversations.activeSessionId}
           sessionRef={effectiveSessionRef}
           title={chat.viewingSessionMeta?.title ?? chat.attachedSessionMeta?.title ?? activeTitle}
-          mode={chat.mode}
           onNewChat={conversations.onNewChat}
           onSelectSession={conversations.onSelectSession}
           onDeleteSession={conversations.onDeleteSession}
@@ -187,7 +186,6 @@ export function ChatPage({
                 <SessionStatusBar
                   sessionRef={effectiveSessionRef}
                   title={chat.viewingSessionMeta?.title ?? chat.attachedSessionMeta?.title ?? activeTitle}
-                  mode={chat.mode}
                   viewingMeta={chat.viewingSessionMeta ?? chat.attachedSessionMeta}
                   isAttached={!!chat.attachedSessionId}
                   onAttach={chat.onAttachToViewed}

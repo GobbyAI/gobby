@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Markdown } from './Markdown'
 
 interface ThinkingBlockProps {
@@ -6,8 +6,14 @@ interface ThinkingBlockProps {
   messageId: string
 }
 
+/** Convert single newlines to markdown line breaks (two trailing spaces) */
+function preserveLineBreaks(text: string): string {
+  return text.replace(/\n/g, '  \n')
+}
+
 export function ThinkingBlock({ content, messageId }: ThinkingBlockProps) {
   const [expanded, setExpanded] = useState(false)
+  const processed = useMemo(() => preserveLineBreaks(content), [content])
 
   return (
     <div
@@ -34,7 +40,7 @@ export function ThinkingBlock({ content, messageId }: ThinkingBlockProps) {
           className="px-3 pb-3 text-sm text-muted-foreground prose-sm"
           onClick={(e) => e.stopPropagation()}
         >
-          <Markdown content={content} id={`${messageId}-thinking`} />
+          <Markdown content={processed} id={`${messageId}-thinking`} />
         </div>
       )}
     </div>

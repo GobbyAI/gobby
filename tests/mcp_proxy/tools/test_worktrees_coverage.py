@@ -617,14 +617,14 @@ class TestInstallProviderHooks:
         assert result is False
 
     def test_claude_hooks_success(self, tmp_path) -> None:
-        """Test Claude hooks installation success."""
+        """Test Claude hooks installation success with project mode."""
         from gobby.cli.installers import claude as claude_mod
 
         with patch.object(claude_mod, "install_claude") as mock_install:
             mock_install.return_value = {"success": True}
             result = _install_provider_hooks("claude", tmp_path)
             assert result is True
-            mock_install.assert_called_once()
+            mock_install.assert_called_once_with(tmp_path, mode="project")
 
     def test_claude_hooks_failure(self, tmp_path, caplog) -> None:
         """Test Claude hooks installation failure."""
@@ -634,7 +634,19 @@ class TestInstallProviderHooks:
             mock_install.return_value = {"success": False, "error": "Install failed"}
             result = _install_provider_hooks("claude", tmp_path)
             assert result is False
+            mock_install.assert_called_once_with(tmp_path, mode="project")
             assert "Install failed" in caplog.text
+
+    @pytest.mark.parametrize("provider", ["cursor", "windsurf", "copilot"])
+    def test_claude_format_providers_use_project_mode(self, tmp_path, provider) -> None:
+        """Test cursor/windsurf/copilot install claude hooks with project mode."""
+        from gobby.cli.installers import claude as claude_mod
+
+        with patch.object(claude_mod, "install_claude") as mock_install:
+            mock_install.return_value = {"success": True}
+            result = _install_provider_hooks(provider, tmp_path)
+            assert result is True
+            mock_install.assert_called_once_with(tmp_path, mode="project")
 
     def test_gemini_hooks_success(self, tmp_path) -> None:
         """Test Gemini hooks installation success."""

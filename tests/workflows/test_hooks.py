@@ -11,6 +11,7 @@ threading scenarios:
 
 import asyncio
 import concurrent.futures
+import json
 import threading
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -643,8 +644,6 @@ class TestVariablePersistence:
         self, db, name: str, event: str, variable: str, value: str, priority: int = 10
     ):
         """Insert a test rule that does set_variable."""
-        import json
-
         definition = {
             "event": event,
             "priority": priority,
@@ -711,8 +710,6 @@ class TestVariablePersistence:
         self, db, handler, session_var_manager
     ) -> None:
         """Variables set via SessionVariableManager should be visible to rule when conditions."""
-        import json
-
         # Insert a block rule that only fires when my_flag is true
         definition = {
             "event": "stop",

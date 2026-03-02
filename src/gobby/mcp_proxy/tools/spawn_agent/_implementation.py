@@ -71,8 +71,6 @@ async def spawn_agent_impl(
     parent_session_id: str | None = None,
     project_path: str | None = None,
     initial_variables: dict[str, Any] | None = None,
-    # For mode=self (workflow activation on caller session)
-    state_manager: Any | None = None,  # WorkflowStateManager
     session_manager: Any | None = None,  # LocalSessionManager
     db: Any | None = None,  # DatabaseProtocol
 ) -> dict[str, Any]:
@@ -109,7 +107,6 @@ async def spawn_agent_impl(
         parent_session_id: Parent session ID
         project_path: Project path override
         initial_variables: Pre-built initial variables from factory (merged with impl's own)
-        state_manager: WorkflowStateManager for mode=self
         session_manager: LocalSessionManager for mode=self
         db: DatabaseProtocol for mode=self
 

@@ -50,7 +50,6 @@ from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.state_manager import (
     SessionVariableManager,
     WorkflowInstanceManager,
-    WorkflowStateManager,
 )
 
 __all__ = [
@@ -61,7 +60,6 @@ __all__ = [
 
 def create_workflows_registry(
     loader: WorkflowLoader | None = None,
-    state_manager: WorkflowStateManager | None = None,
     session_manager: LocalSessionManager | None = None,
     db: DatabaseProtocol | None = None,
 ) -> InternalToolRegistry:
@@ -70,7 +68,6 @@ def create_workflows_registry(
 
     Args:
         loader: WorkflowLoader instance
-        state_manager: WorkflowStateManager instance (created from db if not provided)
         session_manager: LocalSessionManager instance (created from db if not provided)
         db: Database instance for creating default managers
 
@@ -78,19 +75,11 @@ def create_workflows_registry(
         InternalToolRegistry with workflow tools registered
 
     Note:
-        If db is None and state_manager/session_manager are not provided,
+        If db is None and session_manager is not provided,
         tools requiring database access will return errors when called.
     """
     _db = db
     _loader = loader or WorkflowLoader(db=_db)
-
-    # Create default managers only if db is provided
-    if state_manager is not None:
-        _state_manager = state_manager
-    elif _db is not None:
-        _state_manager = WorkflowStateManager(_db)
-    else:
-        _state_manager = None
 
     if session_manager is not None:
         _session_manager = session_manager
@@ -135,10 +124,9 @@ def create_workflows_registry(
         description="Get workflow status for a session. Shows all active workflow instances and session variables. Accepts #N, N, UUID, or prefix for session_id.",
     )
     def _get_workflow_status(session_id: str | None = None) -> dict[str, Any]:
-        if _state_manager is None or _session_manager is None:
+        if _session_manager is None:
             return {"error": "Workflow tools require database connection"}
         return get_workflow_status(
-            _state_manager,
             _session_manager,
             session_id,
             instance_manager=_instance_manager,
@@ -155,10 +143,9 @@ def create_workflows_registry(
         session_id: str | None = None,
         workflow: str | None = None,
     ) -> dict[str, Any]:
-        if _state_manager is None or _session_manager is None or _db is None:
+        if _session_manager is None or _db is None:
             return {"error": "Workflow tools require database connection"}
         return set_variable(
-            _state_manager,
             _session_manager,
             _db,
             name,
@@ -178,10 +165,9 @@ def create_workflows_registry(
         session_id: str | None = None,
         workflow: str | None = None,
     ) -> dict[str, Any]:
-        if _state_manager is None or _session_manager is None or _db is None:
+        if _session_manager is None or _db is None:
             return {"error": "Workflow tools require database connection"}
         return get_variable(
-            _state_manager,
             _session_manager,
             _db,
             name,

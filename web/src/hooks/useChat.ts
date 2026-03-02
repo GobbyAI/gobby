@@ -289,6 +289,11 @@ export function useChat() {
     conversationIdRef.current,
   );
 
+  // Counter that increments only on intentional conversation switches (not SDK
+  // session ID adoption).  Used by the mode-restore effect in App.tsx so that
+  // adopting the SDK session ID doesn't reset the user's mode to the default.
+  const [conversationSwitchKey, setConversationSwitchKey] = useState(0);
+
   // Fetch messages from DB on mount if we have a persisted dbSessionId
   useEffect(() => {
     const storedDbSid = loadDbSessionId();
@@ -309,6 +314,7 @@ export function useChat() {
           const newId = uuid();
           conversationIdRef.current = newId;
           setConversationId(newId);
+          setConversationSwitchKey((k) => k + 1);
           saveConversationId(newId);
           setDbSessionId(null);
           return;
@@ -1296,6 +1302,7 @@ export function useChat() {
 
     conversationIdRef.current = id;
     setConversationId(id);
+    setConversationSwitchKey((k) => k + 1);
     saveConversationId(id);
 
     // Clear messages; DB fetch below will populate
@@ -1343,7 +1350,19 @@ export function useChat() {
           }
           // Restore chat mode from DB (corrects stale sessions list data)
           if (s.chat_mode) {
-            onModeChangedRef.current?.(s.chat_mode as ChatMode);
+            const restored = s.chat_mode as ChatMode;
+            currentModeRef.current = restored;
+            onModeChangedRef.current?.(restored);
+            // Sync restored mode to backend session
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(
+                JSON.stringify({
+                  type: "set_mode",
+                  mode: restored,
+                  conversation_id: conversationIdRef.current,
+                }),
+              );
+            }
           }
         })
         .catch(() => {});
@@ -1355,6 +1374,7 @@ export function useChat() {
     const newId = uuid();
     conversationIdRef.current = newId;
     setConversationId(newId);
+    setConversationSwitchKey((k) => k + 1);
     saveConversationId(newId);
     setMessages([]);
     setSessionRef(null);
@@ -1396,6 +1416,7 @@ export function useChat() {
   const resumeSession = useCallback((externalId: string) => {
     conversationIdRef.current = externalId;
     setConversationId(externalId);
+    setConversationSwitchKey((k) => k + 1);
     saveConversationId(externalId);
 
     setMessages([
@@ -1420,6 +1441,7 @@ export function useChat() {
       // Switch to new conversation
       conversationIdRef.current = newConversationId;
       setConversationId(newConversationId);
+      setConversationSwitchKey((k) => k + 1);
       saveConversationId(newConversationId);
       activeRequestIdRef.current = null;
       setIsStreaming(false);
@@ -1527,6 +1549,7 @@ export function useChat() {
     const newId = uuid();
     conversationIdRef.current = newId;
     setConversationId(newId);
+    setConversationSwitchKey((k) => k + 1);
     saveConversationId(newId);
     return true;
   }, []);
@@ -1552,6 +1575,7 @@ export function useChat() {
         const newId = uuid();
         conversationIdRef.current = newId;
         setConversationId(newId);
+        setConversationSwitchKey((k) => k + 1);
         saveConversationId(newId);
         setMessages([]);
         setSessionRef(null);
@@ -2082,6 +2106,7 @@ export function useChat() {
   return {
     messages,
     conversationId,
+    conversationSwitchKey,
     sessionRef,
     dbSessionId,
     currentBranch,

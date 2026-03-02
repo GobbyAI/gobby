@@ -155,8 +155,12 @@ class LocalPipelineExecutionManager:
         Returns:
             List of PipelineExecution instances
         """
-        query = "SELECT * FROM pipeline_executions WHERE project_id = ?"
-        params: list[Any] = [self.project_id]
+        params: list[Any] = []
+        if self.project_id is None:
+            query = "SELECT * FROM pipeline_executions WHERE project_id IS NULL"
+        else:
+            query = "SELECT * FROM pipeline_executions WHERE project_id = ?"
+            params.append(self.project_id)
 
         if status is not None:
             query += " AND status = ?"
@@ -361,44 +365,60 @@ class LocalPipelineExecutionManager:
         )
         return StepExecution.from_row(row) if row else None
 
-    def fail_stale_running_executions(self) -> int:
+    def fail_stale_running_executions(self, exclude_ids: set[str] | None = None) -> int:
         """Mark running executions and their steps as failed.
 
         Called during daemon startup to recover from unclean shutdowns.
         Leaves waiting_approval executions alone (they can still be approved).
+
+        Args:
+            exclude_ids: Execution IDs to skip (e.g. resumable pipelines).
 
         Returns:
             Number of executions marked as failed.
         """
         now = datetime.now(UTC).isoformat()
 
+        def build_not_in_clause(
+            ids: set[str] | None, column_name: str
+        ) -> tuple[str, tuple[str, ...]]:
+            if not ids:
+                return "", ()
+            placeholders = ", ".join("?" for _ in ids)
+            return f" AND {column_name} NOT IN ({placeholders})", tuple(ids)
+
+        # Build exclusion clause for parameter binding
+        exclude_clause, exclude_params = build_not_in_clause(exclude_ids, "execution_id")
+        exec_exclude_clause, exec_exclude_params = build_not_in_clause(exclude_ids, "id")
+
         # Fail running step executions that belong to running pipeline executions
         self.db.execute(
-            """
+            f"""
             UPDATE step_executions
             SET status = ?, error = 'Daemon restarted', completed_at = ?
             WHERE status = ?
               AND execution_id IN (
                   SELECT id FROM pipeline_executions
                   WHERE status = ? AND project_id = ?
-              )
-            """,
+              ){exclude_clause}
+            """,  # nosec B608
             (
                 StepStatus.FAILED.value,
                 now,
                 StepStatus.RUNNING.value,
                 ExecutionStatus.RUNNING.value,
                 self.project_id,
+                *exclude_params,
             ),
         )
 
         # Fail running pipeline executions
         cursor = self.db.execute(
-            """
+            f"""
             UPDATE pipeline_executions
             SET status = ?, outputs_json = ?, completed_at = ?, updated_at = ?
-            WHERE status = ? AND project_id = ?
-            """,
+            WHERE status = ? AND project_id = ?{exec_exclude_clause}
+            """,  # nosec B608
             (
                 ExecutionStatus.FAILED.value,
                 '{"error": "Daemon restarted while execution was in progress"}',
@@ -406,6 +426,7 @@ class LocalPipelineExecutionManager:
                 now,
                 ExecutionStatus.RUNNING.value,
                 self.project_id,
+                *exec_exclude_params,
             ),
         )
 

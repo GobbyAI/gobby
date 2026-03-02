@@ -11,6 +11,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import pydantic
+
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import DatabaseProtocol
@@ -18,7 +20,13 @@ from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
 )
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import (
+    RuleDefinitionBody,
+    RuleEffect,
+    RuleEvent,
+    WorkflowDefinition,
+    WorkflowStep,
+)
 from gobby.workflows.enforcement.blocking import (
     is_discovery_tool,
     is_message_delivery_tool,
@@ -27,6 +35,7 @@ from gobby.workflows.enforcement.blocking import (
     is_tool_unlocked,
 )
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.state_manager import WorkflowInstanceManager
 from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
@@ -53,6 +62,7 @@ class RuleEngine:
     def __init__(self, db: DatabaseProtocol):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
+        self.instance_manager = WorkflowInstanceManager(db)
 
     async def evaluate(
         self,
@@ -142,6 +152,18 @@ class RuleEngine:
 
         # 4. Filter by active rules (selector-based)
         rules = self._filter_by_active_rules(rules, variables)
+
+        # 4b. Step-level tool enforcement (preempts declarative rules)
+        if rule_event == RuleEvent.BEFORE_TOOL:
+            step_block = self._check_step_tool_enforcement(event, session_id)
+            if step_block is not None:
+                variables["tool_block_pending"] = True
+                variables["_last_blocked_tool"] = event.data.get("tool_name", "")
+                return step_block
+
+        # 4c. Step workflow transition processing (after successful MCP tool calls)
+        if rule_event == RuleEvent.AFTER_TOOL:
+            self._process_step_after_tool(event, session_id, variables)
 
         # Deferred overrides — these used to early-return, but that skipped rule
         # evaluation entirely, preventing mcp_call effects (like digest-on-response)
@@ -646,3 +668,193 @@ class RuleEngine:
             "len(",
         )
         return any(indicator in value for indicator in expression_indicators)
+
+    # --- Step workflow enforcement ---
+
+    def _get_step_for_session(
+        self, session_id: str
+    ) -> tuple[WorkflowStep | None, Any | None, WorkflowDefinition | None]:
+        """Get the current workflow step, instance, and definition for a session.
+
+        Returns (step, instance, definition) or (None, None, None) if no active step workflow.
+        """
+        if not session_id:
+            return None, None, None
+        instances = self.instance_manager.get_active_instances(session_id)
+
+        for instance in instances:
+            if not instance.current_step:
+                continue
+            row = self.definition_manager.get_by_name(instance.workflow_name)
+            if not row or row.workflow_type == "pipeline":
+                continue
+            try:
+                data = json.loads(row.definition_json)
+                definition = WorkflowDefinition(**data)
+            except (json.JSONDecodeError, pydantic.ValidationError):
+                continue
+            step = definition.get_step(instance.current_step)
+            if step is not None:
+                return step, instance, definition
+        return None, None, None
+
+    def _check_step_tool_enforcement(
+        self, event: HookEvent, session_id: str
+    ) -> HookResponse | None:
+        """Check step-level tool restrictions. Returns block response or None to continue."""
+        step, instance, _defn = self._get_step_for_session(session_id)
+        if step is None or instance is None:
+            return None
+
+        tool_name = event.data.get("tool_name", "")
+        wf_name = instance.workflow_name
+
+        # Discovery tools always pass — agents need progressive disclosure in every step
+        if tool_name.startswith("mcp__gobby__"):
+            mcp_suffix = tool_name[len("mcp__gobby__") :]
+            if is_discovery_tool(mcp_suffix):
+                return None
+
+        # Check native tool allow-list
+        if step.allowed_tools != "all":
+            if tool_name not in step.allowed_tools:
+                return HookResponse(
+                    decision="block",
+                    reason=(
+                        f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                        f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
+                        f"Allowed tools: {', '.join(step.allowed_tools)}"
+                    ),
+                )
+
+        # Check native tool block-list
+        if tool_name in step.blocked_tools:
+            return HookResponse(
+                decision="block",
+                reason=(
+                    f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                    f"Tool '{tool_name}' is blocked in the '{step.name}' step."
+                ),
+            )
+
+        # Check MCP tool restrictions (for call_tool)
+        if tool_name in ("call_tool", "mcp__gobby__call_tool"):
+            tool_input = event.data.get("tool_input") or {}
+            if isinstance(tool_input, dict):
+                mcp_server = tool_input.get("server_name", "")
+                mcp_tool_name = tool_input.get("tool_name", "")
+
+                # Discovery MCP tools always pass
+                if is_discovery_tool(mcp_tool_name):
+                    return None
+
+                mcp_key = f"{mcp_server}:{mcp_tool_name}" if mcp_server and mcp_tool_name else ""
+
+                if mcp_key and step.allowed_mcp_tools != "all":
+                    if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
+                        return HookResponse(
+                            decision="block",
+                            reason=(
+                                f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                                f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
+                                f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}"
+                            ),
+                        )
+
+                if mcp_key and step.blocked_mcp_tools:
+                    if self._mcp_tool_matches(mcp_key, step.blocked_mcp_tools):
+                        return HookResponse(
+                            decision="block",
+                            reason=(
+                                f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                                f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
+                            ),
+                        )
+
+        return None
+
+    @staticmethod
+    def _mcp_tool_matches(mcp_key: str, patterns: list[str]) -> bool:
+        """Check if an MCP tool key (server:tool) matches any pattern in the list."""
+        for pattern in patterns:
+            if pattern == mcp_key:
+                return True
+            # Wildcard: "server:*"
+            if pattern.endswith(":*") and mcp_key.startswith(pattern[:-1]):
+                return True
+        return False
+
+    def _process_step_after_tool(
+        self, event: HookEvent, session_id: str, variables: dict[str, Any]
+    ) -> None:
+        """Process step workflow on_mcp_success handlers and transitions after tool completion."""
+        step, instance, definition = self._get_step_for_session(session_id)
+        if step is None or instance is None or definition is None:
+            return
+
+        # Only process successful MCP tool completions
+        is_failure = event.metadata.get("is_failure", False) or event.data.get("is_error", False)
+        if is_failure:
+            return
+
+        tool_name = event.data.get("tool_name", "")
+        if tool_name not in ("call_tool", "mcp__gobby__call_tool"):
+            return
+
+        tool_input = event.data.get("tool_input") or {}
+        if not isinstance(tool_input, dict):
+            return
+
+        mcp_server = tool_input.get("server_name", "")
+        mcp_tool_name = tool_input.get("tool_name", "")
+        if not mcp_server or not mcp_tool_name:
+            return
+
+        instance_mgr = WorkflowInstanceManager(self.db)
+        vars_changed = False
+
+        # Execute on_mcp_success handlers
+        for handler in step.on_mcp_success:
+            if handler.get("server") == mcp_server and handler.get("tool") == mcp_tool_name:
+                if handler.get("action") == "set_variable":
+                    var_name = handler.get("variable")
+                    var_value = handler.get("value")
+                    if var_name is not None:
+                        instance.variables[var_name] = var_value
+                        variables[var_name] = var_value
+                        vars_changed = True
+
+        # Evaluate transitions
+        for transition in step.transitions:
+            ctx = {"vars": instance.variables, "variables": variables}
+            if not transition.when or self._evaluate_condition(
+                transition.when, ctx, "set_variable"
+            ):
+                old_step = instance.current_step
+                new_step = transition.to
+
+                if not definition.get_step(new_step):
+                    logger.warning(
+                        "Transition to unknown step '%s' in workflow '%s'",
+                        new_step,
+                        instance.workflow_name,
+                    )
+                    return
+
+                instance.current_step = new_step
+                instance.step_action_count = 0
+                instance.step_entered_at = datetime.now(UTC)
+                instance_mgr.save_instance(instance)
+
+                logger.info(
+                    "Step transition: %s -> %s (workflow=%s, session=%s)",
+                    old_step,
+                    new_step,
+                    instance.workflow_name,
+                    session_id,
+                )
+                return  # First matching transition wins
+
+        # Save if variables changed without transition
+        if vars_changed:
+            instance_mgr.save_instance(instance)

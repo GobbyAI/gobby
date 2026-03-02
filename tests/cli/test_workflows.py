@@ -12,7 +12,6 @@ pytestmark = pytest.mark.unit
 MOCK_WORKFLOW = WorkflowDefinition(
     name="test-workflow",
     description="A test workflow",
-    type="step",
     enabled=False,
     version="1.0",
     steps=[
@@ -29,17 +28,15 @@ def mock_loader():
 
 
 @pytest.fixture
-def mock_state_manager():
-    with patch("gobby.cli.workflows.common.get_state_manager") as mock:
+def mock_session_var_manager():
+    with patch("gobby.cli.workflows.common.get_session_var_manager") as mock:
         yield mock.return_value
 
 
 def test_list_workflows_empty(mock_loader) -> None:
     """Test 'workflows list' with no workflows."""
-    # Mock global_dirs to be empty or contain directories with no yaml
     mock_loader.global_dirs = []
 
-    # We also need to patch pathlib.Path.cwd to return a path without .gobby
     with patch("gobby.cli.workflows.common.Path.cwd") as mock_cwd:
         mock_cwd.return_value = MagicMock()
         mock_cwd.return_value.__truediv__.return_value.exists.return_value = False
@@ -80,7 +77,6 @@ def test_list_workflows_found(mock_open, mock_yaml, mock_project_path, mock_load
     assert result.exit_code == 0
     assert "test-workflow" in result.output
     assert "(enabled)" in result.output
-    # [global] tag is not shown for global workflows
     assert "desc" in result.output
 
 
@@ -108,42 +104,13 @@ def test_show_workflow_not_found(mock_loader) -> None:
     assert "not found" in result.output
 
 
-def test_status_no_active(mock_state_manager) -> None:
-    """Test 'workflows status' with no active workflow."""
-    mock_state_manager.get_state.return_value = None
+def test_status_no_variables(mock_session_var_manager) -> None:
+    """Test 'workflows status' with no variables set."""
+    mock_session_var_manager.get_variables.return_value = {}
 
     runner = CliRunner()
     with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess-123"):
         result = runner.invoke(workflows, ["status"])
 
     assert result.exit_code == 0
-    assert "No workflow active" in result.output
-
-
-def test_set_workflow_success(mock_loader, mock_state_manager) -> None:
-    """Test 'workflows set' successfully."""
-    mock_loader.load_workflow_sync.return_value = MOCK_WORKFLOW
-    mock_state_manager.get_state.return_value = None  # No existing workflow
-
-    runner = CliRunner()
-    with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess-123"):
-        result = runner.invoke(workflows, ["set", "test-workflow"])
-
-    assert result.exit_code == 0
-    assert "Activated workflow 'test-workflow'" in result.output
-    mock_state_manager.save_state.assert_called_once()
-
-
-def test_clear_workflow(mock_state_manager) -> None:
-    """Test 'workflows clear'."""
-    mock_state = MagicMock()
-    mock_state.workflow_name = "test-workflow"
-    mock_state_manager.get_state.return_value = mock_state
-
-    runner = CliRunner()
-    with patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess-123"):
-        result = runner.invoke(workflows, ["clear"], input="y\n")
-
-    assert result.exit_code == 0
-    assert "Cleared workflow" in result.output
-    mock_state_manager.delete_state.assert_called_once()
+    assert "No variables set" in result.output

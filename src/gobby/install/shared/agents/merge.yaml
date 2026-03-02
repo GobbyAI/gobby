@@ -1,42 +1,43 @@
 name: merge
 description: |
-  Merge agent: merges task branch into target branch.
-  Enforcement via rule_definitions. Guidance via instructions.
+  Merge agent: batch merges approved tasks into the target branch.
+  Behavior enforced by merge-workflow step workflow.
 
 version: "2.0"
 enabled: false
+isolation: none
 
 instructions: |
-  You are a merge agent spawned by a coordinator pipeline.
-  Your worktree_id and branch_name are in your session variables.
+  You are a merge agent spawned by an orchestrator pipeline.
+  You work in the main repo and operate on task worktrees via MCP tools.
 
-  Follow these steps IN ORDER:
-  1. Merge the task branch into the target branch using the MCP tool:
-     mcp__gobby__call_tool(server_name="gobby-worktrees", tool_name="merge_worktree",
-       arguments={"worktree_id": "<your_worktree_id>", "source_branch": "<your_branch_name>"})
-  2. If merge_worktree returns has_conflicts, use gobby-merge tools to resolve.
-  3. Push to origin using the push_command from the merge_worktree result:
-     Run the Bash tool with the push_command value (e.g., "git push --no-verify origin task-123:0.2.23")
-  4. MANDATORY: Terminate by calling kill_agent:
-     mcp__gobby__call_tool(server_name="gobby-agents", tool_name="kill_agent",
-       arguments={"session_id": "<your_session_id>"})
+  Merge ALL review_approved tasks into the target branch.
+  For each approved task (process in seq_num order):
+  1. list_tasks(parent_task_id=..., status="review_approved") to find approved tasks
+  2. list_worktrees(task_id=...) to find the task's worktree
+  3. merge_worktree(worktree_id=...) to merge into target
+  4. If conflicts: use gobby-merge tools to resolve. If unresolvable, escalate_task.
+  5. Run the push_command from merge_worktree result
+  6. auto_link_commits(task_id=..., since=task.created_at)
+  7. close_task(task_id=..., changes_summary="Merged to {target}")
+  8. delete_worktree(worktree_id=..., force=true)
+  9. git fetch origin (before next merge)
+
+  When all approved tasks are merged, call kill_agent to terminate.
 
   CRITICAL RULES:
-  - Do NOT run raw git merge commands. Use ONLY the merge_worktree MCP tool.
-  - Do NOT call close_task — it is BLOCKED. The coordinator closes tasks.
+  - Do NOT use raw git merge commands. Use ONLY merge_worktree MCP tool. Exception: you are allowed to run 'git fetch origin'.
+  - Do NOT edit or write files — you only merge.
   - Do NOT stop or exit without calling kill_agent.
   - Use progressive disclosure: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+
+workflows:
+  rules:
+    - merge-workflow
 
 rule_definitions:
   no_agent_spawn:
     mcp_tools:
       - gobby-agents:spawn_agent
     reason: "Spawning agents is not allowed in merge workflow."
-    action: block
-
-  no_task_management:
-    mcp_tools:
-      - gobby-tasks:create_task
-      - gobby-tasks:close_task
-    reason: "close_task is blocked for merge agents. The coordinator handles task closure. Call kill_agent to shut down after merging."
     action: block

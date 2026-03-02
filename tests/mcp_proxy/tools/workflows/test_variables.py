@@ -7,20 +7,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.workflows.definitions import WorkflowInstance, WorkflowState
+from gobby.workflows.definitions import WorkflowInstance
 
 pytestmark = pytest.mark.unit
 
 
 def _make_mocks(
-    existing_state: WorkflowState | None = None,
     instance: WorkflowInstance | None = None,
     session_variables: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create mock dependencies for variable functions."""
-    state_manager = MagicMock()
-    state_manager.get_state.return_value = existing_state
-
     session_manager = MagicMock()
     session_manager.resolve_session_reference.return_value = "uuid-session-1"
 
@@ -33,7 +29,6 @@ def _make_mocks(
     db = MagicMock()
 
     return {
-        "state_manager": state_manager,
         "session_manager": session_manager,
         "instance_manager": instance_manager,
         "session_var_manager": session_var_manager,
@@ -60,7 +55,6 @@ class TestSetVariableScoped:
         mocks = _make_mocks(instance=instance)
 
         result = set_variable(
-            mocks["state_manager"],
             mocks["session_manager"],
             mocks["db"],
             name="my_flag",
@@ -86,7 +80,6 @@ class TestSetVariableScoped:
         mocks = _make_mocks()
 
         result = set_variable(
-            mocks["state_manager"],
             mocks["session_manager"],
             mocks["db"],
             name="counter",
@@ -109,7 +102,6 @@ class TestSetVariableScoped:
         mocks = _make_mocks(instance=None)
 
         result = set_variable(
-            mocks["state_manager"],
             mocks["session_manager"],
             mocks["db"],
             name="flag",
@@ -166,7 +158,6 @@ class TestGetVariableScoped:
         mocks = _make_mocks(instance=instance)
 
         result = get_variable(
-            mocks["state_manager"],
             mocks["session_manager"],
             mocks["db"],
             name="my_flag",
@@ -187,7 +178,6 @@ class TestGetVariableScoped:
         mocks = _make_mocks(session_variables={"counter": 42, "flag": True})
 
         result = get_variable(
-            mocks["state_manager"],
             mocks["session_manager"],
             mocks["db"],
             name="counter",
@@ -216,7 +206,6 @@ class TestGetVariableScoped:
         mocks = _make_mocks(instance=instance)
 
         result = get_variable(
-            mocks["state_manager"],
             mocks["session_manager"],
             mocks["db"],
             name=None,

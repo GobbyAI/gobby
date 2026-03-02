@@ -190,6 +190,24 @@ class TestPipelineDefinition:
         assert len(pipeline.steps) == 1
         assert pipeline.inputs == {}
         assert pipeline.outputs == {}
+        assert pipeline.resume_on_restart is False
+
+    def test_resume_on_restart_defaults_false(self) -> None:
+        """resume_on_restart defaults to False."""
+        pipeline = PipelineDefinition(
+            name="test",
+            steps=[PipelineStep(id="s1", exec="true")],
+        )
+        assert pipeline.resume_on_restart is False
+
+    def test_resume_on_restart_opt_in(self) -> None:
+        """resume_on_restart can be set to True."""
+        pipeline = PipelineDefinition(
+            name="resumable",
+            steps=[PipelineStep(id="s1", exec="true")],
+            resume_on_restart=True,
+        )
+        assert pipeline.resume_on_restart is True
 
     def test_full_pipeline(self) -> None:
         """Test creating pipeline with all fields."""

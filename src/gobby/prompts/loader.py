@@ -11,13 +11,10 @@ read by sync_bundled_prompts() on daemon startup.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 from gobby.prompts.models import PromptTemplate
 from gobby.storage.database import DatabaseProtocol
-
-if TYPE_CHECKING:
-    from gobby.storage.prompts import LocalPromptManager
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +65,16 @@ class PromptLoader:
             self._db = LocalDatabase()
         return self._db
 
-    def _get_manager(self) -> "LocalPromptManager":
-        """Lazily import and create a LocalPromptManager."""
+    def _get_manager(self) -> Any:
+        """Get the prompt manager instance."""
         from gobby.storage.prompts import LocalPromptManager
 
         return LocalPromptManager(self._get_db())
+
+    def _get_record(self, path: str) -> Any | None:
+        """Helper to get a prompt record by path."""
+        manager = self._get_manager()
+        return manager.get_by_name(path, project_id=self._project_id)
 
     def load(self, path: str) -> PromptTemplate:
         """Load a prompt template by path.
@@ -89,11 +91,10 @@ class PromptLoader:
         if path in self._cache:
             return self._cache[path]
 
-        manager = self._get_manager()
-        record = manager.get_by_name(path, project_id=self._project_id)
+        record = self._get_record(path)
 
         if record is not None:
-            template = record.to_prompt_template()
+            template = cast(PromptTemplate, record.to_prompt_template())
             self._cache[path] = template
             logger.debug(f"Loaded prompt template '{path}' from database (scope={record.scope})")
             return template
@@ -178,8 +179,7 @@ class PromptLoader:
         Returns:
             True if template exists
         """
-        manager = self._get_manager()
-        return manager.get_by_name(path, project_id=self._project_id) is not None
+        return self._get_record(path) is not None
 
     def list_templates(self, category: str | None = None) -> list[str]:
         """List available template paths.

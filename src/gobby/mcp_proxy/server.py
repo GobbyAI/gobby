@@ -39,7 +39,6 @@ class GobbyDaemonTools:
         memory_manager: Any | None = None,
         config_manager: Any | None = None,
         semantic_search: Any | None = None,
-        tool_filter: Any | None = None,
         fallback_resolver: Any | None = None,
     ):
         self.config = config
@@ -53,7 +52,6 @@ class GobbyDaemonTools:
         self.tool_proxy = ToolProxyService(
             mcp_manager,
             internal_manager=internal_manager,
-            tool_filter=tool_filter,
             fallback_resolver=fallback_resolver,
         )
         self.server_mgmt = ServerManagementService(mcp_manager, config_manager, config)

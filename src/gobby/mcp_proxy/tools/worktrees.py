@@ -204,7 +204,7 @@ def _install_provider_hooks(
         if provider == "claude":
             from gobby.cli.installers.claude import install_claude
 
-            result = install_claude(worktree_path_obj)
+            result = install_claude(worktree_path_obj, mode="project")
             if result["success"]:
                 logger.info(f"Installed Claude hooks in worktree: {worktree_path}")
                 return True
@@ -214,7 +214,7 @@ def _install_provider_hooks(
             # These editors use Claude hooks format
             from gobby.cli.installers.claude import install_claude
 
-            result = install_claude(worktree_path_obj)
+            result = install_claude(worktree_path_obj, mode="project")
             if result["success"]:
                 logger.info(f"Installed {provider} hooks in worktree: {worktree_path}")
                 return True

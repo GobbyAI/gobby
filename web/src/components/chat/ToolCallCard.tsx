@@ -1,8 +1,9 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import React, { memo, useCallback, useMemo, useState } from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import type { ToolCall } from '../../types/chat'
 import { cn } from '../../lib/utils'
+import { Markdown } from './Markdown'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import type { A2UISurfaceState, UserAction } from '../canvas'
@@ -202,6 +203,40 @@ function parseReadOutput(result: string): { content: string; startLine: number }
   return { content: parsed.join('\n').replace(/\n$/, ''), startLine }
 }
 
+interface GrepFileGroup {
+  filePath: string
+  lines: { lineNum: number; content: string }[]
+}
+
+function parseGrepOutput(result: string): GrepFileGroup[] | null {
+  const lines = result.split('\n')
+  const groups: GrepFileGroup[] = []
+  let currentGroup: GrepFileGroup | null = null
+  let matchCount = 0
+
+  for (const line of lines) {
+    if (line === '--' || line === '') {
+      currentGroup = null
+      continue
+    }
+    const match = line.match(/^(.+?):(\d+)[:\-](.*)$/)
+    if (!match) {
+      if (matchCount === 0) return null
+      continue
+    }
+    const [, fp, lineNumStr, content] = match
+    const lineNum = parseInt(lineNumStr, 10)
+    matchCount++
+    if (!currentGroup || currentGroup.filePath !== fp) {
+      currentGroup = { filePath: fp, lines: [] }
+      groups.push(currentGroup)
+    }
+    currentGroup.lines.push({ lineNum, content })
+  }
+
+  return groups.length > 0 ? groups : null
+}
+
 function getLanguageFromPath(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase() || ''
   return EXT_TO_LANGUAGE[ext] || 'text'
@@ -259,23 +294,44 @@ function computeLineDiff(oldStr: string, newStr: string): { type: 'keep' | 'add'
   return result
 }
 
-function InlineDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
+function InlineDiff({ oldStr, newStr, language }: { oldStr: string; newStr: string; language: string }) {
   const diff = useMemo(() => computeLineDiff(oldStr, newStr), [oldStr, newStr])
+  const content = useMemo(() => diff.map(e => {
+    const prefix = e.type === 'add' ? '+' : e.type === 'remove' ? '-' : ' '
+    return `${prefix} ${e.line}`
+  }).join('\n'), [diff])
+
+  const lineProps = useCallback((lineNumber: number): React.HTMLProps<HTMLElement> => {
+    const entry = diff[lineNumber - 1]
+    if (!entry) return { style: { display: 'block' } }
+    const bg = entry.type === 'add' ? 'rgba(63, 185, 80, 0.15)'
+             : entry.type === 'remove' ? 'rgba(248, 81, 73, 0.3)'
+             : 'transparent'
+    return { style: { background: bg, display: 'block' } }
+  }, [diff])
+
+  const diffLineNumberStyle = useCallback((lineNumber: number) => {
+    const entry = diff[lineNumber - 1]
+    const color = entry?.type === 'add' ? '#3fb950'
+               : entry?.type === 'remove' ? '#f85149'
+               : '#555'
+    return { ...lineNumberStyle, color }
+  }, [diff])
 
   return (
-    <pre className="bg-[#0d0d0d] rounded text-xs overflow-auto max-h-96 p-3 m-0" style={{ fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace" }}>
-      {diff.map((entry, i) => {
-        const prefix = entry.type === 'add' ? '+' : entry.type === 'remove' ? '-' : ' '
-        const bg = entry.type === 'add' ? 'rgba(63, 185, 80, 0.15)' : entry.type === 'remove' ? 'rgba(248, 81, 73, 0.15)' : 'transparent'
-        const color = entry.type === 'add' ? '#3fb950' : entry.type === 'remove' ? '#f85149' : '#e6edf3'
-        return (
-          <div key={i} style={{ background: bg, color, margin: '0 -0.75rem', padding: '0 0.75rem' }}>
-            <span style={{ color: '#555', userSelect: 'none', display: 'inline-block', width: '1.5em' }}>{prefix}</span>
-            {entry.line}
-          </div>
-        )
-      })}
-    </pre>
+    <SyntaxHighlighter
+      style={highlighterTheme}
+      language={language}
+      PreTag="div"
+      showLineNumbers
+      startingLineNumber={1}
+      wrapLines
+      lineProps={lineProps}
+      lineNumberStyle={diffLineNumberStyle}
+      customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+    >
+      {content}
+    </SyntaxHighlighter>
   )
 }
 
@@ -315,12 +371,13 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
 
   // Edit pattern: file_path + old_string + new_string — unified diff
   if (filePath && typeof args.old_string === 'string' && typeof args.new_string === 'string') {
+    const language = getLanguageFromPath(filePath)
     return (
       <div>
         <div className="text-muted-foreground mb-1 font-medium">
           Edit <span className="font-mono text-foreground">{filePath}</span>
         </div>
-        <InlineDiff oldStr={args.old_string as string} newStr={args.new_string as string} />
+        <InlineDiff oldStr={args.old_string as string} newStr={args.new_string as string} language={language} />
       </div>
     )
   }
@@ -435,6 +492,49 @@ function ToolResultContent({ call }: { call: ToolCall }) {
     }
   }
 
+  const toolName = formatToolName(call.tool_name)
+
+  // Grep content mode: parse file:line:content and render per-file with highlighting
+  if (toolName === 'Grep') {
+    const groups = parseGrepOutput(resultStr)
+    if (groups) {
+      return (
+        <div className="space-y-2">
+          {groups.map((group, i) => {
+            const lang = getLanguageFromPath(group.filePath)
+            const content = group.lines.map(l => l.content).join('\n')
+            const startLine = group.lines[0].lineNum
+            return (
+              <div key={i}>
+                <div className="text-muted-foreground text-xs mb-1 font-mono">{group.filePath}</div>
+                <SyntaxHighlighter
+                  style={highlighterTheme}
+                  language={lang}
+                  PreTag="div"
+                  showLineNumbers
+                  startingLineNumber={startLine}
+                  lineNumberStyle={lineNumberStyle}
+                  customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+                >
+                  {content}
+                </SyntaxHighlighter>
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+  }
+
+  // Agent/Task results: plaintext
+  if (toolName === 'Agent' || toolName === 'Task') {
+    return (
+      <pre className="bg-muted rounded p-2 overflow-x-auto text-foreground max-h-96 overflow-y-auto font-mono text-xs whitespace-pre-wrap">
+        {resultStr}
+      </pre>
+    )
+  }
+
   // Detect if result looks like JSON for syntax highlighting
   const looksLikeJson = resultStr.trimStart().startsWith('{') || resultStr.trimStart().startsWith('[')
 
@@ -506,7 +606,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
           {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
             <ToolArgumentsContent args={call.arguments} />
           )}
-          {call.status === 'completed' && call.result !== undefined && (
+          {call.status === 'completed' && call.result !== undefined && formatToolName(call.tool_name) !== 'Edit' && (
             <div>
               <div className="text-muted-foreground mb-1 font-medium">Result</div>
               <ToolResultContent call={call} />

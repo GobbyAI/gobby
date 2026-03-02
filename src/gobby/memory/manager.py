@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 # Boost factor applied to user-sourced memories in search results
 _USER_SOURCE_BOOST = 1.2
 
+DEFAULT_LIST_LIMIT = 50
+DEFAULT_SEARCH_LIMIT = 10
+DEFAULT_GRAPH_LIMIT = 500
+MAX_REINDEX_LIMIT = 100_000
+
 
 class MemoryManager:
     """
@@ -455,7 +460,7 @@ class MemoryManager:
         self,
         query: str | None = None,
         project_id: str | None = None,
-        limit: int = 10,
+        limit: int = DEFAULT_SEARCH_LIMIT,
         memory_type: str | None = None,
         search_mode: str | None = None,
         tags_all: list[str] | None = None,
@@ -606,7 +611,7 @@ class MemoryManager:
     async def search_memories_as_context(
         self,
         project_id: str | None = None,
-        limit: int = 10,
+        limit: int = DEFAULT_SEARCH_LIMIT,
     ) -> str:
         """
         Retrieve memories and format them as context for LLM prompts.
@@ -674,7 +679,7 @@ class MemoryManager:
         self,
         project_id: str | None = None,
         memory_type: str | None = None,
-        limit: int = 50,
+        limit: int = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
@@ -695,7 +700,7 @@ class MemoryManager:
         self,
         project_id: str | None = None,
         memory_type: str | None = None,
-        limit: int = 50,
+        limit: int = DEFAULT_LIST_LIMIT,
         offset: int = 0,
     ) -> list[Memory]:
         """List memories via backend (async)."""
@@ -807,7 +812,7 @@ class MemoryManager:
         if not self._vector_store or not self._embed_fn:
             return {"success": False, "error": "Vector store or embedding function not configured"}
 
-        memories = self.list_memories(limit=100_000)
+        memories = self.list_memories(limit=MAX_REINDEX_LIMIT)
         total = len(memories)
         generated = 0
 
@@ -878,7 +883,7 @@ class MemoryManager:
     async def get_related(
         self,
         memory_id: str,
-        limit: int = 5,
+        limit: int = DEFAULT_SEARCH_LIMIT,
         min_similarity: float = 0.0,
     ) -> list[Memory]:
         """
@@ -909,7 +914,7 @@ class MemoryManager:
     # Neo4j knowledge graph (delegated to KnowledgeGraphService)
     # =========================================================================
 
-    async def get_entity_graph(self, limit: int = 500) -> dict[str, Any] | None:
+    async def get_entity_graph(self, limit: int = DEFAULT_GRAPH_LIMIT) -> dict[str, Any] | None:
         """Get the Neo4j entity graph for visualization."""
         if self._kg_service:
             return await self._kg_service.get_entity_graph(limit=limit)

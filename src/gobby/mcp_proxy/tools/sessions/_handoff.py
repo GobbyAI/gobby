@@ -146,7 +146,7 @@ def register_handoff_tools(
         from pathlib import Path
 
         from gobby.sessions.analyzer import TranscriptAnalyzer
-        from gobby.workflows.context_actions import format_handoff_as_markdown
+        from gobby.sessions.formatting import format_handoff_as_markdown
         from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
         from gobby.workflows.summary_actions import (
             _format_structured_context,

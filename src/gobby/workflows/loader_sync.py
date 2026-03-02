@@ -42,10 +42,6 @@ class _WorkflowLoaderProtocol(Protocol):
         self, project_path: Path | str | None = None
     ) -> list[DiscoveredWorkflow]: ...
 
-    async def discover_lifecycle_workflows(
-        self, project_path: Path | str | None = None
-    ) -> list[DiscoveredWorkflow]: ...
-
     async def discover_pipeline_workflows(
         self, project_path: Path | str | None = None
     ) -> list[DiscoveredWorkflow]: ...
@@ -130,11 +126,6 @@ class WorkflowLoaderSyncMixin:
         self, project_path: Path | str | None = None
     ) -> list[DiscoveredWorkflow]:
         return self._run_sync(self._async_self.discover_workflows(project_path))
-
-    def discover_lifecycle_workflows_sync(
-        self, project_path: Path | str | None = None
-    ) -> list[DiscoveredWorkflow]:
-        return self._run_sync(self._async_self.discover_lifecycle_workflows(project_path))
 
     def discover_pipeline_workflows_sync(
         self, project_path: Path | str | None = None

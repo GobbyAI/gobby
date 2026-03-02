@@ -1,54 +1,38 @@
 name: developer
 description: |
   Developer agent: implements tasks, writes tests, commits, marks for review.
-  Enforcement via rule_definitions. Guidance via instructions.
+  Behavior enforced by developer-workflow step workflow.
 
 version: "2.0"
 enabled: false
 priority: 20
 
 instructions: |
-  You are a developer agent spawned by a coordinator pipeline.
+  You are a developer agent spawned by an orchestrator pipeline.
   Your task ID is in your session variables as assigned_task_id.
 
-  Follow these steps IN ORDER:
-  1. Read the codebase to understand context
-  2. Write implementation code
-  3. Write tests
-  4. Run tests with `uv run pytest <test_file> -v` and iterate until they pass
-  5. Stage and commit with the gobby prefix:
+  Your behavior is enforced by a step workflow. Follow the step prompts:
+  1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
+  2. IMPLEMENT: Read code, write implementation, write tests, run tests, commit
      git add <files>
      git commit -m "[gobby-#TASK_ID] description"
-  6. MANDATORY: Mark the task for review (NOT close_task):
-     mcp__gobby__call_tool(server_name="gobby-tasks", tool_name="mark_task_needs_review",
-       arguments={"task_id": "<your_task_id>", "session_id": "<your_session_id>"})
-  7. MANDATORY: Terminate by calling kill_agent:
-     mcp__gobby__call_tool(server_name="gobby-agents", tool_name="kill_agent",
-       arguments={"session_id": "<your_session_id>"})
+  3. SUBMIT: Call mark_task_needs_review to submit for QA
+  4. TERMINATE: Call kill_agent to shut down
 
   CRITICAL RULES:
-  - Do NOT call close_task — it is BLOCKED. Only mark_task_needs_review works.
-  - Do NOT call git push — the coordinator handles merging.
+  - Do NOT call close_task — blocked by workflow. Only mark_task_needs_review.
+  - Do NOT call git push — the merge agent handles pushing.
   - Do NOT stop or exit without calling kill_agent.
   - Always use `uv run` for Python commands.
   - Use progressive disclosure: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 
+workflows:
+  rules:
+    - developer-workflow
+
 rule_definitions:
-  no_agent_spawn:
-    mcp_tools:
-      - gobby-agents:spawn_agent
-    reason: "Spawning agents is not allowed in developer workflow."
-    action: block
-
-  no_close_or_approve:
-    mcp_tools:
-      - gobby-tasks:close_task
-      - gobby-tasks:mark_task_review_approved
-    reason: "close_task is blocked for developer agents. Use mark_task_needs_review instead to mark your work for QA review, then call kill_agent to shut down."
-    action: block
-
   no_push:
     tools: [Bash]
     command_pattern: "git\\s+push"
-    reason: "Push is blocked. The parent orchestrator handles merging."
+    reason: "Push is blocked. The merge agent handles pushing."
     action: block

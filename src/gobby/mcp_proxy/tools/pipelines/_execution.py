@@ -5,7 +5,14 @@ import json
 import logging
 from typing import Any, Protocol
 
-from gobby.workflows.pipeline_state import ApprovalRequired
+from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline_state import (
+    ApprovalRequired,
+    ExecutionStatus,
+    PipelineExecution,
+    StepExecution,
+    StepStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,24 +44,65 @@ async def cleanup_background_tasks() -> None:
 
 
 class PipelineLoader(Protocol):
-    async def load_pipeline(self, name: str) -> Any: ...
+    async def load_pipeline(self, name: str) -> PipelineDefinition | None: ...
+
+
+class PipelineExecutionManager(Protocol):
+    def get_execution(self, execution_id: str) -> PipelineExecution | None: ...
+    def get_steps_for_execution(self, execution_id: str) -> list[StepExecution]: ...
+    def update_execution_status(
+        self,
+        execution_id: str,
+        status: ExecutionStatus,
+        resume_token: str | None = None,
+        outputs_json: str | None = None,
+    ) -> PipelineExecution | None: ...
+    def update_step_execution(
+        self,
+        step_execution_id: int,
+        status: StepStatus | None = None,
+        output_json: str | None = None,
+        error: str | None = None,
+        approval_token: str | None = None,
+        approved_by: str | None = None,
+        approval_timeout_seconds: int | None = None,
+    ) -> StepExecution | None: ...
+    def create_execution(
+        self, pipeline_name: str, inputs_json: str, session_id: str | None = None
+    ) -> PipelineExecution: ...
+    def list_executions(self, status: ExecutionStatus) -> list[PipelineExecution]: ...
 
 
 class PipelineExecutor(Protocol):
+    @property
+    def execution_manager(self) -> PipelineExecutionManager: ...
+
     async def execute(
         self,
-        *,
-        pipeline: Any,
+        pipeline: PipelineDefinition,
         inputs: dict[str, Any],
         project_id: str,
         execution_id: str | None = None,
         session_id: str | None = None,
-    ) -> Any: ...
+    ) -> PipelineExecution: ...
+    async def approve(self, token: str, approved_by: str | None = None) -> PipelineExecution: ...
+    async def reject(self, token: str, rejected_by: str | None = None) -> PipelineExecution: ...
+
+
+def _register_background_task(task: asyncio.Task[None]) -> None:
+    _background_tasks.add(task)
+
+    def _on_done(t: asyncio.Task[None]) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled() and t.exception():
+            logger.error(f"Pipeline background task failed: {t.exception()}")
+
+    task.add_done_callback(_on_done)
 
 
 async def _execute_pipeline_background(
-    executor: Any,
-    pipeline: Any,
+    executor: PipelineExecutor,
+    pipeline: PipelineDefinition,
     inputs: dict[str, Any],
     project_id: str,
     execution_id: str,
@@ -143,7 +191,11 @@ async def run_pipeline(
         return {"success": False, "error": "No loader configured"}
 
     # Load the pipeline definition
-    pipeline = await loader.load_pipeline(name)
+    try:
+        pipeline = await loader.load_pipeline(name)
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid pipeline '{name}': {e}"}
+
     if not pipeline:
         return {"success": False, "error": f"Pipeline '{name}' not found"}
 
@@ -158,13 +210,6 @@ async def run_pipeline(
     except Exception as e:
         return {"success": False, "error": f"Failed to create execution record: {e}"}
 
-    # Always create a background task — this ensures the pipeline keeps
-    # running even if wait mode times out
-    def _on_done(t: asyncio.Task[None]) -> None:
-        _background_tasks.discard(t)
-        if not t.cancelled() and t.exception():
-            logger.error(f"Pipeline background task failed: {t.exception()}")
-
     task = asyncio.create_task(
         _execute_pipeline_background(
             executor,
@@ -177,8 +222,7 @@ async def run_pipeline(
         ),
         name=f"pipeline-{name}-{execution_id[:8]}",
     )
-    _background_tasks.add(task)
-    task.add_done_callback(_on_done)
+    _register_background_task(task)
 
     if wait:
         # Block until completion or timeout — asyncio.wait does NOT cancel
@@ -203,7 +247,7 @@ async def run_pipeline(
 
 
 async def approve_pipeline(
-    executor: Any,
+    executor: PipelineExecutor,
     token: str,
     approved_by: str | None = None,
 ) -> dict[str, Any]:
@@ -241,7 +285,7 @@ async def approve_pipeline(
 
 
 async def reject_pipeline(
-    executor: Any,
+    executor: PipelineExecutor,
     token: str,
     rejected_by: str | None = None,
 ) -> dict[str, Any]:
@@ -278,8 +322,81 @@ async def reject_pipeline(
         return {"success": False, "error": f"Rejection failed: {e}"}
 
 
+async def resume_interrupted_pipelines(
+    loader: PipelineLoader,
+    executor: PipelineExecutor,
+    execution_manager: PipelineExecutionManager,
+    project_id: str | None = None,
+) -> list[str]:
+    """Resume pipelines that were running when the daemon last stopped.
+
+    Finds RUNNING executions whose pipeline definition has resume_on_restart=True,
+    re-queues them as background tasks using the existing resume path (execution_id),
+    and returns the list of resumed execution IDs. Non-resumable executions are left
+    RUNNING so the caller can fail them via fail_stale_running_executions(exclude_ids=...).
+
+    Args:
+        loader: WorkflowLoader for loading pipeline definitions.
+        executor: PipelineExecutor instance.
+        execution_manager: LocalPipelineExecutionManager instance.
+        project_id: Current project ID.
+
+    Returns:
+        List of execution IDs that were successfully re-queued.
+    """
+    from gobby.workflows.pipeline_state import ExecutionStatus
+
+    running = execution_manager.list_executions(status=ExecutionStatus.RUNNING)
+    if not running:
+        return []
+
+    resumed: list[str] = []
+    for execution in running:
+        try:
+            pipeline = await loader.load_pipeline(execution.pipeline_name)
+        except ValueError as e:
+            logger.warning(
+                f"Cannot load pipeline '{execution.pipeline_name}' for "
+                f"execution {execution.id} — will be failed: {e}"
+            )
+            continue
+
+        if not pipeline:
+            continue
+
+        if not getattr(pipeline, "resume_on_restart", False):
+            continue
+
+        # Parse stored inputs
+        inputs: dict[str, Any] = {}
+        if execution.inputs_json:
+            try:
+                inputs = json.loads(execution.inputs_json)
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning("Malformed inputs_json for execution %s: %s", execution.id, e)
+
+        # Re-queue as background task with existing execution_id (resume path)
+        task = asyncio.create_task(
+            _execute_pipeline_background(
+                executor,
+                pipeline,
+                inputs,
+                project_id,
+                execution.id,
+                execution.pipeline_name,
+                session_id=execution.session_id,
+            ),
+            name=f"pipeline-resume-{execution.pipeline_name}-{execution.id[:8]}",
+        )
+        _register_background_task(task)
+        resumed.append(execution.id)
+        logger.info(f"Resumed pipeline '{execution.pipeline_name}' execution {execution.id}")
+
+    return resumed
+
+
 def get_pipeline_status(
-    execution_manager: Any,
+    execution_manager: PipelineExecutionManager,
     execution_id: str,
 ) -> dict[str, Any]:
     """

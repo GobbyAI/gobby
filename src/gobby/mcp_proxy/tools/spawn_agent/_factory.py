@@ -58,8 +58,6 @@ def create_spawn_agent_registry(
     clone_storage: Any | None = None,
     clone_manager: Any | None = None,
     session_manager: Any | None = None,
-    # For mode=self (workflow activation on caller session)
-    state_manager: Any | None = None,  # WorkflowStateManager
     db: DatabaseProtocol | None = None,
 ) -> InternalToolRegistry:
     """
@@ -73,8 +71,7 @@ def create_spawn_agent_registry(
         clone_storage: Storage for clone records.
         clone_manager: Git manager for clone operations.
         session_manager: Session manager for resolving session references.
-        state_manager: WorkflowStateManager for mode=self activation.
-        db: Database instance for agent lookups and mode=self activation.
+        db: Database instance for agent lookups.
 
     Returns:
         InternalToolRegistry with spawn_agent tool registered.
@@ -242,8 +239,6 @@ def create_spawn_agent_registry(
             parent_session_id=resolved_parent_session_id,
             project_path=project_path,
             initial_variables=initial_variables,
-            # For mode=self
-            state_manager=state_manager,
             session_manager=session_manager,
             db=db,
         )

@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # --- Workflow Definition Models (YAML) ---
 
@@ -279,44 +279,20 @@ class Observer(BaseModel):
             )
 
 
-class WorkflowRule(BaseModel):
-    name: str | None = None
-    when: str
-    action: Literal["block", "allow", "require_approval", "warn"]
-    message: str | None = None
-
-
 class WorkflowTransition(BaseModel):
+    """Transition between workflow steps."""
+
     to: str
     when: str
     on_transition: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class WorkflowExitCondition(BaseModel):
-    type: str
-
-    # Other fields depend on type (e.g. pattern, prompt, variable)
-    model_config = ConfigDict(extra="allow")
-
-
-class PrematureStopHandler(BaseModel):
-    """Handler for when an agent attempts to stop before task completion."""
-
-    action: Literal["guide_continuation", "block", "warn"] = "guide_continuation"
-    message: str = (
-        "Task has incomplete subtasks. Options: "
-        "1) Continue: use suggest_next_task() to find the next task. "
-        "2) Stop anyway: use `/g workflows deactivate` to end the workflow first."
-    )
-    condition: str | None = None  # Optional condition to check (e.g., task_tree_complete)
-
-
 class WorkflowStep(BaseModel):
+    """A single step in a step workflow with tool enforcement."""
+
     name: str
     description: str | None = None
-    status_message: str | None = (
-        None  # Template rendered after on_enter, returned as system_message
-    )
+    status_message: str | None = None
 
     on_enter: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -324,19 +300,16 @@ class WorkflowStep(BaseModel):
     allowed_tools: list[str] | Literal["all"] = Field(default="all")
     blocked_tools: list[str] = Field(default_factory=list)
 
-    # MCP-level tool restrictions (for call_tool arguments)
-    # Format: "server:tool" (e.g., "gobby-tasks:list_tasks") or "server:*" for all tools on server
+    # MCP-level tool restrictions: "server:tool" or "server:*"
     allowed_mcp_tools: list[str] | Literal["all"] = Field(default="all")
     blocked_mcp_tools: list[str] = Field(default_factory=list)
 
-    rules: list[WorkflowRule] = Field(default_factory=list)
     transitions: list[WorkflowTransition] = Field(default_factory=list)
-    exit_when: str | None = None  # Expression shorthand AND-ed with exit_conditions
-    exit_conditions: list[dict[str, Any] | str] = Field(default_factory=list)
+    exit_when: str | None = None
 
     on_exit: list[dict[str, Any]] = Field(default_factory=list)
 
-    # MCP tool success/error handlers - execute actions when specific MCP tools complete
+    # MCP tool success/error handlers — execute actions when specific MCP tools complete
     # Each handler: {server: str, tool: str, action: str, ...action_params}
     on_mcp_success: list[dict[str, Any]] = Field(default_factory=list)
     on_mcp_error: list[dict[str, Any]] = Field(default_factory=list)
@@ -345,9 +318,8 @@ class WorkflowStep(BaseModel):
 class WorkflowDefinition(BaseModel):
     name: str
     description: str | None = None
+    type: str = "step"
     version: str = "1.0"
-    # Deprecated: use `enabled` instead. Kept for backward-compat YAML loading.
-    type: Literal["lifecycle", "step"] = "step"
     extends: str | None = None
 
     # Instance defaults: control whether workflow starts enabled and its evaluation priority
@@ -372,26 +344,20 @@ class WorkflowDefinition(BaseModel):
     # Cross-file rule imports (e.g., ["worker-safety"])
     imports: list[str] = Field(default_factory=list)
 
-    # Top-level tool blocking rules (same format as block_tools action rules).
-    # Evaluated on BEFORE_TOOL events before trigger-based block_tools actions.
-    tool_rules: list[dict[str, Any]] = Field(default_factory=list)
-
     # Observers: watch events and set variables or invoke registered behaviors
     observers: list[Observer] = Field(default_factory=list)
 
+    # Inline tool blocking rules for lifecycle workflows
+    tool_rules: list[dict[str, Any]] = Field(default_factory=list)
+
+    # Step workflow steps (empty for rule-only workflows)
     steps: list[WorkflowStep] = Field(default_factory=list)
 
-    # Global triggers (on_session_start, etc.)
-    triggers: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
-
-    # Handler for premature stop attempts (step workflows only)
-    # Triggered when agent tries to stop but exit_condition is not met
-    on_premature_stop: PrematureStopHandler | None = None
-
-    # Exit condition for the entire workflow (when this is true, workflow can end)
+    # Exit condition for the entire workflow
     exit_condition: str | None = None
 
     def get_step(self, step_name: str) -> WorkflowStep | None:
+        """Get a step by name."""
         for s in self.steps:
             if s.name == step_name:
                 return s
@@ -446,7 +412,7 @@ class PipelineStep(BaseModel):
     prompt: str | None = None  # LLM prompt template
     invoke_pipeline: str | dict[str, Any] | None = None  # Name of pipeline to invoke
     mcp: MCPStepConfig | None = None  # Call MCP tool directly
-    activate_workflow: dict[str, Any] | None = None  # Activate workflow on a session
+    activate_workflow: dict[str, Any] | None = None  # Activate workflow on session
 
     # Optional fields
     condition: str | None = None  # Condition for step execution
@@ -472,8 +438,8 @@ class PipelineStep(BaseModel):
             )
         if len(specified) > 1:
             raise ValueError(
-                "PipelineStep exec, prompt, invoke_pipeline, mcp, "
-                "and activate_workflow are mutually exclusive - only one allowed"
+                "PipelineStep exec, prompt, invoke_pipeline, mcp, and activate_workflow "
+                "are mutually exclusive - only one allowed"
             )
 
 
@@ -506,6 +472,9 @@ class PipelineDefinition(BaseModel):
 
     # Expose as MCP tool
     expose_as_tool: bool = False
+
+    # Resume execution after daemon restart (opt-in, steps must be idempotent)
+    resume_on_restart: bool = False
 
     @field_validator("steps", mode="after")
     @classmethod
@@ -582,38 +551,3 @@ class WorkflowInstance(BaseModel):
             if isinstance(val, str):
                 parsed[field] = datetime.fromisoformat(val)
         return cls(**parsed)
-
-
-class WorkflowState(BaseModel):
-    session_id: str
-    workflow_name: str
-    step: str
-    step_entered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    step_action_count: int = 0
-    total_action_count: int = 0
-
-    context_injected: bool = False
-
-    variables: dict[str, Any] = Field(default_factory=dict)
-
-    # Task decomposition state
-    task_list: list[dict[str, Any]] | None = None
-    current_task_index: int = 0
-    files_modified_this_task: int = 0
-
-    # Approval state for user_approval exit conditions
-    approval_pending: bool = False
-    approval_condition_id: str | None = None  # Which condition is awaiting approval
-    approval_prompt: str | None = None  # The prompt shown to user
-    approval_requested_at: datetime | None = None
-    approval_timeout_seconds: int | None = None  # None = no timeout
-
-    # Escape hatch: temporarily disable enforcement
-    disabled: bool = False
-    disabled_reason: str | None = None
-
-    # Track initial step for reset functionality
-    initial_step: str | None = None
-
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -12,6 +12,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["get_machine_id", "clear_cache"]
+
 # Thread-safe cache
 _cache_lock = threading.Lock()
 _cached_machine_id: str | None = None

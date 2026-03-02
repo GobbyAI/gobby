@@ -215,7 +215,7 @@ class AgentRunner:
                 # Reject lifecycle workflows - they run automatically via hooks
                 if (
                     isinstance(workflow_definition, WorkflowDefinition)
-                    and workflow_definition.type == "lifecycle"
+                    and not workflow_definition.steps
                 ):
                     self.logger.error(
                         f"Cannot use lifecycle workflow '{effective_workflow}' for agent spawning"

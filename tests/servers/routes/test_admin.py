@@ -9,6 +9,13 @@ pytestmark = pytest.mark.unit
 
 
 class TestAdminRoutes:
+    @pytest.fixture(autouse=True)
+    def reset_restart_state(self):
+        import gobby.servers.routes.admin._lifecycle as lifecycle
+
+        lifecycle._restart_in_progress = False
+        yield
+
     @pytest.fixture
     def mock_server(self):
         server = MagicMock()
@@ -58,8 +65,8 @@ class TestAdminRoutes:
         app.include_router(router)
         return TestClient(app)
 
-    @patch("gobby.servers.routes.admin.psutil")
-    @patch("gobby.servers.routes.admin.asyncio.to_thread")
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
     def test_status_endpoint(self, mock_to_thread, mock_psutil, client, mock_server) -> None:
         # Mock psutil
         mock_process = MagicMock()
@@ -90,8 +97,8 @@ class TestAdminRoutes:
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
 
-    @patch("gobby.servers.routes.admin.get_metrics_collector")
-    @patch("gobby.servers.routes.admin.psutil")
+    @patch("gobby.servers.routes.admin._health.get_metrics_collector")
+    @patch("gobby.servers.routes.admin._health.psutil")
     def test_metrics_endpoint(self, mock_psutil, mock_get_collector, client) -> None:
         mock_collector = MagicMock()
         mock_collector.export_prometheus.return_value = "metric_name 1.0\n"
@@ -108,7 +115,7 @@ class TestAdminRoutes:
         assert response.text == "metric_name 1.0\n"
         assert "text/plain" in response.headers["content-type"]
 
-    @patch("gobby.servers.routes.admin.get_version")
+    @patch("gobby.servers.routes.admin._config.get_version")
     def test_config_endpoint(self, mock_get_version, client) -> None:
         mock_get_version.return_value = "1.0.0"
 
@@ -142,7 +149,7 @@ class TestAdminRoutes:
         # verify the method was called.
         mock_server._process_shutdown.assert_called()
 
-    @patch("gobby.servers.routes.admin.subprocess.Popen")
+    @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
     def test_restart_endpoint(self, mock_popen, client, mock_server) -> None:
         response = client.post("/api/admin/restart")
         assert response.status_code == 200
@@ -157,7 +164,7 @@ class TestAdminRoutes:
         # Verify shutdown was initiated
         mock_server._process_shutdown.assert_called()
 
-    @patch("gobby.servers.routes.admin.subprocess.Popen")
+    @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
     def test_restart_endpoint_double_restart_guard(self, mock_popen, client, mock_server) -> None:
         # First restart should succeed
         response1 = client.post("/api/admin/restart")
@@ -220,7 +227,7 @@ class TestModelsEndpoint:
         app.include_router(router)
         return TestClient(app)
 
-    @patch("gobby.servers.routes.admin._discover_models")
+    @patch("gobby.servers.routes.admin._config._discover_models")
     def test_models_returns_grouped(self, mock_discover, client) -> None:
         mock_discover.return_value = {
             "claude": ["haiku"],
@@ -236,7 +243,7 @@ class TestModelsEndpoint:
         assert "gpt" in data["models"]
         assert data["default_model"] == "haiku"
 
-    @patch("gobby.servers.routes.admin._discover_models")
+    @patch("gobby.servers.routes.admin._config._discover_models")
     def test_models_provider_filter(self, mock_discover, client) -> None:
         mock_discover.return_value = {
             "claude": ["haiku"],
@@ -250,7 +257,7 @@ class TestModelsEndpoint:
         assert "claude" in data["models"]
         assert "gpt" not in data["models"]
 
-    @patch("gobby.servers.routes.admin._discover_models")
+    @patch("gobby.servers.routes.admin._config._discover_models")
     def test_models_provider_filter_no_match(self, mock_discover, client) -> None:
         mock_discover.return_value = {
             "claude": ["haiku"],
@@ -261,8 +268,8 @@ class TestModelsEndpoint:
         data = response.json()
         assert data["models"] == {}
 
-    @patch("gobby.servers.routes.admin._fallback_models_from_config")
-    @patch("gobby.servers.routes.admin._discover_models")
+    @patch("gobby.servers.routes.admin._config._fallback_models_from_config")
+    @patch("gobby.servers.routes.admin._config._discover_models")
     def test_models_fallback_on_litellm_error(
         self, mock_discover, mock_fallback, client, mock_server
     ) -> None:
@@ -276,7 +283,7 @@ class TestModelsEndpoint:
         assert data["models"] == {"claude": ["haiku"]}
         mock_fallback.assert_called_once_with(mock_server)
 
-    @patch("gobby.servers.routes.admin._discover_models")
+    @patch("gobby.servers.routes.admin._config._discover_models")
     def test_models_default_model_from_config(self, mock_discover, client) -> None:
         mock_discover.return_value = {}
 
@@ -284,7 +291,7 @@ class TestModelsEndpoint:
         data = response.json()
         assert data["default_model"] == "haiku"
 
-    @patch("gobby.servers.routes.admin._discover_models")
+    @patch("gobby.servers.routes.admin._config._discover_models")
     def test_models_default_model_fallback(self, mock_discover) -> None:
         """When no config default_model is set, falls back to 'opus'."""
         server = MagicMock()
@@ -326,12 +333,12 @@ class TestDiscoverModels:
         assert "gemini" in result
         assert result["claude"] == [
             {"value": "", "label": "(default)"},
-            {"value": "haiku", "label": "Haiku"}
+            {"value": "haiku", "label": "Haiku"},
         ]
         assert result["codex"] == [
             {"value": "", "label": "(default)"},
             {"value": "gpt-4.5-preview", "label": "GPT 4.5 Preview"},
-            {"value": "o3-mini", "label": "O3 Mini"}
+            {"value": "o3-mini", "label": "O3 Mini"},
         ]
 
     @patch(
@@ -368,7 +375,7 @@ class TestDiscoverModels:
 
         assert result["claude"] == [
             {"value": "", "label": "(default)"},
-            {"value": "haiku", "label": "Haiku"}
+            {"value": "haiku", "label": "Haiku"},
         ]
 
     @patch(
@@ -431,11 +438,11 @@ class TestFallbackModelsFromConfig:
 
         assert result["claude"] == [
             {"value": "", "label": "(default)"},
-            {"value": "haiku", "label": "Haiku"}
+            {"value": "haiku", "label": "Haiku"},
         ]
         assert result["gemini"] == [
             {"value": "", "label": "(default)"},
-            {"value": "gemini-2.0-flash", "label": "Gemini 2.0 Flash"}
+            {"value": "gemini-2.0-flash", "label": "Gemini 2.0 Flash"},
         ]
         assert "codex" not in result
         assert "litellm" not in result

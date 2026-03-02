@@ -74,7 +74,7 @@ def create_session_messages_registry(
     # --- Commits Tools ---
     # Only register if session_manager is available
     if session_manager is not None:
-        register_commits_tools(registry, session_manager)
+        register_commits_tools(registry, session_manager, db=db)
 
     # --- Action Tools (workflow action wrappers) ---
     # Only register if session_manager is available

@@ -13,8 +13,7 @@ from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.project_context import get_project_context
-from gobby.workflows.definitions import WorkflowState
-from gobby.workflows.state_manager import SessionVariableManager, WorkflowStateManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -45,7 +44,6 @@ class RegistryContext:
     dep_manager: TaskDependencyManager = field(init=False)
     session_task_manager: SessionTaskManager = field(init=False)
     session_manager: LocalSessionManager = field(init=False)
-    workflow_state_manager: WorkflowStateManager = field(init=False)
     session_var_manager: SessionVariableManager = field(init=False)
     project_manager: LocalProjectManager = field(init=False)
 
@@ -61,7 +59,6 @@ class RegistryContext:
         self.dep_manager = TaskDependencyManager(db)
         self.session_task_manager = SessionTaskManager(db)
         self.session_manager = LocalSessionManager(db)
-        self.workflow_state_manager = WorkflowStateManager(db)
         self.session_var_manager = SessionVariableManager(db)
         self.project_manager = LocalProjectManager(db)
 
@@ -98,12 +95,6 @@ class RegistryContext:
             name: str = ctx["name"]
             return name
         return None
-
-    def get_workflow_state(self, session_id: str | None) -> WorkflowState | None:
-        """Get workflow state for a session, if available."""
-        if not session_id:
-            return None
-        return self.workflow_state_manager.get_state(session_id)
 
     def resolve_project_filter(
         self, project: str | None = None, all_projects: bool = False

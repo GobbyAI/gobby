@@ -685,7 +685,7 @@ class TestAdminEndpoints:
         )
 
         # Make get_version raise an exception
-        with patch("gobby.servers.routes.admin.get_version") as mock_version:
+        with patch("gobby.servers.routes.admin._config.get_version") as mock_version:
             mock_version.side_effect = RuntimeError("Version error")
 
             client = TestClient(server.app)

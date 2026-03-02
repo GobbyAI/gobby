@@ -1,4 +1,4 @@
 # Workflows module
-from .definitions import WorkflowDefinition, WorkflowState
+from .definitions import WorkflowDefinition
 
-__all__ = ["WorkflowDefinition", "WorkflowState"]
+__all__ = ["WorkflowDefinition"]

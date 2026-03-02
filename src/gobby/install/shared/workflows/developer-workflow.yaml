@@ -1,0 +1,74 @@
+name: developer-workflow
+description: "Developer agent step workflow with per-step tool enforcement"
+version: "2.0"
+enabled: false
+
+variables:
+  task_claimed: false
+  review_submitted: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned task"
+    status_message: |
+      Claim your task by calling claim_task with your assigned_task_id,
+      then call get_task to read the full details.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: implement
+        when: "vars.task_claimed"
+
+  - name: implement
+    description: "Read code, implement changes, write tests, run tests, commit"
+    status_message: |
+      Implement the task. When done:
+      1. git add <files> && git commit -m "[gobby-#TASK_REF] description"
+      2. Call mark_task_needs_review to submit your work for QA review.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:mark_task_review_approved"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: mark_task_needs_review
+        action: set_variable
+        variable: review_submitted
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.review_submitted"
+
+  - name: terminate
+    description: "Self-terminate by calling kill_agent"
+    status_message: "Call kill_agent to terminate."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:kill_agent"
+
+exit_condition: "current_step == 'terminate'"
+
+rule_definitions:
+  no_push:
+    tools: [Bash]
+    command_pattern: "git\\s+push"
+    reason: "Push is blocked. The merge agent handles pushing."
+    action: block

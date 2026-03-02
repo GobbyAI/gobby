@@ -390,7 +390,7 @@ def create_handoff(
     from pathlib import Path
 
     from gobby.sessions.analyzer import TranscriptAnalyzer
-    from gobby.workflows.context_actions import format_handoff_as_markdown
+    from gobby.sessions.formatting import format_handoff_as_markdown
 
     manager = get_session_manager()
 

@@ -44,7 +44,7 @@ class AgentContext:
 
         Args:
             session: Session object with agent_depth attribute
-            workflow_state: WorkflowState with workflow_name, current step info
+            workflow_state: Dict with workflow variables (session-scoped)
             task: Active task dict with type/category fields
         """
         depth = getattr(session, "agent_depth", 0) or 0

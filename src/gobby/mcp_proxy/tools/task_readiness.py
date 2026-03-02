@@ -16,7 +16,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.utils.project_context import get_project_context
-from gobby.workflows.state_manager import WorkflowStateManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -216,8 +216,8 @@ def create_readiness_registry(
     if task_manager is None:
         raise ValueError("task_manager is required")
 
-    # Create workflow state manager for session_task scoping
-    workflow_state_manager = WorkflowStateManager(task_manager.db)
+    # Create session variable manager for session_task scoping
+    session_var_manager = SessionVariableManager(task_manager.db)
     session_manager = LocalSessionManager(task_manager.db)
 
     # --- list_ready_tasks ---
@@ -405,9 +405,9 @@ def create_readiness_registry(
                 logger.warning(f"Could not resolve session_id '{session_id}': {e}")
                 resolved_session_id = session_id
 
-            workflow_state = workflow_state_manager.get_state(resolved_session_id)
-            if workflow_state:
-                session_task = workflow_state.variables.get("session_task")
+            session_vars = session_var_manager.get_variables(resolved_session_id)
+            if session_vars:
+                session_task = session_vars.get("session_task")
                 if session_task and session_task != "*":
                     # session_task is set, use it as parent_task_id for scoping
                     parent_task_id = session_task
@@ -532,7 +532,7 @@ def create_readiness_registry(
         # Get recommended skills based on task category
         recommended_skills: list[str] = []
         try:
-            from gobby.workflows.context_actions import recommend_skills_for_task
+            from gobby.skills.formatting import recommend_skills_for_task
 
             task_brief = best_task.to_brief()
             recommended_skills = recommend_skills_for_task(task_brief, db=task_manager.db)

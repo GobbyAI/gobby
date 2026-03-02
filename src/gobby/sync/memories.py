@@ -276,6 +276,7 @@ class MemoryBackupManager:
                         continue
 
                     content = data.get("content", "")
+                    content = self._sanitize_content(content)
 
                     # Skip if memory with identical content already exists
                     if self.memory_manager.content_exists(content):

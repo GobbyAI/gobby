@@ -5,11 +5,6 @@ import json
 import click
 
 from gobby.cli.workflows import common
-from gobby.workflows.definitions import WorkflowState
-
-# Sentinel workflow name used when no real workflow is active but variables
-# still need a WorkflowState container (e.g. ad-hoc variable storage).
-LIFECYCLE_WORKFLOW_NAME = "__lifecycle__"
 
 
 @click.command("set-var")
@@ -33,9 +28,7 @@ def set_variable(
 
         gobby workflows set-var max_retries 5
     """
-    from datetime import UTC, datetime
-
-    state_manager = common.get_state_manager()
+    session_var_manager = common.get_session_var_manager()
 
     session_id = common.resolve_session_id(session_id)
 
@@ -58,22 +51,11 @@ def set_variable(
             except ValueError:
                 parsed_value = value
 
-    # Get or create state
-    state = state_manager.get_state(session_id)
-    if not state:
-        state = WorkflowState(
-            session_id=session_id,
-            workflow_name=LIFECYCLE_WORKFLOW_NAME,
-            step="",
-            step_entered_at=datetime.now(UTC),
-            variables={},
-        )
-
     # Set the variable
-    state.variables[name] = parsed_value
-    state_manager.save_state(state)
+    session_var_manager.set_variable(session_id, name, parsed_value)
 
     if json_format:
+        all_variables = session_var_manager.get_variables(session_id)
         click.echo(
             json.dumps(
                 {
@@ -81,7 +63,7 @@ def set_variable(
                     "session_id": session_id,
                     "variable": name,
                     "value": parsed_value,
-                    "all_variables": state.variables,
+                    "all_variables": all_variables,
                 },
                 indent=2,
             )
@@ -111,12 +93,11 @@ def get_variable(
 
         gobby workflows get-var
     """
-    state_manager = common.get_state_manager()
+    session_var_manager = common.get_session_var_manager()
 
     session_id = common.resolve_session_id(session_id)
 
-    state = state_manager.get_state(session_id)
-    variables = state.variables if state else {}
+    variables = session_var_manager.get_variables(session_id)
 
     if name:
         # Get specific variable

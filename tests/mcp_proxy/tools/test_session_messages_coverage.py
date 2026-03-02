@@ -552,7 +552,7 @@ class TestGetHandoffContext:
         assert result["context"] == "## Compact"
         assert result["context_type"] == "compact_markdown"
 
-    def test_get_session_not_found(self) -> None:
+    def test_get_handoff_context_session_not_found(self) -> None:
         """Test error when session not found by ID."""
         session_manager = MagicMock()
         session_manager.resolve_session_reference.side_effect = ValueError("Not found")
@@ -971,7 +971,7 @@ class TestGetSessionCommits:
             result = get_commits(session_id="sess-123")
 
         assert "error" in result
-        assert "Git not found" in result["error"]
+        assert "Git executable not found" in result["error"]
 
     def test_get_session_commits_by_prefix(self) -> None:
         """Test commit retrieval by session ID prefix."""
@@ -1029,26 +1029,23 @@ class TestMarkLoopComplete:
         mock_session.id = "sess-123"
         session_manager.get.return_value = mock_session
 
-        mock_state = MagicMock()
-        mock_state_manager = MagicMock()
-        mock_state_manager.get_state.return_value = mock_state
+        mock_svm = MagicMock()
 
         registry = create_test_registry(session_manager=session_manager)
         mark_complete = registry.get_tool("mark_loop_complete")
 
         with (
             patch("gobby.storage.database.LocalDatabase"),
-            patch("gobby.workflows.state_manager.WorkflowStateManager") as mock_wsm_class,
-            patch("gobby.workflows.state_actions.mark_loop_complete") as mock_action,
+            patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_class,
         ):
-            mock_wsm_class.return_value = mock_state_manager
+            mock_svm_class.return_value = mock_svm
 
             result = mark_complete(session_id="sess-123")
 
         assert result["success"] is True
         assert result["session_id"] == "sess-123"
         assert result["stop_reason"] == "completed"
-        mock_action.assert_called_once_with(mock_state)
+        mock_svm.set_variable.assert_called_once_with("sess-123", "stop_reason", "completed")
 
     def test_mark_loop_complete_no_session(self) -> None:
         """Test when session not found."""
@@ -1063,33 +1060,28 @@ class TestMarkLoopComplete:
         assert "error" in result
         assert "not found" in result["error"]
 
-    def test_mark_loop_complete_creates_state(self) -> None:
-        """Test that state is created if it doesn't exist."""
+    def test_mark_loop_complete_sets_variable_directly(self) -> None:
+        """Test that set_variable is called directly (no WorkflowState needed)."""
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
         session_manager.get.return_value = mock_session
 
-        mock_state_manager = MagicMock()
-        mock_state_manager.get_state.return_value = None  # No existing state
+        mock_svm = MagicMock()
 
         registry = create_test_registry(session_manager=session_manager)
         mark_complete = registry.get_tool("mark_loop_complete")
 
         with (
             patch("gobby.storage.database.LocalDatabase"),
-            patch("gobby.workflows.state_manager.WorkflowStateManager") as mock_wsm_class,
-            patch("gobby.workflows.definitions.WorkflowState") as mock_ws_class,
-            patch("gobby.workflows.state_actions.mark_loop_complete"),
+            patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_class,
         ):
-            mock_wsm_class.return_value = mock_state_manager
-            mock_ws_class.return_value = MagicMock()
+            mock_svm_class.return_value = mock_svm
 
-            # session_id is now required
             result = mark_complete(session_id="sess-123")
 
         assert result["success"] is True
-        mock_ws_class.assert_called_once()
+        mock_svm.set_variable.assert_called_once_with("sess-123", "stop_reason", "completed")
 
 
 # ============================================================================

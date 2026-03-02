@@ -9,6 +9,9 @@ type Handler = (data: Record<string, unknown>) => void
 let ws: WebSocket | null = null
 let reconnectTimer: number | null = null
 let closed = false
+let reconnectAttempts = 0
+const BASE_DELAY = 1000
+const MAX_DELAY = 30000
 
 /** event-type → Set of handler callbacks */
 const handlers = new Map<string, Set<Handler>>()
@@ -48,6 +51,7 @@ function connect() {
   ws = new WebSocket(getWsUrl())
 
   ws.onopen = () => {
+    reconnectAttempts = 0
     sendSubscriptions()
   }
 
@@ -56,7 +60,11 @@ function connect() {
   ws.onclose = () => {
     ws = null
     if (!closed) {
-      reconnectTimer = window.setTimeout(connect, 3000)
+      const baseDelay = Math.min(BASE_DELAY * 2 ** reconnectAttempts, MAX_DELAY)
+      const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1)
+      const delay = Math.max(0, baseDelay + jitter)
+      reconnectAttempts++
+      reconnectTimer = window.setTimeout(connect, delay)
     }
   }
 
@@ -133,6 +141,7 @@ export function useWebSocketEvent(eventType: string, handler: Handler): void {
         }
         // Reset so next mount can reconnect
         closed = false
+        reconnectAttempts = 0
       }
     }
   }, [eventType])

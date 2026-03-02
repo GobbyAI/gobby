@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.storage.database import DatabaseProtocol
     from gobby.workflows.loader import WorkflowLoader
-    from gobby.workflows.state_manager import WorkflowStateManager
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +102,6 @@ async def evaluate_spawn(
     db: DatabaseProtocol | None = None,
     workflow_loader: WorkflowLoader | None = None,
     runner: AgentRunner | None = None,
-    state_manager: WorkflowStateManager | None = None,
     session_manager: Any | None = None,
     git_manager: Any | None = None,
     worktree_storage: Any | None = None,
@@ -284,27 +282,6 @@ async def evaluate_spawn(
                     level="info",
                     code="SPAWN_DEPTH_OK",
                     message=f"Spawn depth check passed: {reason}",
-                )
-            )
-
-    # mode=self: check for existing step workflow on parent session
-    if eff_mode == "self" and parent_session_id and state_manager:
-        parent_state = state_manager.get_state(parent_session_id)
-        if (
-            parent_state
-            and parent_state.workflow_name
-            and parent_state.workflow_name != "__lifecycle__"
-        ):
-            result.items.append(
-                EvaluationItem(
-                    layer="runtime",
-                    level="warning",
-                    code="SELF_MODE_WORKFLOW_CONFLICT",
-                    message=(
-                        f"mode=self would activate workflow on parent session, but parent "
-                        f"already has workflow '{parent_state.workflow_name}' active"
-                    ),
-                    detail={"parent_workflow": parent_state.workflow_name},
                 )
             )
 

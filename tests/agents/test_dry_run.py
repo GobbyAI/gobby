@@ -72,11 +72,6 @@ def mock_runner() -> MagicMock:
     return runner
 
 
-@pytest.fixture
-def mock_state_manager() -> MagicMock:
-    return MagicMock()
-
-
 class TestAgentNotFound:
     @pytest.mark.asyncio
     async def test_agent_not_found(self, tmp_path: Path) -> None:
@@ -197,28 +192,6 @@ class TestRuntimeEnvironment:
         depth_items = [i for i in result.errors if i.code == "SPAWN_DEPTH_EXCEEDED"]
         assert len(depth_items) == 1
 
-    @pytest.mark.asyncio
-    async def test_self_mode_workflow_conflict(
-        self, tmp_path: Path, mock_state_manager: MagicMock
-    ) -> None:
-        """SELF_MODE_WORKFLOW_CONFLICT when parent already has active workflow."""
-        db = _setup_db(tmp_path)
-        _create_agent(db, mode="autonomous")
-
-        parent_state = MagicMock()
-        parent_state.workflow_name = "existing-workflow"
-        mock_state_manager.get_state.return_value = parent_state
-
-        result = await evaluate_spawn(
-            agent="test-agent",
-            mode="self",
-            parent_session_id="sess-123",
-            db=db,
-            state_manager=mock_state_manager,
-        )
-
-        conflict_items = [i for i in result.warnings if i.code == "SELF_MODE_WORKFLOW_CONFLICT"]
-        assert len(conflict_items) == 1
 
 
 class TestWorkflowEvaluation:

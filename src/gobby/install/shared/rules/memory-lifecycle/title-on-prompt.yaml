@@ -1,0 +1,13 @@
+tags: [memory-lifecycle, memory, lifecycle, title]
+
+rules:
+  title-on-prompt:
+    description: "Synthesize session title from user prompt"
+    event: before_agent
+    enabled: false
+    priority: 12
+    effect:
+      type: mcp_call
+      server: gobby-sessions
+      tool: synthesize_title_from_prompt
+      background: true
