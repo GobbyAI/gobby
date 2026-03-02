@@ -12,13 +12,13 @@ from gobby.servers.chat_session import ChatSession
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
-    from gobby.workflows.definitions import WorkflowDefinition
+    from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
 
 
 def _inject_agent_skills(
-    agent_body: WorkflowDefinition,
+    agent_body: AgentDefinitionBody,
     db: DatabaseProtocol,
     project_id: str,
     cli_source: str = "claude_sdk_web_chat",

@@ -381,7 +381,7 @@ async def resume_interrupted_pipelines(
                 executor,
                 pipeline,
                 inputs,
-                project_id,
+                project_id or "",
                 execution.id,
                 execution.pipeline_name,
                 session_id=execution.session_id,

@@ -218,8 +218,11 @@ def create_pipelines_registry(
         token: str,
         approved_by: str | None = None,
     ) -> dict[str, Any]:
+        executor = _get_executor()
+        if executor is None:
+            return {"error": "Pipeline executor not available"}
         return await approve_pipeline(
-            executor=_get_executor(),
+            executor=executor,
             token=token,
             approved_by=approved_by,
         )
@@ -232,8 +235,11 @@ def create_pipelines_registry(
         token: str,
         rejected_by: str | None = None,
     ) -> dict[str, Any]:
+        executor = _get_executor()
+        if executor is None:
+            return {"error": "Pipeline executor not available"}
         return await reject_pipeline(
-            executor=_get_executor(),
+            executor=executor,
             token=token,
             rejected_by=rejected_by,
         )
@@ -245,8 +251,11 @@ def create_pipelines_registry(
     def _get_pipeline_status(
         execution_id: str,
     ) -> dict[str, Any]:
+        em = _get_execution_manager()
+        if em is None:
+            return {"error": "Pipeline execution manager not available"}
         return get_pipeline_status(
-            execution_manager=_get_execution_manager(),
+            execution_manager=em,
             execution_id=execution_id,
         )
 

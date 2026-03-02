@@ -231,25 +231,25 @@ class ToolProxyService:
             tools_map = await self._mcp_manager.list_tools(server_name)
             tools_list = tools_map.get(server_name, [])
             # Convert to lightweight format
-            brief_tools: list[dict[str, Any]] = []
+            ext_brief_tools: list[dict[str, Any]] = []
             for tool in tools_list:
                 if isinstance(tool, dict):
-                    brief_tools.append(
+                    ext_brief_tools.append(
                         {
                             "name": tool.get("name", "unknown"),
                             "brief": safe_truncate(tool.get("description", "")),
                         }
                     )
                 else:
-                    brief_tools.append(
+                    ext_brief_tools.append(
                         {
                             "name": tool.name,
                             "brief": safe_truncate(tool.description),
                         }
                     )
             if self._tool_filter and session_id:
-                brief_tools = self._tool_filter.filter_tools(brief_tools, session_id)
-            return {"success": True, "tools": brief_tools, "tool_count": len(brief_tools)}
+                ext_brief_tools = self._tool_filter.filter_tools(ext_brief_tools, session_id)
+            return {"success": True, "tools": ext_brief_tools, "tool_count": len(ext_brief_tools)}
 
         return {
             "success": False,
