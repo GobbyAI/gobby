@@ -368,9 +368,18 @@ class ChatSessionMixin:
         start_data: dict[str, Any] = {}
         if pending_agent:
             start_data["agent_name_override"] = pending_agent
-        asyncio.create_task(
+
+        def _log_session_start_error(task: asyncio.Task[Any]) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc:
+                logger.warning("SESSION_START lifecycle hook failed: %s", exc)
+
+        t = asyncio.create_task(
             self._fire_lifecycle(conversation_id, HookEventType.SESSION_START, start_data)
         )
+        t.add_done_callback(_log_session_start_error)
 
         # Broadcast authoritative mode to frontend so it can override local storage
         mode_msg = json.dumps(

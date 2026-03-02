@@ -7,8 +7,11 @@ This module contains MCP tools for:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -213,17 +216,25 @@ Args:
             }
 
         # Set stop_reason via session variables
-        from gobby.workflows.state_manager import SessionVariableManager
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
 
-        if db is None:
-            from gobby.storage.database import LocalDatabase
+            if db is None:
+                from gobby.storage.database import LocalDatabase
 
-            local_db = LocalDatabase()
-            session_var_manager = SessionVariableManager(local_db)
-        else:
-            session_var_manager = SessionVariableManager(db)
+                local_db = LocalDatabase()
+                session_var_manager = SessionVariableManager(local_db)
+            else:
+                session_var_manager = SessionVariableManager(db)
 
-        session_var_manager.set_variable(session.id, "stop_reason", "completed")
+            session_var_manager.set_variable(session.id, "stop_reason", "completed")
+        except Exception as e:
+            logger.warning("Failed to set stop_reason for session %s: %s", session.id, e)
+            return {
+                "success": False,
+                "error": f"Failed to set stop_reason: {e}",
+                "session_id": session.id,
+            }
 
         return {
             "success": True,

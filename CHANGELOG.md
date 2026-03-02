@@ -8,6 +8,323 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.23]
+
+### Major Features
+
+#### Coordinator Pipeline & Agent Trio
+- Added coordinator pipeline with developer, QA, and merge agent trio for orchestrated multi-agent workflows (#9393)
+- Added orchestrator pipeline with step workflow enforcement for structured pipeline execution (#9510)
+- Added pipeline resume on daemon restart to recover in-flight pipelines (#9513)
+- Created child sessions in pipeline executor for P2P messaging between agents (#9389)
+- Wired session_manager in runner and injected parent_session_id into pipeline inputs (#9391)
+- Simplified developer and QA agent workflows for Haiku reliability (#9424)
+- Wired rule_definitions into rule engine with deterministic shutdown sequencing (#9407)
+- Moved merge from main repo to worktree to eliminate unsafe main repo operations (#9457, #9461)
+- Added fetch_after_merge, auto_link_commits, stash/pull handling, and push delegation to merge agent (#9454)
+- Registered skipped steps in pipeline context for downstream condition evaluation (#9419)
+
+#### Autonomous SDK Agent Execution
+- Replaced headless/embedded spawn modes with unified autonomous mode (#9439)
+- Wired autonomous SDK dispatch in spawn_executor (#9441)
+- Added lifecycle monitor to detect completed/failed autonomous tasks (#9442)
+- Captured SDK session ID for cross-mode resume (#9443)
+
+#### Session Handoff & Digest Overhaul
+- Added full session handoff pipeline with handoff_ready flag and context injection (#9325)
+- Added cross-mode session handoff from terminal to web chat (#9482)
+- Added web chat resume from terminal/autonomous sessions (#9445)
+- Overhauled session digest pipeline with turn-by-turn records (#9378)
+- Wired generate_session_boundary_summaries for session transitions (#9392)
+- Added digest support for plan mode turns (#9481)
+- Fixed digest capture of interrupted turns on next stop event (#9487)
+- Fixed handoff source detection to use event source instead of rule-based variable (#9488, #9489)
+- Restructured handoff prompts with real git data and proper word budgets (#9372, #9373)
+- Renamed summary files to `{seq_num}-full.md` / `{seq_num}-compact.md` (#9374)
+- Added max_age_minutes guard to find_parent() for handoff sessions (#9387)
+- Fixed fallback to transcript when digest_markdown is empty for compact handoff (#9519)
+
+#### Stop-Gate & Tool Error Recovery
+- Promoted Tier 1 stop-gate rules to hardcoded engine plumbing (#9324)
+- Added block agent stop after tool errors as built-in plumbing (#9311)
+- Added consecutive tool block detection in rule engine (#9312)
+- Added tool error recovery rule and wired hooks into spawned agents (#9298)
+- Hardened tool error recovery from inject_context to stop block (#9301)
+- Scoped consecutive block counter to same tool to prevent death spiral (#9319)
+- Fixed stop-blocking after sibling tool errors with catastrophic failure bypass (#9318)
+- Auto-cleared tool_block_pending on successful after_tool (#9302)
+- Fixed fire stop rules for killed agent sessions (#9450)
+
+#### Legacy Workflow System Removal
+- Pruned legacy step/lifecycle workflow system (#9507)
+- Removed dead WorkflowEngine and migrated observers to rule engine (#9435)
+- Deleted dead workflow action modules and relocated survivors (#9504)
+- Removed dead ActionHandler wrappers from workflow actions (#9499)
+- Purged deprecated digest system and fixed memory-recall-on-prompt (#9402)
+- Removed legacy transcript-based handoff path (#9404)
+
+### Web UI
+
+- Added smart tool call headers with contextual summaries (#9359)
+- Added line numbers on Write blocks and unified diff on Edit blocks (#9356)
+- Improved chat UI tool result rendering with better formatting (#9530)
+- Fixed tool results not displaying in web UI (#9354)
+- Fixed tool chain groups and tool call details expand by default (#9348, #9349)
+- Fixed base64 images in tool results rendering as raw text (#9277)
+- Fixed thinking blocks disappearing after streaming completes (#9282)
+- Added mobile chat drawer improvements with session status dots (#9346)
+- Combined MobileChatDrawer and SessionStatusBar on mobile (#9344)
+- Added two-row mobile terminal toolbar layout (#9314)
+- Added Shift+Tab/Shift+Enter to mobile toolbar with Ctrl+C/Ctrl+D labels (#9313)
+- Added mobile terminal delete button, VIEW/EDIT badges, and ConfirmDialog (#9306)
+- Fixed mobile terminal viewport height and keyboard autofill bar (#9308)
+- Fixed mobile chat drawer expanding by default (#9347)
+- Fixed plan approval modal flash and mode dial lag from artifact panel (#9345)
+- Fixed project picker dropdown clipping on mobile — aligned right (#9205)
+- Added clickable and dismissable agent sessions in sidebar (#9219)
+- Added sidebar parity across Workflows page (#9309)
+- Added Escape key handler to SidebarPanel (#9310)
+- Added workflows UI bug fixes and improvements (#9327)
+- Fixed workflows/pipeline editor crashes on dict-form invoke_pipeline (#9341)
+- Aligned pipeline card buttons with agents/rules pattern (#9379)
+- Replaced pipeline create dropdown with direct sidebar open (#9401)
+- Replaced window.confirm with ConfirmDialog component (#9479)
+- Fixed agent editor sidebar — YAML empty, extends dropped, skills not saved (#9350)
+- Fixed context usage pie chart reporting inflated percentage on tool-heavy turns (#9275)
+- Added DELETE endpoint for UI settings (#9238)
+- Fixed template rules not visible in UI (#9264)
+- Loaded agent definition as single source of truth in web chat (#9328)
+- Made inject_context templates work with session data (#9331)
+- Added colon-triggered inline autocomplete for slash commands (#9265)
+- Fixed web UI slash command bugs (#9239)
+- Fixed stale chat content persisting after session deleted (#9210)
+- Fixed chat mode bleeding between sessions (#9221)
+- Fixed plan/act mode desync on WebSocket connect race (#9269)
+- Prevented mode reset on SDK session ID adoption in web chat (#9508)
+- Fixed terminal session observation rendering raw JSON (#9248)
+- Restored missing CSS from index.css monolith decomposition (#9261)
+- Fixed terminal shortcut keys bar CSS — co-located styles (#9204)
+- Removed mode indicator from status bar and mobile drawer (#9511)
+- Filtered extends dropdown to only installed and enabled agents
+- Updated session start display with cleaner layout and agent metadata (#9360)
+- Showed injected skill names in session start output (#9290)
+
+### Improvements
+
+- Synthesized session title from first user prompt (#9501)
+- Increased session title synthesis timeout from 10s to 30s (#9528)
+- Added web chat / CLI hook parity: webhooks, broadcasting, inter-session messages (#9300)
+- Added workflows reinstall CLI and auto-enable gobby-tagged templates (#9369)
+- Removed TTS (ElevenLabs) while keeping STT (Whisper) (#9323)
+- Separated TTS and STT enablement in voice config (#9303)
+- Fixed STT voice flow — VAD thresholds, stuck state, error feedback (#9338)
+- Moved TTS to frontend and capitalized API key config names (#9254)
+- Combined discovery and discovering-tools into progressive-discovery skill (#9296)
+- Added wait_for_command MCP tool and command-listener pipeline (#9245)
+- Wired tool caching into MCP manager and status endpoint (#9289)
+- Slimmed list_mcp_servers output and required category/validation_criteria on create_task (#9292, #9293, #9294)
+- Injected default agent context into session start response (#9268)
+- Enabled pipeline workflows for agent spawning and fixed pipeline-worker (#9268)
+- Fixed /skills Run Skill — injected context via additionalContext (#9249)
+- Scoped worker-safety rules to spawned agents only (#9383)
+- Added is_spawned_agent guards to messaging rules (#9485)
+- Denied ExitPlanMode when no plan file exists (#9271)
+- Exempted plan mode markdown from require-task-before-edit (#9376)
+- Propagated template changes to installed copies for agents and workflows (#9416)
+- Added 'Rule enforced by Gobby' prefix to hardcoded auto-blocks (#9340)
+- Removed redundant awaiting_tool_use rule (#9332)
+- Fixed YAML folding artefact in command-mcp-tool-restriction that caused unconditional blocking (#9486)
+- Graceful Neo4j/Docker handling on daemon startup (#9291)
+- Fixed CLI Neo4j status sourced from daemon API instead of broken config (#9299)
+- Fixed watchdog health check to use lightweight /api/admin/health endpoint (#9258)
+- Route standardization, WebSocket broadcasting, and refresh button removal (#9218)
+- Fixed stale CLI endpoint URLs missing /api/ prefix (#9266)
+- Overrode VIRTUAL_ENV to empty in tmux -e flags (#9410)
+- Prevented committing-changes skill from overriding agent close procedures (#9428)
+- Made delete_worktree idempotent for pipeline cleanup resilience (#9429)
+- Fixed pipeline step condition evaluation — stripped ${{ }} wrapper (#9256)
+- Fixed pipeline reliability for task orchestration (#9380)
+- Stopped marking every session as handoff_ready on exit (#9382)
+- Persisted observer variable changes to DB and guarded create_task claim detection
+- Preserved task claim variables across session compaction (#9502)
+- Fixed auto-compaction context survival for autonomous and web chat (#9448)
+- Fixed compact_markdown from containing summary content when LLM omits section break marker (#9490)
+- Collected mcp_call effects even when override decisions apply (#9406)
+- Fixed context-handoff rules not firing on /clear (#9304)
+- Extended handoff parent backoff to 6m polling for /clear and /compact (#9484)
+- Wired _dispatch_boundary_summaries and added backoff for /clear handoff race (#9483)
+- Fixed int task_ids in task_tree_complete() stop-gate condition (#9453)
+- Added BEFORE_AGENT to piggyback events and improved message formatting (#9222)
+- Fixed context window percentage and removed dead conductor module (#9240)
+- Fixed LiteLLM error leaking into web chat (#9297)
+- Allowed developer and QA agents to create bug tasks for triaging
+- Updated rollup 4.57.1 to 4.59.0 — fixed GHSA-mw96-cpmx-2vgc (#9261)
+
+### Bug Fixes
+
+- Fixed 47 failing tests and 3 errors across 10 root causes (#9342)
+- Fixed 33 failing tests and 25 E2E errors on 0.2.23 branch (#9531)
+- Resolved 15 pytest failures and 5 mypy errors (#9365)
+- Added category field to all create_task calls in e2e tests (#9343)
+- Resolved all mypy --strict errors in agent_spawn.py (#9322)
+- Resolved 5 mypy errors across 4 files (#9491)
+- Fixed missing PromptLoader._get_manager() method (#9523)
+- Replaced nonexistent SessionSource.EMBEDDED with AUTONOMOUS_SDK (#9467)
+- Fixed agent rule_definitions filtered by empty _active_rule_names and added IfExp to safe evaluator (#9407)
+- Removed dangling ActionContext imports and stale WorkflowEngine docstrings (#9451)
+- Removed stale WorkflowState references from test_tasks_coverage.py (#9518)
+- Fixed prompt_text injection that silently broke session handoffs (#9357, #9362)
+- Resolved mypy type errors in _handoff.py (#9384)
+- Stripped trailing newlines from agent tree text fields (#9371)
+- Fixed HeadlessResult/HeadlessSpawner imports in integration tests (#9459)
+- Fixed CodeRabbit findings across multiple batches (#9234, #9285, #9288, #9405, #9512)
+- Fixed worktree hook install to use project mode
+- Added force: true to coordinator cleanup_worktree step (#9421)
+- Handled dict-form invoke_pipeline in renderer and executor (#9358)
+- Fixed missing pipeline validation in runner.prepare_run (#9268)
+
+### Refactoring
+
+- Decomposed websocket/chat.py into focused modules (#9526)
+- Decomposed admin.py routes monolith into package (#9522)
+- Decomposed storage/skills.py monolith into package (#9521)
+- Decomposed _activate_default_agent into focused helpers (#9498)
+- Moved description and task into agent tree block (#9367)
+
+### Testing
+
+- Raised CLI module test coverage to 80%+ across all 7 targets (#9493)
+
+### Documentation
+
+- Added unified SDK agent execution and session blob storage plans (#9375)
+- Rewrote pipeline guide and created issues audit (#9364)
+- Documented automatic context injection in send_message tool (#9243)
+
+## [0.2.22]
+
+### Major Features
+
+#### CLI Session Observation & Bidirectional Messaging
+- Added Phase 1 read-only session observation from CLI to Web UI (#9152)
+- Added Phase 2 CLI sessions in chat sidebar with bidirectional messaging (#9161)
+- Added terminal session filtering to show only active tmux panes using process liveness checks (#9194)
+- Fixed terminal session observation, sidebar scroll expansion, and missing sessions (#9192, #9174, #9177)
+- Hid internal cliSessions from chat sidebar Terminal Sessions list (#9226)
+
+#### Agent System v3
+- Removed SkillProfile, added variables sync, and created dedicated agents skill (#9085)
+- Added web chat agent selection with scope-aware picker modal (#9187)
+- Converted agent edit form to sliding sidebar panel with improved UX (#9184)
+- Improved Agent Editor Form with 7 UX fixes including 60vh scrollable detail, Pydantic defaults, and variables/rules editor rendering (#9182, #9183)
+- Added Launch Agent from Task Panel (#9176)
+- Unified agent mode/isolation/provider/base_branch defaults to "inherit" (#9191)
+- Fixed agent picker modal imports, deduplication, mobile layout, and icon sizing (#9195)
+- Fixed agent rules selector and agent card UX (#9188)
+
+#### Rule Engine Consolidation
+- Supported multiple effects per rule and consolidated 36 rules into 8 (#9158)
+- Consolidated variable stores: removed step_variables, used session_variables exclusively (#9233)
+- Revamped rule templates: renamed auto_task_ref, deprecated stale rules, tuned stop gates
+- Dropped underscore prefix from session variable names in templates (#9155)
+- Moved initialize-session-defaults rule to deprecated (#9178)
+- Renamed require-read-mail to notify-unread-mail, switching from block to inject_context
+- Removed deprecated rule/skill templates and cleaned up stale files
+- Added Jinja template support in require-server-listed-for-schema reason field (#9173)
+
+#### Plan Mode Improvements
+- Fixed plan mode stuck after ExitPlanMode timeout or UI toggle (#9143)
+- Fixed plan mode detection false positive from conversation history (#9132)
+- Fixed plan mode bash filter false positive on stderr redirection (#9118)
+- Fixed plan file path not tracked with regex and fallback (#9120)
+- Fixed ExitPlanMode fallback to fail closed instead of defaulting to approve
+- Instructed agent to call ExitPlanMode when plan is complete (#9116)
+- Fixed plan approval not prompting agent to proceed (#9172)
+
+#### Canvas & Artifacts
+- Fixed 6 A2UI canvas implementation bugs (#9110)
+- Fixed canvas render_surface MCP proxy context threading (#9121)
+- Added remaining canvas frontend files including panel, tests, skill, and hooks
+- Fixed artifact panel mobile layout with full-width overlay on screens under 768px (#9162)
+
+#### Skills System
+- Completed skills template-to-installed pattern (#9100)
+- Added skill filtering at serve time and updated default agent (#9085)
+- Threaded database connection to recommend_skills_for_task for DB-backed skill loading (#9104)
+- Fixed skill auto-injection pipeline and wired up default web agent (#9115)
+- Fixed skill browser sending wrong command prefix (#9198)
+
+### Web UI
+
+- Decomposed index.css monolith into 16 component-scoped CSS files (#9190)
+- Organized web/src/components/ into feature directories (#9230)
+- Replaced flat slash command popup with modal browsers for skills and workflows (#9114)
+- Sorted slash commands alphabetically in popup (#9122)
+- Fixed slash command palette not scrolling on arrow key navigation (#9148)
+- Added /restart slash command to web chat (#9145)
+- Added tool call groupings in chat view (#9144)
+- Loaded all session messages at once, removed Load More button (#9229)
+- Loaded chat messages from DB on initial mount (#9150)
+- Replaced RuleCreateModal with YAML editor for new rules (#9224)
+- Replaced header status badge with arrow icon on mobile (#9201)
+- Fixed mobile drawer on Chat and Sessions pages (#9199)
+- Fixed CSS cascade and textarea height on mobile (#9199)
+- Fixed terminal viewer not filling full height on mobile (#9199)
+- Made mobile terminal drawer match chat UI style (#9200)
+- Fixed missing 'No conversations' empty state CSS (#9202)
+- Added missing agent-defs-btn base CSS styles (#9223)
+- Added desktop CSS for terminal content container (#9227)
+- Fixed UI bugs: z-index stacking, branch selector, chat deletion (#9165, #9166, #9167)
+- Switched source filter to Installed after Install All (#9181)
+- Aligned SkillsPage with workflows UI, added filter chips, removed Overview cards
+- Added light theme color for templates overview card (#9105)
+- Reset all chat state when deleting the active conversation (#9149)
+- Prevented 3D knowledge graph crash on iOS/mobile (#9154)
+
+### Improvements
+
+- Consolidated handoff tools to set_handoff_context and get_handoff_context (#9112)
+- Added get_inter_session_messages tool for P2P message visibility (#9108)
+- Added require-read-mail rule to enforce mid-turn message awareness (#9107)
+- Added multi-variable file support with Variables tab and consolidated YAML (#9175)
+- Persisted chat mode to DB for session reconnection (#9131, #9146)
+- Persisted selected project ID to config_store (#9134)
+- Persisted user settings (font, model, theme) to config_store (#9133)
+- Deprecated localStorage chat message storage in favor of DB (#9138)
+- Removed localStorage cache for project selection (#9159)
+- Pulled Gemini and Codex model lists from litellm (#9189)
+- Used multi-step exploration heuristic in memory nudge (#9099)
+- Normalized secret names to lowercase for case-insensitive upsert (#9163)
+- Removed dead handoff action handlers (#9147)
+- Updated agents SKILL.md with comprehensive gobby-agents tool docs (#9113)
+
+### Bug Fixes
+
+- Fixed block-stop-after-tool-block false positive causing API waste (#9164)
+- Fixed _dispatch_mcp_calls silent drop when no event loop (#9186)
+- Fixed 4 error log bugs degrading daemon functionality (#9179)
+- Fixed rules YAML save, soft-delete blocking create, and workflow_type mutation (#9103)
+- Fixed get_session_messages not resolving session references (#9109)
+- Fixed require-read-mail review issues (#9111)
+- Fixed memory-review-gate re-trigger on close_task (#9098)
+- Fixed title synthesis race condition by sending db_session_id via WebSocket
+- Fixed WebSocket errors and validation failures on page load (#9196)
+- Fixed mypy type-arg errors in rule_engine, canvas, and chat_session_permissions (#9160)
+
+### Code Quality
+
+- Hardened E2E test isolation with HOME override, service paths, and leak detection (#9066)
+- Set up vitest config and test script for web/ (#9151)
+- Fixed stale test expectations in test_agent_definitions_v2.py (#9197)
+- Fixed test_auto_task_rules.py to match non-deprecated rules (#9185)
+- Fixed test failures from agent definition changes (#9123)
+- Fixed uninstall tests to use fake home instead of real Path.home() (#9101)
+
+### Documentation
+
+- Added frontend design standard and style guide (#9153)
+- Added 0.2.21 changelog with release notes (#9231)
+
 ## [0.2.21]
 
 ### Major Features

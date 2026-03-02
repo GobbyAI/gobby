@@ -413,11 +413,16 @@ class SessionControlMixin:
             db_sid = getattr(session, "db_session_id", None)
             if db_sid:
                 try:
-                    from gobby.storage.database import LocalDatabase
                     from gobby.workflows.observers import compute_mode_level
                     from gobby.workflows.state_manager import SessionVariableManager
 
-                    svm = SessionVariableManager(LocalDatabase())
+                    sm = getattr(self, "session_manager", None)
+                    db = getattr(sm, "db", None) if sm else None
+                    if db is None:
+                        from gobby.storage.database import LocalDatabase
+
+                        db = LocalDatabase()
+                    svm = SessionVariableManager(db)
                     svm.merge_variables(
                         db_sid,
                         {"chat_mode": mode, "mode_level": compute_mode_level(mode)},
