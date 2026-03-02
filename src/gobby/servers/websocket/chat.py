@@ -184,9 +184,12 @@ class ChatMixin:
         conversation_id: str,
         model: str | None = None,
         project_id: str | None = None,
+        resume_session_id: str | None = None,
     ) -> ChatSession:
         """Create and bootstrap a new ChatSession with lifecycle hooks wired."""
         session = ChatSession(conversation_id=conversation_id)
+        if resume_session_id:
+            session.resume_session_id = resume_session_id
 
         # Wire lifecycle callbacks before start() so hooks are registered with the SDK
         session._on_before_agent = lambda data: self._fire_lifecycle(
@@ -578,11 +581,19 @@ class ChatMixin:
             if session and getattr(session, "seq_num", None):
                 session_ref = f"#{session.seq_num}"
                 ctx = result.get("context")
-                result["context"] = (
-                    f"Gobby Session ID: {session_ref}\n\n{ctx}"
-                    if ctx
-                    else f"Gobby Session ID: {session_ref}"
-                )
+                if event_type == HookEventType.PRE_COMPACT:
+                    # Richer context for compaction survival
+                    from gobby.servers.chat_session_helpers import build_compaction_context
+
+                    enrichment = build_compaction_context(
+                        session_ref=session_ref,
+                        project_id=getattr(session, "project_id", None),
+                        cwd=project_path,
+                        source="claude_sdk_web_chat",
+                    )
+                else:
+                    enrichment = f"Gobby Session ID: {session_ref}"
+                result["context"] = f"{enrichment}\n\n{ctx}" if ctx else enrichment
 
             # --- Event broadcasting for audit trail (parity with CLI path D2) ---
             hook_broadcaster = getattr(self, "hook_broadcaster", None)

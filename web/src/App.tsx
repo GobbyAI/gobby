@@ -29,6 +29,7 @@ import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
 import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
+import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import type { GobbySession } from "./hooks/useSessions";
 
 // Lazy-load non-default page components for code splitting
@@ -291,6 +292,7 @@ export default function App() {
   );
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [resumeModalOpen, setResumeModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -762,6 +764,10 @@ export default function App() {
         sendMessage("/compact", settings.model, undefined, effectiveProjectId);
         return;
       }
+      if (item.action === "resume_session") {
+        setResumeModalOpen(true);
+        return;
+      }
       if (item.action === "restart_daemon") {
         addSystemMessage("Restarting daemon...");
         const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
@@ -1061,6 +1067,13 @@ export default function App() {
       <QuickCaptureTask
         isOpen={quickCaptureOpen}
         onClose={() => setQuickCaptureOpen(false)}
+      />
+
+      <ResumeSessionModal
+        isOpen={resumeModalOpen}
+        onClose={() => setResumeModalOpen(false)}
+        sessions={sessionsHook.sessions}
+        onResume={handleContinueInChat}
       />
 
       <SlashCommandModal

@@ -1,9 +1,9 @@
 """Terminal spawner implementations for agent execution.
 
-This package provides the base types, command building, prompt management,
-and the embedded/headless spawners.  The primary terminal spawner
-(:class:`TmuxSpawner`) lives in :mod:`gobby.agents.tmux.spawner` and is
-lazily imported here to avoid circular imports.
+This package provides the base types, command building, and prompt management.
+The primary terminal spawner (:class:`TmuxSpawner`) lives in
+:mod:`gobby.agents.tmux.spawner` and is lazily imported here to avoid circular
+imports.
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ if TYPE_CHECKING:
     from gobby.agents.tmux.spawner import TmuxSpawner as TmuxSpawner
 
 from gobby.agents.spawners.base import (
-    EmbeddedPTYResult,
-    HeadlessResult,
     SpawnMode,
     SpawnResult,
     TerminalSpawnerBase,
@@ -26,8 +24,6 @@ from gobby.agents.spawners.command_builder import (
     build_codex_command_with_resume,
     build_gemini_command_with_resume,
 )
-from gobby.agents.spawners.embedded import EmbeddedSpawner
-from gobby.agents.spawners.headless import HeadlessSpawner
 from gobby.agents.spawners.prompt_manager import (
     MAX_ENV_PROMPT_LENGTH,
     create_prompt_file,
@@ -37,15 +33,10 @@ __all__ = [
     # Base types
     "SpawnMode",
     "SpawnResult",
-    "EmbeddedPTYResult",
-    "HeadlessResult",
     "TerminalSpawnerBase",
     "make_spawn_env",
     # TmuxSpawner (lazy)
     "TmuxSpawner",
-    # Embedded/Headless spawners
-    "EmbeddedSpawner",
-    "HeadlessSpawner",
     # Command building
     "build_cli_command",
     "build_gemini_command_with_resume",

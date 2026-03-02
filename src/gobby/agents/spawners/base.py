@@ -15,9 +15,8 @@ class SpawnMode(str, Enum):
     """Agent execution mode."""
 
     TERMINAL = "terminal"  # Spawn in external terminal window
-    EMBEDDED = "embedded"  # Return PTY handle for UI attachment
-    HEADLESS = "headless"  # Daemon captures output, no terminal visible
-    IN_PROCESS = "in_process"  # Run via SDK in daemon process
+    AUTONOMOUS = "autonomous"  # SDK in-process, auto-approve all tools
+    IN_PROCESS = "in_process"  # Run via SDK in daemon process (web chat)
 
 
 @dataclass

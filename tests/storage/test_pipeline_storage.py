@@ -378,3 +378,131 @@ class TestGetStepsByExecution:
         execution = manager.create_execution(pipeline_name="test-pipeline")
         steps = manager.get_steps_for_execution(execution.id)
         assert steps == []
+
+
+class TestFailStaleRunningExecutions:
+    """Tests for fail_stale_running_executions method."""
+
+    def test_marks_running_executions_as_failed(self, manager) -> None:
+        """Running executions are marked as failed."""
+        execution = manager.create_execution(pipeline_name="stale-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.RUNNING
+        )
+
+        count = manager.fail_stale_running_executions()
+
+        assert count == 1
+        updated = manager.get_execution(execution.id)
+        assert updated is not None
+        assert updated.status == ExecutionStatus.FAILED
+        assert updated.completed_at is not None
+
+    def test_leaves_waiting_approval_alone(self, manager) -> None:
+        """Waiting-approval executions are not affected."""
+        execution = manager.create_execution(pipeline_name="approval-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.WAITING_APPROVAL
+        )
+
+        count = manager.fail_stale_running_executions()
+
+        assert count == 0
+        updated = manager.get_execution(execution.id)
+        assert updated is not None
+        assert updated.status == ExecutionStatus.WAITING_APPROVAL
+
+    def test_also_fails_running_steps(self, manager) -> None:
+        """Running steps belonging to stale executions are also failed."""
+        execution = manager.create_execution(pipeline_name="stale-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.RUNNING
+        )
+        step = manager.create_step_execution(
+            execution_id=execution.id, step_id="s1"
+        )
+        manager.update_step_execution(
+            step_execution_id=step.id, status=StepStatus.RUNNING
+        )
+
+        manager.fail_stale_running_executions()
+
+        updated_step = manager.get_steps_for_execution(execution.id)[0]
+        assert updated_step.status == StepStatus.FAILED
+        assert updated_step.error == "Daemon restarted"
+
+    def test_returns_zero_when_nothing_stale(self, manager) -> None:
+        """Returns 0 when no running executions exist."""
+        # Create a completed execution — should not be affected
+        execution = manager.create_execution(pipeline_name="done-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.COMPLETED
+        )
+
+        count = manager.fail_stale_running_executions()
+        assert count == 0
+
+
+class TestApprovalTimeout:
+    """Tests for approval timeout expiry."""
+
+    def test_get_expired_approval_steps(self, manager, db) -> None:
+        """Steps past their timeout are returned."""
+        execution = manager.create_execution(pipeline_name="timeout-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.WAITING_APPROVAL
+        )
+        step = manager.create_step_execution(
+            execution_id=execution.id, step_id="approval-step"
+        )
+        # Set to waiting with a 1-second timeout and a started_at in the past
+        manager.update_step_execution(
+            step_execution_id=step.id,
+            status=StepStatus.WAITING_APPROVAL,
+            approval_timeout_seconds=1,
+        )
+        # Backdate started_at so it's definitely expired
+        db.execute(
+            "UPDATE step_executions SET started_at = datetime('now', '-60 seconds') WHERE id = ?",
+            (step.id,),
+        )
+
+        expired = manager.get_expired_approval_steps()
+        assert len(expired) == 1
+        assert expired[0].step_id == "approval-step"
+
+    def test_steps_without_timeout_not_expired(self, manager) -> None:
+        """Steps with no timeout_seconds are never returned as expired."""
+        execution = manager.create_execution(pipeline_name="no-timeout-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.WAITING_APPROVAL
+        )
+        step = manager.create_step_execution(
+            execution_id=execution.id, step_id="no-timeout-step"
+        )
+        manager.update_step_execution(
+            step_execution_id=step.id,
+            status=StepStatus.WAITING_APPROVAL,
+        )
+
+        expired = manager.get_expired_approval_steps()
+        assert len(expired) == 0
+
+    def test_steps_within_timeout_not_expired(self, manager) -> None:
+        """Steps still within their timeout window are not returned."""
+        execution = manager.create_execution(pipeline_name="fresh-pipeline")
+        manager.update_execution_status(
+            execution_id=execution.id, status=ExecutionStatus.WAITING_APPROVAL
+        )
+        step = manager.create_step_execution(
+            execution_id=execution.id, step_id="fresh-step"
+        )
+        # Set a very long timeout (1 hour)
+        manager.update_step_execution(
+            step_execution_id=step.id,
+            status=StepStatus.WAITING_APPROVAL,
+            approval_timeout_seconds=3600,
+        )
+
+        expired = manager.get_expired_approval_steps()
+        assert len(expired) == 0

@@ -114,6 +114,9 @@ class PipelineExecutor:
         project_id: str,
         execution_id: str | None = None,
         session_id: str | None = None,
+        _depth: int = 0,
+        _pipeline_stack: frozenset[str] | None = None,
+        _parent_session_id: str | None = None,
     ) -> PipelineExecution:
         """Execute a pipeline workflow.
 
@@ -123,10 +126,40 @@ class PipelineExecutor:
             project_id: Project context for the execution
             execution_id: Optional existing execution ID (for resuming)
             session_id: Optional session that triggered the execution
+            _parent_session_id: Original caller's session ID (for nested pipelines)
 
         Returns:
             The completed PipelineExecution record
+
+        Raises:
+            RuntimeError: If nesting depth limit exceeded or cycle detected
         """
+        # 0. Enforce nesting depth limit and cycle detection
+        depth_limit = 10
+        try:
+            from gobby.config.pipelines import PipelineConfig
+
+            depth_limit = PipelineConfig().nesting_depth_limit
+        except Exception:
+            pass
+
+        if _depth > depth_limit:
+            raise RuntimeError(
+                f"Pipeline nesting depth limit exceeded ({_depth} > {depth_limit}). "
+                f"Pipeline '{pipeline.name}' would exceed maximum recursion depth."
+            )
+
+        if _pipeline_stack is None:
+            _pipeline_stack = frozenset()
+
+        if pipeline.name in _pipeline_stack:
+            raise RuntimeError(
+                f"Pipeline cycle detected: '{pipeline.name}' is already in the "
+                f"call stack {sorted(_pipeline_stack)}."
+            )
+
+        _pipeline_stack = _pipeline_stack | {pipeline.name}
+
         # 1. Create or load execution record
         if execution_id:
             execution = self.execution_manager.get_execution(execution_id)
@@ -156,12 +189,46 @@ class PipelineExecutor:
             step_count=len(pipeline.steps),
         )
 
+        # 2b. Create child session for top-level pipelines
+        caller_session_id = session_id
+        pipeline_session_id = session_id
+        parent_session_id = _parent_session_id
+
+        if _depth == 0 and session_id and self.session_manager:
+            try:
+                child_session = self.session_manager.register(
+                    external_id=f"pipeline-{execution.id}",
+                    machine_id="pipeline",
+                    source="pipeline",
+                    project_id=project_id,
+                    title=f"pipeline:{pipeline.name}",
+                    parent_session_id=caller_session_id,
+                    agent_depth=0,
+                )
+                pipeline_session_id = child_session.id
+                parent_session_id = caller_session_id
+                logger.info(
+                    f"Created child session {child_session.id} for pipeline "
+                    f"{pipeline.name} (parent={caller_session_id})"
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to create child session for pipeline, using caller session_id",
+                    exc_info=True,
+                )
+
         # 3. Build execution context (merge defaults from pipeline definition)
         merged_inputs = {**pipeline.inputs, **inputs}
+        # Inject parent_session_id into inputs so ${{ inputs.parent_session_id }} resolves
+        if parent_session_id and not inputs.get("parent_session_id"):
+            merged_inputs["parent_session_id"] = parent_session_id
         context: dict[str, Any] = {
             "inputs": merged_inputs,
             "steps": {},  # Will hold step outputs as they complete
-            "session_id": session_id,
+            "session_id": pipeline_session_id,
+            "parent_session_id": parent_session_id,
+            "_depth": _depth,
+            "_pipeline_stack": _pipeline_stack,
         }
 
         # Fetch existing steps if resuming
@@ -192,9 +259,12 @@ class PipelineExecutor:
                         context["steps"][step.id] = {"output": output}
                         continue
 
-                    # If skipped, just skip
+                    # If skipped, just skip (but register in context so downstream
+                    # conditions like ``steps.X.output`` resolve to None instead
+                    # of raising a KeyError / attribute error).
                     if step_execution.status == StepStatus.SKIPPED:
                         logger.info(f"Skipping previously skipped step {step.id}")
+                        context["steps"][step.id] = {"output": None}
                         continue
 
                     # If waiting approval, check if we should check gate again
@@ -211,7 +281,11 @@ class PipelineExecutor:
                     step_execution = self.execution_manager.create_step_execution(
                         execution_id=execution.id,
                         step_id=step.id,
-                        input_json=json.dumps(context) if context else None,
+                        input_json=json.dumps(
+                            {k: v for k, v in context.items() if not k.startswith("_")}
+                        )
+                        if context
+                        else None,
                     )
 
                 # Check if step should run based on condition
@@ -231,6 +305,9 @@ class PipelineExecutor:
                         step_name=getattr(step, "name", step.id),
                         reason="condition not met",
                     )
+                    # Register skipped step in context so downstream conditions
+                    # like ``steps.X.output`` resolve to None instead of erroring.
+                    context["steps"][step.id] = {"output": None}
                     current_step_execution = None
                     continue
 
@@ -480,12 +557,17 @@ class PipelineExecutor:
             else:
                 nested_inputs = context.get("inputs", {})
 
-            # Propagate session_id to nested execution
+            # Propagate session_id and nesting state to nested execution
+            parent_depth: int = context.get("_depth", 0)
+            parent_stack: frozenset[str] = context.get("_pipeline_stack", frozenset())
             result = await self.execute(
                 pipeline=nested_pipeline,
                 inputs=nested_inputs,
                 project_id=project_id,
                 session_id=context.get("session_id"),
+                _depth=parent_depth + 1,
+                _pipeline_stack=parent_stack,
+                _parent_session_id=context.get("parent_session_id"),
             )
 
             return {

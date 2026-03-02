@@ -85,14 +85,14 @@ class TestListAgentDefinitions:
 class TestGetAgentDefinition:
     def test_found(self, tmp_path: Path) -> None:
         mgr = _setup(tmp_path)
-        _insert_agent(mgr, "worker", description="A worker", provider="claude", mode="headless")
+        _insert_agent(mgr, "worker", description="A worker", provider="claude", mode="autonomous")
         result = get_agent_definition(mgr, "worker")
         assert result["success"] is True
         agent = result["agent"]
         assert agent["name"] == "worker"
         assert agent["description"] == "A worker"
         assert agent["provider"] == "claude"
-        assert agent["mode"] == "headless"
+        assert agent["mode"] == "autonomous"
 
     def test_not_found(self, tmp_path: Path) -> None:
         mgr = _setup(tmp_path)

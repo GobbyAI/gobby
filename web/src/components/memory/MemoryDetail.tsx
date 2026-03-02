@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { GobbyMemory } from '../../hooks/useMemory'
 import { formatRelativeTime, typeLabel } from '../../utils/formatTime'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 
 interface MemoryDetailProps {
   memory: GobbyMemory | null
@@ -10,6 +11,7 @@ interface MemoryDetailProps {
 }
 
 export function MemoryDetail({ memory, onEdit, onDelete, onClose }: MemoryDetailProps) {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const isOpen = memory !== null
 
   useEffect(() => {
@@ -23,6 +25,7 @@ export function MemoryDetail({ memory, onEdit, onDelete, onClose }: MemoryDetail
 
   return (
     <>
+      {ConfirmDialogElement}
       <div
         className={`memory-detail-backdrop ${isOpen ? 'open' : ''}`}
         onClick={onClose}
@@ -109,8 +112,8 @@ export function MemoryDetail({ memory, onEdit, onDelete, onClose }: MemoryDetail
               </button>
               <button
                 className="memory-delete-btn"
-                onClick={() => {
-                  if (window.confirm('Are you sure you want to delete this memory?')) {
+                onClick={async () => {
+                  if (await confirm({ title: 'Delete memory?', description: 'Are you sure you want to delete this memory?', confirmLabel: 'Delete', destructive: true })) {
                     onDelete()
                   }
                 }}

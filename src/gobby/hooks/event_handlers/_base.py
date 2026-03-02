@@ -35,6 +35,7 @@ class EventHandlersBase:
     _skills_config: SkillsConfig | None
     _get_machine_id: Callable[[], str]
     _resolve_project_id: Callable[[str | None, str | None], str]
+    _dispatch_boundary_summaries_fn: Callable[[str, bool], None] | None
     logger: logging.Logger
     _handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]]
 
@@ -54,21 +55,3 @@ class EventHandlersBase:
             response.system_message += echo_block
         else:
             response.system_message = echo_block
-
-    def _auto_activate_workflow(
-        self,
-        workflow_name: str,
-        session_id: str,
-        project_path: str | None,
-        variables: dict[str, Any] | None = None,
-    ) -> None:
-        """Pipeline workflows are executed by the agent via run_pipeline MCP tool.
-
-        Legacy step workflow activation is no longer needed. Agent rules enforce
-        pipeline execution by blocking all tools except progressive disclosure
-        and run_pipeline.
-        """
-        self.logger.debug(
-            "Pipeline workflow registered for session — agent will execute via run_pipeline",
-            extra={"workflow_name": workflow_name, "session_id": session_id},
-        )

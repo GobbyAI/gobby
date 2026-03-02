@@ -391,6 +391,36 @@ class TestWorktreeGitManagerDeleteWorktree:
         assert result.success is False
         assert "Failed to remove" in result.message
 
+    @patch("subprocess.run")
+    def test_delete_force_fallback_on_untracked_files(self, mock_run, manager, tmp_path) -> None:
+        """Force delete falls back to rmtree when git remove fails with untracked files."""
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
+        # Simulate untracked files that cause git worktree remove to fail
+        (worktree_path / ".mypy_cache").mkdir()
+        (worktree_path / ".mypy_cache" / "data.json").write_text("{}")
+
+        # git worktree remove --force fails, then git worktree prune succeeds
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "remove", "--force"],
+                returncode=128,
+                stdout="",
+                stderr="fatal: cannot remove: Directory not empty",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "prune"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+        ]
+
+        result = manager.delete_worktree(worktree_path, force=True)
+
+        assert result.success is True
+        assert not worktree_path.exists()
+
 
 class TestWorktreeGitManagerSyncFromMain:
     """Tests for WorktreeGitManager.sync_from_main method."""
@@ -1702,15 +1732,11 @@ class TestWorktreeGitManagerMergeBranch:
 
     def _mock_success(self, args_hint="git"):
         """Helper: generic successful CompletedProcess."""
-        return subprocess.CompletedProcess(
-            args=[args_hint], returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=[args_hint], returncode=0, stdout="", stderr="")
 
     def _mock_failure(self, stderr="error", args_hint="git"):
         """Helper: generic failed CompletedProcess."""
-        return subprocess.CompletedProcess(
-            args=[args_hint], returncode=1, stdout="", stderr=stderr
-        )
+        return subprocess.CompletedProcess(args=[args_hint], returncode=1, stdout="", stderr=stderr)
 
     @patch("subprocess.run")
     def test_merge_success_with_push(self, mock_run, manager) -> None:

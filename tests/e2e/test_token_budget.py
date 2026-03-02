@@ -378,7 +378,7 @@ class TestAgentSpawnThrottling:
                 "prompt": "Test task",
                 "parent_session_id": session_id,
                 "isolation": "clone",
-                "mode": "headless",
+                "mode": "autonomous",
             },
         )
         result = unwrap_result(raw_result)

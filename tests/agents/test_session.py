@@ -86,7 +86,7 @@ class TestChildSessionManagerDepth:
     def test_get_session_depth_no_parent(self, manager, mock_storage) -> None:
         """Session with no parent has depth 0."""
         mock_session = MagicMock()
-        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
         mock_storage.get.return_value = mock_session
 
         depth = manager.get_session_depth("sess-root")
@@ -94,38 +94,20 @@ class TestChildSessionManagerDepth:
         assert depth == 0
 
     def test_get_session_depth_one_parent(self, manager, mock_storage) -> None:
-        """Session with one parent has depth 1."""
+        """Session with agent_depth=1 returns depth 1."""
         mock_child = MagicMock()
-        mock_child.parent_session_id = "sess-root"
-
-        mock_parent = MagicMock()
-        mock_parent.parent_session_id = None
-
-        mock_storage.get.side_effect = lambda sid: {
-            "sess-child": mock_child,
-            "sess-root": mock_parent,
-        }.get(sid)
+        mock_child.agent_depth = 1
+        mock_storage.get.return_value = mock_child
 
         depth = manager.get_session_depth("sess-child")
 
         assert depth == 1
 
     def test_get_session_depth_two_parents(self, manager, mock_storage) -> None:
-        """Session with two parent levels has depth 2."""
+        """Session with agent_depth=2 returns depth 2."""
         mock_grandchild = MagicMock()
-        mock_grandchild.parent_session_id = "sess-child"
-
-        mock_child = MagicMock()
-        mock_child.parent_session_id = "sess-root"
-
-        mock_root = MagicMock()
-        mock_root.parent_session_id = None
-
-        mock_storage.get.side_effect = lambda sid: {
-            "sess-grandchild": mock_grandchild,
-            "sess-child": mock_child,
-            "sess-root": mock_root,
-        }.get(sid)
+        mock_grandchild.agent_depth = 2
+        mock_storage.get.return_value = mock_grandchild
 
         depth = manager.get_session_depth("sess-grandchild")
 
@@ -139,18 +121,15 @@ class TestChildSessionManagerDepth:
 
         assert depth == 0
 
-    def test_get_session_depth_safety_limit(self, manager, mock_storage) -> None:
-        """Depth calculation has a safety limit to prevent infinite loops."""
-        # Create a cycle (shouldn't happen in practice, but test safety)
+    def test_get_session_depth_none_agent_depth(self, manager, mock_storage) -> None:
+        """Session with None agent_depth returns 0."""
         mock_session = MagicMock()
-        mock_session.parent_session_id = "sess-self"
-
+        mock_session.agent_depth = None
         mock_storage.get.return_value = mock_session
 
-        depth = manager.get_session_depth("sess-self")
+        depth = manager.get_session_depth("sess-root")
 
-        # Should stop at safety limit (10+1=11 iterations max)
-        assert depth <= 11
+        assert depth == 0
 
 
 class TestChildSessionManagerCanSpawn:
@@ -169,7 +148,7 @@ class TestChildSessionManagerCanSpawn:
     def test_can_spawn_at_depth_zero(self, manager, mock_storage) -> None:
         """Session at depth 0 can spawn children."""
         mock_session = MagicMock()
-        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
         mock_storage.get.return_value = mock_session
 
         can_spawn, reason, depth = manager.can_spawn_child("sess-root")
@@ -181,15 +160,8 @@ class TestChildSessionManagerCanSpawn:
     def test_can_spawn_at_depth_one(self, manager, mock_storage) -> None:
         """Session at depth 1 can spawn children (max=2)."""
         mock_child = MagicMock()
-        mock_child.parent_session_id = "sess-root"
-
-        mock_root = MagicMock()
-        mock_root.parent_session_id = None
-
-        mock_storage.get.side_effect = lambda sid: {
-            "sess-child": mock_child,
-            "sess-root": mock_root,
-        }.get(sid)
+        mock_child.agent_depth = 1
+        mock_storage.get.return_value = mock_child
 
         can_spawn, reason, depth = manager.can_spawn_child("sess-child")
 
@@ -200,19 +172,8 @@ class TestChildSessionManagerCanSpawn:
     def test_cannot_spawn_at_max_depth(self, manager, mock_storage) -> None:
         """Session at max depth cannot spawn children."""
         mock_grandchild = MagicMock()
-        mock_grandchild.parent_session_id = "sess-child"
-
-        mock_child = MagicMock()
-        mock_child.parent_session_id = "sess-root"
-
-        mock_root = MagicMock()
-        mock_root.parent_session_id = None
-
-        mock_storage.get.side_effect = lambda sid: {
-            "sess-grandchild": mock_grandchild,
-            "sess-child": mock_child,
-            "sess-root": mock_root,
-        }.get(sid)
+        mock_grandchild.agent_depth = 2
+        mock_storage.get.return_value = mock_grandchild
 
         can_spawn, reason, depth = manager.can_spawn_child("sess-grandchild")
 
@@ -252,6 +213,7 @@ class TestChildSessionManagerCreate:
         # Setup parent session at depth 0
         mock_parent = MagicMock()
         mock_parent.parent_session_id = None
+        mock_parent.agent_depth = 0
         mock_storage.get.return_value = mock_parent
 
         config = ChildSessionConfig(
@@ -281,6 +243,7 @@ class TestChildSessionManagerCreate:
         """Creates child session with provided title."""
         mock_parent = MagicMock()
         mock_parent.parent_session_id = None
+        mock_parent.agent_depth = 0
         mock_storage.get.return_value = mock_parent
 
         config = ChildSessionConfig(
@@ -300,6 +263,7 @@ class TestChildSessionManagerCreate:
         """Creates child session with auto-generated workflow title."""
         mock_parent = MagicMock()
         mock_parent.parent_session_id = None
+        mock_parent.agent_depth = 0
         mock_storage.get.return_value = mock_parent
 
         config = ChildSessionConfig(
@@ -319,6 +283,7 @@ class TestChildSessionManagerCreate:
         """Creates child session with default title."""
         mock_parent = MagicMock()
         mock_parent.parent_session_id = None
+        mock_parent.agent_depth = 0
         mock_storage.get.return_value = mock_parent
 
         config = ChildSessionConfig(
@@ -337,6 +302,7 @@ class TestChildSessionManagerCreate:
         """Creates child session with git branch."""
         mock_parent = MagicMock()
         mock_parent.parent_session_id = None
+        mock_parent.agent_depth = 0
         mock_storage.get.return_value = mock_parent
 
         config = ChildSessionConfig(
@@ -356,19 +322,8 @@ class TestChildSessionManagerCreate:
         """Raises ValueError when max depth would be exceeded."""
         # Setup parent session at depth 2 (max)
         mock_grandchild = MagicMock()
-        mock_grandchild.parent_session_id = "sess-child"
-
-        mock_child = MagicMock()
-        mock_child.parent_session_id = "sess-root"
-
-        mock_root = MagicMock()
-        mock_root.parent_session_id = None
-
-        mock_storage.get.side_effect = lambda sid: {
-            "sess-grandchild": mock_grandchild,
-            "sess-child": mock_child,
-            "sess-root": mock_root,
-        }.get(sid)
+        mock_grandchild.agent_depth = 2
+        mock_storage.get.return_value = mock_grandchild
 
         config = ChildSessionConfig(
             parent_session_id="sess-grandchild",

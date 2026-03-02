@@ -8,7 +8,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.workflows.actions import ActionContext
     from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
@@ -116,7 +115,7 @@ async def call_mcp_tool(
 # These match the ActionHandler protocol: (context: ActionContext, **kwargs) -> dict | None
 
 
-async def handle_call_mcp_tool(context: "ActionContext", **kwargs: Any) -> dict[str, Any] | None:
+async def handle_call_mcp_tool(context: Any, **kwargs: Any) -> dict[str, Any] | None:
     """ActionHandler wrapper for call_mcp_tool.
 
     Supports template rendering in server_name, tool_name, and argument values.

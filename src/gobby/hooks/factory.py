@@ -42,8 +42,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.llm.service import LLMService
-    from gobby.workflows.actions import ActionExecutor
-    from gobby.workflows.engine import WorkflowEngine
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.templates import TemplateEngine
 
@@ -81,8 +79,6 @@ class _WorkflowComponents:
     template_engine: TemplateEngine
     skill_manager: HookSkillManager
     pipeline_executor: PipelineExecutor | None
-    action_executor: ActionExecutor
-    engine: WorkflowEngine
     handler: WorkflowHookHandler
 
 
@@ -114,8 +110,6 @@ class HookManagerComponents:
     template_engine: Any  # TemplateEngine
     skill_manager: HookSkillManager
     pipeline_executor: Any  # PipelineExecutor | None
-    action_executor: Any  # ActionExecutor
-    workflow_engine: Any  # WorkflowEngine
     workflow_handler: WorkflowHookHandler
     webhook_dispatcher: WebhookDispatcher
     session_manager: SessionManager
@@ -277,8 +271,6 @@ class HookManagerFactory:
             template_engine=workflow_components.template_engine,
             skill_manager=workflow_components.skill_manager,
             pipeline_executor=workflow_components.pipeline_executor,
-            action_executor=workflow_components.action_executor,
-            workflow_engine=workflow_components.engine,
             workflow_handler=workflow_components.handler,
             webhook_dispatcher=webhook_dispatcher,
             session_manager=session_mgr,
@@ -353,8 +345,6 @@ class HookManagerFactory:
         resolve_project_id: Callable[[str | None, str | None], str],
         broadcaster: Any | None,
     ) -> _WorkflowComponents:
-        from gobby.workflows.actions import ActionExecutor
-        from gobby.workflows.engine import WorkflowEngine
         from gobby.workflows.rule_engine import RuleEngine
         from gobby.workflows.templates import TemplateEngine
 
@@ -363,10 +353,6 @@ class HookManagerFactory:
         state_manager = WorkflowStateManager(database)
         template_engine = TemplateEngine()
         skill_manager = HookSkillManager(db=database)
-
-        websocket_server = None
-        if broadcaster and hasattr(broadcaster, "websocket_server"):
-            websocket_server = broadcaster.websocket_server
 
         pipeline_executor = None
         try:
@@ -382,42 +368,10 @@ class HookManagerFactory:
                 loader=loader,
                 template_engine=template_engine,
                 tool_proxy_getter=tool_proxy_getter,
+                session_manager=storage.session,
             )
         except Exception as e:
             logger.debug(f"Pipeline executor not available: {e}")
-
-        action_executor = ActionExecutor(
-            db=database,
-            session_manager=storage.session,
-            template_engine=template_engine,
-            llm_service=llm_service,
-            transcript_processor=transcript_processor,
-            config=config,
-            tool_proxy_getter=tool_proxy_getter,
-            memory_manager=memory_manager,
-            memory_sync_manager=memory_sync_manager,
-            task_manager=storage.task,
-            task_sync_manager=task_sync_manager,
-            session_task_manager=storage.session_task,
-            stop_registry=autonomous.stop_registry,
-            progress_tracker=autonomous.progress_tracker,
-            stuck_detector=autonomous.stuck_detector,
-            websocket_server=websocket_server,
-            skill_manager=skill_manager,
-            pipeline_executor=pipeline_executor,
-            workflow_loader=loader,
-        )
-
-        engine = WorkflowEngine(
-            loader=loader,
-            state_manager=state_manager,
-            action_executor=action_executor,
-        )
-
-        if storage.task and engine.evaluator:
-            engine.evaluator.register_task_manager(storage.task)
-        if autonomous.stop_registry and engine.evaluator:
-            engine.evaluator.register_stop_registry(autonomous.stop_registry)
 
         workflow_timeout = 0.0
         workflow_enabled = True
@@ -431,11 +385,12 @@ class HookManagerFactory:
             _loop = None
 
         handler = WorkflowHookHandler(
-            engine=engine,
             loop=_loop,
             timeout=workflow_timeout,
             enabled=workflow_enabled,
             rule_engine=rule_engine,
+            task_manager=storage.task,
+            session_task_manager=storage.session_task,
         )
         return _WorkflowComponents(
             loader=loader,
@@ -443,7 +398,5 @@ class HookManagerFactory:
             template_engine=template_engine,
             skill_manager=skill_manager,
             pipeline_executor=pipeline_executor,
-            action_executor=action_executor,
-            engine=engine,
             handler=handler,
         )

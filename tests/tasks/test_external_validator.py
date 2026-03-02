@@ -818,7 +818,7 @@ class TestAgentSpawnValidation:
         )
 
         call_kwargs = mock_agent_spawner.spawn_agent.call_args.kwargs
-        assert call_kwargs.get("mode") == "headless"
+        assert call_kwargs.get("mode") == "autonomous"
 
     @pytest.mark.asyncio
     async def test_spawn_mode_passes_correct_model(

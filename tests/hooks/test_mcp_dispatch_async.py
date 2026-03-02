@@ -170,11 +170,6 @@ class TestBlockingDispatch:
         async def slow_call(s: str, t: str, args: dict) -> None:
             await asyncio.sleep(60)
 
-        # Patch the timeout to be very short for testing
-        import gobby.hooks.mcp_dispatch as mod
-
-        original_fn = mod.dispatch_mcp_calls
-
         # We can't easily test the 30s timeout in a unit test,
         # so just verify the blocking path works without errors
         call_tool = AsyncMock()

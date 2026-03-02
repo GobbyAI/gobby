@@ -955,7 +955,7 @@ class TestWriteSummaryFile:
 
     @pytest.mark.asyncio
     async def test_write_summary_file_naming_format(self, tmp_path) -> None:
-        """Test that files follow session_{timestamp}_{id}.md format."""
+        """Test that files follow {ref}-{mode}.md format."""
         output_dir = str(tmp_path / "summaries")
 
         result = await _write_summary_file(
@@ -968,9 +968,25 @@ class TestWriteSummaryFile:
         from pathlib import Path
 
         filename = Path(result).name
-        assert filename.startswith("session_")
-        assert filename.endswith(".md")
-        assert "my-session" in filename
+        assert filename == "my-session-full.md"
+
+    @pytest.mark.asyncio
+    async def test_write_summary_file_compact_mode(self, tmp_path) -> None:
+        """Test that compact mode uses -compact suffix."""
+        output_dir = str(tmp_path / "summaries")
+
+        result = await _write_summary_file(
+            session_id="my-session",
+            content="Content",
+            output_path=output_dir,
+            mode="compact",
+        )
+
+        assert result is not None
+        from pathlib import Path
+
+        filename = Path(result).name
+        assert filename == "my-session-compact.md"
 
     @pytest.mark.asyncio
     async def test_write_summary_file_error_returns_none(self, monkeypatch, tmp_path) -> None:

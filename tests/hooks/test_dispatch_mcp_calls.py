@@ -51,7 +51,7 @@ class TestDispatchMcpCallsGuards:
         event = _make_event()
 
         stub._dispatch_mcp_calls(
-            [{"server": "gobby-memory", "tool": "digest_and_synthesize", "arguments": {}}],
+            [{"server": "gobby-memory", "tool": "search_memories", "arguments": {}}],
             event,
         )
 
@@ -64,7 +64,7 @@ class TestDispatchMcpCallsGuards:
         event = _make_event()
 
         stub._dispatch_mcp_calls(
-            [{"server": None, "tool": "digest_and_synthesize", "arguments": {}}],
+            [{"server": None, "tool": "search_memories", "arguments": {}}],
             event,
         )
 
@@ -93,7 +93,7 @@ class TestDispatchMcpCallsContextInjection:
         calls = [
             {
                 "server": "gobby-memory",
-                "tool": "digest_and_synthesize",
+                "tool": "search_memories",
                 "arguments": {"limit": 20},
                 "background": False,
             }
@@ -129,7 +129,7 @@ class TestDispatchMcpCallsContextInjection:
         calls = [
             {
                 "server": "gobby-memory",
-                "tool": "digest_and_synthesize",
+                "tool": "search_memories",
                 "arguments": {"session_id": "explicit-sess", "limit": 20},
                 "background": False,
             }
@@ -161,7 +161,7 @@ class TestDispatchMcpCallsBackgroundMode:
         calls = [
             {
                 "server": "gobby-memory",
-                "tool": "digest_and_synthesize",
+                "tool": "search_memories",
                 "arguments": {"limit": 20},
                 "background": True,
             }
@@ -176,7 +176,7 @@ class TestDispatchMcpCallsBackgroundMode:
         proxy.call_tool.assert_called_once()
         call_args = proxy.call_tool.call_args[0]
         assert call_args[0] == "gobby-memory"
-        assert call_args[1] == "digest_and_synthesize"
+        assert call_args[1] == "search_memories"
 
     @pytest.mark.asyncio
     async def test_background_call_error_does_not_raise(self) -> None:
@@ -192,7 +192,7 @@ class TestDispatchMcpCallsBackgroundMode:
         calls = [
             {
                 "server": "gobby-memory",
-                "tool": "digest_and_synthesize",
+                "tool": "search_memories",
                 "arguments": {},
                 "background": True,
             }
@@ -310,7 +310,7 @@ class TestDispatchMcpCallsProxyNone:
         calls = [
             {
                 "server": "gobby-memory",
-                "tool": "digest_and_synthesize",
+                "tool": "search_memories",
                 "arguments": {},
                 "background": True,
             }

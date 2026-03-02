@@ -59,17 +59,17 @@ class RunningAgent:
     """Parent session that spawned this agent."""
 
     mode: str
-    """Execution mode: in_process, terminal, embedded, headless."""
+    """Execution mode: in_process, terminal, autonomous."""
 
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     """When the agent started running."""
 
-    # Process tracking (for terminal/embedded/headless modes)
+    # Process tracking (for terminal/autonomous modes)
     pid: int | None = None
     """Process ID if running externally."""
 
     master_fd: int | None = None
-    """PTY master file descriptor (embedded mode only)."""
+    """PTY master file descriptor (legacy, unused)."""
 
     terminal_type: str | None = None
     """Terminal type. Always tmux."""
@@ -98,7 +98,7 @@ class RunningAgent:
     """Async task object for in-process agents (asyncio.Task)."""
 
     monitor_task: Any | None = None
-    """Background monitoring task for headless agents (asyncio.Task)."""
+    """Background monitoring task for autonomous agents (asyncio.Task)."""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -429,9 +429,8 @@ class RunningAgentRegistry:
         Kill a running agent process.
 
         Strategy varies by mode:
-        - headless: Direct signal to tracked PID
+        - autonomous: Cancel asyncio task
         - terminal: Check terminal_context for PID, fallback to pgrep
-        - embedded: Close PTY fd + signal
         - in_process: Cancel asyncio task
 
         Args:
@@ -455,8 +454,8 @@ class RunningAgentRegistry:
                 "message": f"Agent {run_id} not in registry (already exited)",
             }
 
-        # Handle in_process mode (asyncio.Task)
-        if agent.mode == "in_process" and agent.task:
+        # Handle in_process/autonomous mode (asyncio.Task)
+        if agent.mode in ("in_process", "autonomous") and agent.task:
             agent.task.cancel()
             self.remove(run_id, status="cancelled")
             return {"success": True, "message": "Cancelled in-process task"}
@@ -694,7 +693,7 @@ class RunningAgentRegistry:
         List all running agents by execution mode.
 
         Args:
-            mode: Execution mode (in_process, terminal, embedded, headless).
+            mode: Execution mode (in_process, terminal, autonomous).
 
         Returns:
             List of running agents with this mode.

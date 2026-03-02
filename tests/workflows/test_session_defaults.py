@@ -232,6 +232,4 @@ variables:
 
         rows = mgr.list_all(workflow_type="variable", include_deleted=False)
         synced_names = {r.name for r in rows}
-        assert expected_vars.issubset(synced_names), (
-            f"Missing: {expected_vars - synced_names}"
-        )
+        assert expected_vars.issubset(synced_names), f"Missing: {expected_vars - synced_names}"

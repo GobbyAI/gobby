@@ -8,7 +8,6 @@ Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
 - memory-sync-import: mcp_call on session_start
 - memory-recall-on-prompt: mcp_call on before_agent
-- memory-background-digest: mcp_call on before_agent (background)
 - memory-capture-nudge: inject_context on before_agent
 - suggest-memory-after-close: inject_context on after_tool
 - clear-memory-review-on-create: set_variable on before_tool
@@ -32,7 +31,6 @@ MEMORY_RULES = {
     "reset-memory-tracking-on-start",
     "memory-sync-import",
     "memory-recall-on-prompt",
-    "memory-background-digest",
     "memory-capture-nudge",
     "suggest-memory-after-close",
     "clear-memory-review-on-create",
@@ -159,7 +157,7 @@ class TestMemoryRecallOnPrompt:
         assert body.event.value == "before_agent"
         assert body.effect.type == "mcp_call"
         assert body.effect.server == "gobby-memory"
-        assert body.effect.tool == "digest_and_synthesize"
+        assert body.effect.tool == "search_memories"
 
     def test_not_background(self, db, manager) -> None:
         """Recall must block to inject context."""
@@ -167,32 +165,6 @@ class TestMemoryRecallOnPrompt:
         row = manager.get_by_name("memory-recall-on-prompt", include_templates=True)
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.effect.background is False
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# memory-background-digest
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestMemoryBackgroundDigest:
-    """Background digest and synthesize after recall."""
-
-    def test_event_and_effect(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-background-digest", include_templates=True)
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_agent"
-        assert body.effect.type == "mcp_call"
-        assert body.effect.server == "gobby-memory"
-        assert body.effect.tool == "digest_and_synthesize"
-
-    def test_is_background(self, db, manager) -> None:
-        """Digest runs async (zero latency)."""
-        _sync_bundled(db)
-        row = manager.get_by_name("memory-background-digest", include_templates=True)
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.effect.background is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

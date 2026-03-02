@@ -5,6 +5,7 @@ rules:
     description: "Block destructive git operations."
     event: before_tool
     enabled: false
+    when: "variables.get('is_spawned_agent')"
     effect:
       type: block
       tools: [Bash]

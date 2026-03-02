@@ -309,7 +309,7 @@ async def evaluate_spawn(
             )
 
     # Terminal availability check
-    if eff_mode in ("terminal", "embedded"):
+    if eff_mode == "terminal":
         try:
             from gobby.agents.tmux.spawner import TmuxSpawner
 

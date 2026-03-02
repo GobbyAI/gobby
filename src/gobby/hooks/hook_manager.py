@@ -9,7 +9,7 @@ Architecture:
     HookManager creates and coordinates subsystems:
     - Session-agnostic: DaemonClient, TranscriptProcessor
     - Session-scoped: SessionManager
-    - Workflow-driven: WorkflowEngine handles session handoff via generate_handoff action
+    - Workflow-driven: RuleEngine + WorkflowHookHandler handle session lifecycle
 
 Example:
     ```python
@@ -49,7 +49,7 @@ class HookManager:
     Delegates all work to subsystems:
     - DaemonClient: HTTP communication with Gobby daemon
     - TranscriptProcessor: JSONL parsing and analysis
-    - WorkflowEngine: Handles session handoff and LLM-powered summaries
+    - RuleEngine + WorkflowHookHandler: Handles session lifecycle and rule enforcement
 
     Session ID Mapping:
         There are two types of session IDs used throughout the system:
@@ -171,8 +171,6 @@ class HookManager:
         self._workflow_state_manager = components.workflow_state_manager
         self._skill_manager = components.skill_manager
         self._pipeline_executor = components.pipeline_executor
-        self._action_executor = components.action_executor
-        self._workflow_engine = components.workflow_engine
         self._workflow_handler = components.workflow_handler
         self._webhook_dispatcher = components.webhook_dispatcher
         self._session_manager = components.session_manager
@@ -180,6 +178,10 @@ class HookManager:
         self._health_monitor = components.health_monitor
         self._hook_assembler = components.hook_assembler
         self._event_handlers = components.event_handlers
+
+        # Wire callback for boundary summary generation (method lives on HookManager,
+        # called from EventHandlers mixins during session-end and before-agent).
+        self._event_handlers._dispatch_boundary_summaries_fn = self._dispatch_boundary_summaries
 
         # Inter-session message manager (for web chat -> CLI piggyback delivery)
         from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -731,6 +733,72 @@ class HookManager:
                             tool,
                             e,
                         )
+
+    def _dispatch_boundary_summaries(self, session_id: str, background: bool = False) -> None:
+        """Generate session boundary summaries from digest.
+
+        Calls generate_session_boundary_summaries which produces compact_markdown
+        and summary_markdown from the accumulated digest. Self-gating: returns None
+        if no digest exists or is < 50 chars.
+
+        Uses same async dispatch pattern as _dispatch_mcp_calls.
+
+        Args:
+            session_id: Platform session ID.
+            background: If True, fire-and-forget. If False, block until complete.
+        """
+        from gobby.workflows.memory_actions import generate_session_boundary_summaries
+
+        async def _run() -> None:
+            try:
+                await generate_session_boundary_summaries(
+                    session_id=session_id,
+                    session_manager=self._session_storage,
+                    llm_service=self._llm_service,
+                    db=self._database,
+                    config=self._config,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "_dispatch_boundary_summaries: failed for session %s: %s",
+                    session_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        coro = _run()
+
+        if background:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(coro)
+            except RuntimeError:
+                if self._loop and self._loop.is_running():
+                    try:
+                        asyncio.run_coroutine_threadsafe(coro, self._loop)
+                    except Exception as e:
+                        self.logger.warning(
+                            "_dispatch_boundary_summaries: failed to schedule: %s", e
+                        )
+                else:
+                    try:
+                        asyncio.run(coro)
+                    except Exception as e:
+                        self.logger.warning(
+                            "_dispatch_boundary_summaries: background failed: %s", e
+                        )
+        else:
+            if self._loop and self._loop.is_running():
+                try:
+                    future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+                    future.result(timeout=30)
+                except Exception as e:
+                    self.logger.error("_dispatch_boundary_summaries: blocking failed: %s", e)
+            else:
+                try:
+                    asyncio.run(coro)
+                except Exception as e:
+                    self.logger.error("_dispatch_boundary_summaries: blocking failed: %s", e)
 
     def shutdown(self) -> None:
         """

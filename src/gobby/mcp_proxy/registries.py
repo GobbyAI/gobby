@@ -231,6 +231,7 @@ def setup_internal_registries(
             clone_manager=clone_git_manager,
             workflow_state_manager=workflow_state_manager,
             db=db,
+            hook_manager_resolver=hook_manager_resolver,
         )
 
         # Add inter-agent messaging tools if dependencies are available

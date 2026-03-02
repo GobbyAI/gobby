@@ -82,11 +82,13 @@ class ApprovalManager:
         message = step.approval.message or f"Approval required for step '{step.id}'"
 
         # Update step status to WAITING_APPROVAL and store token
+        timeout_seconds = step.approval.timeout_seconds if step.approval else None
         await asyncio.to_thread(
             self.execution_manager.update_step_execution,
             step_execution_id=step_execution.id,
             status=StepStatus.WAITING_APPROVAL,
             approval_token=token,
+            approval_timeout_seconds=timeout_seconds,
         )
 
         # Update execution status to WAITING_APPROVAL
@@ -101,7 +103,7 @@ class ApprovalManager:
         if self.webhook_notifier:
             try:
                 await self.webhook_notifier.notify_approval_pending(
-                    execution_id=execution.id,
+                    execution=execution,
                     step_id=step.id,
                     token=token,
                     message=message,

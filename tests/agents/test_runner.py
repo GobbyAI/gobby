@@ -568,7 +568,7 @@ class TestRunningAgent:
             run_id="run-abc",
             session_id="sess-c",
             parent_session_id="sess-p",
-            mode="headless",
+            mode="autonomous",
             provider="claude",
         )
 
@@ -578,7 +578,7 @@ class TestRunningAgent:
         assert result["parent_session_id"] == "sess-p"
         assert result["session_id"] == "sess-c"
         assert result["provider"] == "claude"
-        assert result["mode"] == "headless"
+        assert result["mode"] == "autonomous"
         assert "started_at" in result
 
 
@@ -1302,7 +1302,7 @@ class TestAgentRunnerHookIntegration:
         assert len(captured_events) == 1
         event = captured_events[0]
         assert event.event_type == HookEventType.AFTER_TOOL
-        assert event.source == SessionSource.EMBEDDED
+        assert event.source == SessionSource.AUTONOMOUS_SDK
         assert event.session_id == "sess-hook-test"
         assert event.data["tool_name"] == "Bash"
         assert event.data["is_error"] is True

@@ -21,7 +21,6 @@ def get_workflow_templates() -> list[dict[str, Any]]:
     """
     return [
         _blank_workflow(),
-        _lifecycle_template(),
         _tdd_developer(),
         _blank_pipeline(),
         _ci_pipeline(),
@@ -53,38 +52,6 @@ def _blank_workflow() -> dict[str, Any]:
         "id": "blank-workflow",
         "name": "Blank Workflow",
         "description": "Empty workflow with a single work step",
-        "workflow_type": "workflow",
-        "definition_json": json.dumps(definition),
-    }
-
-
-def _lifecycle_template() -> dict[str, Any]:
-    definition = {
-        "name": "",
-        "description": "Lifecycle workflow with common triggers",
-        "version": "1.0",
-        "enabled": True,
-        "steps": [
-            {
-                "name": "active",
-                "description": "Active session monitoring",
-                "allowed_tools": "all",
-            }
-        ],
-        "triggers": {
-            "on_session_start": [
-                {"action": "log", "message": "Session started"},
-            ],
-            "on_session_stop": [
-                {"action": "log", "message": "Session stopped"},
-            ],
-            "before_tool": [],
-        },
-    }
-    return {
-        "id": "lifecycle",
-        "name": "Lifecycle Template",
-        "description": "Workflow with session start/stop and before_tool triggers",
         "workflow_type": "workflow",
         "definition_json": json.dumps(definition),
     }
@@ -166,9 +133,10 @@ def _ci_pipeline() -> dict[str, Any]:
             },
             {
                 "id": "approval",
+                "exec": "echo 'Approved - deploying'",
                 "approval": {
+                    "required": True,
                     "message": "Deploy to production?",
-                    "approvers": ["admin"],
                 },
             },
             {

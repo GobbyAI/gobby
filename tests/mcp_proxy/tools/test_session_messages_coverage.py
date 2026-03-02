@@ -9,11 +9,8 @@ Tests cover:
 - Session commits tools (get_session_commits, mark_loop_complete)
 """
 
-import json
-import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,9 +18,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
-from gobby.mcp_proxy.tools.sessions._handoff import (
-    _format_turns_for_llm,
-)
+from gobby.workflows.summary_actions import format_turns_for_llm as _format_turns_for_llm
 
 pytestmark = pytest.mark.unit
 
@@ -180,24 +175,6 @@ class TestSetHandoffContext:
 
         assert result["success"] is False
         assert "Not found" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_automated_fallback_no_transcript(self) -> None:
-        """Test automated fallback fails gracefully with no transcript."""
-        session_manager = MagicMock()
-        mock_session = MagicMock()
-        mock_session.id = "sess-123"
-        mock_session.jsonl_path = None
-        session_manager.resolve_session_reference.return_value = "sess-123"
-        session_manager.get.return_value = mock_session
-
-        registry = create_test_registry(session_manager=session_manager)
-        set_context = registry.get_tool("set_handoff_context")
-
-        result = await set_context(session_id="sess-123")
-
-        assert result["success"] is False
-        assert "No transcript path" in result["error"]
 
 
 # ============================================================================
@@ -1113,177 +1090,6 @@ class TestMarkLoopComplete:
 
         assert result["success"] is True
         mock_ws_class.assert_called_once()
-
-
-# ============================================================================
-# Tests for Create Handoff Tool
-# ============================================================================
-
-
-class TestSetHandoffContextAutomated:
-    """Tests for set_handoff_context automated fallback (no content param)."""
-
-    @pytest.mark.asyncio
-    async def test_automated_no_session(self):
-        """Test when no session found."""
-        session_manager = MagicMock()
-        session_manager.get.return_value = None
-        session_manager.list.return_value = []
-
-        registry = create_test_registry(session_manager=session_manager)
-        set_context = registry.get_tool("set_handoff_context")
-
-        result = await set_context(session_id="nonexistent")
-
-        assert "error" in result
-        assert "No session found" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_automated_no_transcript_path(self):
-        """Test when session has no transcript path."""
-        session_manager = MagicMock()
-        mock_session = MagicMock()
-        mock_session.id = "sess-123"
-        mock_session.jsonl_path = None
-        session_manager.resolve_session_reference.return_value = "sess-123"
-        session_manager.get.return_value = mock_session
-
-        registry = create_test_registry(session_manager=session_manager)
-        set_context = registry.get_tool("set_handoff_context")
-
-        result = await set_context(session_id="sess-123")
-
-        assert "error" in result
-        assert "No transcript path" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_automated_transcript_not_found(self):
-        """Test when transcript file doesn't exist."""
-        session_manager = MagicMock()
-        mock_session = MagicMock()
-        mock_session.id = "sess-123"
-        mock_session.jsonl_path = "/nonexistent/path/transcript.jsonl"
-        session_manager.resolve_session_reference.return_value = "sess-123"
-        session_manager.get.return_value = mock_session
-
-        registry = create_test_registry(session_manager=session_manager)
-        set_context = registry.get_tool("set_handoff_context")
-
-        result = await set_context(session_id="sess-123")
-
-        assert "error" in result
-        assert "Transcript file not found" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_automated_compact_only(self):
-        """Test creating compact handoff only."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            transcript_path = Path(tmpdir) / "transcript.jsonl"
-            with open(transcript_path, "w") as f:
-                f.write(json.dumps({"type": "user", "message": {"content": "Hello"}}) + "\n")
-
-            session_manager = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "sess-123"
-            mock_session.jsonl_path = str(transcript_path)
-            session_manager.resolve_session_reference.return_value = "sess-123"
-            session_manager.get.return_value = mock_session
-
-            registry = create_test_registry(session_manager=session_manager)
-            set_context = registry.get_tool("set_handoff_context")
-
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="")
-
-                result = await set_context(
-                    session_id="sess-123",
-                    compact=True,
-                    write_file=False,
-                )
-
-            assert result["success"] is True
-            assert result["compact_length"] > 0
-            session_manager.update_compact_markdown.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_automated_by_prefix(self):
-        """Test finding session by prefix."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            transcript_path = Path(tmpdir) / "transcript.jsonl"
-            with open(transcript_path, "w") as f:
-                f.write(json.dumps({"type": "user", "message": {"content": "Test"}}) + "\n")
-
-            session_manager = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "sess-123-full-id"
-            mock_session.jsonl_path = str(transcript_path)
-            session_manager.resolve_session_reference.return_value = "sess-123-full-id"
-            session_manager.get.return_value = mock_session
-
-            registry = create_test_registry(session_manager=session_manager)
-            set_context = registry.get_tool("set_handoff_context")
-
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="")
-
-                result = await set_context(
-                    session_id="sess-123",
-                    compact=True,
-                    write_file=False,
-                )
-
-            assert result["success"] is True
-            assert result["session_id"] == "sess-123-full-id"
-
-    @pytest.mark.asyncio
-    async def test_automated_ambiguous_prefix(self):
-        """Test ambiguous session ID prefix."""
-        session_manager = MagicMock()
-        session_manager.resolve_session_reference.side_effect = ValueError(
-            "Ambiguous session reference 'sess-abc': matches sess-abc-1, sess-abc-2"
-        )
-
-        registry = create_test_registry(session_manager=session_manager)
-        set_context = registry.get_tool("set_handoff_context")
-
-        result = await set_context(session_id="sess-abc")
-
-        assert "error" in result
-        assert "Ambiguous" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_automated_writes_files(self):
-        """Test that files are written when write_file=True."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            transcript_path = Path(tmpdir) / "transcript.jsonl"
-            with open(transcript_path, "w") as f:
-                f.write(json.dumps({"type": "user", "message": {"content": "Hello"}}) + "\n")
-
-            output_dir = Path(tmpdir) / "summaries"
-
-            session_manager = MagicMock()
-            mock_session = MagicMock()
-            mock_session.id = "sess-123"
-            mock_session.jsonl_path = str(transcript_path)
-            session_manager.resolve_session_reference.return_value = "sess-123"
-            session_manager.get.return_value = mock_session
-
-            registry = create_test_registry(session_manager=session_manager)
-            set_context = registry.get_tool("set_handoff_context")
-
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="")
-
-                result = await set_context(
-                    session_id="sess-123",
-                    compact=True,
-                    write_file=True,
-                    output_path=str(output_dir),
-                )
-
-            assert result["success"] is True
-            assert len(result["files_written"]) > 0
-            assert output_dir.exists()
 
 
 # ============================================================================

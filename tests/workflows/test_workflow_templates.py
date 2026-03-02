@@ -17,7 +17,7 @@ class TestGetWorkflowTemplates:
     def test_returns_list_of_templates(self) -> None:
         templates = get_workflow_templates()
         assert isinstance(templates, list)
-        assert len(templates) == 5
+        assert len(templates) == 4
 
     def test_each_template_has_required_fields(self) -> None:
         required = {"id", "name", "description", "workflow_type", "definition_json"}
@@ -46,15 +46,6 @@ class TestGetWorkflowTemplates:
         defn = json.loads(t["definition_json"])
         assert len(defn["steps"]) == 1
         assert defn["steps"][0]["name"] == "work"
-
-    def test_lifecycle_template_has_triggers(self) -> None:
-        t = get_template_by_id("lifecycle")
-        assert t is not None
-        defn = json.loads(t["definition_json"])
-        assert "triggers" in defn
-        assert "on_session_start" in defn["triggers"]
-        assert "on_session_stop" in defn["triggers"]
-        assert "before_tool" in defn["triggers"]
 
     def test_tdd_developer_has_three_steps(self) -> None:
         t = get_template_by_id("tdd-developer")

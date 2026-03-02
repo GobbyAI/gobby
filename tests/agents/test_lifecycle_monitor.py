@@ -1,11 +1,12 @@
 """Tests for gobby.agents.lifecycle_monitor module.
 
 Tests for the AgentLifecycleMonitor that detects dead tmux sessions
-and marks their agent DB records as failed.
+and completed/failed autonomous tasks, and marks their agent DB records.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -71,6 +72,26 @@ def _make_terminal_agent(
         mode="terminal",
         tmux_session_name=tmux_session_name,
         started_at=datetime.now(UTC),
+    )
+    registry.add(agent)
+    return agent
+
+
+def _make_autonomous_agent(
+    registry: RunningAgentRegistry,
+    run_id: str = "run-auto",
+    session_id: str = "sess-auto",
+    parent_session_id: str = "sess-parent",
+    task: asyncio.Task | None = None,  # type: ignore[type-arg]
+) -> RunningAgent:
+    """Helper to create and register an autonomous-mode agent with an asyncio.Task."""
+    agent = RunningAgent(
+        run_id=run_id,
+        session_id=session_id,
+        parent_session_id=parent_session_id,
+        mode="autonomous",
+        started_at=datetime.now(UTC),
+        task=task,
     )
     registry.add(agent)
     return agent
@@ -151,19 +172,19 @@ class TestCheckDeadAgents:
         monitor: AgentLifecycleMonitor,
         registry: RunningAgentRegistry,
     ) -> None:
-        """Non-terminal agents (headless, in_process) are not checked."""
+        """Non-terminal agents (autonomous, in_process) are not checked."""
         agent = RunningAgent(
-            run_id="run-headless",
+            run_id="run-autonomous",
             session_id="sess-1",
             parent_session_id="sess-parent",
-            mode="headless",
+            mode="autonomous",
             tmux_session_name=None,
         )
         registry.add(agent)
 
         cleaned = await monitor.check_dead_agents()
         assert cleaned == 0
-        assert registry.get("run-headless") is not None
+        assert registry.get("run-autonomous") is not None
 
     @pytest.mark.asyncio
     async def test_skips_already_completed_db_record(
@@ -245,6 +266,250 @@ class TestCheckDeadAgents:
             await mon.check_dead_agents()
 
         mock_coordinator.release_session_worktrees.assert_called_once_with(agent.session_id)
+
+
+class TestCheckDeadAutonomousAgents:
+    """Tests for autonomous/in_process task-based agent detection in check_dead_agents."""
+
+    @pytest.mark.asyncio
+    async def test_detects_completed_autonomous_task(
+        self,
+        monitor: AgentLifecycleMonitor,
+        registry: RunningAgentRegistry,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Completed autonomous task is detected and agent run marked as success."""
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-auto-done",
+        )
+        agent_run_manager.start(run.id)
+
+        # Create a done task (completed successfully)
+        async def _ok() -> str:
+            return "result"
+
+        done_task: asyncio.Task[str] = asyncio.ensure_future(_ok())
+        await done_task  # Let it finish
+
+        _make_autonomous_agent(registry, run_id=run.id, task=done_task)
+
+        cleaned = await monitor.check_dead_agents()
+
+        assert cleaned == 1
+        assert registry.get(run.id) is None
+
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "success"
+
+    @pytest.mark.asyncio
+    async def test_detects_failed_autonomous_task(
+        self,
+        monitor: AgentLifecycleMonitor,
+        registry: RunningAgentRegistry,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Failed autonomous task is detected and agent run marked as error."""
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-auto-fail",
+        )
+        agent_run_manager.start(run.id)
+
+        # Create a done task that raised an exception
+        async def _failing() -> str:
+            raise RuntimeError("SDK connection lost")
+
+        failed_task: asyncio.Task[str] = asyncio.ensure_future(_failing())
+        try:
+            await failed_task
+        except RuntimeError:
+            pass
+
+        _make_autonomous_agent(registry, run_id=run.id, task=failed_task)
+
+        cleaned = await monitor.check_dead_agents()
+
+        assert cleaned == 1
+        assert registry.get(run.id) is None
+
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert "SDK connection lost" in (updated.error or "")
+
+    @pytest.mark.asyncio
+    async def test_detects_cancelled_autonomous_task(
+        self,
+        monitor: AgentLifecycleMonitor,
+        registry: RunningAgentRegistry,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Cancelled autonomous task is detected and cleaned up."""
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-auto-cancel",
+        )
+        agent_run_manager.start(run.id)
+
+        # Create a cancelled task
+        async def _hang() -> str:
+            await asyncio.sleep(3600)
+            return "never"
+
+        cancel_task: asyncio.Task[str] = asyncio.ensure_future(_hang())
+        cancel_task.cancel()
+        try:
+            await cancel_task
+        except asyncio.CancelledError:
+            pass
+
+        _make_autonomous_agent(registry, run_id=run.id, task=cancel_task)
+
+        cleaned = await monitor.check_dead_agents()
+
+        assert cleaned == 1
+        assert registry.get(run.id) is None
+
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert "cancelled" in (updated.error or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_skips_still_running_autonomous_task(
+        self,
+        monitor: AgentLifecycleMonitor,
+        registry: RunningAgentRegistry,
+    ) -> None:
+        """Still-running autonomous tasks are left untouched."""
+        async def _long_running() -> str:
+            await asyncio.sleep(3600)
+            return "done"
+
+        running_task: asyncio.Task[str] = asyncio.ensure_future(_long_running())
+        _make_autonomous_agent(registry, run_id="run-still-going", task=running_task)
+
+        cleaned = await monitor.check_dead_agents()
+
+        assert cleaned == 0
+        assert registry.get("run-still-going") is not None
+        running_task.cancel()
+        try:
+            await running_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_autonomous_agent_without_task_is_skipped(
+        self,
+        monitor: AgentLifecycleMonitor,
+        registry: RunningAgentRegistry,
+    ) -> None:
+        """Autonomous agents with no task field are skipped."""
+        _make_autonomous_agent(registry, run_id="run-no-task", task=None)
+
+        cleaned = await monitor.check_dead_agents()
+
+        assert cleaned == 0
+        assert registry.get("run-no-task") is not None
+
+    @pytest.mark.asyncio
+    async def test_releases_worktrees_on_completed_autonomous(
+        self,
+        registry: RunningAgentRegistry,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Worktrees are released when a completed autonomous agent is cleaned up."""
+        mock_coordinator = MagicMock()
+        mon = AgentLifecycleMonitor(
+            agent_registry=registry,
+            agent_run_manager=agent_run_manager,
+            session_coordinator=mock_coordinator,
+        )
+
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-auto-wt",
+        )
+        agent_run_manager.start(run.id)
+
+        async def _ok2() -> str:
+            return "ok"
+
+        done_task: asyncio.Task[str] = asyncio.ensure_future(_ok2())
+        await done_task
+
+        agent = _make_autonomous_agent(
+            registry, run_id=run.id, session_id="sess-auto-wt", task=done_task
+        )
+
+        cleaned = await mon.check_dead_agents()
+
+        assert cleaned == 1
+        mock_coordinator.release_session_worktrees.assert_called_once_with(agent.session_id)
+
+    @pytest.mark.asyncio
+    async def test_releases_clones_on_failed_autonomous(
+        self,
+        registry: RunningAgentRegistry,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Clones are released when a failed autonomous agent is cleaned up."""
+        mock_clone_storage = MagicMock()
+        mock_clone_storage.release = MagicMock()  # Sync method, called via to_thread
+        mon = AgentLifecycleMonitor(
+            agent_registry=registry,
+            agent_run_manager=agent_run_manager,
+            clone_storage=mock_clone_storage,
+        )
+
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-auto-clone",
+        )
+        agent_run_manager.start(run.id)
+
+        async def _failing() -> str:
+            raise ValueError("boom")
+
+        failed_task: asyncio.Task[str] = asyncio.ensure_future(_failing())
+        try:
+            await failed_task
+        except ValueError:
+            pass
+
+        agent = RunningAgent(
+            run_id=run.id,
+            session_id="sess-auto-clone",
+            parent_session_id="sess-parent",
+            mode="autonomous",
+            started_at=datetime.now(UTC),
+            task=failed_task,
+            clone_id="clone-123",
+        )
+        registry.add(agent)
+
+        cleaned = await mon.check_dead_agents()
+
+        assert cleaned == 1
+        mock_clone_storage.release.assert_called_once_with("clone-123")
 
 
 class TestCleanupOrphanedDbRuns:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -46,37 +46,21 @@ class TestPipelineStepValidation:
 
 
 class TestActivateWorkflowExecution:
-    """Tests for activate_workflow step execution in pipeline executor."""
+    """Tests for activate_workflow step execution in pipeline executor.
+
+    activate_workflow pipeline steps are removed — they always return an error.
+    """
 
     @pytest.mark.asyncio
-    async def test_activate_workflow_step_activates(self) -> None:
-        """activate_workflow step activates workflow via loader."""
-        from gobby.workflows.definitions import (
-            PipelineStep,
-            WorkflowDefinition,
-            WorkflowStep,
-        )
+    async def test_activate_workflow_step_returns_error(self) -> None:
+        """activate_workflow step returns error (step type removed)."""
+        from gobby.workflows.definitions import PipelineStep
         from gobby.workflows.pipeline_executor import PipelineExecutor
-
-        definition = WorkflowDefinition(
-            name="auto-task",
-            enabled=False,
-            steps=[WorkflowStep(name="start"), WorkflowStep(name="work")],
-            variables={},
-            session_variables={},
-        )
-        mock_loader = MagicMock()
-        mock_loader.load_workflow = AsyncMock(return_value=definition)
-
-        mock_session_mgr = MagicMock()
-        mock_session_mgr.resolve_session_reference.return_value = "uuid-sess-1"
 
         executor = PipelineExecutor(
             db=MagicMock(),
             execution_manager=MagicMock(),
             llm_service=MagicMock(),
-            loader=mock_loader,
-            session_manager=mock_session_mgr,
         )
 
         step = PipelineStep(
@@ -93,8 +77,7 @@ class TestActivateWorkflowExecution:
         )
 
         assert result is not None
-        assert result.get("success") is True
-        assert result["workflow"] == "auto-task"
+        assert "error" in result
 
     @pytest.mark.asyncio
     async def test_activate_workflow_fails_without_loader(self) -> None:

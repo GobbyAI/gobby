@@ -69,9 +69,7 @@ class TestStopGatesSync:
         rules = manager.list_all(workflow_type="rule")
         rule_names = {r.name for r in rules}
 
-        assert STOP_GATES_RULES.issubset(rule_names), (
-            f"Missing: {STOP_GATES_RULES - rule_names}"
-        )
+        assert STOP_GATES_RULES.issubset(rule_names), f"Missing: {STOP_GATES_RULES - rule_names}"
 
     def test_all_rules_have_group(self, db, manager) -> None:
         """All rules should have group='stop-gates'."""
@@ -81,9 +79,7 @@ class TestStopGatesSync:
         for row in rules:
             if row.name in STOP_GATES_RULES:
                 body = json.loads(row.definition_json)
-                assert body.get("group") == "stop-gates", (
-                    f"{row.name} missing group"
-                )
+                assert body.get("group") == "stop-gates", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
@@ -231,9 +227,7 @@ class TestRequireTaskClose:
             context={"variables": variables},
             allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
         )
-        assert not evaluator.evaluate(body.when), (
-            "Rule should not fire when task_claimed is unset"
-        )
+        assert not evaluator.evaluate(body.when), "Rule should not fire when task_claimed is unset"
 
     def test_blocks_when_task_claimed_is_set(self, db, manager) -> None:
         """Should block when task_claimed is set and conditions met."""
@@ -252,9 +246,7 @@ class TestRequireTaskClose:
             context={"variables": variables},
             allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
         )
-        assert evaluator.evaluate(body.when), (
-            "Rule should fire when task_claimed is set"
-        )
+        assert evaluator.evaluate(body.when), "Rule should fire when task_claimed is set"
 
 
 class TestBeforeAgentResetsPlumbing:

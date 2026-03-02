@@ -90,10 +90,9 @@ class ChildSessionManager:
         """
         Get the agent depth of a session.
 
-        Depth is determined by counting parent links:
-        - 0: No parent (human-initiated)
-        - 1: Has parent that is depth 0
-        - N: Has parent that is depth N-1
+        Uses the stored agent_depth field set at session creation:
+        - 0: Human-initiated or pipeline session
+        - 1+: Agent-spawned session (parent_depth + 1)
 
         Args:
             session_id: The session ID to check.
@@ -101,22 +100,10 @@ class ChildSessionManager:
         Returns:
             Agent depth (0 for human sessions, 1+ for agent sessions).
         """
-        depth = 0
-        current_id = session_id
-
-        while current_id:
-            session = self._storage.get(current_id)
-            if not session or not session.parent_session_id:
-                break
-            depth += 1
-            current_id = session.parent_session_id
-
-            # Safety limit to prevent infinite loops
-            if depth > 10:
-                self.logger.warning(f"Session depth exceeded safety limit for {session_id}")
-                break
-
-        return depth
+        session = self._storage.get(session_id)
+        if not session:
+            return 0
+        return session.agent_depth or 0
 
     def can_spawn_child(self, parent_session_id: str) -> tuple[bool, str, int]:
         """

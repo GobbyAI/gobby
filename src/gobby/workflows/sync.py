@@ -180,15 +180,49 @@ def sync_bundled_workflows(db: DatabaseProtocol) -> dict[str, Any]:
                             source="template",
                             tags=["gobby"],
                         )
+                        # Propagate definition changes to installed copy
+                        _propagate_to_installed(manager, name, definition_json)
                         logger.info("Updated bundled workflow definition", extra={"workflow": name})
                         result["updated"] += 1
                 else:
-                    # Non-template workflow with same name exists — don't overwrite
-                    logger.debug(
-                        "Workflow exists with non-template source, skipping",
-                        extra={"workflow": name, "source": existing.source},
+                    # Non-template workflow with same name shadows the template.
+                    # Look up the actual template row and update it if changed,
+                    # then propagate to the installed copy.
+                    template_row = manager.db.fetchone(
+                        "SELECT * FROM workflow_definitions "
+                        "WHERE name = ? AND source = 'template' AND deleted_at IS NULL",
+                        (name,),
                     )
-                    result["skipped"] += 1
+                    if template_row:
+                        from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+
+                        tpl = WorkflowDefinitionRow.from_row(template_row)
+                        if tpl.definition_json != definition_json:
+                            manager.update(
+                                tpl.id,
+                                definition_json=definition_json,
+                                description=description,
+                                version=version,
+                                enabled=tpl.enabled,
+                                priority=priority,
+                                sources=sources_list,
+                                source="template",
+                                tags=["gobby"],
+                            )
+                            _propagate_to_installed(manager, name, definition_json)
+                            logger.info(
+                                "Updated shadowed workflow template and propagated",
+                                extra={"workflow": name},
+                            )
+                            result["updated"] += 1
+                        else:
+                            result["skipped"] += 1
+                    else:
+                        logger.debug(
+                            "Workflow exists with non-template source, no template to update",
+                            extra={"workflow": name, "source": existing.source},
+                        )
+                        result["skipped"] += 1
                 continue
 
             # Create the workflow definition in the database

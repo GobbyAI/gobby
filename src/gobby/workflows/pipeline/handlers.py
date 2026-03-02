@@ -63,40 +63,10 @@ async def execute_activate_workflow_step(
     session_manager: Any | None,
     db: Any,
 ) -> dict[str, Any]:
-    """Execute an activate_workflow step — activate a workflow on a session."""
-    config = rendered_step.activate_workflow
-    if not loader:
-        return {"error": "activate_workflow requires workflow loader but none configured"}
-
-    workflow_name = config.get("name")
-    session_id = config.get("session_id")
-    variables = config.get("variables") or {}
-
-    if not workflow_name:
-        return {"error": "activate_workflow requires 'name' field"}
-    if not session_id:
-        return {"error": "activate_workflow requires 'session_id' field"}
-    if not session_manager:
-        return {"error": "activate_workflow requires session_manager but none configured"}
-
-    try:
-        from gobby.mcp_proxy.tools.workflows._lifecycle import activate_workflow
-        from gobby.workflows.state_manager import WorkflowStateManager
-
-        state_manager = WorkflowStateManager(db)
-
-        result = await activate_workflow(
-            loader=loader,
-            state_manager=state_manager,
-            session_manager=session_manager,
-            db=db,
-            name=workflow_name,
-            session_id=session_id,
-            variables=variables,
-        )
-        return result
-    except (ImportError, ValueError, RuntimeError, OSError) as e:
-        return {"error": f"Failed to activate workflow: {e}"}
+    """activate_workflow pipeline steps are removed. Returns error."""
+    return {
+        "error": "activate_workflow pipeline steps are removed. Use agent spawning with pipelines instead."
+    }
 
 
 async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, Any]:

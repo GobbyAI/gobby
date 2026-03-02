@@ -88,7 +88,7 @@ def agents() -> None:
 @click.option(
     "--mode",
     "-m",
-    type=click.Choice(["in_process", "terminal", "embedded", "headless"]),
+    type=click.Choice(["in_process", "terminal", "autonomous"]),
     default="terminal",
     help="Execution mode (default: terminal)",
 )
@@ -96,7 +96,7 @@ def agents() -> None:
     "--terminal",
     type=click.Choice(["auto", "ghostty", "iterm", "kitty", "wezterm", "terminal"]),
     default="auto",
-    help="Terminal for terminal/embedded modes",
+    help="Terminal for terminal mode",
 )
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, gemini, etc.)")
 @click.option("--model", help="Model override")

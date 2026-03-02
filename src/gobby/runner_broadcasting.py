@@ -50,9 +50,8 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
             except Exception as e:
                 logger.warning(f"Failed to broadcast agent event {event_type}: {e}")
 
-        # Handle PTY reader start/stop for embedded agents
-        if event_type == "agent_started" and data.get("mode") == "embedded":
-            # Start PTY reader for embedded agents
+        # Handle PTY reader start/stop for agents with PTY (legacy)
+        if event_type == "agent_started" and data.get("master_fd") is not None:
             agent = registry.get(run_id)
             if agent and agent.master_fd is not None:
                 _agent = agent  # bind for closure type narrowing

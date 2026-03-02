@@ -65,7 +65,9 @@ def _insert_rule(
 
 class TestRuleEngineLoadRules:
     @pytest.mark.asyncio
-    async def test_loads_rules_by_event(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_loads_rules_by_event(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """RuleEngine should load only rules matching the event type."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -94,7 +96,9 @@ class TestRuleEngineLoadRules:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_skips_disabled_rules(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_skips_disabled_rules(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Disabled rules should not be evaluated."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -117,7 +121,9 @@ class TestRuleEngineLoadRules:
 
 class TestBlockEffect:
     @pytest.mark.asyncio
-    async def test_block_returns_deny(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_block_returns_deny(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Block effect should return a block/deny decision."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -160,7 +166,9 @@ class TestBlockEffect:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_first_block_wins(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_first_block_wins(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """When multiple rules block, the first (by priority) wins."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -193,7 +201,9 @@ class TestBlockEffect:
 
 class TestSetVariableEffect:
     @pytest.mark.asyncio
-    async def test_set_variable_literal(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_set_variable_literal(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """set_variable with a literal value should update variables."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -215,7 +225,9 @@ class TestSetVariableEffect:
         assert variables.get("task_claimed") is True
 
     @pytest.mark.asyncio
-    async def test_set_variable_expression(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_set_variable_expression(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """set_variable with a string expression should evaluate it."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -303,7 +315,9 @@ class TestInjectContextEffect:
 
 class TestWhenConditions:
     @pytest.mark.asyncio
-    async def test_when_true_fires(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_when_true_fires(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Rule with when=True condition should fire."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -319,14 +333,14 @@ class TestWhenConditions:
 
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL)
-        response = await engine.evaluate(
-            event, session_id="sess-1", variables={"require_uv": True}
-        )
+        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_when_false_skips(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_when_false_skips(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Rule with when=False condition should not fire."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -349,7 +363,9 @@ class TestWhenConditions:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_when_none_always_fires(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_when_none_always_fires(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Rule without a when condition should always fire."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -689,7 +705,12 @@ class TestMcpCallToolUnwrapping:
             },
         )
         ctx = engine._build_eval_context(event, variables={})
-        assert ctx["tool_input"] == {"task_id": "#1", "commit_sha": "abc123", "server_name": "gobby-tasks", "tool_name": "close_task"}
+        assert ctx["tool_input"] == {
+            "task_id": "#1",
+            "commit_sha": "abc123",
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
 
     @pytest.mark.asyncio
     async def test_mcp_prefixed_call_tool_unwraps(self, db: LocalDatabase) -> None:
@@ -709,7 +730,12 @@ class TestMcpCallToolUnwrapping:
             },
         )
         ctx = engine._build_eval_context(event, variables={})
-        assert ctx["tool_input"] == {"task_id": "#2", "commit_sha": "def456", "server_name": "gobby-tasks", "tool_name": "close_task"}
+        assert ctx["tool_input"] == {
+            "task_id": "#2",
+            "commit_sha": "def456",
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
 
     @pytest.mark.asyncio
     async def test_call_tool_unwraps_json_string_arguments(self, db: LocalDatabase) -> None:
@@ -729,7 +755,12 @@ class TestMcpCallToolUnwrapping:
             },
         )
         ctx = engine._build_eval_context(event, variables={})
-        assert ctx["tool_input"] == {"task_id": "#3", "commit_sha": "ghi789", "server_name": "gobby-tasks", "tool_name": "close_task"}
+        assert ctx["tool_input"] == {
+            "task_id": "#3",
+            "commit_sha": "ghi789",
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
 
     @pytest.mark.asyncio
     async def test_regular_tool_not_unwrapped(self, db: LocalDatabase) -> None:
@@ -847,7 +878,9 @@ class TestMultipleEffects:
     """Tests for rules with multiple effects (effects: [...])."""
 
     @pytest.mark.asyncio
-    async def test_block_and_set_variable(self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+    async def test_block_and_set_variable(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Multi-effect rule with block + set_variable: variable set AND block fires."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -1225,9 +1258,7 @@ class TestConsecutiveToolBlocks:
         assert variables.get("rule_ran") is None
 
     @pytest.mark.asyncio
-    async def test_counter_resets_on_successful_after_tool(
-        self, db: LocalDatabase
-    ) -> None:
+    async def test_counter_resets_on_successful_after_tool(self, db: LocalDatabase) -> None:
         """Counter should reset to 0 on successful after_tool."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -1277,9 +1308,7 @@ class TestConsecutiveToolBlocks:
         assert variables.get("consecutive_tool_blocks", 0) == 0
 
     @pytest.mark.asyncio
-    async def test_counter_not_reset_on_failed_after_tool(
-        self, db: LocalDatabase
-    ) -> None:
+    async def test_counter_not_reset_on_failed_after_tool(self, db: LocalDatabase) -> None:
         """Counter should NOT reset on failed after_tool."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -1304,5 +1333,128 @@ class TestNoRules:
         engine = RuleEngine(db)
         event = _make_event(HookEventType.BEFORE_TOOL)
         response = await engine.evaluate(event, session_id="sess-1", variables={})
+
+        assert response.decision == "allow"
+
+
+class TestOverrideCollectsMcpCalls:
+    """Tests that mcp_call effects fire even when override decisions apply."""
+
+    @pytest.mark.asyncio
+    async def test_tool_block_pending_still_collects_mcp_calls(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """When tool_block_pending blocks a stop, mcp_call effects should still be collected."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        _insert_rule(
+            manager,
+            "digest-on-response",
+            RuleDefinitionBody(
+                event=RuleEvent.STOP,
+                effect=RuleEffect(
+                    type="mcp_call",
+                    server="gobby-memory",
+                    tool="build_turn_and_digest",
+                    arguments={"session_id": "test"},
+                    background=True,
+                ),
+            ),
+            priority=11,
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"tool_block_pending": True}
+        event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "block"
+        assert "tool-failure-recovery" in (response.reason or "")
+        # The critical assertion: mcp_calls must be collected despite the override block
+        calls = response.metadata.get("mcp_calls", [])
+        assert len(calls) == 1
+        assert calls[0]["tool"] == "build_turn_and_digest"
+        # tool_block_pending should still be cleared
+        assert variables["tool_block_pending"] is False
+
+    @pytest.mark.asyncio
+    async def test_force_allow_stop_still_collects_mcp_calls(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """When force_allow_stop allows a stop, mcp_call effects should still be collected."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        _insert_rule(
+            manager,
+            "digest-on-response",
+            RuleDefinitionBody(
+                event=RuleEvent.STOP,
+                effect=RuleEffect(
+                    type="mcp_call",
+                    server="gobby-memory",
+                    tool="build_turn_and_digest",
+                    arguments={"session_id": "test"},
+                    background=True,
+                ),
+            ),
+            priority=11,
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"force_allow_stop": True}
+        event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "allow"
+        calls = response.metadata.get("mcp_calls", [])
+        assert len(calls) == 1
+        assert calls[0]["tool"] == "build_turn_and_digest"
+        assert variables["force_allow_stop"] is False
+
+    @pytest.mark.asyncio
+    async def test_override_block_trumps_rule_evaluated_allow(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """tool_block_pending override should block even when no rules produce a block."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        # Only a set_variable rule — no block rules
+        _insert_rule(
+            manager,
+            "harmless-rule",
+            RuleDefinitionBody(
+                event=RuleEvent.STOP,
+                effect=RuleEffect(type="set_variable", variable="ran", value=True),
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"tool_block_pending": True}
+        event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "block"
+        assert variables.get("ran") is True  # rule loop still ran
+
+    @pytest.mark.asyncio
+    async def test_force_allow_trumps_rule_evaluated_block(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """force_allow_stop override should allow even when rules produce a block."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        _insert_rule(
+            manager,
+            "block-stop",
+            RuleDefinitionBody(
+                event=RuleEvent.STOP,
+                effect=RuleEffect(type="block", reason="Cannot stop yet"),
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"force_allow_stop": True}
+        event = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"

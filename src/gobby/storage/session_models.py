@@ -57,8 +57,12 @@ class Session:
     had_edits: bool = False
     # Rolling conversation digest
     digest_markdown: str | None = None
+    # Per-turn detailed record (overwritten each turn)
+    last_turn_markdown: str | None = None
     # Persisted chat mode (plan, accept_edits, normal, bypass)
     chat_mode: str = "plan"
+    # Idempotency guard for digest pipeline
+    last_digest_input_hash: str | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> Session:
@@ -96,7 +100,13 @@ class Session:
             seq_num=row["seq_num"] if "seq_num" in row.keys() else None,
             had_edits=bool(row["had_edits"]) if "had_edits" in row.keys() else False,
             digest_markdown=row["digest_markdown"] if "digest_markdown" in row.keys() else None,
+            last_turn_markdown=row["last_turn_markdown"]
+            if "last_turn_markdown" in row.keys()
+            else None,
             chat_mode=row["chat_mode"] if "chat_mode" in row.keys() else "plan",
+            last_digest_input_hash=row["last_digest_input_hash"]
+            if "last_digest_input_hash" in row.keys()
+            else None,
         )
 
     @classmethod
@@ -165,7 +175,9 @@ class Session:
             "terminal_context": self.terminal_context,
             "had_edits": self.had_edits,
             "digest_markdown": self.digest_markdown,
+            "last_turn_markdown": self.last_turn_markdown,
             "chat_mode": self.chat_mode,
+            "last_digest_input_hash": self.last_digest_input_hash,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,

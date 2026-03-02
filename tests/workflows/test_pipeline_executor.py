@@ -1013,9 +1013,7 @@ class TestConditionEvaluation:
             llm_service=mock_llm_service,
         )
 
-        step = PipelineStep(
-            id="step2", exec="echo run", condition="${{ inputs.get('command') }}"
-        )
+        step = PipelineStep(id="step2", exec="echo run", condition="${{ inputs.get('command') }}")
         context: dict = {"inputs": {"command": None}, "steps": {}}
 
         result = executor.renderer.should_run_step(step, context)
@@ -1746,3 +1744,400 @@ class TestDefaultInputMerging:
         context = json.loads(step_input_json)
         assert context["inputs"]["city"] == "Memphis"  # overridden
         assert context["inputs"]["state"] == "AR"  # default preserved
+
+
+class TestNestedPipelineDepthLimit:
+    """Tests for nested pipeline depth limit and cycle detection."""
+
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_depth_limit_exceeded(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Exceeding depth limit raises RuntimeError."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="deep-pipeline",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        with pytest.raises(RuntimeError, match="nesting depth limit exceeded"):
+            await executor.execute(
+                pipeline=pipeline,
+                inputs={},
+                project_id="proj-123",
+                _depth=11,
+            )
+
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_cycle_detection(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """A pipeline already in the call stack raises RuntimeError."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="cycle-pipeline",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        with pytest.raises(RuntimeError, match="Pipeline cycle detected"):
+            await executor.execute(
+                pipeline=pipeline,
+                inputs={},
+                project_id="proj-123",
+                _pipeline_stack=frozenset({"cycle-pipeline"}),
+            )
+
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_within_limit(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Depth within limit executes normally."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="ok-pipeline",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        # depth=5 is well within default limit of 10
+        result = await executor.execute(
+            pipeline=pipeline,
+            inputs={},
+            project_id="proj-123",
+            _depth=5,
+        )
+        assert result is not None
+
+
+class TestPipelineChildSession:
+    """Tests for child session creation in pipeline execution."""
+
+    @pytest.mark.asyncio
+    async def test_execute_creates_child_session(
+        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline
+    ) -> None:
+        """Top-level pipeline creates a child session via session_manager."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        mock_session_manager = MagicMock()
+        child_session = MagicMock()
+        child_session.id = "child-session-123"
+        mock_session_manager.register.return_value = child_session
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=mock_session_manager,
+        )
+
+        await executor.execute(
+            pipeline=simple_pipeline,
+            inputs={},
+            project_id="proj-123",
+            session_id="caller-session-456",
+        )
+
+        mock_session_manager.register.assert_called_once()
+        call_kwargs = mock_session_manager.register.call_args.kwargs
+        assert call_kwargs["parent_session_id"] == "caller-session-456"
+        assert call_kwargs["source"] == "pipeline"
+        assert "pipeline-" in call_kwargs["external_id"]
+        assert call_kwargs["title"] == "pipeline:test-pipeline"
+        assert call_kwargs["agent_depth"] == 0
+
+    @pytest.mark.asyncio
+    async def test_context_session_id_is_child(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Context session_id should be the child session, not the caller."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        mock_session_manager = MagicMock()
+        child_session = MagicMock()
+        child_session.id = "child-session-abc"
+        mock_session_manager.register.return_value = child_session
+
+        captured_context: dict = {}
+
+        # Use a pipeline with a single step so we can capture the context
+        pipeline = PipelineDefinition(
+            name="ctx-test",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=mock_session_manager,
+        )
+
+        # Patch _execute_step to capture context
+        original_execute_step = executor._execute_step
+
+        async def capture_context(step, context, project_id):
+            captured_context.update(context)
+            return await original_execute_step(step, context, project_id)
+
+        executor._execute_step = capture_context
+
+        await executor.execute(
+            pipeline=pipeline,
+            inputs={},
+            project_id="proj-123",
+            session_id="caller-session-789",
+        )
+
+        assert captured_context["session_id"] == "child-session-abc"
+
+    @pytest.mark.asyncio
+    async def test_context_has_parent_session_id(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Context parent_session_id should be the original caller."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        mock_session_manager = MagicMock()
+        child_session = MagicMock()
+        child_session.id = "child-session-xyz"
+        mock_session_manager.register.return_value = child_session
+
+        captured_context: dict = {}
+
+        pipeline = PipelineDefinition(
+            name="parent-test",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=mock_session_manager,
+        )
+
+        async def capture_context(step, context, project_id):
+            captured_context.update(context)
+            return {"stdout": "hi", "stderr": "", "exit_code": 0}
+
+        executor._execute_step = capture_context
+
+        await executor.execute(
+            pipeline=pipeline,
+            inputs={},
+            project_id="proj-123",
+            session_id="original-caller",
+        )
+
+        assert captured_context["parent_session_id"] == "original-caller"
+
+    @pytest.mark.asyncio
+    async def test_no_child_session_without_session_manager(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Without session_manager, session_id passes through unchanged."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        captured_context: dict = {}
+
+        pipeline = PipelineDefinition(
+            name="no-mgr-test",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            # No session_manager
+        )
+
+        async def capture_context(step, context, project_id):
+            captured_context.update(context)
+            return {"stdout": "hi", "stderr": "", "exit_code": 0}
+
+        executor._execute_step = capture_context
+
+        await executor.execute(
+            pipeline=pipeline,
+            inputs={},
+            project_id="proj-123",
+            session_id="caller-direct",
+        )
+
+        assert captured_context["session_id"] == "caller-direct"
+
+    @pytest.mark.asyncio
+    async def test_no_child_session_without_session_id(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Without session_id, no child session is created."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        mock_session_manager = MagicMock()
+
+        pipeline = PipelineDefinition(
+            name="no-sid-test",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=mock_session_manager,
+        )
+
+        await executor.execute(
+            pipeline=pipeline,
+            inputs={},
+            project_id="proj-123",
+            # No session_id
+        )
+
+        mock_session_manager.register.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nested_pipeline_inherits_session(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Nested pipelines (depth > 0) should NOT create a new child session."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        mock_session_manager = MagicMock()
+        child_session = MagicMock()
+        child_session.id = "child-session-top"
+        mock_session_manager.register.return_value = child_session
+
+        captured_contexts: list[dict] = []
+
+        # Inner pipeline that the outer will invoke
+        inner_pipeline = PipelineDefinition(
+            name="inner",
+            steps=[PipelineStep(id="inner_step", exec="echo inner")],
+        )
+
+        # Outer pipeline that invokes inner
+        outer_pipeline = PipelineDefinition(
+            name="outer",
+            steps=[
+                PipelineStep(id="nest", invoke_pipeline="inner"),
+            ],
+        )
+
+        mock_loader = AsyncMock()
+        mock_loader.load_pipeline.return_value = inner_pipeline
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=mock_session_manager,
+            loader=mock_loader,
+        )
+
+        # Patch _execute_step to capture context at each level
+        original_execute_step = executor._execute_step
+
+        async def capture_and_execute(step, context, project_id):
+            captured_contexts.append(dict(context))
+            return await original_execute_step(step, context, project_id)
+
+        executor._execute_step = capture_and_execute
+
+        await executor.execute(
+            pipeline=outer_pipeline,
+            inputs={},
+            project_id="proj-123",
+            session_id="caller-outer",
+        )
+
+        # register should be called exactly once (for the outer pipeline only)
+        assert mock_session_manager.register.call_count == 1
+
+
+class TestRendererParentSessionId:
+    """Tests for parent_session_id in StepRenderer render and eval contexts."""
+
+    def test_render_context_includes_parent_session_id(self) -> None:
+        """StepRenderer.render_step() should expose parent_session_id."""
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.pipeline.renderer import StepRenderer
+
+        mock_engine = MagicMock()
+        mock_engine.render.side_effect = lambda t, ctx: ctx.get("parent_session_id", "")
+
+        renderer = StepRenderer(template_engine=mock_engine)
+        step = MagicMock()
+        step.id = "test"
+        step.exec = "${{ parent_session_id }}"
+        step.prompt = None
+        step.mcp = None
+        step.invoke_pipeline = None
+        step.model_copy.return_value = step
+
+        context = {
+            "inputs": {},
+            "steps": {},
+            "session_id": "child-123",
+            "parent_session_id": "parent-456",
+        }
+
+        renderer.render_step(step, context)
+
+        # Verify the render call received parent_session_id in context
+        render_call_ctx = mock_engine.render.call_args[0][1]
+        assert render_call_ctx["parent_session_id"] == "parent-456"
+        assert render_call_ctx["session_id"] == "child-123"
+
+    def test_eval_context_includes_parent_session_id(self) -> None:
+        """StepRenderer.should_run_step() should include parent_session_id in eval context."""
+        from gobby.workflows.pipeline.renderer import StepRenderer
+
+        renderer = StepRenderer()
+        step = MagicMock()
+        step.condition = "${{ parent_session_id == 'parent-789' }}"
+
+        context = {
+            "inputs": {},
+            "steps": {},
+            "session_id": "child-abc",
+            "parent_session_id": "parent-789",
+        }
+
+        result = renderer.should_run_step(step, context)
+        assert result is True
+
+    def test_eval_context_parent_session_id_mismatch(self) -> None:
+        """Condition using parent_session_id should evaluate correctly on mismatch."""
+        from gobby.workflows.pipeline.renderer import StepRenderer
+
+        renderer = StepRenderer(strict_conditions=True)
+        step = MagicMock()
+        step.condition = "${{ parent_session_id == 'wrong-id' }}"
+
+        context = {
+            "inputs": {},
+            "steps": {},
+            "session_id": "child-abc",
+            "parent_session_id": "parent-789",
+        }
+
+        result = renderer.should_run_step(step, context)
+        assert result is False

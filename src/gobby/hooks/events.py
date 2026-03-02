@@ -63,11 +63,11 @@ class SessionSource(str, Enum):
     CODEX = "codex"
     CLAUDE_SDK = "claude_sdk"
     CLAUDE_SDK_WEB_CHAT = "claude_sdk_web_chat"  # Web chat UI (uses Claude SDK)
+    AUTONOMOUS_SDK = "autonomous_sdk"  # SDK-based autonomous agents (AutonomousRunner)
     ANTIGRAVITY = "antigravity"  # Antigravity IDE (uses Claude Code format)
     CURSOR = "cursor"
     WINDSURF = "windsurf"
     COPILOT = "copilot"
-    EMBEDDED = "embedded"  # Daemon-internal spawned agents (AgentRunner)
 
 
 @dataclass

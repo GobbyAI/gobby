@@ -60,6 +60,7 @@ class RuleEngine:
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        extra_rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]] | None = None,
     ) -> HookResponse:
         """Evaluate all matching rules for an event.
 
@@ -114,9 +115,22 @@ class RuleEngine:
         # Auto-increment stop attempts (universal — not configurable)
         if rule_event == RuleEvent.STOP:
             variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
+            logger.debug(
+                "STOP gate diagnostics: session_id=%s, auto_task_ref=%r, "
+                "stop_attempts=%s, task_claimed=%s, claimed_task_id=%s",
+                session_id,
+                variables.get("auto_task_ref"),
+                variables["stop_attempts"],
+                variables.get("task_claimed"),
+                variables.get("claimed_task_id"),
+            )
 
         # 1. Load enabled rules for this event, sorted by priority
         rules = self._load_rules(rule_event)
+
+        # 1b. Append extra rules (e.g. from agent rule_definitions)
+        if extra_rules:
+            rules.extend((row, body) for row, body in extra_rules if body.event == rule_event)
 
         # 2. Apply session overrides
         overrides = self._load_session_overrides(session_id)
@@ -129,17 +143,24 @@ class RuleEngine:
         # 4. Filter by active rules (selector-based)
         rules = self._filter_by_active_rules(rules, variables)
 
+        # Deferred overrides — these used to early-return, but that skipped rule
+        # evaluation entirely, preventing mcp_call effects (like digest-on-response)
+        # from being collected. Now we record the override and let the loop run.
+        override_decision: str | None = None
+        override_reason: str | None = None
+
         # Force-allow stop (catastrophic failure bypass — self-clearing)
         if rule_event == RuleEvent.STOP and variables.get("force_allow_stop"):
             variables["force_allow_stop"] = False
-            return HookResponse(decision="allow")
+            override_decision = "allow"
 
         # Auto-block stop when a tool just failed (self-clearing)
-        if rule_event == RuleEvent.STOP and variables.get("tool_block_pending"):
+        elif rule_event == RuleEvent.STOP and variables.get("tool_block_pending"):
             variables["tool_block_pending"] = False
-            return HookResponse(
-                decision="block",
-                reason="Rule enforced by Gobby: [tool-failure-recovery]\nA tool just failed. Read the error and recover — do not stop.",
+            override_decision = "block"
+            override_reason = (
+                "Rule enforced by Gobby: [tool-failure-recovery]\n"
+                "A tool just failed. Read the error and recover — do not stop."
             )
 
         if not rules:
@@ -157,6 +178,12 @@ class RuleEngine:
                         variables["tool_block_pending"] = False
                         variables["consecutive_tool_blocks"] = 0
                         variables["_last_blocked_tool"] = ""
+            # Honour hardcoded override decisions (e.g. tool_block_pending stop gate)
+            # even when no declarative rules are installed for this event.
+            if override_decision == "block":
+                return HookResponse(decision="block", reason=override_reason or "")
+            if override_decision == "allow":
+                return HookResponse(decision="allow")
             return HookResponse(decision="allow")
 
         # Auto-manage tool_block_pending on after_tool before rule eval
@@ -226,20 +253,30 @@ class RuleEngine:
                     # First block wins — stop evaluating
                     break
 
-        # 6. Build response
+        # 6. Build response — overrides take precedence over rule-evaluated decisions,
+        # but the rule loop always runs so mcp_calls are always collected.
+        ctx_str = "\n\n".join(context_parts) if context_parts else None
+        meta = {"mcp_calls": mcp_calls} if mcp_calls else {}
+
+        if override_decision == "block":
+            return HookResponse(
+                decision="block",
+                reason=override_reason or "",
+                context=ctx_str,
+                metadata=meta,
+            )
+        if override_decision == "allow":
+            return HookResponse(decision="allow", context=ctx_str, metadata=meta)
+
         if block_reason:
             return HookResponse(
                 decision="block",
                 reason=block_reason,
-                context="\n\n".join(context_parts) if context_parts else None,
-                metadata={"mcp_calls": mcp_calls} if mcp_calls else {},
+                context=ctx_str,
+                metadata=meta,
             )
 
-        return HookResponse(
-            decision="allow",
-            context="\n\n".join(context_parts) if context_parts else None,
-            metadata={"mcp_calls": mcp_calls} if mcp_calls else {},
-        )
+        return HookResponse(decision="allow", context=ctx_str, metadata=meta)
 
     def _load_rules(
         self, rule_event: RuleEvent
@@ -306,12 +343,18 @@ class RuleEngine:
         rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
     ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
-        """Filter rules based on resolved selectors (if any) stored in session variables."""
+        """Filter rules based on resolved selectors (if any) stored in session variables.
+
+        Rules with ``source='agent'`` (injected from agent rule_definitions)
+        always pass — they are not subject to the active-rules selector.
+        """
         active_names = variables.get("_active_rule_names")
         if active_names is None:
             return rules  # no filter — current behavior preserved
         active_set = set(active_names)
-        return [(row, body) for row, body in rules if row.name in active_set]
+        return [
+            (row, body) for row, body in rules if row.name in active_set or row.source == "agent"
+        ]
 
     def _apply_effect(
         self,

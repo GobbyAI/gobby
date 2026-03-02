@@ -114,7 +114,7 @@ def create_spawn_agent_registry(
         worktree_id: str | None = None,
         # Execution
         workflow: str | None = None,
-        mode: Literal["terminal", "embedded", "headless", "self"] | None = None,
+        mode: Literal["terminal", "autonomous", "self"] | None = None,
         initial_step: str | None = None,
         provider: str | None = None,
         model: str | None = None,
@@ -208,6 +208,8 @@ def create_spawn_agent_registry(
 
                 if isinstance(wf_def, PipelineDefinition):
                     initial_variables["_assigned_pipeline"] = effective_workflow
+            else:
+                logger.warning("Workflow %r not found for agent spawn", effective_workflow)
 
         # Delegate to spawn_agent_impl
         return await spawn_agent_impl(

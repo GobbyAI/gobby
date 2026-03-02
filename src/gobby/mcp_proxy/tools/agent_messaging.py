@@ -461,6 +461,7 @@ def add_messaging_tools(
             - wait_time: How long we waited in seconds
         """
         if poll_interval <= 0:
+            logger.warning("Invalid poll_interval %d, using default of 5s", poll_interval)
             poll_interval = 5
 
         start_time = time.monotonic()

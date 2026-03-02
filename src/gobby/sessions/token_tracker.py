@@ -9,9 +9,20 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from gobby.storage.session_models import Session
 
 logger = logging.getLogger(__name__)
+
+
+class SessionStorageProtocol(Protocol):
+    """Protocol for the session storage dependency used by token tracking."""
+
+    def get_sessions_since(
+        self, since: datetime, project_id: str | None = None
+    ) -> list[Session]: ...
 
 
 @dataclass
@@ -34,7 +45,7 @@ class SessionTokenTracker:
         can_spawn, reason = tracker.can_spawn_agent()
     """
 
-    session_storage: Any  # LocalSessionManager
+    session_storage: SessionStorageProtocol
     daily_budget_usd: float = 50.0  # Default daily budget in USD
 
     def get_usage_summary(self, days: int = 1) -> dict[str, Any]:

@@ -123,6 +123,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _accumulated_cost_usd: float = field(default=0.0, repr=False)
     sdk_session_id: str | None = field(default=None, repr=False)
     system_prompt_override: str | None = field(default=None, repr=False)
+    resume_session_id: str | None = field(default=None, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
@@ -160,19 +161,23 @@ class ChatSession(ChatSessionPermissionsMixin):
             project_root = _find_project_root()
             cwd = str(project_root) if project_root else str(Path.cwd())
 
-        if self.system_prompt_override:
-            system_prompt = self.system_prompt_override
+        # SDK resume carries its own system prompt and context — skip construction
+        if self.resume_session_id:
+            system_prompt = None
         else:
-            system_prompt = _load_chat_system_prompt()
-        # Inject working directory so the agent doesn't hallucinate paths
-        system_prompt += f"\n\n## Environment\n- Working directory: {cwd}\n"
-        if self.db_session_id:
-            session_ref = f"#{self.seq_num}" if self.seq_num else self.db_session_id
-            system_prompt += (
-                f"- Session ID: {session_ref} (use for session_id params in MCP tools)\n"
-            )
-        if self.project_id:
-            system_prompt += f"- Project ID: {self.project_id}\n"
+            if self.system_prompt_override:
+                system_prompt = self.system_prompt_override
+            else:
+                system_prompt = _load_chat_system_prompt()
+            # Inject working directory so the agent doesn't hallucinate paths
+            system_prompt += f"\n\n## Environment\n- Working directory: {cwd}\n"
+            if self.db_session_id:
+                session_ref = f"#{self.seq_num}" if self.seq_num else self.db_session_id
+                system_prompt += (
+                    f"- Session ID: {session_ref} (use for session_id params in MCP tools)\n"
+                )
+            if self.project_id:
+                system_prompt += f"- Project ID: {self.project_id}\n"
 
         # Build SDK hooks from lifecycle callbacks
         sdk_hooks = self._build_sdk_hooks()
@@ -202,6 +207,10 @@ class ChatSession(ChatSessionPermissionsMixin):
             # ResultMessage.usage contains accumulated token counts across ALL
             # API calls in the agentic loop, making context % wildly wrong.
             include_partial_messages=True,
+            # SDK native resume — picks up exact conversation state from a
+            # previous session (terminal, autonomous, or web chat).
+            resume=self.resume_session_id,
+            continue_conversation=bool(self.resume_session_id),
         )
 
         self._client = ClaudeSDKClient(options=options)

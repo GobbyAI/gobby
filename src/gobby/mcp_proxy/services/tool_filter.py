@@ -4,8 +4,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.workflows.constants import EXEMPT_TOOLS
 from gobby.workflows.definitions import WorkflowDefinition
-from gobby.workflows.engine import EXEMPT_TOOLS
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase

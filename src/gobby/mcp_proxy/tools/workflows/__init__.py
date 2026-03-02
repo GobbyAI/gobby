@@ -4,10 +4,7 @@ Internal MCP tools for Gobby Workflow System.
 Exposes functionality for:
 - get_workflow: Get details about a specific workflow definition
 - list_workflows: Discover available workflow definitions
-- activate_workflow: Start a step-based workflow (supports initial variables)
-- end_workflow: Complete/terminate active workflow
 - get_workflow_status: Get current workflow state
-- request_step_transition: Request transition to a different step
 - set_variable: Set a workflow variable for the session
 - get_variable: Get workflow variable(s) for the session
 - import_workflow: Import a workflow from a file path
@@ -28,11 +25,6 @@ from gobby.mcp_proxy.tools.workflows._definitions import (
     update_workflow_definition,
 )
 from gobby.mcp_proxy.tools.workflows._import import import_workflow, reload_cache
-from gobby.mcp_proxy.tools.workflows._lifecycle import (
-    activate_workflow,
-    end_workflow,
-    request_step_transition,
-)
 from gobby.mcp_proxy.tools.workflows._query import (
     get_workflow,
     get_workflow_status,
@@ -139,58 +131,6 @@ def create_workflows_registry(
         return list_workflows(_loader, project_path, workflow_type, global_only, db=_db)
 
     @registry.tool(
-        name="activate_workflow",
-        description="Activate a step-based workflow for the current session. Accepts #N, N, UUID, or prefix for session_id.",
-    )
-    async def _activate_workflow(
-        name: str,
-        session_id: str | None = None,
-        initial_step: str | None = None,
-        variables: dict[str, Any] | None = None,
-        project_path: str | None = None,
-        resume: bool = False,
-    ) -> dict[str, Any]:
-        if _state_manager is None or _session_manager is None or _db is None:
-            return {"error": "Workflow tools require database connection"}
-        return await activate_workflow(
-            _loader,
-            _state_manager,
-            _session_manager,
-            _db,
-            name,
-            session_id,
-            initial_step,
-            variables,
-            project_path,
-            resume,
-            instance_manager=_instance_manager,
-            session_var_manager=_session_var_manager,
-        )
-
-    @registry.tool(
-        name="end_workflow",
-        description="End a step-based workflow. Specify workflow name or defaults to current. Accepts #N, N, UUID, or prefix for session_id.",
-    )
-    async def _end_workflow(
-        session_id: str | None = None,
-        reason: str | None = None,
-        project_path: str | None = None,
-        workflow: str | None = None,
-    ) -> dict[str, Any]:
-        if _state_manager is None or _session_manager is None:
-            return {"error": "Workflow tools require database connection"}
-        return await end_workflow(
-            _loader,
-            _state_manager,
-            _session_manager,
-            session_id,
-            reason,
-            project_path,
-            workflow=workflow,
-            instance_manager=_instance_manager,
-        )
-
-    @registry.tool(
         name="get_workflow_status",
         description="Get workflow status for a session. Shows all active workflow instances and session variables. Accepts #N, N, UUID, or prefix for session_id.",
     )
@@ -203,30 +143,6 @@ def create_workflows_registry(
             session_id,
             instance_manager=_instance_manager,
             session_var_manager=_session_var_manager,
-        )
-
-    @registry.tool(
-        name="request_step_transition",
-        description="Request transition to a different step. Accepts #N, N, UUID, or prefix for session_id.",
-    )
-    async def _request_step_transition(
-        to_step: str,
-        reason: str | None = None,
-        session_id: str | None = None,
-        force: bool = False,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
-        if _state_manager is None or _session_manager is None:
-            return {"error": "Workflow tools require database connection"}
-        return await request_step_transition(
-            _loader,
-            _state_manager,
-            _session_manager,
-            to_step,
-            reason,
-            session_id,
-            force,
-            project_path,
         )
 
     @registry.tool(

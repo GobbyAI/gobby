@@ -103,7 +103,9 @@ class TestBlockInAutoTaskMode:
         assert body.event.value == "before_agent"
         assert body.effect.type == "inject_context"
         assert body.effect.template is not None
-        assert "autonomous" in body.effect.template.lower() or "auto_task_ref" in body.effect.template
+        assert (
+            "autonomous" in body.effect.template.lower() or "auto_task_ref" in body.effect.template
+        )
 
     def test_has_auto_task_ref_condition(self, db, manager) -> None:
         """Only inject when auto_task_ref is set."""

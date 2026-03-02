@@ -125,6 +125,48 @@ async def cleanup_zombie_messages_loop(
             logger.error(f"Error in zombie message cleanup loop: {e}")
 
 
+async def expire_approval_timeouts_loop(
+    pipeline_execution_manager: Any,
+    is_shutdown_requested: Callable[[], bool],
+    interval_seconds: int = 60,
+) -> None:
+    """Expire pipeline steps that have exceeded their approval timeout.
+
+    Runs every ``interval_seconds``, finds steps in waiting_approval whose
+    timeout has elapsed, marks them FAILED and their parent execution CANCELLED.
+    """
+    from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+
+    while not is_shutdown_requested():
+        try:
+            await asyncio.sleep(interval_seconds)
+            expired_steps = pipeline_execution_manager.get_expired_approval_steps()
+            for step in expired_steps:
+                try:
+                    pipeline_execution_manager.update_step_execution(
+                        step_execution_id=step.id,
+                        status=StepStatus.FAILED,
+                        error="Approval timed out",
+                    )
+                    pipeline_execution_manager.update_execution_status(
+                        execution_id=step.execution_id,
+                        status=ExecutionStatus.CANCELLED,
+                    )
+                    logger.info(
+                        f"Approval timed out for step {step.step_id} "
+                        f"in execution {step.execution_id}"
+                    )
+                except Exception:
+                    logger.error(
+                        f"Failed to expire approval for step {step.id}",
+                        exc_info=True,
+                    )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in approval timeout loop: {e}")
+
+
 def setup_signal_handlers(shutdown_callback: Callable[[], None]) -> None:
     """Register SIGTERM/SIGINT handlers to trigger graceful shutdown."""
     loop = asyncio.get_running_loop()

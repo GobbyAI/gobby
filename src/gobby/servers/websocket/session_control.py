@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import signal
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -23,6 +25,76 @@ from gobby.servers.websocket.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -> bool:
+    """Kill a plain terminal CLI session using its terminal context.
+
+    Tries tmux pane kill first (cleanest — kills just that pane), then
+    falls back to PID-based SIGTERM.
+
+    Args:
+        terminal_ctx: Session's terminal_context dict (tmux_pane, parent_pid, etc.)
+        session_id: Session ID for logging.
+
+    Returns:
+        True if any kill method succeeded.
+    """
+    # 1. Try tmux pane kill (sends SIGHUP to process in pane)
+    tmux_pane = terminal_ctx.get("tmux_pane")
+    if tmux_pane:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "tmux",
+                "kill-pane",
+                "-t",
+                str(tmux_pane),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            if proc.returncode == 0:
+                logger.info(
+                    "Killed terminal session %s via tmux pane %s",
+                    session_id[:8],
+                    tmux_pane,
+                )
+                return True
+            else:
+                logger.debug(
+                    "tmux kill-pane failed for %s: %s",
+                    tmux_pane,
+                    stderr.decode().strip() if stderr else "unknown",
+                )
+        except TimeoutError:
+            logger.warning("tmux kill-pane timed out for pane %s", tmux_pane)
+        except FileNotFoundError:
+            logger.debug("tmux not available, skipping pane kill")
+        except Exception as e:
+            logger.warning("tmux kill-pane error for %s: %s", tmux_pane, e)
+
+    # 2. Fallback: PID-based kill
+    parent_pid = terminal_ctx.get("parent_pid")
+    if parent_pid:
+        try:
+            pid = int(parent_pid)
+            os.kill(pid, signal.SIGTERM)
+            logger.info(
+                "Killed terminal session %s via SIGTERM to PID %d",
+                session_id[:8],
+                pid,
+            )
+            return True
+        except ProcessLookupError:
+            logger.debug("PID %s already dead for session %s", parent_pid, session_id[:8])
+        except (ValueError, OSError) as e:
+            logger.warning("PID kill failed for session %s: %s", session_id[:8], e)
+
+    logger.debug(
+        "No kill method available for session %s (no tmux_pane or parent_pid)",
+        session_id[:8],
+    )
+    return False
 
 
 class SessionControlMixin:
@@ -65,6 +137,7 @@ class SessionControlMixin:
             conversation_id: str,
             model: str | None = None,
             project_id: str | None = None,
+            resume_session_id: str | None = None,
         ) -> ChatSession: ...
 
     async def _handle_stop_chat(self, websocket: Any, data: dict[str, Any] | None = None) -> None:
@@ -158,16 +231,19 @@ class SessionControlMixin:
     async def _handle_continue_in_chat(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle continue_in_chat message to resume a CLI session in the web chat UI.
 
-        Creates a new ChatSession that loads conversation history from a source
-        session (typically a CLI session), allowing the user to continue the
-        conversation in the web UI.
+        Attempts SDK native resume first (picks up exact conversation state).
+        Falls back to history injection if no SDK session ID is available.
+
+        If the source session has a running agent (terminal or autonomous),
+        kills it first so the CLI process releases the session.
 
         Message format:
         {
             "type": "continue_in_chat",
             "conversation_id": "new-uuid",
             "source_session_id": "db-uuid-of-source-session",
-            "project_id": "optional-override"
+            "project_id": "optional-override",
+            "resume": true  // optional hint to prefer SDK resume
         }
         """
         source_session_id = data.get("source_session_id")
@@ -178,43 +254,107 @@ class SessionControlMixin:
         conversation_id = data.get("conversation_id") or str(uuid4())
         project_id = data.get("project_id")
 
-        # Look up source session for project_id if not provided
+        # Look up source session for project_id and SDK session ID
         session_manager = getattr(self, "session_manager", None)
-        if not project_id and session_manager:
+        source_session = None
+        if session_manager:
             try:
                 source_session = await asyncio.to_thread(session_manager.get, source_session_id)
-                if source_session:
+                if source_session and not project_id:
                     project_id = source_session.project_id
             except Exception as e:
                 logger.warning(f"Failed to look up source session {source_session_id}: {e}")
 
-        # Create standard chat session
+        # --- Resolve SDK session ID for native resume ---
+        sdk_resume_id: str | None = None
+
+        # 1. Source session's external_id IS the SDK session ID
+        #    (web chat sessions update external_id → SDK session ID after first turn)
+        if source_session and source_session.external_id:
+            sdk_resume_id = source_session.external_id
+
+        # 2. Check agent_runs for autonomous agents with sdk_session_id
+        if not sdk_resume_id:
+            agent_run_mgr = getattr(self, "agent_run_manager", None)
+            if agent_run_mgr:
+                try:
+                    sdk_resume_id = await asyncio.to_thread(
+                        agent_run_mgr.get_sdk_session_id_for_session, source_session_id
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to look up sdk_session_id: {e}")
+
+        # 3. Kill running agent/terminal that owns this session before resuming
+        if sdk_resume_id:
+            killed = False
+            # Try agent registry first (Gobby-spawned agents)
+            try:
+                from gobby.agents.registry import get_running_agent_registry
+
+                registry = get_running_agent_registry()
+                running = registry.get_by_session(source_session_id)
+                if running:
+                    logger.info(
+                        "Killing agent %s (mode=%s) before resume",
+                        running.run_id,
+                        running.mode,
+                    )
+                    await registry.kill(running.run_id, close_terminal=True)
+                    killed = True
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"Failed to kill running agent before resume: {e}")
+
+            # Fallback: kill plain terminal session (user's own CLI, not agent-spawned)
+            if not killed and source_session:
+                terminal_ctx = source_session.terminal_context
+                if terminal_ctx:
+                    term_killed = await _kill_terminal_session(terminal_ctx, source_session_id)
+                    if term_killed:
+                        await asyncio.sleep(0.5)
+                        # Mark source session as expired
+                        if session_manager:
+                            try:
+                                await asyncio.to_thread(
+                                    session_manager.update_status,
+                                    source_session_id,
+                                    "expired",
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to expire source session: {e}")
+
+        # Create chat session with optional SDK resume
         try:
-            session = await self._create_chat_session(conversation_id, project_id=project_id)
+            session = await self._create_chat_session(
+                conversation_id,
+                project_id=project_id,
+                resume_session_id=sdk_resume_id,
+            )
         except Exception as e:
             logger.error(f"Failed to create continuation session: {e}")
             await self._send_error(websocket, f"Failed to create session: {e}")
             return
 
-        # Set up cross-session history injection from the source session
-        message_manager = getattr(self, "message_manager", None)
-        if message_manager:
-            try:
-                max_idx = await message_manager.get_max_message_index(source_session_id)
-                if max_idx >= 0:
-                    session._message_manager_source_session_id = source_session_id
-                    session._needs_history_injection = True
-                    session._message_manager = message_manager
-                    logger.info(
-                        "Cross-session history injection enabled for continuation",
-                        extra={
-                            "source": source_session_id[:8],
-                            "target": conversation_id[:8],
-                            "max_idx": max_idx,
-                        },
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to set up history injection: {e}")
+        # Fall back to history injection if no SDK resume available
+        if not sdk_resume_id:
+            message_manager = getattr(self, "message_manager", None)
+            if message_manager:
+                try:
+                    max_idx = await message_manager.get_max_message_index(source_session_id)
+                    if max_idx >= 0:
+                        session._message_manager_source_session_id = source_session_id
+                        session._needs_history_injection = True
+                        session._message_manager = message_manager
+                        logger.info(
+                            "Cross-session history injection enabled for continuation",
+                            extra={
+                                "source": source_session_id[:8],
+                                "target": conversation_id[:8],
+                                "max_idx": max_idx,
+                            },
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to set up history injection: {e}")
 
         # Set parent_session_id on the DB record for lineage tracking
         if session.db_session_id and session_manager:
@@ -235,12 +375,14 @@ class SessionControlMixin:
                     "conversation_id": conversation_id,
                     "source_session_id": source_session_id,
                     "db_session_id": session.db_session_id,
+                    "resumed": bool(sdk_resume_id),
                 }
             )
         )
+        resume_mode = "SDK resume" if sdk_resume_id else "history injection"
         logger.info(
-            f"Session continued: {source_session_id[:8]} -> {conversation_id[:8]} "
-            f"(db={session.db_session_id})"
+            f"Session continued ({resume_mode}): {source_session_id[:8]} -> "
+            f"{conversation_id[:8]} (db={session.db_session_id})"
         )
 
     async def _handle_set_mode(self, websocket: Any, data: dict[str, Any]) -> None:

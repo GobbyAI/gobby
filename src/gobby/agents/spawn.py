@@ -28,9 +28,6 @@ from gobby.agents.spawners import (
     build_gemini_command_with_resume,
     create_prompt_file,
 )
-from gobby.agents.spawners.base import EmbeddedPTYResult, HeadlessResult
-from gobby.agents.spawners.embedded import EmbeddedSpawner
-from gobby.agents.spawners.headless import HeadlessSpawner
 from gobby.agents.tmux.spawner import TmuxSpawner
 
 # Re-export TmuxSpawner under the old name for callers that still
@@ -42,16 +39,11 @@ __all__ = [
     "SpawnMode",
     # Result dataclasses
     "SpawnResult",
-    "EmbeddedPTYResult",
-    "HeadlessResult",
     # Base class
     "TerminalSpawnerBase",
     # Spawner (tmux-only)
     "TmuxSpawner",
     "TerminalSpawner",  # backward compat alias
-    # Embedded/Headless
-    "EmbeddedSpawner",
-    "HeadlessSpawner",
     # Helpers
     "PreparedSpawn",
     "prepare_terminal_spawn",
@@ -92,6 +84,9 @@ class PreparedSpawn:
     env_vars: dict[str, str]
     """Environment variables to set."""
 
+    seq_num: int | None = None
+    """Session sequence number for human-friendly references."""
+
 
 def prepare_terminal_spawn(
     session_manager: ChildSessionManager,
@@ -105,7 +100,7 @@ def prepare_terminal_spawn(
     title: str | None = None,
     git_branch: str | None = None,
     prompt: str | None = None,
-    max_agent_depth: int = 3,
+    max_agent_depth: int = 5,
     agent_run_id: str | None = None,
 ) -> PreparedSpawn:
     """
@@ -222,6 +217,7 @@ def prepare_terminal_spawn(
         workflow_name=workflow_name,
         agent_depth=child_session.agent_depth,
         env_vars=env_vars,
+        seq_num=getattr(child_session, "seq_num", None),
     )
 
 
@@ -236,7 +232,7 @@ async def prepare_gemini_spawn_with_preflight(
     title: str | None = None,
     git_branch: str | None = None,
     prompt: str | None = None,
-    max_agent_depth: int = 3,
+    max_agent_depth: int = 5,
     preflight_timeout: float = 10.0,
 ) -> PreparedSpawn:
     """
@@ -347,6 +343,7 @@ async def prepare_gemini_spawn_with_preflight(
         workflow_name=workflow_name,
         agent_depth=child_session.agent_depth,
         env_vars=env_vars,
+        seq_num=getattr(child_session, "seq_num", None),
     )
 
 
@@ -361,7 +358,7 @@ async def prepare_codex_spawn_with_preflight(
     title: str | None = None,
     git_branch: str | None = None,
     prompt: str | None = None,
-    max_agent_depth: int = 3,
+    max_agent_depth: int = 5,
     preflight_timeout: float = 30.0,
 ) -> PreparedSpawn:
     """
@@ -472,4 +469,5 @@ async def prepare_codex_spawn_with_preflight(
         workflow_name=workflow_name,
         agent_depth=child_session.agent_depth,
         env_vars=env_vars,
+        seq_num=getattr(child_session, "seq_num", None),
     )

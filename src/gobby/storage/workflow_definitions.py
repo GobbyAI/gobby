@@ -449,14 +449,21 @@ class LocalWorkflowDefinitionManager:
         return new_row
 
     def install_all_templates(
-        self, workflow_type: str | None = None
+        self, workflow_type: str | None = None, tag: str | None = None
     ) -> list[WorkflowDefinitionRow]:
         """Create installed copies of all eligible template definitions.
 
         Skips template items that already have an installed counterpart with the same name.
+
+        Args:
+            workflow_type: Only install templates of this type (e.g. "rule", "agent").
+            tag: Only install templates whose tags list contains this value.
         """
         templates = self.list_all(workflow_type=workflow_type, include_deleted=False)
         templates = [row for row in templates if row.source == "template"]
+
+        if tag:
+            templates = [row for row in templates if row.tags and tag in row.tags]
 
         created: list[WorkflowDefinitionRow] = []
         for row in templates:

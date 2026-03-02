@@ -28,6 +28,7 @@ __all__ = ["AgentRunner"]
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.sessions import LocalSessionManager
+    from gobby.workflows.hooks import WorkflowHookHandler
     from gobby.workflows.loader import WorkflowLoader
 
 logger = logging.getLogger(__name__)
@@ -91,18 +92,18 @@ class AgentRunner:
         self.logger = logger
 
         # Workflow handler for hook evaluation on spawned agent tool calls
-        self._workflow_handler: Any = None
+        self._workflow_handler: WorkflowHookHandler | None = None
 
         # Thread-safe in-memory tracking of running agents
         self._tracker = RunTracker()
 
     @property
-    def workflow_handler(self) -> Any:
+    def workflow_handler(self) -> WorkflowHookHandler | None:
         """Workflow handler for hook evaluation on spawned agent tool calls."""
         return self._workflow_handler
 
     @workflow_handler.setter
-    def workflow_handler(self, value: Any) -> None:
+    def workflow_handler(self, value: WorkflowHookHandler | None) -> None:
         self._workflow_handler = value
 
     @property
@@ -422,7 +423,7 @@ class AgentRunner:
                 event = HookEvent(
                     event_type=HookEventType.AFTER_TOOL,
                     session_id=child_session.id,
-                    source=SessionSource.EMBEDDED,
+                    source=SessionSource.AUTONOMOUS_SDK,
                     timestamp=datetime.now(UTC),
                     data={
                         "tool_name": tool_name,

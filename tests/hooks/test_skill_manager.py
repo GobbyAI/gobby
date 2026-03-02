@@ -166,9 +166,7 @@ class TestDbSkillToParsed:
         """audience_config is reconstructed from metadata.gobby."""
         from gobby.hooks.skill_manager import _db_skill_to_parsed
 
-        skill = _make_mock_skill(
-            metadata={"gobby": {"audience": "all", "triggers": ["test"]}}
-        )
+        skill = _make_mock_skill(metadata={"gobby": {"audience": "all", "triggers": ["test"]}})
         parsed = _db_skill_to_parsed(skill)
 
         assert parsed.audience_config is not None

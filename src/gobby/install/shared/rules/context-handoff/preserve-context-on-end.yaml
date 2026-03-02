@@ -2,17 +2,11 @@ tags: [context-handoff, context, handoff, lifecycle]
 
 rules:
   preserve-context-on-end:
-    description: "Generate handoff summary and export data on session end"
+    description: "Extract memories and export data on session end"
     event: session_end
     enabled: false
     priority: 10
     effects:
-      - type: mcp_call
-        server: gobby-sessions
-        tool: set_handoff_context
-        arguments:
-          full: true
-          write_file: true
       - type: mcp_call
         server: gobby-memory
         tool: extract_from_session

@@ -342,10 +342,10 @@ async def _run_spawn_validation(
         # Determine model to use
         model = config.external_validator_model or config.model
 
-        # Spawn a headless agent with no parent context
+        # Spawn an autonomous agent with no parent context
         spawn_result = await agent_spawner.spawn_agent(
             prompt=prompt,
-            mode="headless",
+            mode="autonomous",
             model=model,
             provider=config.provider,
             max_turns=5,  # Validation should be quick

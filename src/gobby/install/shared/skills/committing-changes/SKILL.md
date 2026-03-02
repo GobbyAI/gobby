@@ -34,6 +34,10 @@ Use the `project-#N` format (e.g., `[gobby-#123]`) — the hyphen before `#` is 
 
 ### Step 3: Close the Task
 
+**If your agent instructions specify a different post-commit procedure** (e.g., `mark_task_needs_review` instead of `close_task`), **follow your agent instructions** — they take priority over this skill.
+
+Otherwise, for standard sessions:
+
 ```python
 call_tool("gobby-tasks", "close_task", {
     "task_id": "<task-id>",

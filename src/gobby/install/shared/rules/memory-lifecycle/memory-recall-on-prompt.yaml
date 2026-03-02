@@ -9,7 +9,7 @@ rules:
     effect:
       type: mcp_call
       server: gobby-memory
-      tool: digest_and_synthesize
+      tool: search_memories
       arguments:
         limit: 5
       background: false

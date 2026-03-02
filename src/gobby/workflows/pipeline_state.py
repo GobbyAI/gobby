@@ -111,6 +111,7 @@ class StepExecution:
     approval_token: str | None = None  # Unique token for this step's approval
     approved_by: str | None = None  # Who approved (email, user ID, etc.)
     approved_at: str | None = None
+    approval_timeout_seconds: int | None = None  # Timeout for approval gate
 
     @classmethod
     def from_row(cls, row: Any) -> StepExecution:
@@ -128,6 +129,9 @@ class StepExecution:
             approval_token=row["approval_token"],
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
+            approval_timeout_seconds=row["approval_timeout_seconds"]
+            if "approval_timeout_seconds" in row.keys()
+            else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +149,7 @@ class StepExecution:
             "approval_token": self.approval_token,
             "approved_by": self.approved_by,
             "approved_at": self.approved_at,
+            "approval_timeout_seconds": self.approval_timeout_seconds,
         }
 
 

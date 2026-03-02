@@ -26,7 +26,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
-from ._modes import _handle_self_mode, _handle_self_persona
+from ._modes import _handle_self_persona
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -55,7 +55,7 @@ async def spawn_agent_impl(
     clone_manager: Any | None = None,
     # Execution
     workflow: str | None = None,
-    mode: Literal["terminal", "embedded", "headless", "self"] | None = None,
+    mode: Literal["terminal", "autonomous", "self"] | None = None,
     initial_step: str | None = None,  # For mode=self, start at specific step
     provider: str | None = None,
     model: str | None = None,
@@ -96,7 +96,7 @@ async def spawn_agent_impl(
         clone_storage: Storage for clone records
         clone_manager: Git manager for clone operations
         workflow: Workflow to use
-        mode: Execution mode (terminal/embedded/headless/self)
+        mode: Execution mode (terminal/autonomous/self)
         initial_step: For mode=self, start at specific step
         provider: AI provider (claude/gemini/codex/cursor/windsurf/copilot)
         model: Model to use
@@ -139,8 +139,8 @@ async def spawn_agent_impl(
         _raw_mode = agent_body.mode
     if _raw_mode in (None, "inherit"):
         _raw_mode = "self"
-    effective_mode: Literal["terminal", "embedded", "headless", "self"] = (
-        _raw_mode if _raw_mode in ("terminal", "embedded", "headless", "self") else "self"  # type: ignore[assignment]
+    effective_mode: Literal["terminal", "autonomous", "self"] = (
+        _raw_mode if _raw_mode in ("terminal", "autonomous", "self") else "self"  # type: ignore[assignment]
     )
 
     effective_model = model
@@ -194,23 +194,11 @@ async def spawn_agent_impl(
                 except Exception as e:
                     logger.warning(f"Failed to resolve task_id {task_id}: {e}")
 
-        # Create WorkflowLoader on demand for mode=self
-        from gobby.workflows.loader import WorkflowLoader
-
-        workflow_loader = WorkflowLoader()
-
         if effective_workflow:
-            return await _handle_self_mode(
-                workflow=effective_workflow,
-                parent_session_id=parent_session_id,
-                step_variables=self_step_variables,
-                initial_step=initial_step,
-                workflow_loader=workflow_loader,
-                state_manager=state_manager,
-                session_manager=session_manager,
-                db=db,
-                project_path=project_path,
-            )
+            return {
+                "success": False,
+                "error": "Step workflows are removed. Use pipelines instead.",
+            }
         else:
             if agent_body is None:
                 return {"success": False, "error": "Agent body is required for self-persona mode"}
@@ -404,6 +392,14 @@ async def spawn_agent_impl(
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
 
+    # 10b. Inject isolation context so workflow variables can reference them
+    if isolation_ctx.clone_id:
+        effective_initial_variables["clone_id"] = isolation_ctx.clone_id
+    if isolation_ctx.worktree_id:
+        effective_initial_variables["worktree_id"] = isolation_ctx.worktree_id
+    if isolation_ctx.branch_name:
+        effective_initial_variables["branch_name"] = isolation_ctx.branch_name
+
     # 11. Execute spawn via SpawnExecutor
     spawn_request = SpawnRequest(
         prompt=enhanced_prompt,
@@ -424,6 +420,11 @@ async def spawn_agent_impl(
         machine_id=get_machine_id() or "unknown",
         model=effective_model,
         sandbox_config=effective_sandbox_config,
+        # Autonomous mode fields
+        system_prompt=agent_body.instructions if agent_body else None,
+        max_turns=max_turns
+        or (agent_body.max_turns if agent_body and agent_body.max_turns else None),
+        agent_run_manager=runner.run_storage,
     )
 
     # 11b. Pre-register with RunningAgentRegistry before spawn
@@ -465,6 +466,7 @@ async def spawn_agent_impl(
                 worktree_id=isolation_ctx.worktree_id,
                 clone_id=isolation_ctx.clone_id,
                 timeout_seconds=effective_timeout,
+                task=spawn_result.process,  # asyncio.Task for autonomous mode
             )
         )
         try:

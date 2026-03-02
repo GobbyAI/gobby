@@ -572,6 +572,7 @@ def auto_link_commits(
     since: str | None = None,
     cwd: str | Path | None = None,
     project_name: str | None = None,
+    project_id: str | None = None,
 ) -> AutoLinkResult:
     """Auto-detect and link commits that mention task IDs.
 
@@ -580,11 +581,12 @@ def auto_link_commits(
 
     Args:
         task_manager: LocalTaskManager instance for task operations.
-        task_id: Optional specific task ID to filter for.
+        task_id: Optional specific task ID to filter for (#N or UUID format).
         since: Optional git --since parameter (e.g., "1 week ago", "2024-01-01").
         cwd: Working directory for git commands.
         project_name: Optional project name to filter commits. If not provided,
             auto-detects from current project context.
+        project_id: Project ID for resolving #N format task references.
 
     Returns:
         AutoLinkResult with details of linked and skipped commits.
@@ -636,7 +638,12 @@ def auto_link_commits(
         # Try to link each found task
         for tid in found_task_ids:
             try:
-                task = task_manager.get_task(tid)
+                # Resolve #N format to UUID for database operations
+                resolved_tid = tid
+                if project_id and (tid.startswith("#") or tid.isdigit()):
+                    resolved_tid = task_manager.resolve_task_reference(tid, project_id)
+
+                task = task_manager.get_task(resolved_tid)
 
                 # Check if already linked
                 existing_commits = task.commits or []
@@ -644,10 +651,10 @@ def auto_link_commits(
                     result.skipped += 1
                     continue
 
-                # Link the commit
-                task_manager.link_commit(tid, commit_sha)
+                # Link the commit using UUID
+                task_manager.link_commit(task.id, commit_sha, cwd=cwd)
 
-                # Track in result
+                # Track in result using original #N format for readability
                 if tid not in result.linked_tasks:
                     result.linked_tasks[tid] = []
                 result.linked_tasks[tid].append(commit_sha)

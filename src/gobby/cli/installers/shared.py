@@ -283,6 +283,29 @@ def sync_bundled_content_to_db(
         logger.warning(msg)
         result["errors"].append(msg)
 
+    # Auto-install and enable gobby-tagged workflow definition templates.
+    # Creates source='installed' copies of templates tagged "gobby" and enables them.
+    try:
+        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+        wf_manager = LocalWorkflowDefinitionManager(db)
+        installed = wf_manager.install_all_templates(tag="gobby")
+        if installed:
+            with db.transaction() as conn:
+                ids = [row.id for row in installed]
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(
+                    f"UPDATE workflow_definitions SET enabled = 1, updated_at = datetime('now') "
+                    f"WHERE id IN ({placeholders})",
+                    ids,
+                )
+            logger.info(f"Auto-installed and enabled {len(installed)} gobby-tagged definitions")
+            result["details"]["workflow_definitions"] = {"auto_installed": len(installed)}
+    except Exception as e:
+        msg = f"Failed to auto-install workflow definition templates: {e}"
+        logger.warning(msg)
+        result["errors"].append(msg)
+
     return result
 
 

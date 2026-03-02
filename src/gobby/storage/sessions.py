@@ -8,7 +8,7 @@ import logging
 import sqlite3
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.session_models import Session
@@ -208,6 +208,7 @@ class LocalSessionManager:
         project_id: str,
         source: str | None = None,
         status: str = "handoff_ready",
+        max_age_minutes: int = 10,
     ) -> Session | None:
         """
         Find most recent parent session with specific status.
@@ -217,12 +218,18 @@ class LocalSessionManager:
             project_id: Project identifier
             source: Optional source identifier to filter by
             status: Status to filter by (default: handoff_ready)
+            max_age_minutes: Only match sessions updated within this many minutes.
+                Legitimate handoffs happen within seconds; stale sessions should
+                not be matched. Default 10 minutes.
 
         Returns:
             Session object or None
         """
-        query = "SELECT * FROM sessions WHERE machine_id = ? AND status = ? AND project_id = ?"
-        params: list[Any] = [machine_id, status, project_id]
+        query = (
+            "SELECT * FROM sessions WHERE machine_id = ? AND status = ? AND project_id = ?"
+            " AND datetime(updated_at) >= datetime('now', 'utc', ? || ' minutes')"
+        )
+        params: list[Any] = [machine_id, status, project_id, f"-{max_age_minutes}"]
 
         if source:
             query += " AND source = ?"
@@ -309,7 +316,7 @@ class LocalSessionManager:
             (session_id,),
         )
 
-    _VALID_CHAT_MODES = {"plan", "accept_edits", "normal", "bypass"}
+    _VALID_CHAT_MODES: ClassVar[set[str]] = {"plan", "accept_edits", "normal", "bypass"}
 
     def update_chat_mode(self, session_id: str, chat_mode: str) -> None:
         """Persist the chat mode (plan, accept_edits, normal, bypass) for a session."""
@@ -374,6 +381,33 @@ class LocalSessionManager:
             (digest_markdown, now, session_id),
         )
         return self.get(session_id)
+
+    def update_last_turn_markdown(self, session_id: str, last_turn_markdown: str) -> Session | None:
+        """Update session last turn markdown record."""
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """
+            UPDATE sessions
+            SET last_turn_markdown = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (last_turn_markdown, now, session_id),
+        )
+        return self.get(session_id)
+
+    def update_last_digest_input_hash(self, session_id: str, hash_value: str) -> None:
+        """Update the last digest input hash for idempotency."""
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """
+            UPDATE sessions
+            SET last_digest_input_hash = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (hash_value, now, session_id),
+        )
 
     def update_compact_markdown(self, session_id: str, compact_markdown: str) -> Session | None:
         """Update session compact handoff markdown."""

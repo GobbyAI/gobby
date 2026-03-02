@@ -25,14 +25,11 @@ from gobby.agents.constants import (
 from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawn import (
     MAX_ENV_PROMPT_LENGTH,
-    HeadlessResult,
-    HeadlessSpawner,
     PreparedSpawn,
-    SpawnMode,
-    SpawnResult,
-    TmuxSpawner,
     prepare_terminal_spawn,
 )
+from gobby.agents.spawners.base import SpawnMode, SpawnResult
+from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
@@ -115,7 +112,7 @@ class TestGetTerminalEnvVars:
         assert result[GOBBY_AGENT_RUN_ID] == "run-456"
         assert result[GOBBY_PROJECT_ID] == "proj-789"
         assert result[GOBBY_AGENT_DEPTH] == "1"
-        assert result[GOBBY_MAX_AGENT_DEPTH] == "3"
+        assert result[GOBBY_MAX_AGENT_DEPTH] == "5"
 
     def test_with_workflow_name(self) -> None:
         """Test env vars include workflow name when provided."""
@@ -346,87 +343,19 @@ class TestTmuxSpawnerDetection:
             assert result.error is not None
 
 
-class TestHeadlessSpawner:
-    """Tests for headless spawner functionality."""
-
-    def test_spawn_simple_command(self) -> None:
-        """Test spawning a simple command in headless mode."""
-        spawner = HeadlessSpawner()
-
-        result = spawner.spawn(
-            command=["echo", "hello"],
-            cwd="/tmp",
-        )
-
-        assert result.success is True
-        assert result.pid is not None
-        assert result.process is not None
-
-        # Wait for process and check output
-        stdout, _ = result.process.communicate()
-        assert "hello" in stdout
-
-    def test_spawn_with_env_vars(self) -> None:
-        """Test spawning with custom environment variables."""
-        spawner = HeadlessSpawner()
-
-        result = spawner.spawn(
-            command=["printenv", "TEST_VAR"],
-            cwd="/tmp",
-            env={"TEST_VAR": "test_value"},
-        )
-
-        assert result.success is True
-        stdout, _ = result.process.communicate()
-        assert "test_value" in stdout
-
-    def test_spawn_agent_sets_env_vars(self) -> None:
-        """Test spawn_agent sets Gobby environment variables."""
-        spawner = HeadlessSpawner()
-
-        result = spawner.spawn_agent(
-            cli="printenv",
-            cwd="/tmp",
-            session_id="sess-123",
-            parent_session_id="sess-parent",
-            agent_run_id="run-456",
-            project_id="proj-789",
-        )
-
-        assert result.success is True
-        stdout, _ = result.process.communicate()
-
-        # Check that Gobby env vars are set
-        assert "sess-123" in stdout
-        assert "sess-parent" in stdout
-
-    def test_spawn_nonexistent_command(self) -> None:
-        """Test spawning a non-existent command fails gracefully."""
-        spawner = HeadlessSpawner()
-
-        result = spawner.spawn(
-            command=["nonexistent_command_12345"],
-            cwd="/tmp",
-        )
-
-        assert result.success is False
-        assert result.error is not None
-
-
 class TestSpawnModeEnum:
     """Tests for SpawnMode enum."""
 
     def test_spawn_mode_values(self) -> None:
         """Test SpawnMode enum values."""
         assert SpawnMode.TERMINAL.value == "terminal"
-        assert SpawnMode.EMBEDDED.value == "embedded"
-        assert SpawnMode.HEADLESS.value == "headless"
+        assert SpawnMode.AUTONOMOUS.value == "autonomous"
         assert SpawnMode.IN_PROCESS.value == "in_process"
 
     def test_spawn_mode_from_string(self) -> None:
         """Test creating SpawnMode from string."""
         assert SpawnMode("terminal") == SpawnMode.TERMINAL
-        assert SpawnMode("headless") == SpawnMode.HEADLESS
+        assert SpawnMode("autonomous") == SpawnMode.AUTONOMOUS
 
 
 class TestWorktreeIntegration:
@@ -447,19 +376,6 @@ class TestWorktreeIntegration:
 
         assert result.session_id is not None
         # The session would track the git branch for the worktree
-
-    def test_headless_spawn_in_worktree(self, worktree_dir) -> None:
-        """Test headless spawning in a worktree directory."""
-        spawner = HeadlessSpawner()
-
-        result = spawner.spawn(
-            command=["pwd"],
-            cwd=str(worktree_dir),
-        )
-
-        assert result.success is True
-        stdout, _ = result.process.communicate()
-        assert "worktree-feature-x" in stdout
 
     def test_env_vars_for_worktree_agent(
         self, child_session_manager, parent_session, project
@@ -551,27 +467,3 @@ class TestSpawnResultDataclass:
         assert result.error == "Terminal not available"
 
 
-class TestHeadlessResultDataclass:
-    """Tests for HeadlessResult dataclass."""
-
-    def test_headless_result_get_output(self) -> None:
-        """Test HeadlessResult.get_output method."""
-        result = HeadlessResult(
-            success=True,
-            message="Running",
-            pid=12345,
-            output_buffer=["line1", "line2", "line3"],
-        )
-
-        output = result.get_output()
-        assert output == "line1\nline2\nline3"
-
-    def test_headless_result_empty_output(self) -> None:
-        """Test HeadlessResult with empty output."""
-        result = HeadlessResult(
-            success=True,
-            message="Running",
-            pid=12345,
-        )
-
-        assert result.get_output() == ""

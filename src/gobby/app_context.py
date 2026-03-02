@@ -165,6 +165,7 @@ class ServiceContainer:
                 llm_service=self.llm_service,
                 loader=self.workflow_loader,
                 template_engine=TemplateEngine(),
+                session_manager=self.session_manager,
             )
 
             # Wire event broadcasting via WebSocket

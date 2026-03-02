@@ -1,0 +1,13 @@
+tags: [memory-lifecycle, memory, lifecycle, digest]
+
+rules:
+  digest-on-response:
+    description: "Build turn record and append to digest after agent response"
+    event: stop
+    enabled: false
+    priority: 11
+    effect:
+      type: mcp_call
+      server: gobby-memory
+      tool: build_turn_and_digest
+      background: true

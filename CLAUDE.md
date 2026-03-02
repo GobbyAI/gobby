@@ -6,7 +6,7 @@ This file provides guidance for developing the Gobby codebase.
 
 These are enforced by hooks and workflows.
 
-1. **Agent depth limit of 3.** No recursive agent chains deeper than 3 levels.
+1. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
 2. **No monoliths.** Keep files under 1,000 lines. Decompose if larger.
 3. **Task before first write.** Create/claim a task before using Edit, Write, or NotebookEdit tools.
 4. **Claim before you work.** You must claim a task to work it.

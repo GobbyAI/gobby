@@ -32,7 +32,7 @@ def _create_agent_row(
     name: str,
     description: str | None = None,
     provider: str = "claude",
-    mode: str = "headless",
+    mode: str = "autonomous",
     project_id: str | None = None,
     source: str = "template",
     enabled: bool = True,
@@ -359,7 +359,7 @@ class TestImportDefinition:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "importable.yaml").write_text(
-            "name: importable\ndescription: Imported agent\nprovider: claude\nmode: headless\n"
+            "name: importable\ndescription: Imported agent\nprovider: claude\nmode: autonomous\n"
         )
 
         with patch(
@@ -389,7 +389,7 @@ class TestImportDefinition:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "proj-agent.yaml").write_text(
-            "name: proj-agent\nprovider: claude\nmode: headless\n"
+            "name: proj-agent\nprovider: claude\nmode: autonomous\n"
         )
 
         with patch(

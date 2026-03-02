@@ -14,6 +14,7 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.registry import (
@@ -26,6 +27,43 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
 
 logger = logging.getLogger(__name__)
+
+
+def _fire_synthetic_stop(
+    hook_manager_resolver: Any | None,
+    session_id: str,
+) -> None:
+    """Fire a synthetic STOP event so stop-triggered rules evaluate for killed agents.
+
+    When kill_agent sends SIGTERM, the CLI never fires its stop hook.
+    This ensures rules like digest-on-response still run.
+    """
+    if not hook_manager_resolver:
+        return
+
+    try:
+        hook_mgr = hook_manager_resolver()
+        if hook_mgr is None:
+            return
+
+        from datetime import datetime
+
+        from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+
+        stop_event = HookEvent(
+            event_type=HookEventType.STOP,
+            session_id=session_id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={},
+            metadata={"_platform_session_id": session_id},
+        )
+        # Evaluate workflow rules only (skip full handle() which does
+        # daemon health checks, adapter routing, session resolution, etc.)
+        hook_mgr._evaluate_workflow_rules(stop_event)
+        logger.debug("Fired synthetic stop rules for killed agent session %s", session_id)
+    except Exception as e:
+        logger.warning("Failed to fire synthetic stop rules for session %s: %s", session_id, e)
 
 
 def create_agents_registry(
@@ -41,6 +79,8 @@ def create_agents_registry(
     clone_manager: Any | None = None,
     # For mode=self (workflow activation on caller session)
     db: Any | None = None,
+    # For firing synthetic stop events on agent kill
+    hook_manager_resolver: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.
@@ -322,6 +362,11 @@ def create_agents_registry(
                     except Exception as e:
                         result["session_expire_error"] = str(e)
 
+                # Fire synthetic stop event so stop-triggered rules
+                # (e.g. digest-on-response) evaluate for killed agent sessions.
+                # The CLI never gets to fire its stop hook when SIGTERM'd.
+                _fire_synthetic_stop(hook_manager_resolver, agent_session_id)
+
         return result
 
     @registry.tool(
@@ -556,6 +601,7 @@ def create_agents_registry(
         run_id: str,
         timeout: int = 600,
         poll_interval: int = 10,
+        kill_on_timeout: bool = False,
     ) -> dict[str, Any]:
         """
         Wait for an agent run to complete.
@@ -566,6 +612,7 @@ def create_agents_registry(
             run_id: The agent run ID to wait for.
             timeout: Maximum wait time in seconds (default: 600).
             poll_interval: Time between status checks in seconds (default: 10).
+            kill_on_timeout: If True, kill the agent when timeout expires (default: False).
 
         Returns:
             Dict with:
@@ -574,6 +621,7 @@ def create_agents_registry(
             - run_id: The agent run ID
             - timed_out: Whether the wait timed out
             - wait_time: How long we waited
+            - killed: Whether agent was killed on timeout (only present if kill_on_timeout=True)
         """
         import asyncio
         import time
@@ -591,7 +639,7 @@ def create_agents_registry(
         if run.status not in ("pending", "running"):
             return {
                 "success": True,
-                "completed": True,
+                "completed": run.status == "success",
                 "status": run.status,
                 "run_id": run_id,
                 "timed_out": False,
@@ -605,7 +653,7 @@ def create_agents_registry(
             if elapsed >= timeout:
                 # Re-fetch to get latest status
                 run = runner.get_run(run_id)
-                return {
+                result = {
                     "success": True,
                     "completed": False,
                     "status": run.status if run else "unknown",
@@ -613,6 +661,14 @@ def create_agents_registry(
                     "timed_out": True,
                     "wait_time": elapsed,
                 }
+                if kill_on_timeout and run and run.status in ("pending", "running"):
+                    try:
+                        kill_result = await kill_agent(run_id=run_id, signal="TERM")
+                        result["killed"] = kill_result.get("success", False)
+                    except Exception as e:
+                        logger.warning(f"kill_on_timeout failed for {run_id}: {e}")
+                        result["killed"] = False
+                return result
 
             await asyncio.sleep(poll_interval)
 
@@ -631,7 +687,7 @@ def create_agents_registry(
             if run.status not in ("pending", "running"):
                 return {
                     "success": True,
-                    "completed": True,
+                    "completed": run.status == "success",
                     "status": run.status,
                     "run_id": run_id,
                     "timed_out": False,

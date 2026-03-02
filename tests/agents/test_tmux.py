@@ -15,6 +15,7 @@ from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
+from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
 
 pytestmark = pytest.mark.unit
@@ -467,3 +468,91 @@ class TestTmuxPTYBridge:
     async def test_resize_missing_is_noop(self) -> None:
         bridge = TmuxPTYBridge()
         await bridge.resize("nonexistent", 50, 200)  # should not raise
+
+
+# =============================================================================
+# TmuxSpawner
+# =============================================================================
+
+
+class TestTmuxSpawner:
+    """Tests for TmuxSpawner._async_spawn environment handling."""
+
+    @pytest.mark.asyncio
+    async def test_virtual_env_cleared_in_extra_env(self) -> None:
+        """VIRTUAL_ENV and VIRTUAL_ENV_PROMPT are set to empty via -e flags."""
+        spawner = TmuxSpawner()
+        with patch.object(
+            spawner._session_manager, "create_session", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(
+                command=["echo", "hello"],
+                cwd="/tmp",
+                env={"GOBBY_SESSION_ID": "sess-1"},
+            )
+
+            mock_create.assert_called_once()
+            env_arg = (
+                mock_create.call_args[1].get("env") or mock_create.call_args[0][3]
+                if len(mock_create.call_args[0]) > 3
+                else mock_create.call_args[1].get("env")
+            )
+            assert env_arg["VIRTUAL_ENV"] == ""
+            assert env_arg["VIRTUAL_ENV_PROMPT"] == ""
+            # Gobby-specific vars should still be passed
+            assert env_arg["GOBBY_SESSION_ID"] == "sess-1"
+
+    @pytest.mark.asyncio
+    async def test_unset_in_shell_command(self) -> None:
+        """Shell command is prefixed with unset VIRTUAL_ENV."""
+        spawner = TmuxSpawner()
+        with patch.object(
+            spawner._session_manager, "create_session", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
+            await spawner._async_spawn(
+                command=["claude", "--session-id=xxx"],
+                cwd="/tmp",
+            )
+
+            mock_create.assert_called_once()
+            cmd_arg = (
+                mock_create.call_args[1].get("command") or mock_create.call_args[0][1]
+                if len(mock_create.call_args[0]) > 1
+                else mock_create.call_args[1].get("command")
+            )
+            assert cmd_arg.startswith("unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT;")
+
+    @pytest.mark.asyncio
+    async def test_spawn_returns_success(self) -> None:
+        """Successful spawn returns SpawnResult with success=True."""
+        spawner = TmuxSpawner()
+        with patch.object(
+            spawner._session_manager, "create_session", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
+            result = await spawner._async_spawn(
+                command=["echo", "test"],
+                cwd="/tmp",
+            )
+
+            assert result.success is True
+            assert result.pid == 456
+            assert result.tmux_session_name == "test-session"
+
+    @pytest.mark.asyncio
+    async def test_spawn_failure_returns_error(self) -> None:
+        """Failed spawn returns SpawnResult with success=False."""
+        spawner = TmuxSpawner()
+        with patch.object(
+            spawner._session_manager, "create_session", new_callable=AsyncMock
+        ) as mock_create:
+            mock_create.side_effect = RuntimeError("tmux not found")
+            result = await spawner._async_spawn(
+                command=["echo", "test"],
+                cwd="/tmp",
+            )
+
+            assert result.success is False
+            assert "tmux not found" in result.error

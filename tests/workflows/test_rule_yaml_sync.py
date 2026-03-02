@@ -179,7 +179,9 @@ rules:
 
         rows = manager.list_all(workflow_type="rule")
         assert rows[0].sources is not None
-        sources = json.loads(rows[0].sources) if isinstance(rows[0].sources, str) else rows[0].sources
+        sources = (
+            json.loads(rows[0].sources) if isinstance(rows[0].sources, str) else rows[0].sources
+        )
         assert "claude" in sources
         assert "codex" in sources
 

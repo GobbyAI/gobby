@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useSkills } from '../../hooks/useSkills'
 import type { GobbySkill } from '../../hooks/useSkills'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { SkillsFilters } from './SkillsFilters'
 import { SkillsGrid } from './SkillsGrid'
 import { SkillDetail } from './SkillDetail'
@@ -22,6 +23,7 @@ const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
 ]
 
 export function SkillsPage() {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const {
     skills,
     stats,
@@ -155,7 +157,7 @@ export function SkillsPage() {
   }, [editSkill, createSkill, updateSkill, showError])
 
   const handleDelete = useCallback(async (skillId: string) => {
-    if (!window.confirm('Delete this skill?')) return
+    if (!await confirm({ title: 'Delete skill?', confirmLabel: 'Delete', destructive: true })) return
     const ok = await deleteSkill(skillId)
     if (!ok) showError('Failed to delete skill')
     if (selectedSkill?.id === skillId) setSelectedSkill(null)
@@ -253,6 +255,7 @@ export function SkillsPage() {
 
   return (
     <main className="workflows-page">
+      {ConfirmDialogElement}
       {errorMessage && (
         <div className="skills-error-toast" onClick={() => setErrorMessage(null)}>
           {errorMessage}

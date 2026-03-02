@@ -33,7 +33,7 @@ def _setup_db(tmp_path: Path) -> LocalDatabase:
 def _create_agent(
     db: LocalDatabase,
     name: str = "test-agent",
-    mode: str = "headless",
+    mode: str = "autonomous",
     provider: str = "claude",
     isolation: str | None = None,
     pipeline: str | None = None,
@@ -203,7 +203,7 @@ class TestRuntimeEnvironment:
     ) -> None:
         """SELF_MODE_WORKFLOW_CONFLICT when parent already has active workflow."""
         db = _setup_db(tmp_path)
-        _create_agent(db, mode="headless")
+        _create_agent(db, mode="autonomous")
 
         parent_state = MagicMock()
         parent_state.workflow_name = "existing-workflow"

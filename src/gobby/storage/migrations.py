@@ -37,7 +37,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 129
+BASELINE_VERSION = 133
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v108) have been removed.
@@ -196,7 +196,8 @@ CREATE TABLE agent_runs (
     started_at TEXT,
     completed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    sdk_session_id TEXT
 );
 CREATE INDEX idx_agent_runs_parent_session ON agent_runs(parent_session_id);
 CREATE INDEX idx_agent_runs_child_session ON agent_runs(child_session_id);
@@ -235,7 +236,9 @@ CREATE TABLE sessions (
     model TEXT,
     had_edits BOOLEAN DEFAULT 0,
     digest_markdown TEXT,
+    last_turn_markdown TEXT,
     chat_mode TEXT DEFAULT 'plan',
+    last_digest_input_hash TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -728,6 +731,7 @@ CREATE TABLE step_executions (
     approval_token TEXT UNIQUE,
     approved_by TEXT,
     approved_at TEXT,
+    approval_timeout_seconds INTEGER,
     UNIQUE(execution_id, step_id)
 );
 CREATE INDEX idx_step_executions_execution ON step_executions(execution_id);
@@ -1152,7 +1156,7 @@ def _migrate_agent_defs_to_workflow_defs(db: LocalDatabase) -> None:
         body: dict[str, object] = {
             "name": row["name"],
             "provider": row["provider"] or "claude",
-            "mode": row["mode"] or "headless",
+            "mode": row["mode"] or "terminal",
             "base_branch": row["base_branch"] or "main",
             "timeout": float(row["timeout"]) if row["timeout"] else 120.0,
             "max_turns": int(row["max_turns"]) if row["max_turns"] else 10,
@@ -1508,6 +1512,26 @@ CREATE INDEX idx_skills_deleted_at ON skills(deleted_at)""",
         129,
         "Normalize config_store keys to lowercase",
         _normalize_config_keys_lowercase,
+    ),
+    (
+        130,
+        "Add last_turn_markdown column to sessions for per-turn digest records",
+        "ALTER TABLE sessions ADD COLUMN last_turn_markdown TEXT",
+    ),
+    (
+        131,
+        "Add approval_timeout_seconds column to step_executions",
+        "ALTER TABLE step_executions ADD COLUMN approval_timeout_seconds INTEGER",
+    ),
+    (
+        132,
+        "Add sdk_session_id to agent_runs for cross-mode resume",
+        "ALTER TABLE agent_runs ADD COLUMN sdk_session_id TEXT",
+    ),
+    (
+        133,
+        "Add last_digest_input_hash to sessions for digest idempotency",
+        "ALTER TABLE sessions ADD COLUMN last_digest_input_hash TEXT",
     ),
 ]
 

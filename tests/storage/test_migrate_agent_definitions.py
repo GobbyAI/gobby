@@ -88,7 +88,7 @@ def _insert_old_agent(
         "instructions": None,
         "provider": "claude",
         "model": None,
-        "mode": "headless",
+        "mode": "autonomous",
         "terminal": "auto",
         "isolation": None,
         "base_branch": "main",
@@ -132,7 +132,7 @@ class TestMigrateAgentDefinitions:
         from gobby.storage.migrations import _migrate_agent_defs_to_workflow_defs
 
         db = db_with_old_table
-        _insert_old_agent(db, "test-basic-mig", provider="claude", mode="headless")
+        _insert_old_agent(db, "test-basic-mig", provider="claude", mode="autonomous")
 
         _migrate_agent_defs_to_workflow_defs(db)
 

@@ -30,12 +30,12 @@ class TestRunningAgentRegistryKill:
 
     @pytest.mark.asyncio
     async def test_kill_headless_success(self, registry, mock_os_kill):
-        """Kill headless agent sends signal to PID."""
+        """Kill autonomous agent sends signal to PID."""
         agent = RunningAgent(
-            run_id="ar-headless",
+            run_id="ar-autonomous",
             session_id="sess",
             parent_session_id="parent",
-            mode="headless",
+            mode="autonomous",
             pid=12345,
         )
         registry.add(agent)
@@ -46,11 +46,11 @@ class TestRunningAgentRegistryKill:
         # 3. wait loop check (pid, 0) -> raise ProcessLookupError (simulating death)
         mock_os_kill.side_effect = [None, None, ProcessLookupError()]
 
-        result = await registry.kill("ar-headless")
+        result = await registry.kill("ar-autonomous")
 
         assert result["success"] is True
         mock_os_kill.assert_any_call(12345, signal.SIGTERM)
-        assert registry.get("ar-headless") is None
+        assert registry.get("ar-autonomous") is None
 
     @pytest.mark.asyncio
     async def test_kill_not_found(self, registry):
@@ -66,7 +66,7 @@ class TestRunningAgentRegistryKill:
             run_id="ar-no-pid",
             session_id="sess",
             parent_session_id="parent",
-            mode="headless",
+            mode="autonomous",
             pid=None,
         )
         registry.add(agent)
@@ -83,7 +83,7 @@ class TestRunningAgentRegistryKill:
             run_id="ar-dead",
             session_id="sess",
             parent_session_id="parent",
-            mode="headless",
+            mode="autonomous",
             pid=12345,
         )
         registry.add(agent)

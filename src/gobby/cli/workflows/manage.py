@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -12,6 +13,138 @@ import yaml
 from gobby.cli.workflows import common
 
 logger = logging.getLogger(__name__)
+
+
+VALID_WORKFLOW_TYPES = ("rule", "workflow", "pipeline", "agent", "variable")
+
+
+@click.command("reinstall")
+@click.option(
+    "--type",
+    "-t",
+    "workflow_type",
+    default=None,
+    type=click.Choice(VALID_WORKFLOW_TYPES),
+    help="Only reinstall a specific type",
+)
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
+    """Delete all workflow definitions and reinstall from bundled templates."""
+    from gobby.storage.database import LocalDatabase
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+    type_label = workflow_type or "all"
+    if not force:
+        click.confirm(
+            f"This will delete and reinstall {type_label} workflow definitions. Continue?",
+            abort=True,
+        )
+
+    db = LocalDatabase()
+    manager = LocalWorkflowDefinitionManager(db)
+
+    # 1. Hard-delete existing rows
+    with db.transaction() as conn:
+        if workflow_type:
+            cursor = conn.execute(
+                "DELETE FROM workflow_definitions WHERE workflow_type = ?",
+                (workflow_type,),
+            )
+        else:
+            cursor = conn.execute("DELETE FROM workflow_definitions")
+        deleted = cursor.rowcount
+    click.echo(f"Deleted {deleted} existing definitions")
+
+    # 2. Re-sync templates from bundled YAML
+    sync_results = _run_sync(db, workflow_type)
+    total_synced = sum(r.get("synced", 0) + r.get("updated", 0) for r in sync_results.values())
+    click.echo(f"Synced {total_synced} templates from bundled YAML")
+
+    # 3. Install templates (create source='installed' copies)
+    installed = manager.install_all_templates(workflow_type=workflow_type)
+    click.echo(f"Created {len(installed)} installed copies")
+
+    # 4. Enable all installed copies
+    with db.transaction() as conn:
+        if workflow_type:
+            conn.execute(
+                "UPDATE workflow_definitions SET enabled = 1, updated_at = datetime('now') "
+                "WHERE source = 'installed' AND workflow_type = ? AND deleted_at IS NULL",
+                (workflow_type,),
+            )
+        else:
+            conn.execute(
+                "UPDATE workflow_definitions SET enabled = 1, updated_at = datetime('now') "
+                "WHERE source = 'installed' AND deleted_at IS NULL",
+            )
+
+    # 5. Notify daemon to reload
+    _notify_daemon_reload()
+
+    # 6. Print summary
+    rows = db.fetchall(
+        "SELECT COUNT(*) as cnt, source, enabled, workflow_type "
+        "FROM workflow_definitions WHERE deleted_at IS NULL "
+        "GROUP BY source, enabled, workflow_type ORDER BY source, workflow_type",
+    )
+    click.echo("\nCurrent state:")
+    click.echo(f"  {'source':<12} {'enabled':<8} {'type':<12} {'count':<6}")
+    click.echo(f"  {'─' * 12} {'─' * 8} {'─' * 12} {'─' * 6}")
+    for row in rows:
+        click.echo(
+            f"  {row['source']:<12} {row['enabled']:<8} {row['workflow_type']:<12} {row['cnt']:<6}"
+        )
+
+
+def _run_sync(db: Any, workflow_type: str | None) -> dict[str, Any]:
+    """Run the appropriate sync functions for the given workflow type."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.workflows.sync import (
+        sync_bundled_rules,
+        sync_bundled_variables,
+        sync_bundled_workflows,
+    )
+
+    sync_map: dict[str, Any] = {
+        "rule": ("rules", sync_bundled_rules),
+        "workflow": ("workflows", sync_bundled_workflows),
+        "pipeline": ("workflows", sync_bundled_workflows),  # pipelines live in workflows/
+        "agent": ("agents", sync_bundled_agents),
+        "variable": ("variables", sync_bundled_variables),
+    }
+
+    results: dict[str, Any] = {}
+    if workflow_type:
+        label, fn = sync_map[workflow_type]
+        results[label] = fn(db)
+    else:
+        seen: set[str] = set()
+        for label, fn in sync_map.values():
+            if label not in seen:
+                seen.add(label)
+                results[label] = fn(db)
+    return results
+
+
+def _notify_daemon_reload() -> None:
+    """Tell the running daemon to reload workflow definitions."""
+    try:
+        import httpx
+
+        from gobby.config.app import load_config
+
+        config = load_config()
+        response = httpx.post(
+            f"http://localhost:{config.daemon_port}/api/admin/workflows/reload",
+            timeout=2.0,
+        )
+        if response.status_code == 200:
+            click.echo("Triggered daemon workflow reload")
+        else:
+            click.echo(f"Daemon reload returned status {response.status_code}", err=True)
+    except Exception as e:
+        logger.debug("Could not notify daemon: %s", e)
+        click.echo("Daemon not reachable; reload will happen on next restart")
 
 
 @click.command("import")

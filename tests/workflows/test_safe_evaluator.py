@@ -436,3 +436,55 @@ class TestCombinedExpressions:
         ev = _build_evaluator(ctx, task_manager=mock_task_manager)
         # This simulates: task_tree_complete(variables.session_task)
         assert ev.evaluate("task_tree_complete(session_task)") is True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# _normalize_expr — whitespace normalization
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestNormalizeExpr:
+    """Verify _normalize_expr collapses YAML folding artefacts."""
+
+    def test_collapses_newline_with_indent(self) -> None:
+        raw = "(a + b)\n  not in c"
+        assert SafeExpressionEvaluator._normalize_expr(raw) == "(a + b) not in c"
+
+    def test_collapses_multiple_newlines(self) -> None:
+        raw = "a\n  and b\n  and c"
+        assert SafeExpressionEvaluator._normalize_expr(raw) == "a and b and c"
+
+    def test_preserves_single_spaces(self) -> None:
+        raw = "a and b not in c"
+        assert SafeExpressionEvaluator._normalize_expr(raw) == "a and b not in c"
+
+    def test_strips_trailing_newline(self) -> None:
+        raw = "a and b\n"
+        assert SafeExpressionEvaluator._normalize_expr(raw) == "a and b"
+
+    def test_evaluate_with_yaml_folding_artefact(self) -> None:
+        """Reproduce the actual bug: YAML > preserves newline before 'not in'."""
+        expr_with_newline = (
+            "variables.get('allowed') "
+            "and (variables.get('x') + ':' + variables.get('y'))\n"
+            "  not in variables.get('allowed', [])"
+        )
+        ctx: dict[str, Any] = {
+            "variables": {"allowed": ["a:b"], "x": "a", "y": "c"},
+        }
+        ev = SafeExpressionEvaluator(ctx, {"len": len})
+        # Without normalization this would raise ValueError (SyntaxError from ast.parse)
+        assert ev.evaluate(expr_with_newline) is True  # "a:c" not in ["a:b"]
+
+    def test_evaluate_with_yaml_folding_artefact_allowed(self) -> None:
+        """Same expression but the value IS in the list — should be False."""
+        expr_with_newline = (
+            "variables.get('allowed') "
+            "and (variables.get('x') + ':' + variables.get('y'))\n"
+            "  not in variables.get('allowed', [])"
+        )
+        ctx: dict[str, Any] = {
+            "variables": {"allowed": ["a:b"], "x": "a", "y": "b"},
+        }
+        ev = SafeExpressionEvaluator(ctx, {"len": len})
+        assert ev.evaluate(expr_with_newline) is False  # "a:b" in ["a:b"]

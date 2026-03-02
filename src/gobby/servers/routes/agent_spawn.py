@@ -19,6 +19,7 @@ from gobby.utils.metrics import get_metrics_collector
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+    from gobby.storage.tasks._models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class AgentSpawnRequest(BaseModel):
     task_id: str
     agent_name: str = "default"
     prompt: str | None = None
-    mode: Literal["terminal", "web_chat", "headless"] = "terminal"
+    mode: Literal["terminal", "web_chat", "autonomous"] = "terminal"
     isolation: Literal["none", "worktree", "clone"] | None = None
     provider: str | None = None
     model: str | None = None
@@ -78,7 +79,7 @@ class LaunchDefaultsRequest(BaseModel):
     project_id: str
     category: str
     agent_name: str = "default"
-    mode: Literal["terminal", "web_chat", "headless"] = "terminal"
+    mode: Literal["terminal", "web_chat", "autonomous"] = "terminal"
     isolation: Literal["none", "worktree", "clone"] = "none"
     model: str | None = None
 
@@ -99,7 +100,7 @@ _BATCH_SEMAPHORE = asyncio.Semaphore(5)
 
 
 def _build_task_prompt(
-    task: Any, deps: list[Any] | None = None, comments: list[Any] | None = None
+    task: Task, deps: list[Task] | None = None, comments: list[Any] | None = None
 ) -> str:
     """Build an auto-generated prompt from task context."""
     parts: list[str] = []
@@ -306,9 +307,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-        # Map "terminal"/"headless" to the mode enum spawn_agent_impl expects
-        spawn_mode: Literal["terminal", "embedded", "headless", "self"] = (
-            "headless" if req.mode == "headless" else "terminal"
+        # Map HTTP modes to the mode enum spawn_agent_impl expects
+        spawn_mode: Literal["terminal", "autonomous", "self"] = (
+            "autonomous" if req.mode == "autonomous" else "terminal"
         )
 
         result = await spawn_agent_impl(

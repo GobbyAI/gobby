@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useMcp } from '../../hooks/useMcp'
 import type { McpToolSchema } from '../../hooks/useMcp'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { McpOverview } from './McpOverview'
 import { McpToolDetail } from './McpToolDetail'
 import { McpAddServerModal, McpImportModal } from './McpServerForm'
@@ -11,6 +12,7 @@ type OverviewFilter = 'total' | 'connected' | 'tools' | 'internal' | null
 const TRANSPORTS = ['internal', 'http', 'stdio', 'websocket', 'sse'] as const
 
 export function McpPage() {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const {
     servers,
     toolsByServer,
@@ -67,7 +69,7 @@ export function McpPage() {
 
   const handleRemoveServer = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!window.confirm(`Remove server "${name}"?`)) return
+    if (!await confirm({ title: `Remove "${name}"?`, confirmLabel: 'Remove', destructive: true })) return
     const ok = await removeServer(name)
     if (!ok) showError(`Failed to remove ${name}`)
   }, [removeServer, showError])
@@ -128,6 +130,7 @@ export function McpPage() {
 
   return (
     <main className="mcp-page">
+      {ConfirmDialogElement}
       {errorMessage && (
         <div className="mcp-error-toast" onClick={() => setErrorMessage(null)}>
           {errorMessage}

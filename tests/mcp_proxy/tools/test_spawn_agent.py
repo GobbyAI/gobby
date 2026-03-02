@@ -417,11 +417,11 @@ class TestSpawnAgentParamOverrides:
     async def test_tool_params_override_agent_definition(self, mock_runner) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        # Agent definition says mode=headless
+        # Agent definition says mode=autonomous
         agent_body = AgentDefinitionBody(
             name="default",
             provider="claude",
-            mode="headless",
+            mode="autonomous",
         )
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())

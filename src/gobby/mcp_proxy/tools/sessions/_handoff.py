@@ -1,8 +1,6 @@
 """Handoff tools for session management.
 
-This module contains:
-- Helper function for formatting transcript turns for LLM analysis
-- MCP tools for setting and retrieving handoff context
+This module contains MCP tools for setting and retrieving handoff context.
 """
 
 from __future__ import annotations
@@ -13,29 +11,6 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import LocalSessionManager
-
-
-def _format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
-    """Format transcript turns for LLM analysis."""
-    formatted: list[str] = []
-    for i, turn in enumerate(turns):
-        message = turn.get("message", {})
-        role = message.get("role", "unknown")
-        content = message.get("content", "")
-
-        if isinstance(content, list):
-            text_parts: list[str] = []
-            for block in content:
-                if isinstance(block, dict):
-                    if block.get("type") == "text":
-                        text_parts.append(str(block.get("text", "")))
-                    elif block.get("type") == "tool_use":
-                        text_parts.append(f"[Tool: {block.get('name', 'unknown')}]")
-            content = " ".join(text_parts)
-
-        formatted.append(f"[Turn {i + 1} - {role}]: {content}")
-
-    return "\n\n".join(formatted)
 
 
 def register_handoff_tools(
@@ -168,11 +143,15 @@ def register_handoff_tools(
         # --- Automated fallback ---
         import json
         import subprocess  # nosec B404 - subprocess needed for git commands
-        import time
         from pathlib import Path
 
         from gobby.sessions.analyzer import TranscriptAnalyzer
         from gobby.workflows.context_actions import format_handoff_as_markdown
+        from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
+        from gobby.workflows.summary_actions import (
+            _format_structured_context,
+            format_turns_for_llm,
+        )
 
         # Get transcript path
         transcript_path = session.jsonl_path
@@ -291,12 +270,20 @@ def register_handoff_tools(
                 # Prepare context for LLM
                 last_turns = parser.extract_turns_since_clear(turns, max_turns=50)
                 last_messages = parser.extract_last_messages(turns, num_pairs=2)
+                last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
+
+                # Gather real git data (matches summary_actions.generate_summary)
+                file_changes = get_file_changes()
+                git_diff_summary = get_git_diff_summary()
+                structured_context = _format_structured_context(handoff_ctx)
 
                 context = {
-                    "transcript_summary": _format_turns_for_llm(last_turns),
-                    "last_messages": last_messages,
+                    "transcript_summary": format_turns_for_llm(last_turns),
+                    "last_messages": last_messages_str,
                     "git_status": handoff_ctx.git_status or "",
-                    "file_changes": "",
+                    "file_changes": file_changes,
+                    "git_diff_summary": git_diff_summary,
+                    "structured_context": structured_context,
                     "external_id": session.id[:12],
                     "session_id": session.id,
                     "session_source": session.source,
@@ -328,29 +315,21 @@ def register_handoff_tools(
         # Save to file if requested
         files_written: list[str] = []
         if write_file:
-            try:
-                summary_dir = Path(output_path)
-                if not summary_dir.is_absolute():
-                    summary_dir = Path.cwd() / summary_dir
-                summary_dir.mkdir(parents=True, exist_ok=True)
-                timestamp = int(time.time())
+            from gobby.workflows.summary_actions import _write_summary_file
 
-                if full_markdown:
-                    full_file = summary_dir / f"session_{timestamp}_{session.id[:12]}.md"
-                    full_file.write_text(full_markdown, encoding="utf-8")
-                    files_written.append(str(full_file))
+            if full_markdown:
+                full_path: str | None = await _write_summary_file(
+                    session.id, full_markdown, output_path, session_manager, mode="full"
+                )
+                if full_path:
+                    files_written.append(full_path)
 
-                if compact_markdown:
-                    compact_file = summary_dir / f"session_compact_{timestamp}_{session.id[:12]}.md"
-                    compact_file.write_text(compact_markdown, encoding="utf-8")
-                    files_written.append(str(compact_file))
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Failed to write file: {e}",
-                    "session_id": session.id,
-                }
+            if compact_markdown:
+                compact_path: str | None = await _write_summary_file(
+                    session.id, compact_markdown, output_path, session_manager, mode="compact"
+                )
+                if compact_path:
+                    files_written.append(compact_path)
 
         result_dict: dict[str, Any] = {
             "success": True,

@@ -208,11 +208,7 @@ class SessionEventHandlerMixin(EventHandlersBase):
         workflow_name = input_data.get("workflow_name")
         agent_depth = input_data.get("agent_depth")
 
-        if (
-            not parent_session_id
-            and session_source in ("clear", "compact")
-            and self._session_storage
-        ):
+        if not parent_session_id and self._session_storage:
             try:
                 parent = self._session_storage.find_parent(
                     machine_id=machine_id,
@@ -220,9 +216,46 @@ class SessionEventHandlerMixin(EventHandlersBase):
                     source=cli_source,
                     status="handoff_ready",
                 )
+
+                # Race condition: Claude Code fires session-start before session-end,
+                # so the old session may still be active when we look for handoff_ready.
+                # SESSION_END is fast (just sets status), so a short backoff suffices.
+                if not parent and session_source in ("clear", "compact"):
+                    import time
+
+                    deadline = time.monotonic() + 15  # 15s — session_end is fast now
+                    while time.monotonic() < deadline:
+                        time.sleep(2)
+                        parent = self._session_storage.find_parent(
+                            machine_id=machine_id,
+                            project_id=project_id,
+                            source=cli_source,
+                            status="handoff_ready",
+                        )
+                        if parent:
+                            self.logger.debug(
+                                f"Found handoff_ready parent after backoff: {parent.id}"
+                            )
+                            break
+                    if not parent:
+                        self.logger.warning(
+                            f"No handoff_ready parent found for /{session_source} session"
+                        )
+
                 if parent:
                     parent_session_id = parent.id
                     self.logger.debug(f"Found parent session: {parent_session_id}")
+                    # Read handoff_source marker set by prepare-clear-handoff
+                    # or preserve-context-on-compact rules
+                    from gobby.workflows.state_manager import SessionVariableManager
+
+                    parent_vars = SessionVariableManager(self._session_storage.db).get_variables(
+                        parent.id
+                    )
+                    handoff_source = parent_vars.get("handoff_source")
+                    if handoff_source in ("clear", "compact"):
+                        session_source = handoff_source
+                        input_data["source"] = session_source
             except Exception as e:
                 self.logger.warning(f"Error finding parent session: {e}")
 
@@ -259,9 +292,14 @@ class SessionEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning(f"Failed to mark parent session as expired: {e}")
 
-        # Step 2c: Auto-activate workflow if specified (for spawned agents)
+        # Step 2c: Pipeline workflows are executed by the agent via run_pipeline MCP tool.
+        # Agent rules enforce pipeline execution by blocking all tools except
+        # progressive disclosure and run_pipeline.
         if workflow_name and session_id:
-            self._auto_activate_workflow(workflow_name, session_id, cwd)
+            self.logger.debug(
+                "Pipeline workflow registered for session — agent will execute via run_pipeline",
+                extra={"workflow_name": workflow_name, "session_id": session_id},
+            )
 
         # Step 2d: Deep load default agent (rules, skills, variables) for new session
         agent_result: AgentActivationResult | None = None
@@ -312,10 +350,25 @@ class SessionEventHandlerMixin(EventHandlersBase):
             if current_vars.get("auto_inject_handoff", True):
                 parent = self._session_storage.get(parent_session_id)
                 if parent:
+                    # For /clear: generate boundary summaries now (no pre-clear hook
+                    # fires in Claude Code, so summaries don't exist yet).
+                    # For /compact: PRE_COMPACT already generated compact_markdown.
+                    if session_source == "clear" and not parent.summary_markdown:
+                        if self._dispatch_boundary_summaries_fn:
+                            try:
+                                self._dispatch_boundary_summaries_fn(parent_session_id, False)
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Failed to generate boundary summaries "
+                                    f"for parent {parent_session_id}: {e}"
+                                )
+                            # Re-read parent after generation
+                            parent = self._session_storage.get(parent_session_id)
+
                     handoff_vars: dict[str, Any] = {}
-                    if session_source == "clear" and parent.summary_markdown:
+                    if parent and session_source == "clear" and parent.summary_markdown:
                         handoff_vars["full_session_summary"] = parent.summary_markdown
-                    elif session_source == "compact" and parent.compact_markdown:
+                    elif parent and session_source == "compact" and parent.compact_markdown:
                         handoff_vars["compact_session_summary"] = parent.compact_markdown
                     if handoff_vars:
                         sv_mgr.merge_variables(session_id, handoff_vars)
@@ -432,13 +485,24 @@ class SessionEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.debug(f"Failed to notify pane monitor for session {session_id}: {e}")
 
-        # Mark session as handoff_ready so the next session (via /clear or /compact)
-        # can find this session as its parent via find_parent(status="handoff_ready")
+        # Mark as handoff_ready if session is ending due to /clear or /compact,
+        # so the new session can find this parent and generate handoff summaries.
+        # Claude Code session-end uses 'reason' field (not 'source').
         if session_id and self._session_storage:
             try:
-                self._session_storage.update_status(session_id, "handoff_ready")
+                end_status = "expired"
+                end_reason = event.data.get("reason")
+                if end_reason in ("clear", "compact"):
+                    end_status = "handoff_ready"
+                # Don't downgrade handoff_ready → expired (PRE_COMPACT may have
+                # already set handoff_ready before SESSION_END fires)
+                if end_status == "expired":
+                    current = self._session_storage.get(session_id)
+                    if current and current.status == "handoff_ready":
+                        end_status = "handoff_ready"
+                self._session_storage.update_status(session_id, end_status)
             except Exception as e:
-                self.logger.warning(f"Failed to mark session as handoff_ready: {e}")
+                self.logger.warning(f"Failed to update session status on end: {e}")
 
         return HookResponse(decision="allow")
 
@@ -505,27 +569,11 @@ class SessionEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning(f"Failed to start agent run: {e}")
 
-        # Auto-activate workflow if specified for this session
+        # Pipeline workflows are executed by the agent via run_pipeline MCP tool
         if existing_session.workflow_name and session_id:
-            # Read initial variables from session_variables table (canonical store)
-            initial_vars: dict[str, Any] | None = None
-            try:
-                from gobby.workflows.state_manager import SessionVariableManager
-
-                if self._session_storage is None:
-                    raise RuntimeError("session_storage unavailable")
-                sv_mgr = SessionVariableManager(self._session_storage.db)
-                sv = sv_mgr.get_variables(session_id)
-                if sv:
-                    initial_vars = sv
-            except Exception as e:
-                self.logger.debug(f"Could not load session variables for workflow activation: {e}")
-
-            self._auto_activate_workflow(
-                existing_session.workflow_name,
-                session_id,
-                cwd,
-                variables=initial_vars,
+            self.logger.debug(
+                "Pipeline workflow registered for session — agent will execute via run_pipeline",
+                extra={"workflow_name": existing_session.workflow_name, "session_id": session_id},
             )
 
         # Deep load default agent (rules, skills, variables) for pre-created session
@@ -597,10 +645,22 @@ class SessionEventHandlerMixin(EventHandlersBase):
         if agent_name_override:
             default_agent_name = agent_name_override
         else:
-            from gobby.storage.config_store import ConfigStore
+            # Check if the session already has _agent_type set (e.g., from spawn_agent).
+            # If so, use that instead of the global default — spawned agents should
+            # keep the agent type assigned by the parent.
+            from gobby.workflows.state_manager import SessionVariableManager
 
-            config_store = ConfigStore(self._session_storage.db)
-            default_agent_name = config_store.get("default_agent") or "default"
+            sv_mgr = SessionVariableManager(self._session_storage.db)
+            existing_vars = sv_mgr.get_variables(session_id)
+            existing_agent_type = existing_vars.get("_agent_type") if existing_vars else None
+
+            if existing_agent_type and existing_agent_type != "default":
+                default_agent_name = existing_agent_type
+            else:
+                from gobby.storage.config_store import ConfigStore
+
+                config_store = ConfigStore(self._session_storage.db)
+                default_agent_name = config_store.get("default_agent") or "default"
         if default_agent_name == "none":
             return None
 
@@ -633,9 +693,14 @@ class SessionEventHandlerMixin(EventHandlersBase):
 
         active_rules = resolve_rules_for_agent(agent_body, enabled_rules)
 
+        # Detect whether this is a spawned agent (has agent_run_id) vs user terminal
+        session = self._session_storage.get(session_id)
+        is_spawned = bool(session and session.agent_run_id)
+
         changes: dict[str, Any] = {
             "_agent_type": agent_body.name,
             "_active_rule_names": list(active_rules),
+            "is_spawned_agent": is_spawned,
         }
 
         from gobby.skills.manager import SkillManager
@@ -753,7 +818,8 @@ class SessionEventHandlerMixin(EventHandlersBase):
         ):
             return None
         try:
-            return self._workflow_handler.engine.state_manager.get_state(session_id)
+            state: WorkflowState | None = self._workflow_handler.engine.state_manager.get_state(session_id)
+            return state
         except Exception as e:
             self.logger.debug(f"Failed to get step workflow state: {e}")
             return None
@@ -831,31 +897,28 @@ class SessionEventHandlerMixin(EventHandlersBase):
 
         system_message += f"\nExternal ID: {external_id} (CLI-native, rarely needed)"
 
-        # Task (only if exists, as #N ref)
-        if task_id and self._task_manager:
-            try:
-                task = self._task_manager.get_task(task_id, project_id=project_id)
-                if task and task.seq_num:
-                    system_message += f"\nTask: #{task.seq_num}"
-                else:
-                    system_message += f"\nTask: {task_id}"
-            except Exception:
-                system_message += f"\nTask: {task_id}"
-
         # Agent info (only if agent loaded — absence signals activation failure)
         if agent_info:
-            # Agent name with optional description
-            agent_line = f"\nAgent: {agent_info.agent_name}"
-            if agent_info.description:
-                agent_line += f" — {agent_info.description}"
-            system_message += agent_line
+            # Agent name only — description moves to tree node
+            system_message += f"\nAgent: {agent_info.agent_name}"
 
-            # Build tree nodes: role, goal, rules, variables, skills
+            # Build tree nodes: description, role, goal, task, rules, variables, skills
             tree_nodes: list[str] = []
+            if agent_info.description:
+                tree_nodes.append(f"Description: {agent_info.description.strip()}")
             if agent_info.role:
-                tree_nodes.append(f"Role: {agent_info.role}")
+                tree_nodes.append(f"Role: {agent_info.role.strip()}")
             if agent_info.goal:
-                tree_nodes.append(f"Goal: {agent_info.goal}")
+                tree_nodes.append(f"Goal: {agent_info.goal.strip()}")
+            # Current task (inside agent tree, with claimed/assigned indicator)
+            if task_id and self._task_manager:
+                try:
+                    task = self._task_manager.get_task(task_id, project_id=project_id)
+                    task_ref = f"#{task.seq_num}" if task and task.seq_num else task_id
+                except Exception:
+                    task_ref = task_id
+                claim_status = "assigned" if parent_session_id else "claimed"
+                tree_nodes.append(f"Current Task: {task_ref} ({claim_status})")
             tree_nodes.append(f"Rules: {agent_info.rules_count}")
             tree_nodes.append(f"Variables: {agent_info.variables_count}")
             # Skills is always last (may have sub-node)

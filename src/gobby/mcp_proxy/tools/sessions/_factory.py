@@ -63,8 +63,6 @@ def create_session_messages_registry(
         register_handoff_tools(
             registry,
             session_manager,
-            llm_service=llm_service,
-            transcript_processor=transcript_processor,
             inter_session_message_manager=inter_session_message_manager,
         )
 

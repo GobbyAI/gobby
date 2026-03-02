@@ -4,6 +4,7 @@ import { RulesTab } from './RulesTab'
 import { AgentsTab } from './AgentsTab'
 import { PipelinesTab } from './PipelinesTab'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import './WorkflowsPage.css'
 
 type ActiveTab = 'pipelines' | 'agents' | 'rules'
@@ -29,8 +30,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
   const [devMode, setDevMode] = useState(false)
   const [showRuleCreateModal, setShowRuleCreateModal] = useState(false)
   const [showAgentCreateForm, setShowAgentCreateForm] = useState(false)
-  const [showPipelineCreateDropdown, setShowPipelineCreateDropdown] = useState(false)
-  const [pipelineCreateMode, setPipelineCreateMode] = useState<'builder' | 'yaml' | null>(null)
+  const [showPipelineCreate, setShowPipelineCreate] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [hideGobby, setHideGobby] = useState(false)
@@ -44,6 +44,11 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
   // Dynamic options reported by tabs
   const [agentProviders, setAgentProviders] = useState<string[]>([])
   const [ruleEventTypes, setRuleEventTypes] = useState<string[]>([])
+  const [availableTags, setAvailableTags] = useState<string[]>([])
+
+  // Cross-tab filters
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [priorityFilter, setPriorityFilter] = useState<number | null>(null)
 
   // Rules bulk toggle state
   const [rulesAllEnabled, setRulesAllEnabled] = useState(false)
@@ -80,6 +85,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     return () => document.removeEventListener('mousedown', handleMouseDown)
   }, [showFilterPopover])
 
+
   // Badge count
   const activeFilterCount = useMemo(() => {
     let count = 0
@@ -89,8 +95,10 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     if (activeTab === 'pipelines' && pipelineEnabledFilter !== null) count++
     if (activeTab === 'agents' && agentProviderFilter !== 'all') count++
     if (activeTab === 'rules' && ruleEventFilter !== null) count++
+    if (tagFilter !== null) count++
+    if (priorityFilter !== null) count++
     return count
-  }, [sourceFilter, hideGobby, hideInstalled, activeTab, pipelineEnabledFilter, agentProviderFilter, ruleEventFilter])
+  }, [sourceFilter, hideGobby, hideInstalled, activeTab, pipelineEnabledFilter, agentProviderFilter, ruleEventFilter, tagFilter, priorityFilter])
 
   // Bulk actions
   const handleInstallAll = useCallback(async () => {
@@ -175,6 +183,11 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
                 ruleEventFilter={ruleEventFilter}
                 onRuleEventFilterChange={setRuleEventFilter}
                 ruleEventTypes={ruleEventTypes}
+                tagFilter={tagFilter}
+                onTagFilterChange={setTagFilter}
+                availableTags={availableTags}
+                priorityFilter={priorityFilter}
+                onPriorityFilterChange={setPriorityFilter}
               />
             )}
           </div>
@@ -204,39 +217,13 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
             </div>
           )}
           {activeTab === 'pipelines' && (
-            <div className="workflows-new-wrapper">
-              <button
-                type="button"
-                className="workflows-new-btn"
-                onClick={() => setShowPipelineCreateDropdown(!showPipelineCreateDropdown)}
-              >
-                + Pipeline
-              </button>
-              {showPipelineCreateDropdown && (
-                <div className="workflows-new-dropdown">
-                  <button
-                    type="button"
-                    className="workflows-new-dropdown-item"
-                    onClick={() => {
-                      setShowPipelineCreateDropdown(false)
-                      setPipelineCreateMode('builder')
-                    }}
-                  >
-                    Builder
-                  </button>
-                  <button
-                    type="button"
-                    className="workflows-new-dropdown-item"
-                    onClick={() => {
-                      setShowPipelineCreateDropdown(false)
-                      setPipelineCreateMode('yaml')
-                    }}
-                  >
-                    YAML
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              className="workflows-new-btn"
+              onClick={() => setShowPipelineCreate(true)}
+            >
+              + Pipeline
+            </button>
           )}
           {activeTab === 'agents' && (
             <button
@@ -265,13 +252,16 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           searchText={searchText}
           sourceFilter={sourceFilter}
           devMode={devMode}
-          createMode={pipelineCreateMode}
-          onCreateModeHandled={() => setPipelineCreateMode(null)}
+          showCreate={showPipelineCreate}
+          onCreateHandled={() => setShowPipelineCreate(false)}
           refreshKey={refreshKey}
           projectId={projectId}
           hideGobby={hideGobby}
-          hideInstalled={hideInstalled}
+          hideInstalled={sourceFilter === 'templates' && hideInstalled}
           enabledFilter={pipelineEnabledFilter}
+          tagFilter={tagFilter}
+          priorityFilter={priorityFilter}
+          onTagsChange={setAvailableTags}
         />
       )}
 
@@ -285,9 +275,11 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           refreshKey={refreshKey}
           projectId={projectId}
           hideGobby={hideGobby}
-          hideInstalled={hideInstalled}
+          hideInstalled={sourceFilter === 'templates' && hideInstalled}
           filterProvider={agentProviderFilter}
           onProvidersChange={setAgentProviders}
+          tagFilter={tagFilter}
+          onTagsChange={setAvailableTags}
         />
       )}
 
@@ -301,10 +293,13 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           refreshKey={refreshKey}
           projectId={projectId}
           hideGobby={hideGobby}
-          hideInstalled={hideInstalled}
+          hideInstalled={sourceFilter === 'templates' && hideInstalled}
           eventFilter={ruleEventFilter}
           onEventTypesChange={setRuleEventTypes}
           onAllEnabledChange={setRulesAllEnabled}
+          tagFilter={tagFilter}
+          priorityFilter={priorityFilter}
+          onTagsChange={setAvailableTags}
         />
       )}
     </main>
@@ -327,6 +322,11 @@ function FilterPopover({
   ruleEventFilter,
   onRuleEventFilterChange,
   ruleEventTypes,
+  tagFilter,
+  onTagFilterChange,
+  availableTags,
+  priorityFilter,
+  onPriorityFilterChange,
 }: {
   sourceFilter: SourceFilter
   onSourceFilterChange: (v: SourceFilter) => void
@@ -343,6 +343,11 @@ function FilterPopover({
   ruleEventFilter: string | null
   onRuleEventFilterChange: (v: string | null) => void
   ruleEventTypes: string[]
+  tagFilter: string | null
+  onTagFilterChange: (v: string | null) => void
+  availableTags: string[]
+  priorityFilter: number | null
+  onPriorityFilterChange: (v: number | null) => void
 }) {
   return (
     <div className="workflows-filter-popover">
@@ -422,6 +427,42 @@ function FilterPopover({
         </div>
       )}
 
+      {/* Priority */}
+      <div className="workflows-filter-popover-section">
+        <div className="workflows-filter-popover-label">Priority</div>
+        <div className="workflows-filter-popover-chips">
+          {[1, 2, 3].map(p => (
+            <button
+              key={p}
+              type="button"
+              className={`workflows-filter-chip ${priorityFilter === p ? 'workflows-filter-chip--active' : ''}`}
+              onClick={() => onPriorityFilterChange(priorityFilter === p ? null : p)}
+            >
+              P{p}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tags */}
+      {availableTags.length > 0 && (
+        <div className="workflows-filter-popover-section">
+          <div className="workflows-filter-popover-label">Tag</div>
+          <div className="workflows-filter-popover-chips">
+            {availableTags.map(tag => (
+              <button
+                key={tag}
+                type="button"
+                className={`workflows-filter-chip ${tagFilter === tag ? 'workflows-filter-chip--active' : ''}`}
+                onClick={() => onTagFilterChange(tagFilter === tag ? null : tag)}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Hide Built-in */}
       <div className="workflows-filter-popover-section workflows-filter-popover-section--bottom">
         <label className="workflows-filter-popover-checkbox" onClick={() => onHideGobbyChange(!hideGobby)}>
@@ -451,6 +492,7 @@ export function YamlEditorModal({ workflowName, yamlContent, loading, onChange, 
   onSave: () => Promise<void>
   onClose: () => void
 }) {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
@@ -469,13 +511,14 @@ export function YamlEditorModal({ workflowName, yamlContent, loading, onChange, 
     }
   }
 
-  const handleClose = () => {
-    if (isDirty && !window.confirm('You have unsaved changes. Discard them?')) return
+  const handleClose = async () => {
+    if (isDirty && !await confirm({ title: 'Unsaved changes', description: 'You have unsaved changes. Discard them?', confirmLabel: 'Discard', destructive: true })) return
     onClose()
   }
 
   return (
     <div className="workflows-modal-overlay" onClick={handleClose}>
+      {ConfirmDialogElement}
       <div className="workflows-yaml-modal" onClick={e => e.stopPropagation()}>
         <div className="workflows-yaml-header">
           <h3>Edit YAML — {workflowName}</h3>

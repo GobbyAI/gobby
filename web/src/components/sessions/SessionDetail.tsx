@@ -6,6 +6,7 @@ import { BranchIcon, ChatIcon, SummaryIcon } from '../shared/Icons'
 import { MemoizedMarkdown } from '../shared/MemoizedMarkdown'
 import { SessionTranscript } from './SessionTranscript'
 import { SessionLineage } from './SessionLineage'
+import { ConfirmDialog } from '../chat/ui/ConfirmDialog'
 import { DURATION_INVALID, formatDuration, formatTokens, formatCost } from '../../utils/formatTime'
 
 interface SessionDetailProps {
@@ -218,6 +219,7 @@ function SessionActions({
   onWatchInChat?: (session: GobbySession) => void
 }) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -232,6 +234,7 @@ function SessionActions({
   }, [dropdownOpen])
 
   const hasMessages = (session.message_count ?? 0) > 0
+  const isActiveTerminal = session.status === 'active' && session.source !== 'claude_sdk_web_chat'
 
   return (
     <div className="session-detail-actions" ref={dropdownRef}>
@@ -261,13 +264,19 @@ function SessionActions({
             <button
               className="session-detail-dropdown-item"
               disabled={!hasMessages}
-              title={!hasMessages ? 'No messages recorded' : 'Continue this session in chat with full history'}
+              title={!hasMessages ? 'No messages recorded' : isActiveTerminal
+                ? 'Take over this terminal session in web chat (terminal will be closed)'
+                : 'Continue this session in chat with full history'}
               onClick={() => {
                 setDropdownOpen(false)
-                onContinueInChat(session)
+                if (isActiveTerminal) {
+                  setConfirmOpen(true)
+                } else {
+                  onContinueInChat(session)
+                }
               }}
             >
-              <ResumeIcon /> Resume Session
+              <ResumeIcon /> {isActiveTerminal ? 'Continue in Chat' : 'Resume Session'}
             </button>
           )}
           {onAskGobby && (
@@ -282,6 +291,20 @@ function SessionActions({
             </button>
           )}
         </div>
+      )}
+      {onContinueInChat && (
+        <ConfirmDialog
+          open={confirmOpen}
+          title="Continue in Chat"
+          description="This will end the terminal session and resume it here in the web chat. The terminal pane will be closed."
+          confirmLabel="Continue"
+          cancelLabel="Cancel"
+          onConfirm={() => {
+            setConfirmOpen(false)
+            onContinueInChat(session)
+          }}
+          onCancel={() => setConfirmOpen(false)}
+        />
       )}
     </div>
   )

@@ -33,8 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
+    from gobby.hooks.broadcaster import HookEventBroadcaster
+    from gobby.hooks.event_handlers import EventHandlers
+    from gobby.hooks.webhooks import WebhookDispatcher
+    from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.session_messages import LocalSessionMessageManager
     from gobby.storage.sessions import LocalSessionManager
+    from gobby.workflows.hooks import WorkflowHookHandler
 
 
 class WebSocketServer(
@@ -93,11 +98,11 @@ class WebSocketServer(
         self.session_manager = session_manager
         self.message_manager = message_manager
         self.daemon_config = daemon_config
-        self.workflow_handler: Any = None  # WorkflowHookHandler from HookManager
-        self.event_handlers: Any = None  # EventHandlers from HookManager
-        self.webhook_dispatcher: Any = None  # WebhookDispatcher from HookManager
-        self.hook_broadcaster: Any = None  # HookEventBroadcaster for audit trail
-        self.inter_session_msg_manager: Any = None  # InterSessionMessageManager for piggyback
+        self.workflow_handler: WorkflowHookHandler | None = None
+        self.event_handlers: EventHandlers | None = None
+        self.webhook_dispatcher: WebhookDispatcher | None = None
+        self.hook_broadcaster: HookEventBroadcaster | None = None
+        self.inter_session_msg_manager: InterSessionMessageManager | None = None
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}

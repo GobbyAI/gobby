@@ -36,6 +36,7 @@ class AgentRun:
     turns_used: int = 0
     started_at: str | None = None
     completed_at: str | None = None
+    sdk_session_id: str | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> AgentRun:
@@ -57,6 +58,7 @@ class AgentRun:
             completed_at=row["completed_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            sdk_session_id=row["sdk_session_id"] if "sdk_session_id" in row.keys() else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +80,7 @@ class AgentRun:
             "completed_at": self.completed_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "sdk_session_id": self.sdk_session_id,
         }
 
 
@@ -261,6 +264,44 @@ class LocalAgentRunManager:
             (now, now, run_id),
         )
         return self.get(run_id)
+
+    def update_sdk_session_id(self, run_id: str, sdk_session_id: str) -> AgentRun | None:
+        """Store the SDK session ID for cross-mode resume.
+
+        Args:
+            run_id: The agent run ID.
+            sdk_session_id: The Claude CLI session ID captured from ResultMessage.
+
+        Returns:
+            Updated AgentRun.
+        """
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """
+            UPDATE agent_runs
+            SET sdk_session_id = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (sdk_session_id, now, run_id),
+        )
+        return self.get(run_id)
+
+    def get_sdk_session_id_for_session(self, session_id: str) -> str | None:
+        """Find SDK session ID for a session that was an agent run.
+
+        Looks up agent_runs where child_session_id matches, returning
+        the most recent sdk_session_id.
+        """
+        row = self.db.fetchone(
+            """
+            SELECT sdk_session_id FROM agent_runs
+            WHERE child_session_id = ? AND sdk_session_id IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        )
+        return row["sdk_session_id"] if row else None
 
     def update_child_session(self, run_id: str, child_session_id: str) -> AgentRun | None:
         """Update the child session ID for an agent run."""

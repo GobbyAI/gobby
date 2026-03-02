@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react'
 import type { WorkflowDetail } from '../../hooks/useWorkflows'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import './PipelineEditor.css'
 
 // ---------------------------------------------------------------------------
@@ -106,6 +107,8 @@ interface PipelineEditorProps {
 // ---------------------------------------------------------------------------
 
 export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorProps>(function PipelineEditor({ pipeline, updateWorkflow, onBack, onExport, inSidebar }, ref) {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
+
   // Parse definition
   const initDef = useMemo(() => {
     try {
@@ -129,10 +132,10 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
 
   const markDirty = useCallback(() => setDirty(true), [])
 
-  const handleBack = useCallback(() => {
-    if (isDirty && !window.confirm('You have unsaved changes. Discard them?')) return
+  const handleBack = useCallback(async () => {
+    if (isDirty && !await confirm({ title: 'Unsaved changes', description: 'You have unsaved changes. Discard them?', confirmLabel: 'Discard', destructive: true })) return
     onBack()
-  }, [isDirty, onBack])
+  }, [isDirty, onBack, confirm])
 
   // ---- Step mutations ----
 
@@ -145,13 +148,13 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
   )
 
   const deleteStep = useCallback(
-    (index: number) => {
-      if (!window.confirm('Delete this step?')) return
+    async (index: number) => {
+      if (!await confirm({ title: 'Delete step?', confirmLabel: 'Delete', destructive: true })) return
       setSteps((prev) => prev.filter((_, i) => i !== index))
       setExpandedId(null)
       markDirty()
     },
-    [markDirty],
+    [markDirty, confirm],
   )
 
   const moveStep = useCallback(
@@ -242,6 +245,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
 
   return (
     <div className={`pipeline-editor${inSidebar ? ' pipeline-editor--sidebar' : ''}`}>
+      {ConfirmDialogElement}
       {/* Header — hidden when inside sidebar */}
       {!inSidebar && (
         <div className="pipeline-editor-toolbar">

@@ -7,7 +7,6 @@ description: |
   is set on a command or max iterations reached.
 
 inputs:
-  parent_session_id: null
   wait_timeout: 600
   max_iterations: 50
   _current_iteration: 0
@@ -24,7 +23,7 @@ steps:
       tool: send_message
       arguments:
         from_session: "${{ session_id }}"
-        to_session: "${{ inputs.parent_session_id }}"
+        to_session: "${{ parent_session_id }}"
         content: "Ready for command (iteration ${{ inputs._current_iteration }})"
 
   - id: wait_command
@@ -43,7 +42,7 @@ steps:
       tool: send_message
       arguments:
         from_session: "${{ session_id }}"
-        to_session: "${{ inputs.parent_session_id }}"
+        to_session: "${{ parent_session_id }}"
         content: "Wait for command timed out after ${{ inputs.wait_timeout }} seconds."
 
   - id: process_command
@@ -67,7 +66,6 @@ steps:
     invoke_pipeline:
       name: command-listener
       arguments:
-        parent_session_id: "${{ inputs.parent_session_id }}"
         wait_timeout: "${{ inputs.wait_timeout }}"
         max_iterations: "${{ inputs.max_iterations }}"
         _current_iteration: "${{ inputs._current_iteration + 1 }}"

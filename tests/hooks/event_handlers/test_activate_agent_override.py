@@ -74,11 +74,15 @@ class TestAgentNameOverride:
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
     def test_no_override_reads_config_store(
-        self, mock_resolve: MagicMock, _mock_svm: MagicMock
+        self, mock_resolve: MagicMock, mock_svm_cls: MagicMock
     ) -> None:
         """When no override is provided, ConfigStore is used to get the default agent."""
         handlers = _make_event_handlers()
         mock_resolve.return_value = _make_agent_body("default")
+
+        # SessionVariableManager must return empty vars so the code falls
+        # through to ConfigStore instead of using existing _agent_type.
+        mock_svm_cls.return_value.get_variables.return_value = {}
 
         with patch("gobby.storage.config_store.ConfigStore") as mock_cs:
             mock_cs.return_value.get.return_value = "default"

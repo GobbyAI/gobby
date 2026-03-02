@@ -253,9 +253,9 @@ def test_validation_history_foreign_key(tmp_path) -> None:
     sql_lower = row["sql"].lower()
 
     # Check for foreign key reference to tasks
-    assert "references tasks" in sql_lower or "foreign key" in sql_lower, (
-        "task_validation_history missing foreign key to tasks"
-    )
+    assert (
+        "references tasks" in sql_lower or "foreign key" in sql_lower
+    ), "task_validation_history missing foreign key to tasks"
 
 
 def test_validation_history_index_exists(tmp_path) -> None:
@@ -569,9 +569,9 @@ def test_test_strategy_column_removed_after_migration(tmp_path) -> None:
     assert row is not None
     sql_lower = row["sql"].lower()
     # test_strategy should not appear in the schema (it's been renamed to category)
-    assert "test_strategy" not in sql_lower, (
-        "test_strategy column should not exist after migration to category"
-    )
+    assert (
+        "test_strategy" not in sql_lower
+    ), "test_strategy column should not exist after migration to category"
 
 
 def test_category_column_accepts_values(tmp_path) -> None:
@@ -942,9 +942,9 @@ def test_inter_session_messages_foreign_keys(tmp_path) -> None:
     sql_lower = row["sql"].lower()
 
     # Check for foreign key references to sessions
-    assert "references sessions" in sql_lower or "foreign key" in sql_lower, (
-        "inter_session_messages missing foreign key to sessions"
-    )
+    assert (
+        "references sessions" in sql_lower or "foreign key" in sql_lower
+    ), "inter_session_messages missing foreign key to sessions"
 
 
 def test_inter_session_messages_indexes(tmp_path) -> None:
@@ -1219,9 +1219,9 @@ def test_workflow_instances_unique_constraint(tmp_path) -> None:
     )
     assert row is not None
     sql_lower = row["sql"].lower()
-    assert "unique(session_id, workflow_name)" in sql_lower, (
-        "UNIQUE(session_id, workflow_name) constraint missing"
-    )
+    assert (
+        "unique(session_id, workflow_name)" in sql_lower
+    ), "UNIQUE(session_id, workflow_name) constraint missing"
 
 
 def test_workflow_instances_foreign_key(tmp_path) -> None:
@@ -1701,9 +1701,9 @@ def test_workflow_definitions_unique_constraint(tmp_path) -> None:
         "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='workflow_definitions'"
     )
     index_names = {row["name"] for row in rows}
-    assert "idx_wf_defs_name_project" in index_names, (
-        "idx_wf_defs_name_project unique index missing"
-    )
+    assert (
+        "idx_wf_defs_name_project" in index_names
+    ), "idx_wf_defs_name_project unique index missing"
 
     # Verify it's unique
     for row in rows:
@@ -1726,7 +1726,7 @@ def test_workflow_definitions_bundled_import(tmp_path) -> None:
 
     # Check that well-known workflows are present
     names = {row["name"] for row in rows}
-    assert "developer" in names, "developer workflow not imported"
+    assert "code-review" in names, "code-review workflow not imported"
 
 
 def test_workflow_definitions_type_mapping(tmp_path) -> None:
@@ -1759,14 +1759,14 @@ def test_workflow_definitions_definition_json_populated(tmp_path) -> None:
 
     run_migrations(db)
 
-    row = db.fetchone("SELECT definition_json FROM workflow_definitions WHERE name = 'developer'")
-    assert row is not None, "developer not found"
+    row = db.fetchone("SELECT definition_json FROM workflow_definitions WHERE name = 'code-review'")
+    assert row is not None, "code-review not found"
     assert row["definition_json"] is not None, "definition_json is NULL"
 
     # Should be valid JSON
     parsed = json.loads(row["definition_json"])
     assert isinstance(parsed, dict)
-    assert parsed.get("name") == "developer"
+    assert parsed.get("name") == "code-review"
 
 
 def test_workflow_definitions_insert_or_ignore_idempotent(tmp_path) -> None:

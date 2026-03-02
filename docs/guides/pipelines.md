@@ -237,7 +237,8 @@ Converted to Jinja2 `{{ expr }}` internally and rendered with the full context.
 | `steps.<step_id>.output` | Output from a completed step |
 | `steps.<step_id>.output.<field>` | Nested field from step output (dict access) |
 | `env.<VAR_NAME>` | Environment variables (sensitive values filtered) |
-| `session_id` | Session that triggered execution |
+| `session_id` | Pipeline's own session (child of the caller session) |
+| `parent_session_id` | Session that triggered the pipeline (the caller) |
 
 **Source**: `src/gobby/workflows/pipeline/renderer.py` — `StepRenderer` (line 57)
 
@@ -745,6 +746,45 @@ steps:
 outputs:
   staging: $deploy-staging.output
   production: $deploy-prod.output
+```
+
+### Command Listener (P2P Messaging)
+
+Pipelines automatically create a child session, establishing the parent-child ancestry required by `send_command`/`wait_for_command`. The `session_id` template variable is the pipeline's own session, and `parent_session_id` is the caller.
+
+```yaml
+name: command-listener
+type: pipeline
+
+inputs:
+  wait_timeout: 600
+  max_iterations: 50
+  _current_iteration: 0
+
+steps:
+  - id: notify_ready
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        from_session: "${{ session_id }}"           # pipeline's child session
+        to_session: "${{ parent_session_id }}"       # caller who started the pipeline
+
+  - id: wait_command
+    mcp:
+      server: gobby-agents
+      tool: wait_for_command
+      arguments:
+        session_id: "${{ session_id }}"
+        timeout: "${{ inputs.wait_timeout }}"
+
+  - id: next_iteration
+    condition: "${{ steps.wait_command.output.command }}"
+    invoke_pipeline:
+      name: command-listener
+      arguments:
+        wait_timeout: "${{ inputs.wait_timeout }}"
+        _current_iteration: "${{ inputs._current_iteration + 1 }}"
 ```
 
 ## See Also

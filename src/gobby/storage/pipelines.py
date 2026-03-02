@@ -269,6 +269,7 @@ class LocalPipelineExecutionManager:
         error: str | None = None,
         approval_token: str | None = None,
         approved_by: str | None = None,
+        approval_timeout_seconds: int | None = None,
     ) -> StepExecution | None:
         """Update a step execution.
 
@@ -318,6 +319,10 @@ class LocalPipelineExecutionManager:
             updates.append("approved_at = ?")
             params.append(now)
 
+        if approval_timeout_seconds is not None:
+            updates.append("approval_timeout_seconds = ?")
+            params.append(approval_timeout_seconds)
+
         if not updates:
             # Nothing to update
             row = self.db.fetchone(
@@ -355,6 +360,82 @@ class LocalPipelineExecutionManager:
             (token,),
         )
         return StepExecution.from_row(row) if row else None
+
+    def fail_stale_running_executions(self) -> int:
+        """Mark running executions and their steps as failed.
+
+        Called during daemon startup to recover from unclean shutdowns.
+        Leaves waiting_approval executions alone (they can still be approved).
+
+        Returns:
+            Number of executions marked as failed.
+        """
+        now = datetime.now(UTC).isoformat()
+
+        # Fail running step executions that belong to running pipeline executions
+        self.db.execute(
+            """
+            UPDATE step_executions
+            SET status = ?, error = 'Daemon restarted', completed_at = ?
+            WHERE status = ?
+              AND execution_id IN (
+                  SELECT id FROM pipeline_executions
+                  WHERE status = ? AND project_id = ?
+              )
+            """,
+            (
+                StepStatus.FAILED.value,
+                now,
+                StepStatus.RUNNING.value,
+                ExecutionStatus.RUNNING.value,
+                self.project_id,
+            ),
+        )
+
+        # Fail running pipeline executions
+        cursor = self.db.execute(
+            """
+            UPDATE pipeline_executions
+            SET status = ?, outputs_json = ?, completed_at = ?, updated_at = ?
+            WHERE status = ? AND project_id = ?
+            """,
+            (
+                ExecutionStatus.FAILED.value,
+                '{"error": "Daemon restarted while execution was in progress"}',
+                now,
+                now,
+                ExecutionStatus.RUNNING.value,
+                self.project_id,
+            ),
+        )
+
+        count: int = cursor.rowcount if cursor else 0
+        if count > 0:
+            logger.info(f"Marked {count} stale running executions as failed after restart")
+        return count
+
+    def get_expired_approval_steps(self) -> list[StepExecution]:
+        """Get step executions where approval has timed out.
+
+        Finds steps that are waiting_approval with a configured timeout
+        where started_at + timeout_seconds < now.
+
+        Returns:
+            List of expired StepExecution instances.
+        """
+        rows = self.db.fetchall(
+            """
+            SELECT se.* FROM step_executions se
+            JOIN pipeline_executions pe ON se.execution_id = pe.id
+            WHERE se.status = ?
+              AND se.approval_timeout_seconds IS NOT NULL
+              AND se.started_at IS NOT NULL
+              AND datetime(se.started_at, '+' || se.approval_timeout_seconds || ' seconds') < datetime('now')
+              AND pe.project_id = ?
+            """,
+            (StepStatus.WAITING_APPROVAL.value, self.project_id),
+        )
+        return [StepExecution.from_row(row) for row in rows]
 
     def get_steps_for_execution(self, execution_id: str) -> list[StepExecution]:
         """Get all steps for an execution.

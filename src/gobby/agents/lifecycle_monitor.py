@@ -96,18 +96,15 @@ class AgentLifecycleMonitor:
                 break
 
     async def check_dead_agents(self) -> int:
-        """Check for dead tmux agents and clean up.
+        """Check for dead agents (tmux and autonomous) and clean up.
 
         Returns:
             Number of dead agents cleaned up.
         """
         agents = self._registry.list_all()
 
-        # Only check terminal-mode agents that have a tmux session name
+        # Check terminal-mode agents that have a tmux session name
         tmux_agents = [a for a in agents if a.mode == "terminal" and a.tmux_session_name]
-
-        if not tmux_agents:
-            return 0
 
         cleaned = 0
         for agent in tmux_agents:
@@ -157,7 +154,71 @@ class AgentLifecycleMonitor:
                 logger.warning(f"Error checking agent {agent.run_id}: {e}")
 
         if cleaned > 0:
-            logger.info(f"Cleaned up {cleaned} dead agent(s)")
+            logger.info(f"Cleaned up {cleaned} dead tmux agent(s)")
+
+        # Check autonomous/in_process agents with asyncio.Tasks
+        task_agents = [
+            a for a in agents if a.task is not None and a.mode in ("autonomous", "in_process")
+        ]
+        for agent in task_agents:
+            task: asyncio.Task[object] = agent.task  # type: ignore[assignment]
+            if not task.done():
+                continue
+
+            try:
+                exc = task.exception()
+                if exc:
+                    error_msg = f"Autonomous agent failed: {exc}"
+                    logger.info(f"Detected failed autonomous task for agent {agent.run_id}: {exc}")
+                else:
+                    error_msg = None
+                    logger.info(f"Detected completed autonomous task for agent {agent.run_id}")
+            except asyncio.CancelledError:
+                error_msg = "Autonomous agent was cancelled"
+                logger.info(f"Detected cancelled autonomous task for agent {agent.run_id}")
+
+            try:
+                # Update DB record
+                db_run = await asyncio.to_thread(self._agent_run_manager.get, agent.run_id)
+                if db_run and db_run.status in ("pending", "running"):
+                    if error_msg:
+                        await asyncio.to_thread(
+                            self._agent_run_manager.fail,
+                            agent.run_id,
+                            error=error_msg,
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            self._agent_run_manager.complete,
+                            agent.run_id,
+                            result="Completed (detected by lifecycle monitor)",
+                        )
+
+                # Remove from in-memory registry
+                status = "failed" if error_msg else "completed"
+                self._registry.remove(agent.run_id, status=status)
+
+                # Release worktrees
+                if self._session_coordinator:
+                    try:
+                        self._session_coordinator.release_session_worktrees(agent.session_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to release worktrees for agent {agent.run_id}: {e}")
+
+                # Release clones
+                if self._clone_storage and agent.clone_id:
+                    try:
+                        await asyncio.to_thread(self._clone_storage.release, agent.clone_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to release clone for agent {agent.run_id}: {e}")
+
+                cleaned += 1
+
+            except Exception as e:
+                logger.warning(f"Error cleaning up autonomous agent {agent.run_id}: {e}")
+
+        if cleaned > 0:
+            logger.info(f"Cleaned up {cleaned} dead agent(s) total")
 
         return cleaned
 

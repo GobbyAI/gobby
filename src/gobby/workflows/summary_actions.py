@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import aiofiles
 
@@ -21,9 +20,6 @@ from gobby.workflows.git_utils import (
     get_git_status,
     get_recent_git_commits,
 )
-
-if TYPE_CHECKING:
-    from gobby.workflows.actions import ActionContext
 
 logger = logging.getLogger(__name__)
 
@@ -213,33 +209,42 @@ async def _write_summary_file(
     content: str,
     output_path: str | None = None,
     session_manager: Any = None,
+    mode: str = "full",
 ) -> str | None:
     """Write summary to file in session_summaries directory.
+
+    Files are named ``{seq_num}-{mode}.md`` (e.g. ``2139-full.md``).
+    Falls back to ``{external_id}-{mode}.md`` or ``{session_id}-{mode}.md``
+    when seq_num is unavailable.
 
     Args:
         session_id: Internal session ID
         content: Summary markdown content
         output_path: Override directory for summary files
-        session_manager: Session manager to look up external_id
+        session_manager: Session manager to look up seq_num / external_id
+        mode: "full" or "compact" — used as filename suffix
 
     Returns:
         Path to written file, or None on failure
     """
-    external_id: str | None = None
     summary_dir: Path | None = None
+    ref: str = session_id
     try:
         summary_dir = Path(output_path or "~/.gobby/session_summaries").expanduser()
         summary_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use external_id in filename for failback reader compatibility
         if session_manager:
             session = session_manager.get(session_id)
             if session:
-                external_id = getattr(session, "external_id", None)
+                seq_num = getattr(session, "seq_num", None)
+                if isinstance(seq_num, int) and seq_num > 0:
+                    ref = str(seq_num)
+                else:
+                    ref = getattr(session, "external_id", None) or session_id
+                    if not isinstance(ref, str):
+                        ref = session_id
 
-        file_id = external_id or session_id
-        timestamp = int(time.time())
-        summary_file = summary_dir / f"session_{timestamp}_{file_id}.md"
+        summary_file = summary_dir / f"{ref}-{mode}.md"
 
         async with aiofiles.open(summary_file, "w", encoding="utf-8") as f:
             await f.write(content)
@@ -248,7 +253,7 @@ async def _write_summary_file(
             "Session summary written",
             extra={
                 "session_id": session_id,
-                "external_id": external_id,
+                "ref": ref,
                 "summary_file": str(summary_file),
                 "output_dir": str(summary_dir),
             },
@@ -260,7 +265,7 @@ async def _write_summary_file(
             exc_info=True,
             extra={
                 "session_id": session_id,
-                "external_id": external_id,
+                "ref": ref,
                 "output_dir": str(summary_dir) if summary_dir is not None else None,
             },
         )
@@ -477,6 +482,7 @@ async def generate_summary(
             content=summary_content,
             output_path=output_path,
             session_manager=session_manager,
+            mode=mode,
         )
 
     logger.info(f"Generated summary for session {session_id} (mode={mode})")
@@ -487,10 +493,10 @@ async def generate_summary(
 
 
 # --- ActionHandler-compatible wrappers ---
-# These match the ActionHandler protocol: (context: ActionContext, **kwargs) -> dict | None
+# These match the ActionHandler protocol: (context: Any, **kwargs) -> dict | None
 
 
-async def handle_generate_summary(context: ActionContext, **kwargs: Any) -> dict[str, Any] | None:
+async def handle_generate_summary(context: Any, **kwargs: Any) -> dict[str, Any] | None:
     """ActionHandler wrapper for generate_summary."""
     return await generate_summary(
         session_manager=context.session_manager,

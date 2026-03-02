@@ -3,6 +3,7 @@ import '../agents/agents.css'
 import * as yaml from 'js-yaml'
 import { useAgentRuns } from '../../hooks/useAgentRuns'
 import type { RunningAgent, AgentRun } from '../../hooks/useAgentRuns'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { YamlEditorModal } from './WorkflowsPage'
 import { AgentEditForm } from '../agents/AgentEditForm'
 import type { AgentFormData } from '../agents/AgentEditForm'
@@ -150,9 +151,12 @@ interface AgentsTabProps {
   hideInstalled?: boolean
   filterProvider: string
   onProvidersChange: (providers: string[]) => void
+  tagFilter?: string | null
+  onTagsChange?: (tags: string[]) => void
 }
 
-export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, onToggleCreateForm, refreshKey = 0, projectId, hideGobby, hideInstalled, filterProvider, onProvidersChange }: AgentsTabProps) {
+export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, onToggleCreateForm, refreshKey = 0, projectId, hideGobby, hideInstalled, filterProvider, onProvidersChange, tagFilter, onTagsChange }: AgentsTabProps) {
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
   const { running, recentRuns, cancelAgent } = useAgentRuns()
   const [definitions, setDefinitions] = useState<AgentDefInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -312,6 +316,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
 
     if (hideInstalled && installedNames.has(d.definition.name)) return false
     if (filterProvider !== 'all' && d.definition.provider !== filterProvider) return false
+    if (tagFilter && !(d.tags && d.tags.includes(tagFilter))) return false
     if (searchText.trim()) {
       const q = searchText.toLowerCase()
       if (
@@ -322,7 +327,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       ) return false
     }
     return true
-  }), [definitions, installedNames, sourceFilter, filterProvider, searchText, hideGobby, hideInstalled])
+  }), [definitions, installedNames, sourceFilter, filterProvider, searchText, hideGobby, hideInstalled, tagFilter])
 
   const providers = useMemo(
     () => [...new Set(definitions.map(d => d.definition.provider))].sort(),
@@ -332,6 +337,18 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
   useEffect(() => {
     onProvidersChange(providers)
   }, [providers, onProvidersChange])
+
+  const allTags = useMemo(() => {
+    const tags = new Set<string>()
+    for (const d of definitions) {
+      if (d.tags) for (const t of d.tags) tags.add(t)
+    }
+    return [...tags].sort()
+  }, [definitions])
+
+  useEffect(() => {
+    onTagsChange?.(allTags)
+  }, [allTags, onTagsChange])
 
   const handleCreate = async () => {
     try {
@@ -542,7 +559,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
   }, [fetchDefinitions, showToast])
 
   const handleDelete = async (dbId: string) => {
-    if (!confirm('Delete this agent definition?')) return
+    if (!await confirm({ title: 'Delete agent definition?', confirmLabel: 'Delete', destructive: true })) return
     try {
       const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${dbId}`, {
         method: 'DELETE',
@@ -713,7 +730,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
 
   const handleMoveToProject = useCallback(async (item: AgentDefInfo) => {
     if (!projectId || !item.db_id) return
-    if (!window.confirm(`Move "${item.definition.name}" to the current project? It will no longer apply globally.`)) return
+    if (!await confirm({ title: 'Move to project?', description: `Move "${item.definition.name}" to the current project? It will no longer apply globally.`, confirmLabel: 'Move' })) return
     try {
       const res = await fetch(`${getBaseUrl()}/api/workflows/${item.db_id}/move-to-project`, {
         method: 'POST',
@@ -728,7 +745,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
 
   const handleMoveToGlobal = useCallback(async (item: AgentDefInfo) => {
     if (!item.db_id) return
-    if (!window.confirm(`Move "${item.definition.name}" to global scope? It will apply to all projects.`)) return
+    if (!await confirm({ title: 'Move to global?', description: `Move "${item.definition.name}" to global scope? It will apply to all projects.`, confirmLabel: 'Move' })) return
     try {
       const res = await fetch(`${getBaseUrl()}/api/workflows/${item.db_id}/move-to-global`, {
         method: 'POST',
@@ -759,6 +776,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
 
   return (
     <div className="agent-defs-tab">
+      {ConfirmDialogElement}
       {toastMessage && (
         <div
           className={`agent-defs-toast ${toastMessage.type === 'success' ? 'agent-defs-toast--success' : ''}`}

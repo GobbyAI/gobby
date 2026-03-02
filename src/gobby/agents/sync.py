@@ -108,6 +108,8 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                             description=body.description,
                             tags=["gobby"],
                         )
+                        # Propagate definition changes to installed copy
+                        _propagate_to_installed(manager, name, body_json)
                         logger.info(f"Updated bundled agent definition: {name}")
                         result["updated"] += 1
                     except Exception as e:
@@ -146,6 +148,32 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
     )
 
     return result
+
+
+def _propagate_to_installed(
+    manager: LocalWorkflowDefinitionManager,
+    agent_name: str,
+    definition_json: str,
+) -> None:
+    """Propagate definition_json changes from a template to its installed copy.
+
+    Preserves the installed copy's enabled state.
+    """
+    from gobby.storage.workflow_definitions import WorkflowDefinitionRow
+
+    installed_row = manager.db.fetchone(
+        "SELECT * FROM workflow_definitions "
+        "WHERE name = ? AND source = 'installed' AND deleted_at IS NULL",
+        (agent_name,),
+    )
+    if installed_row:
+        installed = WorkflowDefinitionRow.from_row(installed_row)
+        if installed.definition_json != definition_json:
+            manager.update(
+                installed.id,
+                definition_json=definition_json,
+            )
+            logger.info(f"Propagated agent definition change to installed copy: {agent_name}")
 
 
 def _ensure_gobby_tag_on_installed(

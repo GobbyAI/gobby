@@ -2,10 +2,11 @@
 Unified Spawn Executor for Agent Spawning.
 
 This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
-and clones.py into a single unified executor that handles terminal, embedded,
-and headless modes.
+and clones.py into a single unified executor that handles terminal and
+autonomous modes.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -24,8 +25,6 @@ from gobby.agents.spawn import (
     prepare_codex_spawn_with_preflight,
     prepare_terminal_spawn,
 )
-from gobby.agents.spawners.embedded import EmbeddedSpawner
-from gobby.agents.spawners.headless import HeadlessSpawner
 from gobby.agents.tmux.spawner import TmuxSpawner
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ class SpawnRequest:
     # Required fields
     prompt: str
     cwd: str
-    mode: Literal["terminal", "embedded", "headless", "self"]
+    mode: Literal["terminal", "autonomous", "self"]
     provider: str
     session_id: str
     run_id: str
@@ -55,7 +54,7 @@ class SpawnRequest:
     clone_id: str | None = None
     branch_name: str | None = None  # Git branch for worktree/clone isolation
     agent_depth: int = 0
-    max_agent_depth: int = 3
+    max_agent_depth: int = 5
     session_manager: Any | None = None  # Required for Gemini/Codex preflight
     machine_id: str | None = None
     model: str | None = None  # Model override (e.g., gemini-3-pro-preview)
@@ -64,6 +63,11 @@ class SpawnRequest:
     sandbox_config: SandboxConfig | None = None
     sandbox_args: list[str] | None = None
     sandbox_env: dict[str, str] | None = field(default=None)
+
+    # Autonomous mode fields
+    system_prompt: str | None = None  # Agent system prompt
+    max_turns: int | None = None  # From agent definition
+    agent_run_manager: Any | None = None  # LocalAgentRunManager for complete/fail
 
 
 @dataclass
@@ -81,7 +85,7 @@ class SpawnResult:
     master_fd: int | None = None
     error: str | None = None
     message: str | None = None
-    process: Any | None = None  # subprocess.Popen for headless
+    process: Any | None = None  # asyncio.Task for autonomous
     gemini_session_id: str | None = None  # Gemini external session ID
     codex_session_id: str | None = None  # Codex external session ID
     tmux_session_name: str | None = None  # Tmux session name for output streaming
@@ -89,7 +93,7 @@ class SpawnResult:
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """
-    Unified spawn dispatch for terminal/embedded/headless modes.
+    Unified spawn dispatch for terminal and autonomous modes.
 
     Consolidates duplicated logic from agents.py, worktrees.py, clones.py
     into a single dispatch function.
@@ -107,10 +111,16 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
         elif request.provider == "codex":
             return await _spawn_codex_terminal(request)
         return await _spawn_claude_terminal(request)
-    elif request.mode == "embedded":
-        return await _spawn_embedded(request)
-    else:  # headless
-        return await _spawn_headless(request)
+    elif request.mode == "autonomous":
+        return await _spawn_autonomous(request)
+    else:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=request.session_id,
+            status="failed",
+            error=f"Unknown spawn mode: {request.mode}",
+        )
 
 
 async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
@@ -211,80 +221,6 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         terminal_type=terminal_result.terminal_type,
         tmux_session_name=terminal_result.tmux_session_name,
         message=f"Claude agent spawned in {terminal_result.terminal_type} with session {gobby_session_id}",
-    )
-
-
-async def _spawn_embedded(request: SpawnRequest) -> SpawnResult:
-    """Spawn agent with PTY for UI attachment."""
-    spawner = EmbeddedSpawner()
-    result = spawner.spawn_agent(
-        cli=request.provider,
-        cwd=request.cwd,
-        session_id=request.session_id,
-        parent_session_id=request.parent_session_id,
-        agent_run_id=request.run_id,
-        project_id=request.project_id,
-        workflow_name=request.workflow,
-        agent_depth=request.agent_depth,
-        max_agent_depth=request.max_agent_depth,
-        prompt=request.prompt,
-        sandbox_config=request.sandbox_config,
-    )
-
-    if not result.success:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=request.session_id,
-            status="failed",
-            error=result.error or result.message,
-        )
-
-    return SpawnResult(
-        success=True,
-        run_id=request.run_id,
-        child_session_id=request.session_id,
-        status="pending",
-        pid=result.pid,
-        master_fd=result.master_fd,
-        message=f"Agent spawned with PTY (PID: {result.pid})",
-    )
-
-
-async def _spawn_headless(request: SpawnRequest) -> SpawnResult:
-    """Spawn headless agent with output capture."""
-    spawner = HeadlessSpawner()
-    result = spawner.spawn_agent(
-        cli=request.provider,
-        cwd=request.cwd,
-        session_id=request.session_id,
-        parent_session_id=request.parent_session_id,
-        agent_run_id=request.run_id,
-        project_id=request.project_id,
-        workflow_name=request.workflow,
-        agent_depth=request.agent_depth,
-        max_agent_depth=request.max_agent_depth,
-        prompt=request.prompt,
-        sandbox_config=request.sandbox_config,
-    )
-
-    if not result.success:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=request.session_id,
-            status="failed",
-            error=result.error or result.message,
-        )
-
-    return SpawnResult(
-        success=True,
-        run_id=request.run_id,
-        child_session_id=request.session_id,
-        status="running",  # Headless is immediately running
-        pid=result.pid,
-        process=result.process,
-        message=f"Agent spawned headless (PID: {result.pid})",
     )
 
 
@@ -470,4 +406,86 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         pid=terminal_result.pid,
         codex_session_id=codex_session_id,
         message=f"Codex agent spawned in terminal with session {gobby_session_id}",
+    )
+
+
+async def _spawn_autonomous(request: SpawnRequest) -> SpawnResult:
+    """
+    Spawn Claude agent using in-process SDK (AutonomousRunner).
+
+    Creates a child session via prepare_terminal_spawn, then launches
+    an AutonomousRunner as an asyncio.Task. The task reference is
+    returned on SpawnResult.process for lifecycle monitoring.
+    """
+    from gobby.agents.spawners.autonomous import AutonomousRunner
+
+    if request.session_manager is None:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error="session_manager is required for autonomous spawn",
+        )
+
+    # Create child session (same as terminal — reuses session/run infrastructure)
+    spawn_context = prepare_terminal_spawn(
+        session_manager=cast("ChildSessionManager", request.session_manager),
+        parent_session_id=request.parent_session_id,
+        project_id=request.project_id,
+        machine_id=request.machine_id or "unknown",
+        source="claude",
+        workflow_name=request.workflow,
+        initial_variables=request.initial_variables,
+        prompt=request.prompt,
+        max_agent_depth=request.max_agent_depth,
+        git_branch=request.branch_name,
+        agent_run_id=request.agent_run_id,
+    )
+
+    gobby_session_id = spawn_context.session_id
+
+    # Build PreCompact callback so Gobby context survives compaction
+    from gobby.servers.chat_session_helpers import build_compaction_context
+
+    _seq_num = spawn_context.seq_num
+    _session_ref = f"#{_seq_num}" if _seq_num else gobby_session_id
+
+    async def _on_pre_compact(data: dict[str, Any]) -> dict[str, Any] | None:
+        return {
+            "context": build_compaction_context(
+                session_ref=_session_ref,
+                project_id=request.project_id,
+                cwd=request.cwd,
+                source="autonomous_sdk",
+            )
+        }
+
+    runner = AutonomousRunner(
+        session_id=gobby_session_id,
+        run_id=spawn_context.agent_run_id,
+        project_id=request.project_id,
+        cwd=request.cwd,
+        prompt=request.prompt,
+        model=request.model,
+        system_prompt=request.system_prompt,
+        max_turns=request.max_turns,
+        agent_run_manager=request.agent_run_manager,
+        seq_num=_seq_num,
+        on_pre_compact=_on_pre_compact,
+    )
+
+    # Launch as background task for lifecycle monitoring
+    task = asyncio.create_task(
+        runner.run(),
+        name=f"autonomous-{spawn_context.agent_run_id}",
+    )
+
+    return SpawnResult(
+        success=True,
+        run_id=spawn_context.agent_run_id,
+        child_session_id=gobby_session_id,
+        status="running",
+        process=task,
+        message=f"Autonomous agent spawned with session {gobby_session_id}",
     )

@@ -1741,9 +1741,7 @@ class TestCustomMessagesInPolicies:
         mock_task.status = "in_progress"
         mock_task_manager.get_task.return_value = mock_task
 
-        custom_messages = {
-            "task_still_in_progress": "Custom: {{ task_ref }} needs closing."
-        }
+        custom_messages = {"task_still_in_progress": "Custom: {{ task_ref }} needs closing."}
 
         result = await require_task_review_or_close_before_stop(
             workflow_state=workflow_state,
@@ -1756,7 +1754,9 @@ class TestCustomMessagesInPolicies:
         assert result["reason"] == "Custom: #42 needs closing."
 
     @pytest.mark.asyncio
-    async def test_review_or_close_uses_default_when_no_messages(self, workflow_state, mock_task_manager):
+    async def test_review_or_close_uses_default_when_no_messages(
+        self, workflow_state, mock_task_manager
+    ):
         """Without messages param, default hardcoded message is used."""
         task_id = "01234567-89ab-cdef-0123-456789abcdef"
         workflow_state.variables["claimed_task_id"] = task_id
@@ -1807,7 +1807,9 @@ class TestCustomMessagesInPolicies:
         assert result["reason"] == "Custom: task-123 has 1 dirty files."
 
     @pytest.mark.asyncio
-    async def test_require_task_complete_uses_custom_message(self, workflow_state, mock_task_manager):
+    async def test_require_task_complete_uses_custom_message(
+        self, workflow_state, mock_task_manager
+    ):
         """Custom task_ready_to_close message replaces default."""
         parent_task = MagicMock()
         parent_task.id = "parent-uuid"
@@ -1817,9 +1819,7 @@ class TestCustomMessagesInPolicies:
         mock_task_manager.get_task.return_value = parent_task
         mock_task_manager.list_tasks.return_value = []  # no subtasks
 
-        custom_messages = {
-            "task_ready_to_close": "Please close {{ task_title }}."
-        }
+        custom_messages = {"task_ready_to_close": "Please close {{ task_title }}."}
 
         result = await require_task_complete(
             task_manager=mock_task_manager,
@@ -1852,6 +1852,7 @@ class TestLoadAgentPrompt:
         )
         # Patch at the import location inside the function
         import gobby.prompts.sync as sync_mod
+
         monkeypatch.setattr(sync_mod, "get_bundled_prompts_path", lambda: tmp_path)
 
         result = _load_agent_prompt("nonexistent", fallback="fallback text")
@@ -1863,11 +1864,10 @@ class TestLoadAgentPrompt:
 
         agent_dir = tmp_path / "agent"
         agent_dir.mkdir()
-        (agent_dir / "test-prompt.md").write_text(
-            "---\nname: test\n---\nHello world"
-        )
+        (agent_dir / "test-prompt.md").write_text("---\nname: test\n---\nHello world")
 
         import gobby.prompts.sync as sync_mod
+
         monkeypatch.setattr(sync_mod, "get_bundled_prompts_path", lambda: tmp_path)
 
         result = _load_agent_prompt("test-prompt", fallback="fallback")
@@ -1884,6 +1884,7 @@ class TestLoadAgentPrompt:
         )
 
         import gobby.prompts.sync as sync_mod
+
         monkeypatch.setattr(sync_mod, "get_bundled_prompts_path", lambda: tmp_path)
 
         result = _load_agent_prompt(
@@ -1908,6 +1909,7 @@ class TestLoadAgentPrompt:
         )
 
         import gobby.prompts.sync as sync_mod
+
         monkeypatch.setattr(sync_mod, "get_bundled_prompts_path", lambda: tmp_path)
 
         result = _load_agent_prompt(

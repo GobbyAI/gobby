@@ -92,7 +92,7 @@ Call `spawn_agent_in_clone` with:
 - `task_id`: Optional task ID to link
 - `base_branch`: Branch to clone from (default: main)
 - `clone_path`: Optional custom path for the clone
-- `mode`: Execution mode (terminal, embedded, headless) - default: terminal
+- `mode`: Execution mode (terminal, autonomous) - default: terminal
 - `terminal`: Terminal type (auto, ghostty, etc.) - default: auto
 - `provider`: LLM provider (claude, gemini, codex, antigravity) - default: claude
 - `model`: Optional model override
@@ -108,8 +108,8 @@ Creates clone + spawns agent in one call. The agent receives clone context inclu
 Example: `/gobby clones spawn feature/auth Implement OAuth login`
 -> `spawn_agent_in_clone(branch_name="feature/auth", prompt="Implement OAuth login", parent_session_id="<session_id>")`
 
-Example: `/gobby clones spawn feature/auth --headless Fix all type errors`
--> `spawn_agent_in_clone(branch_name="feature/auth", prompt="Fix all type errors", mode="headless", parent_session_id="<session_id>")`
+Example: `/gobby clones spawn feature/auth --autonomous Fix all type errors`
+-> `spawn_agent_in_clone(branch_name="feature/auth", prompt="Fix all type errors", mode="autonomous", parent_session_id="<session_id>")`
 
 ### `/gobby clones sync <clone-id>` - Sync with remote
 Call `sync_clone` with:

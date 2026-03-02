@@ -175,8 +175,8 @@ def _require_uv_effect() -> RuleEffect:
     return RuleEffect(
         type="block",
         tools=["Bash"],
-        command_pattern=r'(?:^|[;&|])\s*(?:sudo\s+)?(?:python(?:3(?:\.\d+)?)?|pip3?)\b',
-        command_not_pattern=r'(?:^|[;&|])\s*(?:sudo\s+)?uv\s+',
+        command_pattern=r"(?:^|[;&|])\s*(?:sudo\s+)?(?:python(?:3(?:\.\d+)?)?|pip3?)\b",
+        command_not_pattern=r"(?:^|[;&|])\s*(?:sudo\s+)?uv\s+",
         reason="Use `uv run` or `uv pip` instead of running python/pip directly.",
     )
 

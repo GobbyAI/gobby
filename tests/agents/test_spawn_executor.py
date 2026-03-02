@@ -58,7 +58,7 @@ class TestSpawnRequest:
         assert request.worktree_id is None
         assert request.clone_id is None
         assert request.agent_depth == 0
-        assert request.max_agent_depth == 3
+        assert request.max_agent_depth == 5
 
     def test_spawn_request_sandbox_fields_default_to_none(self) -> None:
         """Test SpawnRequest sandbox fields default to None."""
@@ -203,12 +203,12 @@ class TestExecuteSpawn:
             assert result.child_session_id == "child-session-id"
 
     @pytest.mark.asyncio
-    async def test_embedded_mode_calls_embedded_spawner(self):
-        """Test that embedded mode dispatches to EmbeddedSpawner."""
+    async def test_autonomous_mode_requires_session_manager(self):
+        """Test that autonomous mode requires session_manager."""
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
-            mode="embedded",
+            mode="autonomous",
             provider="claude",
             session_id="sess",
             run_id="run",
@@ -216,56 +216,10 @@ class TestExecuteSpawn:
             project_id="proj",
         )
 
-        mock_spawner = MagicMock()
-        mock_spawner.spawn_agent.return_value = MagicMock(
-            success=True,
-            pid=12345,
-            master_fd=5,
-            message="Spawned with PTY",
-        )
+        result = await execute_spawn(request)
 
-        with patch(
-            "gobby.agents.spawn_executor.EmbeddedSpawner",
-            return_value=mock_spawner,
-        ):
-            result = await execute_spawn(request)
-
-            mock_spawner.spawn_agent.assert_called_once()
-            assert result.success is True
-            assert result.pid == 12345
-            assert result.master_fd == 5
-
-    @pytest.mark.asyncio
-    async def test_headless_mode_calls_headless_spawner(self):
-        """Test that headless mode dispatches to HeadlessSpawner."""
-        request = SpawnRequest(
-            prompt="Test",
-            cwd="/path",
-            mode="headless",
-            provider="claude",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-        )
-
-        mock_spawner = MagicMock()
-        mock_spawner.spawn_agent.return_value = MagicMock(
-            success=True,
-            pid=12345,
-            process=MagicMock(),
-            message="Spawned headless",
-        )
-
-        with patch(
-            "gobby.agents.spawn_executor.HeadlessSpawner",
-            return_value=mock_spawner,
-        ):
-            result = await execute_spawn(request)
-
-            mock_spawner.spawn_agent.assert_called_once()
-            assert result.success is True
-            assert result.pid == 12345
+        assert result.success is False
+        assert "session_manager is required" in result.error
 
     @pytest.mark.asyncio
     async def test_spawn_failure_propagates_error(self):
@@ -675,13 +629,13 @@ class TestExecuteSpawnSandbox:
             assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_embedded_spawn_passes_sandbox_config(self) -> None:
-        """Test that sandbox_config is passed to EmbeddedSpawner."""
+    async def test_autonomous_spawn_without_session_manager_and_sandbox(self) -> None:
+        """Test that autonomous mode without session_manager fails even with sandbox."""
         sandbox_config = SandboxConfig(enabled=True, mode="restrictive")
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
-            mode="embedded",
+            mode="autonomous",
             provider="claude",
             session_id="sess",
             run_id="run",
@@ -690,65 +644,9 @@ class TestExecuteSpawnSandbox:
             sandbox_config=sandbox_config,
         )
 
-        mock_spawner = MagicMock()
-        mock_spawner.spawn_agent.return_value = MagicMock(
-            success=True,
-            pid=12345,
-            master_fd=5,
-        )
-
-        with patch(
-            "gobby.agents.spawn_executor.EmbeddedSpawner",
-            return_value=mock_spawner,
-        ):
-            result = await execute_spawn(request)
-
-            mock_spawner.spawn_agent.assert_called_once()
-            call_kwargs = mock_spawner.spawn_agent.call_args.kwargs
-            assert "sandbox_config" in call_kwargs
-            assert call_kwargs["sandbox_config"].enabled is True
-            assert call_kwargs["sandbox_config"].mode == "restrictive"
-            assert result.success is True
-
-    @pytest.mark.asyncio
-    async def test_headless_spawn_passes_sandbox_config(self) -> None:
-        """Test that sandbox_config is passed to HeadlessSpawner."""
-        sandbox_config = SandboxConfig(
-            enabled=True,
-            mode="permissive",
-            allow_network=False,
-        )
-        request = SpawnRequest(
-            prompt="Test",
-            cwd="/path",
-            mode="headless",
-            provider="claude",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            sandbox_config=sandbox_config,
-        )
-
-        mock_spawner = MagicMock()
-        mock_spawner.spawn_agent.return_value = MagicMock(
-            success=True,
-            pid=12345,
-            process=MagicMock(),
-        )
-
-        with patch(
-            "gobby.agents.spawn_executor.HeadlessSpawner",
-            return_value=mock_spawner,
-        ):
-            result = await execute_spawn(request)
-
-            mock_spawner.spawn_agent.assert_called_once()
-            call_kwargs = mock_spawner.spawn_agent.call_args.kwargs
-            assert "sandbox_config" in call_kwargs
-            assert call_kwargs["sandbox_config"].enabled is True
-            assert call_kwargs["sandbox_config"].allow_network is False
-            assert result.success is True
+        result = await execute_spawn(request)
+        assert result.success is False
+        assert "session_manager is required" in result.error
 
     @pytest.mark.asyncio
     async def test_sandbox_disabled_explicitly_passed(self) -> None:

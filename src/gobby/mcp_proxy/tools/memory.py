@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.manager import MemoryManager
 from gobby.workflows.memory_actions import (
-    memory_background_digest_and_synthesize,
+    build_turn_and_digest as _build_turn_and_digest,
+)
+from gobby.workflows.memory_actions import (
     memory_extract_from_session,
 )
 
@@ -681,41 +683,41 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    # NOTE: This tool is invoked via the `digest-on-response` DB rule (event=stop, mcp_call effect).
+    # It is NOT called directly from Python code. Do not remove without also removing the DB rule.
     @registry.tool(
-        name="digest_and_synthesize",
-        description="Update rolling session digest and synthesize a session title. Runs as a background task triggered by rules.",
+        name="build_turn_and_digest",
+        description="Build a detailed turn record from the last agent response, append to session digest, synthesize title, and extract memories. Fired by digest-on-response rule on stop events.",
     )
-    async def digest_and_synthesize(
+    async def build_turn_and_digest_tool(
         session_id: str = "",
         prompt_text: str | None = None,
-        limit: int = 20,
     ) -> dict[str, Any]:
         """
-        Update rolling session digest and synthesize a session title.
+        Build turn record and append to digest after agent response.
 
-        Builds a rolling LLM digest of the session, parses a short title
-        from the output, and persists both to the session record.
-        Also renames the tmux window to match the new title.
+        Reads the last user/assistant exchange from the transcript,
+        generates a structured turn record via LLM, appends it to the
+        session's rolling digest, synthesizes a title, and extracts
+        reusable memories.
 
         Args:
             session_id: Platform session ID (injected by dispatch layer)
-            prompt_text: The user's prompt text (injected by dispatch layer)
-            limit: Unused (kept for interface compatibility)
+            prompt_text: Optional user prompt (usually None for stop events)
         """
         if not session_id:
             return {"success": False, "error": "session_id is required"}
         try:
-            result = await memory_background_digest_and_synthesize(
+            result = await _build_turn_and_digest(
                 memory_manager=memory_manager,
                 session_manager=session_manager,
                 session_id=session_id,
                 prompt_text=prompt_text,
-                limit=limit,
                 llm_service=llm_service,
                 config=config,
             )
             if result is None:
-                return {"success": True, "skipped": True, "reason": "disabled or no input"}
+                return {"success": True, "skipped": True, "reason": "disabled or no content"}
             if "error" in result:
                 return {"success": False, "error": result["error"]}
             return {"success": True, **result}

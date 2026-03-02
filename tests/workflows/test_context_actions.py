@@ -789,7 +789,6 @@ class TestInjectMessage:
         assert call_args["variables"] == {}
 
 
-
 # --- Tests for format_handoff_as_markdown ---
 
 

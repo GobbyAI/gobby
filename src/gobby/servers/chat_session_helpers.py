@@ -196,6 +196,30 @@ def _response_to_stop_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
     return output
 
 
+def build_compaction_context(
+    *,
+    session_ref: str,
+    project_id: str | None = None,
+    cwd: str | None = None,
+    source: str | None = None,
+) -> str:
+    """Build essential Gobby context that must survive compaction.
+
+    Injected as additionalContext in PreCompact hooks so the agent
+    retains its identity and tool usage instructions after the SDK
+    compacts the conversation.
+    """
+    parts = [f"Gobby Session ID: {session_ref}"]
+    if project_id:
+        parts.append(f"Project ID: {project_id}")
+    if cwd:
+        parts.append(f"Working directory: {cwd}")
+    if source:
+        parts.append(f"Source: {source}")
+    parts.append("Use session_id in MCP tool calls (gobby-tasks, gobby-memory, etc.)")
+    return "\n".join(parts)
+
+
 def _response_to_compact_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to PreCompact SDK output."""
     if not resp:

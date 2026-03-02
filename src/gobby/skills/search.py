@@ -268,10 +268,15 @@ class SkillSearch:
         search_limit = top_k * 3 if filters else top_k
         raw_results = await self._searcher.search_async(query, top_k=search_limit)
 
+        # Pre-compute allowed_names set to avoid rebuilding per result
+        allowed_set: set[str] | None = None
+        if filters and filters.allowed_names is not None:
+            allowed_set = set(filters.allowed_names)
+
         # Build results with filtering
         results = []
         for skill_id, similarity in raw_results:
-            if filters and not self._passes_filters(skill_id, filters):
+            if filters and not self._passes_filters(skill_id, filters, allowed_set):
                 continue
 
             skill_name = self._skill_names.get(skill_id, skill_id)
@@ -327,12 +332,19 @@ class SkillSearch:
         else:
             return asyncio.run(self.search_async(query, top_k, filters))
 
-    def _passes_filters(self, skill_id: str, filters: SearchFilters) -> bool:
+    def _passes_filters(
+        self,
+        skill_id: str,
+        filters: SearchFilters,
+        allowed_set: set[str] | None = None,
+    ) -> bool:
         """Check if a skill passes the given filters.
 
         Args:
             skill_id: ID of the skill to check
             filters: Filters to apply
+            allowed_set: Pre-computed set from filters.allowed_names (avoids
+                rebuilding per call)
 
         Returns:
             True if skill passes all filters
@@ -357,8 +369,8 @@ class SkillSearch:
                 return False
 
         # Check allowed_names filter (session-scoped allowlist)
-        if filters.allowed_names is not None:
-            if meta.name not in set(filters.allowed_names):
+        if allowed_set is not None:
+            if meta.name not in allowed_set:
                 return False
 
         return True

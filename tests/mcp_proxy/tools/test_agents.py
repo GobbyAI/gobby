@@ -310,7 +310,7 @@ class TestListRunningAgents:
                 run_id="run-2",
                 session_id="sess-2",
                 parent_session_id="parent-1",
-                mode="embedded",
+                mode="autonomous",
                 pid=1002,
             )
         )
@@ -635,7 +635,7 @@ class TestRunningAgentStats:
                 run_id="run-3",
                 session_id="sess-3",
                 parent_session_id="parent-2",
-                mode="embedded",
+                mode="autonomous",
             )
         )
         running_registry.add(
@@ -643,7 +643,7 @@ class TestRunningAgentStats:
                 run_id="run-4",
                 session_id="sess-4",
                 parent_session_id="parent-3",
-                mode="headless",
+                mode="autonomous",
             )
         )
 
@@ -656,6 +656,85 @@ class TestRunningAgentStats:
         assert result["success"] is True
         assert result["total"] == 4
         assert result["by_mode"]["terminal"] == 2
-        assert result["by_mode"]["embedded"] == 1
-        assert result["by_mode"]["headless"] == 1
+        assert result["by_mode"]["autonomous"] == 2
         assert result["by_parent_count"] == 3  # 3 unique parents
+
+
+class TestFireSyntheticStop:
+    """Tests for _fire_synthetic_stop helper."""
+
+    def test_noop_when_no_resolver(self):
+        """Test that _fire_synthetic_stop does nothing when resolver is None."""
+        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
+
+        # Should not raise
+        _fire_synthetic_stop(None, "sess-123")
+
+    def test_noop_when_resolver_returns_none(self):
+        """Test that _fire_synthetic_stop does nothing when resolver returns None."""
+        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
+
+        _fire_synthetic_stop(lambda: None, "sess-123")
+
+    def test_calls_evaluate_workflow_rules(self):
+        """Test that _fire_synthetic_stop fires a synthetic STOP event."""
+        from gobby.hooks.events import HookEventType
+        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
+
+        mock_hook_mgr = MagicMock()
+        mock_hook_mgr._evaluate_workflow_rules.return_value = (None, None)
+
+        _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
+
+        mock_hook_mgr._evaluate_workflow_rules.assert_called_once()
+        event_arg = mock_hook_mgr._evaluate_workflow_rules.call_args[0][0]
+        assert event_arg.event_type == HookEventType.STOP
+        assert event_arg.metadata["_platform_session_id"] == "sess-123"
+
+    def test_catches_exceptions(self):
+        """Test that _fire_synthetic_stop catches and logs exceptions."""
+        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
+
+        mock_hook_mgr = MagicMock()
+        mock_hook_mgr._evaluate_workflow_rules.side_effect = RuntimeError("boom")
+
+        # Should not raise
+        _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
+
+    @pytest.mark.asyncio
+    async def test_kill_agent_fires_synthetic_stop(self):
+        """Test that kill_agent calls _fire_synthetic_stop after cleanup."""
+        running_registry = RunningAgentRegistry()
+        running_registry.add(
+            RunningAgent(
+                run_id="run-123",
+                session_id="sess-456",
+                parent_session_id="sess-parent",
+                mode="in_process",
+                task=MagicMock(),
+            )
+        )
+
+        runner = MagicMock()
+        runner.cancel_run.return_value = True
+
+        mock_hook_mgr = MagicMock()
+        mock_hook_mgr._evaluate_workflow_rules.return_value = (None, None)
+        mock_resolver = MagicMock(return_value=mock_hook_mgr)
+
+        registry = create_agents_registry(
+            runner,
+            running_registry=running_registry,
+            workflow_state_manager=MagicMock(),
+            hook_manager_resolver=mock_resolver,
+        )
+        kill_agent = registry._tools["kill_agent"].func
+
+        result = await kill_agent(run_id="run-123")
+
+        assert result["success"] is True
+        # Verify synthetic stop was fired for the agent's session
+        mock_resolver.assert_called_once()
+        mock_hook_mgr._evaluate_workflow_rules.assert_called_once()
+        event_arg = mock_hook_mgr._evaluate_workflow_rules.call_args[0][0]
+        assert event_arg.metadata["_platform_session_id"] == "sess-456"

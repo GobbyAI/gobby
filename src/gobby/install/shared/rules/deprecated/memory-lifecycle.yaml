@@ -44,18 +44,6 @@ rules:
         limit: 5
       background: false
 
-  memory-background-digest:
-    description: "Update session digest and synthesize memories (async, zero latency)"
-    event: before_agent
-    priority: 11
-    effect:
-      type: mcp_call
-      server: gobby-memory
-      tool: digest_and_synthesize
-      arguments:
-        limit: 20
-      background: true
-
   memory-capture-nudge:
     description: "Nudge agent to save user preferences or facts as memories"
     event: before_agent

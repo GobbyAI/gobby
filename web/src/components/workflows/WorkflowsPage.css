@@ -158,41 +158,6 @@
   background: var(--accent-hover);
 }
 
-/* New pipeline dropdown */
-.workflows-new-wrapper {
-  position: relative;
-}
-
-.workflows-new-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px;
-  min-width: 120px;
-  z-index: 50;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.workflows-new-dropdown-item {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: calc(var(--font-size-base) * 0.75);
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.15s;
-}
-
-.workflows-new-dropdown-item:hover {
-  background: var(--bg-tertiary);
-}
 
 /* Overview cards */
 .workflows-overview {
@@ -326,6 +291,35 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.workflows-card-header--clickable {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.workflows-card-header--clickable:hover {
+  opacity: 0.8;
+}
+
+.workflows-card-header--clickable:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.pipeline-edit-yaml-view {
+  height: 100%;
+}
+
+.pipeline-edit-yaml-view .codemirror-container {
+  height: 100%;
 }
 
 .workflows-card-name {

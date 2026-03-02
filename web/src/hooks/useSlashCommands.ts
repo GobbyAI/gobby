@@ -13,6 +13,7 @@ export const COMMANDS: CommandInfo[] = [
   { name: 'mcp', description: 'Browse external MCP tools', action: 'open_mcp' },
   { name: 'plan', description: 'Enter plan mode or show plan', action: 'show_plan' },
   { name: 'restart', description: 'Restart the Gobby daemon', action: 'restart_daemon' },
+  { name: 'resume', description: 'Resume a previous session', action: 'resume_session' },
   { name: 'settings', description: 'Open settings panel', action: 'open_settings' },
   { name: 'skills', description: 'Browse and run skills', action: 'open_skills' },
 ]

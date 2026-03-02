@@ -7,7 +7,8 @@ rules:
     enabled: false
     priority: 90
     when: >
-      variables.get('command_id')
+      variables.get('is_spawned_agent')
+      and variables.get('command_id')
       and variables.get('exit_condition_met')
     effect:
       type: mcp_call

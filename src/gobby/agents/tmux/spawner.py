@@ -108,10 +108,24 @@ class TmuxSpawner(TerminalSpawnerBase):
 
         shell_cmd = shlex.join(command) if len(command) > 1 else command[0]
 
+        # Unset VIRTUAL_ENV in the tmux session to avoid uv warnings
+        # when the agent runs in a worktree/clone with a different CWD.
+        # tmux inherits the daemon's env; -e can only SET vars, not unset.
+        shell_cmd = f"unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT; {shell_cmd}"
+
         # Merge env with a clean spawn env
         clean_env = make_spawn_env(env)
         # Only pass the *extra* env vars that differ from os.environ
         extra_env = {k: v for k, v in clean_env.items() if k in (env or {})}
+
+        # tmux -e can only SET vars, not unset them.  Override to empty so
+        # the session doesn't inherit the daemon's VIRTUAL_ENV (causes uv
+        # "does not match project environment" errors in worktrees/clones).
+        # The shell-level unset above provides full removal; this prevents
+        # inheritance if the unset doesn't take effect (e.g. login shells
+        # that re-source profiles).
+        extra_env["VIRTUAL_ENV"] = ""
+        extra_env["VIRTUAL_ENV_PROMPT"] = ""
 
         try:
             info = await self._session_manager.create_session(
@@ -154,7 +168,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         project_id: str,
         workflow_name: str | None = None,
         agent_depth: int = 1,
-        max_agent_depth: int = 3,
+        max_agent_depth: int = 5,
         prompt: str | None = None,
         sandbox_config: SandboxConfig | None = None,
         mode: str = "terminal",

@@ -423,22 +423,6 @@ async def test_set_handoff_context_agent_authored(mock_session_manager, full_ses
     mock_session_manager.update_status.assert_called_once_with("sess-abc", "handoff_ready")
 
 
-@pytest.mark.asyncio
-async def test_set_handoff_context_no_transcript(mock_session_manager, full_sessions_registry):
-    """Test set_handoff_context when session has no transcript path (automated path)."""
-    mock_session = _make_mock_session("sess-abc")
-    mock_session.jsonl_path = None
-    mock_session_manager.resolve_session_reference.return_value = "sess-abc"
-    mock_session_manager.get.return_value = mock_session
-
-    result = await full_sessions_registry.call(
-        "set_handoff_context", {"session_id": "sess-abc"}
-    )
-
-    assert "error" in result
-    assert "No transcript path" in result["error"]
-
-
 # --- Get Session Commits Tool Tests ---
 
 

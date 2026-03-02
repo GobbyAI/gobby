@@ -31,7 +31,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test-agent.yaml").write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: headless\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: terminal\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -60,7 +60,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "test-agent.yaml").write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: headless\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: terminal\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -83,7 +83,7 @@ class TestSyncBundledAgents:
         agents_dir.mkdir()
         yaml_file = agents_dir / "test-agent.yaml"
         yaml_file.write_text(
-            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: headless\n"
+            "name: test-agent\ndescription: A test agent\nprovider: claude\nmode: terminal\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
@@ -92,7 +92,7 @@ class TestSyncBundledAgents:
 
             # Modify the file
             yaml_file.write_text(
-                "name: test-agent\ndescription: Updated description\nprovider: claude\nmode: headless\n"
+                "name: test-agent\ndescription: Updated description\nprovider: claude\nmode: terminal\n"
             )
 
             # Second sync — should update
@@ -117,7 +117,7 @@ class TestSyncBundledAgents:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
         (agents_dir / "agent-a.yaml").write_text(
-            "name: agent-a\nprovider: claude\nmode: headless\n"
+            "name: agent-a\nprovider: claude\nmode: terminal\n"
         )
         (agents_dir / "agent-b.yaml").write_text(
             "name: agent-b\nprovider: gemini\nmode: terminal\n"
@@ -158,6 +158,53 @@ class TestSyncBundledAgents:
 
         assert result["synced"] == 0
         assert len(result["errors"]) == 1
+
+    @pytest.mark.unit
+    def test_sync_propagates_to_installed_copy(self, tmp_path: Path) -> None:
+        """Test that sync propagates definition changes to installed copies."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        yaml_file = agents_dir / "test-agent.yaml"
+        yaml_file.write_text(
+            "name: test-agent\ndescription: Original\nprovider: claude\nmode: terminal\n"
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            # First sync — creates template
+            sync_bundled_agents(db)
+
+        # Create an installed copy (mimics install_all_templates)
+        template_row = mgr.get_by_name("test-agent", include_templates=True)
+        assert template_row is not None
+        mgr.install_from_template(template_row.id)
+
+        installed_row = mgr.get_by_name("test-agent")
+        assert installed_row is not None
+        assert installed_row.source == "installed"
+        original_body = AgentDefinitionBody.model_validate_json(installed_row.definition_json)
+        assert original_body.description == "Original"
+
+        # Modify the template YAML
+        yaml_file.write_text(
+            "name: test-agent\ndescription: Updated v2\nprovider: claude\nmode: terminal\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            # Second sync — should update template AND propagate to installed copy
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+
+        # Verify the installed copy was updated
+        installed_row = mgr.get_by_name("test-agent")
+        assert installed_row is not None
+        assert installed_row.source == "installed"
+        updated_body = AgentDefinitionBody.model_validate_json(installed_row.definition_json)
+        assert updated_body.description == "Updated v2"
 
     @pytest.mark.integration
     def test_sync_with_real_bundled_agents(self, tmp_path: Path) -> None:

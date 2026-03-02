@@ -61,7 +61,7 @@ class TestRunningAgent:
             run_id="ar-full",
             session_id="sess-full",
             parent_session_id="sess-parent-full",
-            mode="embedded",
+            mode="autonomous",
             pid=12345,
             master_fd=7,
             terminal_type="ghostty",
@@ -97,7 +97,7 @@ class TestRunningAgent:
             run_id="ar-dict",
             session_id="sess-dict",
             parent_session_id="sess-parent-dict",
-            mode="headless",
+            mode="autonomous",
         )
 
         result = agent.to_dict()
@@ -105,7 +105,7 @@ class TestRunningAgent:
         assert result["run_id"] == "ar-dict"
         assert result["session_id"] == "sess-dict"
         assert result["parent_session_id"] == "sess-parent-dict"
-        assert result["mode"] == "headless"
+        assert result["mode"] == "autonomous"
         assert result["provider"] == "claude"
         assert result["pid"] is None
         assert result["master_fd"] is None
@@ -222,7 +222,7 @@ class TestRunningAgentRegistry:
             run_id="ar-overwrite",
             session_id="sess-2",
             parent_session_id="sess-parent",
-            mode="headless",
+            mode="autonomous",
         )
 
         registry.add(agent1)
@@ -230,7 +230,7 @@ class TestRunningAgentRegistry:
 
         assert registry.count() == 1
         assert registry.get("ar-overwrite").session_id == "sess-2"
-        assert registry.get("ar-overwrite").mode == "headless"
+        assert registry.get("ar-overwrite").mode == "autonomous"
 
     def test_get_returns_agent(self, registry, sample_agent) -> None:
         """get() returns the agent when found."""
@@ -392,17 +392,17 @@ class TestRunningAgentRegistry:
             )
             for i in range(2)
         ]
-        headless_agents = [
+        autonomous_agents = [
             RunningAgent(
-                run_id=f"ar-head-{i}",
-                session_id=f"sess-head-{i}",
+                run_id=f"ar-auto-{i}",
+                session_id=f"sess-auto-{i}",
                 parent_session_id="parent",
-                mode="headless",
+                mode="autonomous",
             )
             for i in range(3)
         ]
 
-        for agent in terminal_agents + headless_agents:
+        for agent in terminal_agents + autonomous_agents:
             registry.add(agent)
 
         result = registry.list_by_mode("terminal")
@@ -414,10 +414,10 @@ class TestRunningAgentRegistry:
     def test_list_by_mode_returns_empty_list_when_none_found(self, registry) -> None:
         """list_by_mode() returns empty list when no agents match."""
         agent = RunningAgent(
-            run_id="ar-embedded",
-            session_id="sess-embedded",
+            run_id="ar-autonomous",
+            session_id="sess-autonomous",
             parent_session_id="parent",
-            mode="embedded",
+            mode="autonomous",
         )
         registry.add(agent)
 
@@ -731,7 +731,7 @@ class TestRunningAgentRegistryEventCallbacks:
             run_id="ar-rm",
             session_id="sess-rm",
             parent_session_id="parent-rm",
-            mode="headless",
+            mode="autonomous",
             provider="claude",
         )
         registry.add(agent)
@@ -745,7 +745,7 @@ class TestRunningAgentRegistryEventCallbacks:
             {
                 "session_id": "sess-rm",
                 "parent_session_id": "parent-rm",
-                "mode": "headless",
+                "mode": "autonomous",
                 "provider": "claude",
                 "tmux_session_name": None,
             },
@@ -985,7 +985,7 @@ class TestRunningAgentRegistryThreadSafety:
                     run_id=f"ar-read-{i}",
                     session_id=f"sess-read-{i}",
                     parent_session_id=f"parent-{i % 10}",
-                    mode=["terminal", "headless", "embedded", "in_process"][i % 4],
+                    mode=["terminal", "autonomous", "in_process", "terminal"][i % 4],
                     pid=i if i % 2 == 0 else None,
                 )
             )

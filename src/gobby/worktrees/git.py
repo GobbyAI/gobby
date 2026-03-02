@@ -266,11 +266,31 @@ class WorktreeGitManager:
             result = self._run_git(args, timeout=30)
 
             if result.returncode != 0:
-                return GitOperationResult(
-                    success=False,
-                    message=f"Failed to remove worktree: {result.stderr}",
-                    error=result.stderr,
-                )
+                # git worktree remove --force only handles modified tracked files,
+                # not untracked files (.mypy_cache, .ruff_cache, __pycache__, etc).
+                # Fall back to manual removal + prune when force is requested.
+                if force and worktree_path.exists():
+                    import shutil
+
+                    shutil.rmtree(worktree_path, ignore_errors=True)
+                    self._run_git(["worktree", "prune"], timeout=10)
+                    if not worktree_path.exists():
+                        logger.info(
+                            "Removed worktree via fallback (rmtree + prune): %s",
+                            worktree_path,
+                        )
+                    else:
+                        return GitOperationResult(
+                            success=False,
+                            message=f"Failed to remove worktree even with fallback: {result.stderr}",
+                            error=result.stderr,
+                        )
+                else:
+                    return GitOperationResult(
+                        success=False,
+                        message=f"Failed to remove worktree: {result.stderr}",
+                        error=result.stderr,
+                    )
 
             # Optionally delete the branch
             if delete_branch and branch_name:

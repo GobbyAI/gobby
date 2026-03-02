@@ -125,7 +125,7 @@ class TestGetTerminalEnvVars:
         )
 
         assert result[GOBBY_AGENT_DEPTH] == "1"
-        assert result[GOBBY_MAX_AGENT_DEPTH] == "3"
+        assert result[GOBBY_MAX_AGENT_DEPTH] == "5"
 
     def test_omits_parent_session_id_when_empty(self) -> None:
         """Function omits parent_session_id when empty string."""

@@ -5,6 +5,7 @@ rules:
     description: "Deliver pending inter-session messages on each agent turn"
     event: before_agent
     enabled: false
+    when: "variables.get('is_spawned_agent')"
     priority: 10
     effect:
       type: mcp_call

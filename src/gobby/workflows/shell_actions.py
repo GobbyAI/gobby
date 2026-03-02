@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from gobby.workflows.actions import ActionContext
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_shell_run(context: ActionContext, **kwargs: Any) -> dict[str, Any] | None:
+async def handle_shell_run(context: Any, **kwargs: Any) -> dict[str, Any] | None:
     """Handle the 'shell' workflow action.
 
     Executes shell commands using the system's default shell:

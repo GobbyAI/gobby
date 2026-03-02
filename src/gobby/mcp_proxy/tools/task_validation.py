@@ -595,7 +595,7 @@ Focus on fixing ONLY the listed issues. Do not make unrelated changes.
                 source="claude",
                 workflow=None,  # No workflow - direct execution
                 task=None,  # Don't claim the task
-                mode="headless",
+                mode="autonomous",
                 timeout=timeout,
                 max_turns=max_turns,
                 project_path=repo_path,

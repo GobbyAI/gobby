@@ -298,7 +298,13 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             manager = _get_manager()
             rows = manager.install_all_templates(workflow_type=workflow_type)
             if rows:
-                await _broadcast_workflow("workflows_bulk_changed", "bulk")
+                names = [r.name for r in rows]
+                await _broadcast_workflow(
+                    "workflows_bulk_changed",
+                    "bulk",
+                    count=len(rows),
+                    names=names[:10],
+                )
             return {
                 "status": "success",
                 "definitions": [r.to_dict() for r in rows],

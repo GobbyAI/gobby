@@ -14,11 +14,9 @@ rules:
       - type: set_variable
         variable: pending_context_reset
         value: true
-      - type: mcp_call
-        server: gobby-sessions
-        tool: set_handoff_context
-        arguments:
-          compact: true
+      - type: set_variable
+        variable: handoff_source
+        value: "compact"
       - type: mcp_call
         server: gobby-memory
         tool: extract_from_session
@@ -30,9 +28,3 @@ rules:
       - type: mcp_call
         server: gobby-memory
         tool: sync_export
-      - type: mcp_call
-        server: gobby-sessions
-        tool: set_handoff_context
-        arguments:
-          full: true
-          write_file: true

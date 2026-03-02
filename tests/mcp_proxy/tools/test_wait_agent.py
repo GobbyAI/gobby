@@ -55,7 +55,7 @@ class TestWaitForAgent:
         tool_func = agents_registry._tools["wait_for_agent"].func
         result = await tool_func(run_id="run-456", timeout=600, poll_interval=10)
 
-        assert result["completed"] is True
+        assert result["completed"] is False
         assert result["status"] == "error"
         assert result["timed_out"] is False
 
@@ -69,7 +69,7 @@ class TestWaitForAgent:
         tool_func = agents_registry._tools["wait_for_agent"].func
         result = await tool_func(run_id="run-789", timeout=600, poll_interval=10)
 
-        assert result["completed"] is True
+        assert result["completed"] is False
         assert result["status"] == "timeout"
 
     @pytest.mark.asyncio
@@ -84,7 +84,7 @@ class TestWaitForAgent:
         tool_func = agents_registry._tools["wait_for_agent"].func
         result = await tool_func(run_id="run-abc", timeout=600, poll_interval=10)
 
-        assert result["completed"] is True
+        assert result["completed"] is False
         assert result["status"] == "cancelled"
 
     @pytest.mark.asyncio

@@ -315,7 +315,8 @@ class SessionManager:
         """
         Read session summary from file (failover if database is empty).
 
-        Searches for file matching pattern: session_*_{session_id}.md
+        Tries ``{seq_num}-full.md`` first, then falls back to legacy
+        ``session_*_{session_id}.md`` pattern.
 
         Args:
             session_id: Session ID to read summary for
@@ -329,15 +330,32 @@ class SessionManager:
         else:
             summary_dir = Path.home() / ".gobby" / "session_summaries"
 
-        # Search for files matching session_*_{session_id}.md pattern
-        if summary_dir.exists():
-            for summary_file in summary_dir.glob(f"session_*_{session_id}.md"):
-                try:
-                    return summary_file.read_text()
-                except Exception as e:
-                    self.logger.error(
-                        f"Failed to read summary file {summary_file}: {e}", exc_info=True
-                    )
+        if not summary_dir.exists():
+            return None
+
+        # Try {seq_num}-full.md first
+        try:
+            session = self._storage.get(session_id)
+            if session:
+                seq_num = getattr(session, "seq_num", None)
+                if isinstance(seq_num, int) and seq_num > 0:
+                    candidate = summary_dir / f"{seq_num}-full.md"
+                    if candidate.exists():
+                        try:
+                            return candidate.read_text()
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to read summary file {candidate}: {e}", exc_info=True
+                            )
+        except Exception:
+            pass  # Fall through to legacy glob
+
+        # Legacy fallback: session_*_{session_id}.md
+        for summary_file in summary_dir.glob(f"session_*_{session_id}.md"):
+            try:
+                return summary_file.read_text()
+            except Exception as e:
+                self.logger.error(f"Failed to read summary file {summary_file}: {e}", exc_info=True)
 
         return None
 

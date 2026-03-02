@@ -283,28 +283,15 @@ class TestPreserveContextOnEnd:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "session_end"
 
-    def test_has_four_effects(self, db, manager) -> None:
-        """Should have 4 mcp_call effects."""
+    def test_has_three_effects(self, db, manager) -> None:
+        """Should have 3 mcp_call effects (extract + 2 sync_export)."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-end")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
-        assert len(effects) == 4
+        assert len(effects) == 3
         for effect in effects:
             assert effect.type == "mcp_call"
-
-    def test_includes_handoff_generation(self, db, manager) -> None:
-        """Should include set_handoff_context with full+write_file."""
-        _sync_bundled(db)
-        row = manager.get_by_name("preserve-context-on-end")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        effects = body.resolved_effects
-        handoff_effects = [
-            e for e in effects if e.server == "gobby-sessions" and e.tool == "set_handoff_context"
-        ]
-        assert len(handoff_effects) == 1
-        assert handoff_effects[0].arguments.get("full") is True
-        assert handoff_effects[0].arguments.get("write_file") is True
 
     def test_includes_task_sync_export(self, db, manager) -> None:
         """Should include task sync export."""
@@ -350,17 +337,17 @@ class TestPreserveContextOnCompact:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "pre_compact"
 
-    def test_has_seven_effects(self, db, manager) -> None:
-        """Should have 7 effects (2 set_variable + 5 mcp_call)."""
+    def test_has_six_effects(self, db, manager) -> None:
+        """Should have 6 effects (3 set_variable + 3 mcp_call)."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         effects = body.resolved_effects
-        assert len(effects) == 7
+        assert len(effects) == 6
         set_var_effects = [e for e in effects if e.type == "set_variable"]
         mcp_effects = [e for e in effects if e.type == "mcp_call"]
-        assert len(set_var_effects) == 2
-        assert len(mcp_effects) == 5
+        assert len(set_var_effects) == 3
+        assert len(mcp_effects) == 3
 
     def test_has_gemini_filter(self, db, manager) -> None:
         """Should filter out automatic gemini compactions."""
@@ -393,23 +380,6 @@ class TestPreserveContextOnCompact:
         ]
         assert len(reset_flag) == 1
         assert reset_flag[0].value is True
-
-    def test_includes_handoff_generation(self, db, manager) -> None:
-        """Should include set_handoff_context with full+write_file."""
-        _sync_bundled(db)
-        row = manager.get_by_name("preserve-context-on-compact")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        effects = body.resolved_effects
-        handoff_effects = [
-            e for e in effects if e.server == "gobby-sessions" and e.tool == "set_handoff_context"
-        ]
-        # One compact handoff + one full handoff
-        assert len(handoff_effects) == 2
-        full_handoff = [
-            e for e in handoff_effects if e.arguments and e.arguments.get("full") is True
-        ]
-        assert len(full_handoff) == 1
-        assert full_handoff[0].arguments.get("write_file") is True
 
     def test_includes_task_sync_export(self, db, manager) -> None:
         """Should include task sync export."""

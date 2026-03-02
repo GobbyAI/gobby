@@ -76,9 +76,7 @@ class TestTaskEnforcementSync:
         for row in rules:
             if row.name in TASK_ENFORCEMENT_RULES:
                 body = json.loads(row.definition_json)
-                assert body.get("group") == "task-enforcement", (
-                    f"{row.name} missing group"
-                )
+                assert body.get("group") == "task-enforcement", f"{row.name} missing group"
 
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
@@ -133,8 +131,8 @@ class TestRequireTaskBeforeEdit:
         assert body.effect.type == "block"
         assert set(body.effect.tools) == {"Edit", "Write", "NotebookEdit"}
 
-    def test_when_checks_task_claimed_and_plan_file(self, db, manager) -> None:
-        """Should check task_claimed and is_plan_file."""
+    def test_when_checks_task_claimed_and_plan_file_and_plan_mode(self, db, manager) -> None:
+        """Should check task_claimed, is_plan_file, and plan_mode."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-task-before-edit")
@@ -143,7 +141,7 @@ class TestRequireTaskBeforeEdit:
         assert body.when is not None
         assert "task_claimed" in body.when
         assert "is_plan_file" in body.when
-        assert "plan_mode" not in body.when
+        assert "plan_mode" in body.when
 
     def test_when_condition_evaluates_with_is_plan_file(self) -> None:
         """The when condition should evaluate successfully with is_plan_file registered."""
@@ -152,7 +150,8 @@ class TestRequireTaskBeforeEdit:
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
-            "and not is_plan_file(tool_input.get('file_path', ''), source)"
+            "and not is_plan_file(tool_input.get('file_path', ''), source) "
+            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
         )
 
         # Scenario: editing a plan file without task claimed => should NOT block
@@ -160,6 +159,7 @@ class TestRequireTaskBeforeEdit:
             "variables": {
                 "require_task_before_edit": True,
                 "task_claimed": False,
+                "plan_mode": False,
             },
             "tool_input": {"file_path": "/project/.gobby/plans/my-plan.md"},
             "source": "claude_code",
@@ -178,13 +178,15 @@ class TestRequireTaskBeforeEdit:
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
-            "and not is_plan_file(tool_input.get('file_path', ''), source)"
+            "and not is_plan_file(tool_input.get('file_path', ''), source) "
+            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
         )
 
         context = {
             "variables": {
                 "require_task_before_edit": True,
                 "task_claimed": False,
+                "plan_mode": False,
             },
             "tool_input": {"file_path": "/project/src/main.py"},
             "source": "claude_code",
@@ -195,6 +197,60 @@ class TestRequireTaskBeforeEdit:
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         result = evaluator.evaluate(condition)
         assert result is True, "Should block non-plan file without task"
+
+    def test_plan_mode_exempts_markdown(self) -> None:
+        """In plan mode, writing .md files should not be blocked."""
+        from gobby.workflows.enforcement.blocking import is_plan_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        condition = (
+            "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and not is_plan_file(tool_input.get('file_path', ''), source) "
+            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
+        )
+
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": True,
+            },
+            "tool_input": {"file_path": "/project/docs/plans/my-plan.md"},
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["is_plan_file"] = is_plan_file
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        result = evaluator.evaluate(condition)
+        assert result is False, "Should not block markdown in plan mode"
+
+    def test_plan_mode_still_blocks_non_markdown(self) -> None:
+        """In plan mode, writing non-.md files should still be blocked."""
+        from gobby.workflows.enforcement.blocking import is_plan_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        condition = (
+            "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and not is_plan_file(tool_input.get('file_path', ''), source) "
+            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
+        )
+
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": True,
+            },
+            "tool_input": {"file_path": "/project/src/main.py"},
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["is_plan_file"] = is_plan_file
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        result = evaluator.evaluate(condition)
+        assert result is True, "Should block non-markdown even in plan mode"
 
 
 class TestIsPlanFile:

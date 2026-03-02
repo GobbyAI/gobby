@@ -107,23 +107,13 @@ class TestHookManagerInit:
         assert manager._session_manager is not None
         assert manager._database is not None
 
-    def test_init_passes_skill_manager_to_action_executor(
-        self, hook_manager_with_mocks: HookManager
-    ) -> None:
-        """Test that HookManager passes skill_manager to ActionExecutor.
-
-        Part of epic #6640: Consolidate Skill Injection into Workflows.
-        This verifies the skill_manager is wired through for workflow-based skill injection.
-        """
+    def test_init_has_skill_manager(self, hook_manager_with_mocks: HookManager) -> None:
+        """Test that HookManager has a skill_manager."""
         manager = hook_manager_with_mocks
 
         # Verify skill_manager exists on HookManager
         assert hasattr(manager, "_skill_manager")
         assert manager._skill_manager is not None
-
-        # Verify ActionExecutor received skill_manager
-        assert hasattr(manager._action_executor, "skill_manager")
-        assert manager._action_executor.skill_manager is manager._skill_manager
 
     def test_init_sets_daemon_url(self, hook_manager_with_mocks: HookManager) -> None:
         """Test that daemon URL is set correctly."""
