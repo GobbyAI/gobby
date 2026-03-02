@@ -62,6 +62,7 @@ def mock_llm_service(mock_llm_provider) -> MagicMock:
 def mock_config() -> MagicMock:
     config = MagicMock()
     config.session_title = MagicMock()
+    config.session_title.timeout = 30
     return config
 
 

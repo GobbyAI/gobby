@@ -365,24 +365,26 @@ class TestInstallCommand:
         assert result.exit_code == 0
         assert "Antigravity" in result.output
 
-    @patch("gobby.cli.install.run_daemon_setup")
-    @patch(
-        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
-    )
-    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/src/install"))
-    @patch("gobby.cli.install._is_claude_code_installed", return_value=False)
-    @patch("gobby.cli.install._is_gemini_cli_installed", return_value=False)
-    @patch("gobby.cli.install._is_codex_cli_installed", return_value=False)
-    @patch("gobby.cli.install._is_cursor_installed", return_value=False)
-    @patch("gobby.cli.install._is_windsurf_installed", return_value=False)
-    @patch("gobby.cli.install._is_copilot_cli_installed", return_value=False)
     def test_install_all_no_clis_detected(
         self,
-        *mocks: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        result = runner.invoke(install, ["-C", str(tmp_path)], catch_exceptions=False)
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/src/install")),
+            patch("gobby.cli.install._is_claude_code_installed", return_value=False),
+            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_cursor_installed", return_value=False),
+            patch("gobby.cli.install._is_windsurf_installed", return_value=False),
+            patch("gobby.cli.install._is_copilot_cli_installed", return_value=False),
+        ):
+            result = runner.invoke(install, ["-C", str(tmp_path)], catch_exceptions=False)
         assert result.exit_code == 1
         assert "No supported" in result.output
 

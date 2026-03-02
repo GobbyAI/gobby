@@ -13,8 +13,9 @@ class TestAdminRoutes:
     def reset_restart_state(self):
         import gobby.servers.routes.admin._lifecycle as lifecycle
 
-        lifecycle._restart_in_progress = False
+        lifecycle._restart_lock = None
         yield
+        lifecycle._restart_lock = None
 
     @pytest.fixture
     def mock_server(self):
@@ -324,7 +325,7 @@ class TestDiscoverModels:
         },
     )
     def test_discover_models_groups_by_provider(self) -> None:
-        from gobby.servers.routes.admin import _discover_models
+        from gobby.servers.routes.admin._config import _discover_models
 
         result = _discover_models()
 
@@ -351,7 +352,7 @@ class TestDiscoverModels:
         },
     )
     def test_discover_models_excludes_dated_variants(self) -> None:
-        from gobby.servers.routes.admin import _discover_models
+        from gobby.servers.routes.admin._config import _discover_models
 
         result = _discover_models()
 
@@ -369,7 +370,7 @@ class TestDiscoverModels:
         },
     )
     def test_discover_models_excludes_scoped_names(self) -> None:
-        from gobby.servers.routes.admin import _discover_models
+        from gobby.servers.routes.admin._config import _discover_models
 
         result = _discover_models()
 
@@ -386,7 +387,7 @@ class TestDiscoverModels:
         },
     )
     def test_discover_models_excludes_latest_aliases(self) -> None:
-        from gobby.servers.routes.admin import _discover_models
+        from gobby.servers.routes.admin._config import _discover_models
 
         result = _discover_models()
 
@@ -395,7 +396,7 @@ class TestDiscoverModels:
 
     @patch("litellm.model_cost", {})
     def test_discover_models_empty_registry(self) -> None:
-        from gobby.servers.routes.admin import _discover_models
+        from gobby.servers.routes.admin._config import _discover_models
 
         result = _discover_models()
         assert result == {}
@@ -408,7 +409,7 @@ class TestDiscoverModels:
         },
     )
     def test_discover_models_unknown_prefix_excluded(self) -> None:
-        from gobby.servers.routes.admin import _discover_models
+        from gobby.servers.routes.admin._config import _discover_models
 
         result = _discover_models()
 
@@ -421,7 +422,7 @@ class TestFallbackModelsFromConfig:
     """Tests for the _fallback_models_from_config helper function."""
 
     def test_fallback_returns_models_from_config(self) -> None:
-        from gobby.servers.routes.admin import _fallback_models_from_config
+        from gobby.servers.routes.admin._config import _fallback_models_from_config
 
         server = MagicMock()
         claude_config = MagicMock()
@@ -448,7 +449,7 @@ class TestFallbackModelsFromConfig:
         assert "litellm" not in result
 
     def test_fallback_no_config(self) -> None:
-        from gobby.servers.routes.admin import _fallback_models_from_config
+        from gobby.servers.routes.admin._config import _fallback_models_from_config
 
         server = MagicMock()
         server.services.config = None
@@ -457,7 +458,7 @@ class TestFallbackModelsFromConfig:
         assert result == {}
 
     def test_fallback_no_llm_providers(self) -> None:
-        from gobby.servers.routes.admin import _fallback_models_from_config
+        from gobby.servers.routes.admin._config import _fallback_models_from_config
 
         server = MagicMock()
         server.services.config.llm_providers = None
@@ -466,7 +467,7 @@ class TestFallbackModelsFromConfig:
         assert result == {}
 
     def test_fallback_empty_models_list(self) -> None:
-        from gobby.servers.routes.admin import _fallback_models_from_config
+        from gobby.servers.routes.admin._config import _fallback_models_from_config
 
         server = MagicMock()
         claude_config = MagicMock()

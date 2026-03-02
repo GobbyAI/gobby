@@ -95,7 +95,7 @@ def create_worktree(
         return
     except httpx.HTTPStatusError as e:
         click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise SystemExit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         return

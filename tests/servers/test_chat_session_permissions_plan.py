@@ -5,6 +5,7 @@ ExitPlanMode should deny (request_changes), not approve.
 """
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
@@ -23,6 +24,16 @@ def session() -> ChatSession:
 
 class TestExitPlanModeDecision:
     """ExitPlanMode should block until a decision and fail closed on missing decisions."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_plan_file(self):
+        """Provide a plan file so ExitPlanMode reaches approval logic."""
+        with patch.object(
+            ChatSession,
+            "_read_plan_file",
+            return_value="# Plan\n\nThis is a test plan.",
+        ):
+            yield
 
     @pytest.mark.asyncio
     async def test_approve_returns_allow(self, session: ChatSession) -> None:

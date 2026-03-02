@@ -354,7 +354,7 @@ async def resume_interrupted_pipelines(
     for execution in running:
         try:
             pipeline = await loader.load_pipeline(execution.pipeline_name)
-        except ValueError as e:
+        except Exception as e:
             logger.warning(
                 f"Cannot load pipeline '{execution.pipeline_name}' for "
                 f"execution {execution.id} — will be failed: {e}"
