@@ -112,5 +112,3 @@ class TestLiteLLMProviderGenerateSummary:
 
         with pytest.raises(ValueError, match="prompt_template is required"):
             await provider.generate_summary({"transcript_summary": "test"})
-
-

@@ -130,7 +130,12 @@ class TestSearchGraphForMemories:
         # Mock entity search results
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
-                {"name": "Python", "labels": ["Tool"], "score": 0.9, "memory_ids": ["mem-1", "mem-2"]},
+                {
+                    "name": "Python",
+                    "labels": ["Tool"],
+                    "score": 0.9,
+                    "memory_ids": ["mem-1", "mem-2"],
+                },
                 {"name": "FastAPI", "labels": ["Framework"], "score": 0.8, "memory_ids": ["mem-3"]},
             ]
         )
@@ -161,9 +166,7 @@ class TestSearchGraphForMemories:
             ]
         )
         # Traversal returns overlapping ID
-        manager._kg_service.find_related_memory_ids = AsyncMock(
-            return_value=["mem-1", "mem-2"]
-        )
+        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=["mem-1", "mem-2"])
 
         result = await manager._search_graph_for_memories(
             query_embedding=[0.1],

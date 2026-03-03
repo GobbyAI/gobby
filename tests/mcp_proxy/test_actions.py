@@ -633,6 +633,7 @@ class TestConcurrencyScenarios:
         assert all(r["success"] for r in results)
         assert mock_mcp_manager.add_server.call_count == 3
 
+
 class TestLogging:
     """Test logging behavior."""
 
@@ -691,4 +692,3 @@ class TestLogging:
             )
 
         assert any("Failed to remove MCP server" in record.message for record in caplog.records)
-

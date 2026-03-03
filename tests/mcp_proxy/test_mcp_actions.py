@@ -220,5 +220,3 @@ class TestRemoveMcpServer:
         assert result["success"] is False
         assert "Database error" in result["error"]
         assert result["name"] == "error-server"
-
-

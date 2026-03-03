@@ -125,8 +125,7 @@ _DEVELOPER_WORKFLOW = {
 def _create_session(db: LocalDatabase, session_id: str = "test-session") -> None:
     """Create a minimal session row to satisfy foreign key constraints."""
     db.execute(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) "
-        "VALUES (?, ?, datetime('now'))",
+        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))",
         ("project-1", "test-project"),
     )
     db.execute(
@@ -178,9 +177,7 @@ class TestStepToolBlocking:
     """Test that step-level tool restrictions are enforced on BEFORE_TOOL events."""
 
     @pytest.mark.asyncio
-    async def test_allowed_tool_passes(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_allowed_tool_passes(self, db, manager, engine, instance_mgr) -> None:
         """Tool in allowed_tools list should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(data={"tool_name": "mcp__gobby__call_tool"})
@@ -190,9 +187,7 @@ class TestStepToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_disallowed_tool_blocked(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_disallowed_tool_blocked(self, db, manager, engine, instance_mgr) -> None:
         """Tool NOT in allowed_tools list should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(data={"tool_name": "Edit"})
@@ -204,9 +199,7 @@ class TestStepToolBlocking:
         assert "claim" in response.reason
 
     @pytest.mark.asyncio
-    async def test_all_tools_allowed_when_set(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_all_tools_allowed_when_set(self, db, manager, engine, instance_mgr) -> None:
         """When allowed_tools is 'all', any native tool should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
         event = _make_event(data={"tool_name": "Edit"})
@@ -216,9 +209,7 @@ class TestStepToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_blocked_tools_enforced(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_blocked_tools_enforced(self, db, manager, engine, instance_mgr) -> None:
         """Tool in blocked_tools list should be blocked even with allowed_tools='all'."""
         workflow = {
             "name": "test-blocked",
@@ -232,9 +223,7 @@ class TestStepToolBlocking:
                 }
             ],
         }
-        _setup_step_workflow(
-            db, manager, instance_mgr, current_step="work", workflow_data=workflow
-        )
+        _setup_step_workflow(db, manager, instance_mgr, current_step="work", workflow_data=workflow)
         event = _make_event(data={"tool_name": "Write"})
         variables: dict[str, Any] = {}
 
@@ -243,9 +232,7 @@ class TestStepToolBlocking:
         assert "blocked" in response.reason.lower()
 
     @pytest.mark.asyncio
-    async def test_discovery_tools_always_pass(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_discovery_tools_always_pass(self, db, manager, engine, instance_mgr) -> None:
         """Discovery tools should pass regardless of step restrictions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
 
@@ -257,15 +244,11 @@ class TestStepToolBlocking:
         ]:
             event = _make_event(data={"tool_name": tool})
             variables: dict[str, Any] = {}
-            response = await engine.evaluate(
-                event, session_id="test-session", variables=variables
-            )
+            response = await engine.evaluate(event, session_id="test-session", variables=variables)
             assert response.decision == "allow", f"Discovery tool {tool} should pass"
 
     @pytest.mark.asyncio
-    async def test_no_step_workflow_allows_all(
-        self, db, manager, engine
-    ) -> None:
+    async def test_no_step_workflow_allows_all(self, db, manager, engine) -> None:
         """Without an active step workflow, all tools should pass."""
         event = _make_event(data={"tool_name": "Edit"})
         variables: dict[str, Any] = {}
@@ -279,9 +262,7 @@ class TestStepMCPToolBlocking:
     """Test MCP tool restrictions (allowed_mcp_tools/blocked_mcp_tools)."""
 
     @pytest.mark.asyncio
-    async def test_allowed_mcp_tool_passes(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_allowed_mcp_tool_passes(self, db, manager, engine, instance_mgr) -> None:
         """MCP tool in allowed_mcp_tools should pass."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -299,9 +280,7 @@ class TestStepMCPToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_disallowed_mcp_tool_blocked(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_disallowed_mcp_tool_blocked(self, db, manager, engine, instance_mgr) -> None:
         """MCP tool NOT in allowed_mcp_tools should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -320,9 +299,7 @@ class TestStepMCPToolBlocking:
         assert "gobby-tasks:close_task" in response.reason
 
     @pytest.mark.asyncio
-    async def test_blocked_mcp_tool_enforced(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_blocked_mcp_tool_enforced(self, db, manager, engine, instance_mgr) -> None:
         """MCP tool in blocked_mcp_tools should be blocked."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="implement")
         event = _make_event(
@@ -340,9 +317,7 @@ class TestStepMCPToolBlocking:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_mcp_discovery_tools_always_pass(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_mcp_discovery_tools_always_pass(self, db, manager, engine, instance_mgr) -> None:
         """MCP discovery tools should pass even when allowed_mcp_tools is restrictive."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -360,9 +335,7 @@ class TestStepMCPToolBlocking:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_wildcard_mcp_tool_pattern(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_wildcard_mcp_tool_pattern(self, db, manager, engine, instance_mgr) -> None:
         """Wildcard pattern 'server:*' should match all tools on that server."""
         workflow = {
             "name": "test-wildcard",
@@ -375,9 +348,7 @@ class TestStepMCPToolBlocking:
                 }
             ],
         }
-        _setup_step_workflow(
-            db, manager, instance_mgr, current_step="work", workflow_data=workflow
-        )
+        _setup_step_workflow(db, manager, instance_mgr, current_step="work", workflow_data=workflow)
         event = _make_event(
             data={
                 "tool_name": "mcp__gobby__call_tool",
@@ -398,9 +369,7 @@ class TestStepTransitions:
     """Test step transitions via on_mcp_success handlers."""
 
     @pytest.mark.asyncio
-    async def test_on_mcp_success_sets_variable(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_on_mcp_success_sets_variable(self, db, manager, engine, instance_mgr) -> None:
         """on_mcp_success handler should set workflow instance variable."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -447,9 +416,7 @@ class TestStepTransitions:
         assert instance.current_step == "implement"
 
     @pytest.mark.asyncio
-    async def test_no_transition_on_failure(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_no_transition_on_failure(self, db, manager, engine, instance_mgr) -> None:
         """Failed tool calls should not trigger on_mcp_success or transitions."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
         event = _make_event(
@@ -547,9 +514,7 @@ class TestStepEnforcementAfterTransition:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_kill_agent_allowed_in_terminate(
-        self, db, manager, engine, instance_mgr
-    ) -> None:
+    async def test_kill_agent_allowed_in_terminate(self, db, manager, engine, instance_mgr) -> None:
         """kill_agent should be allowed in the terminate step."""
         _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
         event = _make_event(

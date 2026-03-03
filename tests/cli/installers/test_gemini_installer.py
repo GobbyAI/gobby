@@ -38,12 +38,8 @@ class TestInstallGemini:
         template = gemini_dir / "hooks-template.json"
         template_content = {
             "hooks": {
-                "SessionStart": {
-                    "command": "uv run python $HOOKS_DIR/hook_dispatcher.py"
-                },
-                "SessionEnd": {
-                    "command": "uv run python $HOOKS_DIR/hook_dispatcher.py"
-                },
+                "SessionStart": {"command": "uv run python $HOOKS_DIR/hook_dispatcher.py"},
+                "SessionEnd": {"command": "uv run python $HOOKS_DIR/hook_dispatcher.py"},
             }
         }
         template.write_text(json.dumps(template_content))
@@ -235,9 +231,7 @@ class TestInstallGemini:
         template = mock_install_dir / "gemini" / "hooks-template.json"
         template_content = {
             "hooks": {
-                "SessionStart": {
-                    "command": "uv run python $HOOKS_DIR/hook_dispatcher.py"
-                },
+                "SessionStart": {"command": "uv run python $HOOKS_DIR/hook_dispatcher.py"},
             }
         }
         template.write_text(json.dumps(template_content))
@@ -941,9 +935,7 @@ class TestInstallGeminiEdgeCases:
         template = gemini_dir / "hooks-template.json"
         template_content = {
             "hooks": {
-                "SessionStart": {
-                    "command": "uv run python $HOOKS_DIR/hook_dispatcher.py"
-                },
+                "SessionStart": {"command": "uv run python $HOOKS_DIR/hook_dispatcher.py"},
             }
         }
         template.write_text(json.dumps(template_content))

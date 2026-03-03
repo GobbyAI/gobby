@@ -102,9 +102,7 @@ class TestWorkflowResolution:
         assert len(no_wf) == 1
 
     @pytest.mark.asyncio
-    async def test_pipeline_resolved(
-        self, tmp_path: Path, mock_workflow_loader: MagicMock
-    ) -> None:
+    async def test_pipeline_resolved(self, tmp_path: Path, mock_workflow_loader: MagicMock) -> None:
         """WORKFLOW_RESOLVED when pipeline is configured."""
         db = _setup_db(tmp_path)
         _create_agent(db, pipeline="my-pipeline")
@@ -173,9 +171,7 @@ class TestIsolation:
 
 class TestRuntimeEnvironment:
     @pytest.mark.asyncio
-    async def test_spawn_depth_exceeded(
-        self, tmp_path: Path, mock_runner: MagicMock
-    ) -> None:
+    async def test_spawn_depth_exceeded(self, tmp_path: Path, mock_runner: MagicMock) -> None:
         """SPAWN_DEPTH_EXCEEDED when can_spawn returns False."""
         db = _setup_db(tmp_path)
         _create_agent(db)
@@ -191,7 +187,6 @@ class TestRuntimeEnvironment:
         assert result.can_spawn is False
         depth_items = [i for i in result.errors if i.code == "SPAWN_DEPTH_EXCEEDED"]
         assert len(depth_items) == 1
-
 
 
 class TestWorkflowEvaluation:

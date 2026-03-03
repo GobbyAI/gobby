@@ -772,7 +772,10 @@ class TestVariablePersistence:
                     "tool_name": "claim_task",
                     "arguments": {"task_id": "#99"},
                 },
-                "tool_output": {"success": True, "result": {"id": "task-uuid-observer", "status": "in_progress"}},
+                "tool_output": {
+                    "success": True,
+                    "result": {"id": "task-uuid-observer", "status": "in_progress"},
+                },
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
             },
@@ -787,9 +790,7 @@ class TestVariablePersistence:
         assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
 
     @pytest.mark.asyncio
-    async def test_observer_and_rule_changes_both_persisted(
-        self, db, session_var_manager
-    ) -> None:
+    async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
         """Both observer changes and rule set_variable effects should persist."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -806,7 +807,10 @@ class TestVariablePersistence:
 
         # Insert a rule that fires on after_tool and sets a counter
         self._insert_set_variable_rule(
-            db, "test-tool-counter", "after_tool", "tool_counter",
+            db,
+            "test-tool-counter",
+            "after_tool",
+            "tool_counter",
             "variables.get('tool_counter', 0) + 1",
         )
 
@@ -822,7 +826,10 @@ class TestVariablePersistence:
                     "tool_name": "claim_task",
                     "arguments": {"task_id": "#99"},
                 },
-                "tool_output": {"success": True, "result": {"id": "task-uuid-both", "status": "in_progress"}},
+                "tool_output": {
+                    "success": True,
+                    "result": {"id": "task-uuid-both", "status": "in_progress"},
+                },
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
             },

@@ -151,9 +151,7 @@ class TestExitPlanModeDecision:
         assert ("plan", "plan_changes_requested") not in mode_changes
 
     @pytest.mark.asyncio
-    async def test_mode_toggle_cancels_pending_exit_plan_mode(
-        self, session: ChatSession
-    ) -> None:
+    async def test_mode_toggle_cancels_pending_exit_plan_mode(self, session: ChatSession) -> None:
         """set_chat_mode + provide_plan_decision simulates _handle_set_mode cancellation."""
 
         async def cancel_via_mode_toggle() -> None:

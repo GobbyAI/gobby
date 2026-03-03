@@ -97,9 +97,7 @@ class TestVoiceRoutes:
         assert data["stt_available"] is True
         assert data["stt_reason"] == ""
 
-    def test_status_stt_disabled(
-        self, client: TestClient, server_with_voice: MagicMock
-    ) -> None:
+    def test_status_stt_disabled(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """STT unavailable when stt_enabled=False."""
         server_with_voice.config.voice = VoiceConfig(enabled=True, stt_enabled=False)
         response = client.get("/api/voice/status")

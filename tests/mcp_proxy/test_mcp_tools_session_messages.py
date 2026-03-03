@@ -299,7 +299,9 @@ async def test_get_handoff_context_by_session_id(mock_session_manager, full_sess
 
 
 @pytest.mark.asyncio
-async def test_get_handoff_context_falls_back_to_compact(mock_session_manager, full_sessions_registry):
+async def test_get_handoff_context_falls_back_to_compact(
+    mock_session_manager, full_sessions_registry
+):
     """Test get_handoff_context uses compact_markdown when summary is None."""
     mock_session = _make_mock_session("sess-abc")
     mock_session.summary_markdown = None

@@ -170,9 +170,7 @@ class TestCreateAgentDefinition:
 
     def test_invalid_definition(self, tmp_path: Path) -> None:
         mgr = _setup(tmp_path)
-        result = create_agent_definition(
-            mgr, "bad", {"mode": "invalid_mode"}
-        )
+        result = create_agent_definition(mgr, "bad", {"mode": "invalid_mode"})
         assert result["success"] is False
         assert "Validation failed" in result["error"]
 

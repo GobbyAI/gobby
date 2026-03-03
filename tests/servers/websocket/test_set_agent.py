@@ -82,9 +82,7 @@ class TestSetAgentNoExistingSession:
         server = ConcreteSessionControl()
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "my-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "my-agent"})
 
         assert server._pending_agents["conv-1"] == "my-agent"
 
@@ -92,9 +90,7 @@ class TestSetAgentNoExistingSession:
         server = ConcreteSessionControl()
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "my-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "my-agent"})
 
         ws.send.assert_awaited_once()
         msg = json.loads(ws.send.call_args[0][0])
@@ -106,9 +102,7 @@ class TestSetAgentNoExistingSession:
         server = ConcreteSessionControl()
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "my-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "my-agent"})
 
         server._cancel_active_chat.assert_not_awaited()
 
@@ -122,9 +116,7 @@ class TestSetAgentWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "new-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "new-agent"})
 
         server._cancel_active_chat.assert_awaited_once_with("conv-1")
         session.stop.assert_awaited_once()
@@ -136,9 +128,7 @@ class TestSetAgentWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "new-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "new-agent"})
 
         server.session_manager.update.assert_called_once_with("db-456", status="paused")
 
@@ -148,9 +138,7 @@ class TestSetAgentWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "new-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "new-agent"})
 
         assert server._pending_agents["conv-1"] == "new-agent"
 
@@ -160,9 +148,7 @@ class TestSetAgentWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "new-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "new-agent"})
 
         ws.send.assert_awaited_once()
         msg = json.loads(ws.send.call_args[0][0])
@@ -175,9 +161,7 @@ class TestSetAgentWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "new-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "new-agent"})
 
         server.session_manager.update.assert_not_called()
         # Should still succeed
@@ -191,9 +175,7 @@ class TestSetAgentWithExistingSession:
         ws = _make_ws()
 
         # Should not raise
-        await server._handle_set_agent(
-            ws, {"conversation_id": "conv-1", "agent_name": "new-agent"}
-        )
+        await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "new-agent"})
 
         # Confirmation still sent
         assert server._pending_agents["conv-1"] == "new-agent"

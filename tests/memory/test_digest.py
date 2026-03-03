@@ -556,7 +556,6 @@ class TestBuildTurnAndDigest:
         assert "Implement the feature" in prompt or "feature" in prompt.lower()
 
 
-
 class TestBuildTurnAndDigestIdempotency:
     """Tests for digest idempotency via last_digest_input_hash."""
 

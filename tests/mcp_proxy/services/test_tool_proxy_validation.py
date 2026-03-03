@@ -825,7 +825,9 @@ class TestStripUnknownParameters:
         assert actual_args["limit"] == 5
 
     @pytest.mark.asyncio
-    async def test_strip_unknown_still_fails_on_missing_required(self, tool_proxy, mock_mcp_manager):
+    async def test_strip_unknown_still_fails_on_missing_required(
+        self, tool_proxy, mock_mcp_manager
+    ):
         """Verify strip_unknown=True still rejects missing required parameters."""
 
         async def mock_get_schema(server, tool):

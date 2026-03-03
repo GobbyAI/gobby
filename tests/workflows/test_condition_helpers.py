@@ -88,10 +88,16 @@ class TestIsTaskComplete:
         assert is_task_complete(FakeTask(id="1", status="closed")) is True
 
     def test_needs_review_no_hitl_is_complete(self) -> None:
-        assert is_task_complete(FakeTask(id="1", status="needs_review", requires_user_review=False)) is True
+        assert (
+            is_task_complete(FakeTask(id="1", status="needs_review", requires_user_review=False))
+            is True
+        )
 
     def test_needs_review_with_hitl_is_not_complete(self) -> None:
-        assert is_task_complete(FakeTask(id="1", status="needs_review", requires_user_review=True)) is False
+        assert (
+            is_task_complete(FakeTask(id="1", status="needs_review", requires_user_review=True))
+            is False
+        )
 
     def test_open_is_not_complete(self) -> None:
         assert is_task_complete(FakeTask(id="1", status="open")) is False

@@ -86,5 +86,3 @@ class TestExportMemoryGraphRemoved:
         registry, _ = _make_registry()
         tool_names = [t["name"] for t in registry.list_tools()]
         assert "export_memory_graph" not in tool_names
-
-

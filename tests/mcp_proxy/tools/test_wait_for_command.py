@@ -132,9 +132,7 @@ class TestWaitForCommandImmediate:
     """Command already pending when wait_for_command is called."""
 
     @pytest.mark.asyncio
-    async def test_immediate_return(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
+    async def test_immediate_return(self, messaging_registry, mock_command_manager) -> None:
         """Returns immediately when a pending command exists."""
         cmd = MockCommand(id="cmd-1", to_session="s-child", command_text="Run tests")
         mock_command_manager.list_commands.return_value = [cmd]
@@ -172,9 +170,7 @@ class TestWaitForCommandPolling:
     """Command arrives after polling."""
 
     @pytest.mark.asyncio
-    async def test_polls_until_found(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
+    async def test_polls_until_found(self, messaging_registry, mock_command_manager) -> None:
         """Finds command after a few poll cycles."""
         cmd = MockCommand(id="cmd-2", to_session="s-child", command_text="Deploy")
         # First call (initial check) returns empty, second call (after sleep) returns command
@@ -192,9 +188,7 @@ class TestWaitForCommandPolling:
         mock_sleep.assert_called_once_with(2)
 
     @pytest.mark.asyncio
-    async def test_polls_multiple_cycles(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
+    async def test_polls_multiple_cycles(self, messaging_registry, mock_command_manager) -> None:
         """Polls multiple times before command arrives."""
         cmd = MockCommand(id="cmd-3", to_session="s-child")
         # Empty for initial + 2 poll cycles, then found
@@ -215,9 +209,7 @@ class TestWaitForCommandTimeout:
     """No command arrives within timeout."""
 
     @pytest.mark.asyncio
-    async def test_timeout_returns_none(
-        self, messaging_registry, mock_command_manager
-    ) -> None:
+    async def test_timeout_returns_none(self, messaging_registry, mock_command_manager) -> None:
         """Returns timed_out=True and command=None when timeout expires."""
         mock_command_manager.list_commands.return_value = []
 

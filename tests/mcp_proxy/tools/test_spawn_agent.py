@@ -1019,9 +1019,7 @@ class TestSpawnAgentPipelineInjection:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
             ),
-            patch(
-                "gobby.workflows.loader.WorkflowLoader"
-            ) as mock_wf_loader_cls,
+            patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,
@@ -1075,9 +1073,7 @@ class TestSpawnAgentPipelineInjection:
                 "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
                 return_value=agent_body,
             ),
-            patch(
-                "gobby.workflows.loader.WorkflowLoader"
-            ) as mock_wf_loader_cls,
+            patch("gobby.workflows.loader.WorkflowLoader") as mock_wf_loader_cls,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
             ) as mock_ctx,

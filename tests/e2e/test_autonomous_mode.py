@@ -407,5 +407,3 @@ class TestAutonomousThrottling:
         )
         usage = unwrap_result(usage_result)
         assert usage.get("success") is True, f"Usage report should work: {usage}"
-
-

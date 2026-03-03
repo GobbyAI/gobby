@@ -549,9 +549,7 @@ class TestSessionMoreCoverage:
                     "claimed_tasks": {"task-1": "#1"},
                 },
             ),
-            patch(
-                "gobby.workflows.state_manager.SessionVariableManager.merge_variables"
-            ),
+            patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
         ):
             handler._session_manager.register_session.return_value = "new-sess-1"
 

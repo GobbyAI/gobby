@@ -465,5 +465,3 @@ class TestSpawnResultDataclass:
         assert result.success is False
         assert result.pid is None
         assert result.error == "Terminal not available"
-
-

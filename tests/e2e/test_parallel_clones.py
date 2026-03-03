@@ -212,6 +212,7 @@ class TestEpicWithIndependentSubtasks:
         for subtask_id in subtask_ids:
             assert subtask_id in ready_ids, f"Subtask {subtask_id} should be ready"
 
+
 class TestCloneLifecycle:
     """Tests for clone lifecycle operations."""
 

@@ -115,7 +115,9 @@ class TestSuccessfulRun:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -140,7 +142,9 @@ class TestSuccessfulRun:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -165,7 +169,9 @@ class TestSessionIdCapture:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -184,7 +190,9 @@ class TestSessionIdCapture:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -208,7 +216,9 @@ class TestAgentRunManager:
         runner = _make_runner(agent_run_manager=mgr)
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -228,7 +238,9 @@ class TestAgentRunManager:
         runner = _make_runner(agent_run_manager=mgr)
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -248,7 +260,9 @@ class TestAgentRunManager:
         runner = _make_runner(agent_run_manager=mgr)
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -265,7 +279,9 @@ class TestAgentRunManager:
         runner = _make_runner(agent_run_manager=None)
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -302,7 +318,9 @@ class TestErrorHandling:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", return_value=client),
         ):
@@ -329,7 +347,9 @@ class TestAutoApprove:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch(
                 "gobby.agents.spawners.autonomous.ClaudeSDKClient",
@@ -373,7 +393,9 @@ class TestOptionsConstruction:
         )
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", side_effect=_capture),
         ):
@@ -397,7 +419,9 @@ class TestOptionsConstruction:
         runner = _make_runner(session_id="sess-abc", project_id="proj-xyz")
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", side_effect=_capture),
         ):
@@ -420,7 +444,9 @@ class TestOptionsConstruction:
         runner = _make_runner(max_turns=25)
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", side_effect=_capture),
         ):
@@ -440,7 +466,9 @@ class TestOptionsConstruction:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch(
                 "gobby.agents.spawners.autonomous._find_mcp_config",
                 return_value="/workspace/.mcp.json",
@@ -475,7 +503,9 @@ class TestHookWiring:
         )
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", side_effect=_capture),
         ):
@@ -500,7 +530,9 @@ class TestHookWiring:
         runner = _make_runner()
 
         with (
-            patch("gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.agents.spawners.autonomous._find_cli_path", return_value="/usr/bin/claude"
+            ),
             patch("gobby.agents.spawners.autonomous._find_mcp_config", return_value=None),
             patch("gobby.agents.spawners.autonomous.ClaudeSDKClient", side_effect=_capture),
         ):

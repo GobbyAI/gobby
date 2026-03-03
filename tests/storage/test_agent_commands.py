@@ -36,7 +36,9 @@ def db(tmp_path) -> LocalDatabase:
     return database
 
 
-def _create_session(db: LocalDatabase, session_id: str | None = None, parent_id: str | None = None) -> str:
+def _create_session(
+    db: LocalDatabase, session_id: str | None = None, parent_id: str | None = None
+) -> str:
     """Create a test session, return its ID."""
     sid = session_id or str(uuid.uuid4())
     db.execute(

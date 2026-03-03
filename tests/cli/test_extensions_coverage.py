@@ -3,6 +3,7 @@
 Covers: hooks run, hooks status, hooks disable, hooks enable, _indent helper.
 Lines targeted: 159-256, 267-366, 376-437
 """
+
 from __future__ import annotations
 
 import json
@@ -123,9 +124,7 @@ class TestHooksRun:
         assert "missing: (not defined)" in result.output
 
     @patch("gobby.hooks.verification_runner.VerificationRunner")
-    def test_hooks_run_success(
-        self, mock_vr_cls: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_hooks_run_success(self, mock_vr_cls: MagicMock, runner: CliRunner) -> None:
         mock_runner = MagicMock()
         cmd_result = MagicMock()
         cmd_result.success = True
@@ -153,9 +152,7 @@ class TestHooksRun:
         assert "Passed: 1" in result.output
 
     @patch("gobby.hooks.verification_runner.VerificationRunner")
-    def test_hooks_run_failure(
-        self, mock_vr_cls: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_hooks_run_failure(self, mock_vr_cls: MagicMock, runner: CliRunner) -> None:
         mock_runner = MagicMock()
         cmd_result = MagicMock()
         cmd_result.success = False
@@ -183,9 +180,7 @@ class TestHooksRun:
         assert "Error on line 5" in result.output
 
     @patch("gobby.hooks.verification_runner.VerificationRunner")
-    def test_hooks_run_failure_verbose(
-        self, mock_vr_cls: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_hooks_run_failure_verbose(self, mock_vr_cls: MagicMock, runner: CliRunner) -> None:
         mock_runner = MagicMock()
         cmd_result = MagicMock()
         cmd_result.success = False
@@ -215,9 +210,7 @@ class TestHooksRun:
         assert "stdout output" in result.output
 
     @patch("gobby.hooks.verification_runner.VerificationRunner")
-    def test_hooks_run_skipped_stage(
-        self, mock_vr_cls: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_hooks_run_skipped_stage(self, mock_vr_cls: MagicMock, runner: CliRunner) -> None:
         mock_runner = MagicMock()
         stage_result = MagicMock()
         stage_result.success = True
@@ -233,9 +226,7 @@ class TestHooksRun:
         assert "Skipped: No changes to check" in result.output
 
     @patch("gobby.hooks.verification_runner.VerificationRunner")
-    def test_hooks_run_skipped_command(
-        self, mock_vr_cls: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_hooks_run_skipped_command(self, mock_vr_cls: MagicMock, runner: CliRunner) -> None:
         mock_runner = MagicMock()
         cmd_result = MagicMock()
         cmd_result.success = True
@@ -261,9 +252,7 @@ class TestHooksRun:
         assert "no files changed" in result.output
 
     @patch("gobby.hooks.verification_runner.VerificationRunner")
-    def test_hooks_run_json_output(
-        self, mock_vr_cls: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_hooks_run_json_output(self, mock_vr_cls: MagicMock, runner: CliRunner) -> None:
         mock_runner = MagicMock()
         cmd_result = MagicMock()
         cmd_result.name = "lint"
