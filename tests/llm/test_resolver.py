@@ -618,7 +618,7 @@ class TestCreateGeminiExecutorIntegration:
             mock_provider_config.project = None
             mock_provider_config.location = None
 
-            executor = _create_gemini_executor(mock_provider_config, None, None)
+            executor = _create_gemini_executor(mock_provider_config, None, None, auth_mode="adc")
 
             assert executor.default_model == "gemini-1.5-pro"
 
@@ -646,7 +646,9 @@ class TestCreateGeminiExecutorIntegration:
             mock_provider_config.project = None
             mock_provider_config.location = None
 
-            executor = _create_gemini_executor(mock_provider_config, None, "gemini-2.5-pro")
+            executor = _create_gemini_executor(
+                mock_provider_config, None, "gemini-2.5-pro", auth_mode="adc"
+            )
 
             assert executor.default_model == "gemini-2.5-pro"
 
