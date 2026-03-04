@@ -131,13 +131,21 @@ async def spawn_agent_impl(
     if effective_provider in (None, "inherit"):
         effective_provider = "claude"
 
+    VALID_MODES = ("terminal", "autonomous", "self")
+
     _raw_mode: str | None = mode
+    # Reject explicitly invalid modes early (before fallback logic)
+    if _raw_mode is not None and _raw_mode not in (*VALID_MODES, "inherit"):
+        return {
+            "success": False,
+            "error": f"Invalid mode '{_raw_mode}'. Must be one of: {', '.join(VALID_MODES)}",
+        }
     if _raw_mode is None and agent_body:
         _raw_mode = agent_body.mode
     if _raw_mode in (None, "inherit"):
         _raw_mode = "self"
     effective_mode: Literal["terminal", "autonomous", "self"] = (
-        _raw_mode if _raw_mode in ("terminal", "autonomous", "self") else "self"  # type: ignore[assignment]
+        _raw_mode if _raw_mode in VALID_MODES else "self"  # type: ignore[assignment]
     )
 
     effective_model = model

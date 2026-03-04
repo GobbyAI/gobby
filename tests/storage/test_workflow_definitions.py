@@ -426,6 +426,8 @@ def test_list_all_filter_project(
         ("proj-1", "Test Project"),
     )
 
+    # Create a global workflow (project_id=NULL)
+    manager.create(name="global-wf", definition_json=SAMPLE_DEFINITION)
     manager.create(name="proj-wf", definition_json=SAMPLE_DEFINITION, project_id="proj-1")
 
     results = manager.list_all(project_id="proj-1")
@@ -433,7 +435,7 @@ def test_list_all_filter_project(
 
     # Should include project-scoped AND global
     assert "proj-wf" in names
-    # Bundled (global) workflows should also be present
+    assert "global-wf" in names
     assert any(w.project_id is None for w in results)
 
 
