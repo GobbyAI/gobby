@@ -145,11 +145,15 @@ class TestDetectPlanModeFromContext:
 
 
 class TestDetectTaskClaimCloseTaskBehavior:
-    def test_successful_close_task_clears_task_claimed(
-        self, variables, make_after_tool_event
+    def test_successful_close_task_removes_from_claimed_tasks(
+        self, variables, make_after_tool_event, mock_task_manager
     ) -> None:
+        mock_task = MagicMock()
+        mock_task.id = "task-uuid-123"
+        mock_task_manager.get_task.return_value = mock_task
+
         variables["task_claimed"] = True
-        variables["claimed_task_id"] = "task-123"
+        variables["claimed_tasks"] = {"task-uuid-123": "#1", "task-uuid-456": "#2"}
 
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -161,14 +165,39 @@ class TestDetectTaskClaimCloseTaskBehavior:
             tool_output={"success": True, "result": {"id": "task-123", "status": "done"}},
         )
 
-        detect_task_claim(event, variables, SESSION_ID)
+        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert variables.get("task_claimed") is True  # Still has task-uuid-456
+        assert variables.get("claimed_tasks") == {"task-uuid-456": "#2"}
+
+    def test_successful_close_last_task_clears_task_claimed(
+        self, variables, make_after_tool_event, mock_task_manager
+    ) -> None:
+        mock_task = MagicMock()
+        mock_task.id = "task-uuid-123"
+        mock_task_manager.get_task.return_value = mock_task
+
+        variables["task_claimed"] = True
+        variables["claimed_tasks"] = {"task-uuid-123": "#1"}
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "task-123"},
+            },
+            tool_output={"success": True, "result": {"id": "task-123", "status": "done"}},
+        )
+
+        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
         assert variables.get("task_claimed") is False
-        assert variables.get("claimed_task_id") is None
+        assert variables.get("claimed_tasks") == {}
 
     def test_failed_close_task_with_error(self, variables, make_after_tool_event) -> None:
         variables["task_claimed"] = True
-        variables["claimed_task_id"] = "task-123"
+        variables["claimed_tasks"] = {"task-123": "#1"}
 
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -189,11 +218,11 @@ class TestDetectTaskClaimCloseTaskBehavior:
         detect_task_claim(event, variables, SESSION_ID)
 
         assert variables.get("task_claimed") is True
-        assert variables.get("claimed_task_id") == "task-123"
+        assert variables.get("claimed_tasks") == {"task-123": "#1"}
 
     def test_close_task_with_empty_output(self, variables, make_after_tool_event) -> None:
         variables["task_claimed"] = True
-        variables["claimed_task_id"] = "task-123"
+        variables["claimed_tasks"] = {"task-123": "#1"}
 
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -211,7 +240,7 @@ class TestDetectTaskClaimCloseTaskBehavior:
 
     def test_close_task_with_top_level_error(self, variables, make_after_tool_event) -> None:
         variables["task_claimed"] = True
-        variables["claimed_task_id"] = "task-123"
+        variables["claimed_tasks"] = {"task-123": "#1"}
 
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -250,7 +279,7 @@ class TestDetectTaskClaimClaimOperations:
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
         assert variables.get("task_claimed") is True
-        assert variables.get("claimed_task_id") == "task-uuid-123"
+        assert "task-uuid-123" in variables.get("claimed_tasks", {})
 
     def test_sets_task_claimed_on_create_task_with_claim(
         self, variables, make_after_tool_event, mock_task_manager
@@ -268,7 +297,7 @@ class TestDetectTaskClaimClaimOperations:
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
         assert variables.get("task_claimed") is True
-        assert variables.get("claimed_task_id") == "new-task-uuid"
+        assert "new-task-uuid" in variables.get("claimed_tasks", {})
 
     def test_create_task_without_claim_does_not_set_task_claimed(
         self, variables, make_after_tool_event, mock_task_manager
@@ -326,6 +355,7 @@ class TestDetectTaskClaimClaimOperations:
     ) -> None:
         mock_task = mock_task_manager.get_task.return_value
         mock_task.id = "task-uuid-456"
+        mock_task.seq_num = 456
 
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
@@ -340,7 +370,7 @@ class TestDetectTaskClaimClaimOperations:
         detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
 
         assert variables.get("task_claimed") is True
-        assert variables.get("claimed_task_id") == "task-uuid-456"
+        assert "task-uuid-456" in variables.get("claimed_tasks", {})
 
     def test_ignores_update_to_other_status(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
@@ -417,7 +447,7 @@ class TestDetectTaskClaimClaimOperations:
         detect_task_claim(event, variables, SESSION_ID, task_manager=None)
 
         assert "task_claimed" not in variables
-        assert "claimed_task_id" not in variables
+        assert "claimed_tasks" not in variables
 
     def test_task_resolution_failure_is_handled(
         self, variables, make_after_tool_event, mock_task_manager

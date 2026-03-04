@@ -46,18 +46,6 @@ class TestValidateCommandWithNewFlags:
         assert result.exit_code == 0
         assert "--max-iterations" in result.output
 
-    def test_validate_help_shows_external_flag(self, runner: CliRunner) -> None:
-        """Test that validate --help shows --external flag."""
-        result = runner.invoke(cli, ["tasks", "validate", "--help"])
-        assert result.exit_code == 0
-        assert "--external" in result.output
-
-    def test_validate_help_shows_skip_build_flag(self, runner: CliRunner) -> None:
-        """Test that validate --help shows --skip-build flag."""
-        result = runner.invoke(cli, ["tasks", "validate", "--help"])
-        assert result.exit_code == 0
-        assert "--skip-build" in result.output
-
     def test_validate_help_shows_history_flag(self, runner: CliRunner) -> None:
         """Test that validate --help shows --history flag."""
         result = runner.invoke(cli, ["tasks", "validate", "--help"])
@@ -105,58 +93,6 @@ class TestValidateCommandWithNewFlags:
         # We're testing the CLI accepts the flag, not the implementation
         # Exit code 2 means Click rejected the flag as unrecognized
         assert result.exit_code != 2, f"Flag --max-iterations was rejected: {result.output}"
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.config.app.load_config")
-    def test_validate_with_external_flag(
-        self,
-        mock_load_config: MagicMock,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test validate with --external flag."""
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = MagicMock()
-
-        result = runner.invoke(
-            cli,
-            ["tasks", "validate", "gt-test123", "--external", "--summary", "test changes"],
-        )
-
-        # Exit code 2 means Click rejected the flag as unrecognized
-        assert result.exit_code != 2, f"Flag --external was rejected: {result.output}"
-
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.config.app.load_config")
-    def test_validate_with_skip_build_flag(
-        self,
-        mock_load_config: MagicMock,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test validate with --skip-build flag."""
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = MagicMock()
-
-        result = runner.invoke(
-            cli,
-            ["tasks", "validate", "gt-test123", "--skip-build", "--summary", "test changes"],
-        )
-
-        # Exit code 2 means Click rejected the flag as unrecognized
-        assert result.exit_code != 2, f"Flag --skip-build was rejected: {result.output}"
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -230,9 +166,9 @@ class TestDeEscalateCommand:
         """Test that de-escalate requires a reason."""
         result = runner.invoke(cli, ["tasks", "de-escalate", "gt-test123"])
         # --reason is required=True in Click, so omitting it should fail with exit code 2
-        assert result.exit_code == 2, (
-            f"Expected exit code 2 for missing required --reason, got {result.exit_code}"
-        )
+        assert (
+            result.exit_code == 2
+        ), f"Expected exit code 2 for missing required --reason, got {result.exit_code}"
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -282,9 +218,9 @@ class TestDeEscalateCommand:
         )
 
         # CLI prints error to stderr but returns exit code 0; check for error message
-        assert "not escalated" in result.output.lower(), (
-            f"Expected 'not escalated' message for non-escalated task, got: {result.output}"
-        )
+        assert (
+            "not escalated" in result.output.lower()
+        ), f"Expected 'not escalated' message for non-escalated task, got: {result.output}"
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -310,9 +246,9 @@ class TestDeEscalateCommand:
         )
 
         # With valid args and an escalated task, command should succeed
-        assert result.exit_code == 0, (
-            f"Expected exit code 0 for valid de-escalate command, got {result.exit_code}: {result.output}"
-        )
+        assert (
+            result.exit_code == 0
+        ), f"Expected exit code 0 for valid de-escalate command, got {result.exit_code}: {result.output}"
 
 
 class TestValidationHistoryCommand:
@@ -407,9 +343,9 @@ class TestValidationHistoryCommand:
             ["tasks", "validation-history", "gt-test123", "--json"],
         )
 
-        assert result.exit_code == 0, (
-            f"Expected exit code 0 for --json output, got {result.exit_code}: {result.output}"
-        )
+        assert (
+            result.exit_code == 0
+        ), f"Expected exit code 0 for --json output, got {result.exit_code}: {result.output}"
 
         # Output should be valid JSON with expected structure
         try:
@@ -418,20 +354,20 @@ class TestValidationHistoryCommand:
             pytest.fail(f"Output is not valid JSON: {e}\nOutput was: {result.output}")
 
         # Verify top-level keys exist
-        assert "task_id" in data, (
-            f"Expected 'task_id' key in JSON output, got keys: {list(data.keys())}"
-        )
-        assert "iterations" in data, (
-            f"Expected 'iterations' key in JSON output, got keys: {list(data.keys())}"
-        )
+        assert (
+            "task_id" in data
+        ), f"Expected 'task_id' key in JSON output, got keys: {list(data.keys())}"
+        assert (
+            "iterations" in data
+        ), f"Expected 'iterations' key in JSON output, got keys: {list(data.keys())}"
 
         # Verify types
-        assert isinstance(data["task_id"], str), (
-            f"Expected 'task_id' to be a string, got {type(data['task_id']).__name__}"
-        )
-        assert isinstance(data["iterations"], list), (
-            f"Expected 'iterations' to be a list, got {type(data['iterations']).__name__}"
-        )
+        assert isinstance(
+            data["task_id"], str
+        ), f"Expected 'task_id' to be a string, got {type(data['task_id']).__name__}"
+        assert isinstance(
+            data["iterations"], list
+        ), f"Expected 'iterations' to be a list, got {type(data['iterations']).__name__}"
 
 
 class TestListTasksEscalatedFilter:
@@ -575,8 +511,6 @@ class TestValidateFlagCombinations:
                 "gt-test123",
                 "--max-iterations",
                 "3",
-                "--external",
-                "--skip-build",
                 "--summary",
                 "test changes",
             ],

@@ -448,6 +448,7 @@ class TestGobbyRunnerInitialization:
         mock_memory_manager = MagicMock()
         mock_memory_manager.storage = MagicMock()
         mock_memory_sync_manager = MagicMock()
+        mock_memory_sync_manager.import_sync.return_value = 0
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
@@ -463,7 +464,8 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
 
             assert runner.memory_sync_manager == mock_memory_sync_manager
-            mock_memory_manager.storage.add_change_listener.assert_called_once()
+            mock_memory_sync_manager.import_sync.assert_called_once()
+            mock_memory_sync_manager.export_sync.assert_called_once()
 
     def test_init_memory_sync_manager_exception(self) -> None:
         """Test MemorySyncManager initialization exception is handled."""
@@ -694,11 +696,13 @@ class TestAgentEventBroadcasting:
         mock_ws_server = MagicMock()
 
         # Call the module-level function directly with a mock server
-        with patch(
-            "gobby.agents.registry.get_running_agent_registry",
-            return_value=mock_registry,
-        ), patch("gobby.agents.pty_reader.get_pty_reader_manager"), patch(
-            "gobby.agents.tmux.get_tmux_output_reader"
+        with (
+            patch(
+                "gobby.agents.registry.get_running_agent_registry",
+                return_value=mock_registry,
+            ),
+            patch("gobby.agents.pty_reader.get_pty_reader_manager"),
+            patch("gobby.agents.tmux.get_tmux_output_reader"),
         ):
             setup_agent_event_broadcasting(mock_ws_server)
 
@@ -798,9 +802,7 @@ class TestMetricsCleanupLoop:
 
             runner = GobbyRunner()
 
-            task = asyncio.create_task(
-                metrics_cleanup_loop(runner.metrics_manager, lambda: False)
-            )
+            task = asyncio.create_task(metrics_cleanup_loop(runner.metrics_manager, lambda: False))
             await asyncio.sleep(0.01)
             task.cancel()
 

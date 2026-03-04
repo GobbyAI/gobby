@@ -7,6 +7,7 @@ export interface CommandInfo {
 }
 
 export const COMMANDS: CommandInfo[] = [
+  { name: 'act', description: 'Switch from plan mode to act mode', action: 'exit_plan_mode' },
   { name: 'clear', description: 'Clear chat history', action: 'clear_history' },
   { name: 'compact', description: 'Compact conversation history', action: 'compact_chat' },
   { name: 'gobby', description: 'Browse internal Gobby tools', action: 'open_gobby' },

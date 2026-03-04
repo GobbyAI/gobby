@@ -57,7 +57,9 @@ async def test_task_verbosity_reduction():
     registry = create_task_registry(mock_manager, mock_sync)
 
     # Test create
-    result = await registry.call("create_task", {"title": "test", "session_id": "test-session", "category": "research"})
+    result = await registry.call(
+        "create_task", {"title": "test", "session_id": "test-session", "category": "research"}
+    )
     assert result["id"] == "task-123"
     # Should NOT contain full dict in improved version
     assert "description" not in result
@@ -76,6 +78,7 @@ async def test_worktree_verbosity_reduction():
     mock_storage.create.return_value = mock_wt
     mock_storage.get_by_branch.return_value = None  # Ensure no collision
     mock_git.create_worktree.return_value.success = True
+    mock_git.has_unpushed_commits.return_value = (False, 0)
 
     # Mock resolve_project_context to avoid invalid repo errors
     with unittest.mock.patch(

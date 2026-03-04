@@ -636,13 +636,14 @@ export default function App() {
         tmux.attachSession(agent.tmux_session_name, "gobby");
       } else if (agent.session_id) {
         // Non-tmux agent — view its child session read-only in chat
+        if (viewingSessionId === agent.session_id) return;
         setActiveTab("chat");
         viewSession(agent.session_id);
       } else {
         showToast("Agent has no viewable session");
       }
     },
-    [tmux, refreshAgents, showToast, viewSession],
+    [tmux, refreshAgents, showToast, viewSession, viewingSessionId],
   );
 
   /* Kill a running agent via the cancel endpoint */
@@ -701,9 +702,11 @@ export default function App() {
   const handleWatchInChat = useCallback(
     (session: GobbySession) => {
       setActiveTab("chat");
-      viewSession(session.id);
+      if (viewingSessionId !== session.id) {
+        viewSession(session.id);
+      }
     },
-    [viewSession],
+    [viewSession, viewingSessionId],
   );
 
   // Wire voice message handler into useChat's WebSocket routing
@@ -780,6 +783,13 @@ export default function App() {
         );
         return;
       }
+      if (item.action === "exit_plan_mode") {
+        if (settings.chatMode === "plan") {
+          updateChatMode("accept_edits");
+          sendMode("accept_edits");
+        }
+        return;
+      }
       if (item.action === "show_plan") {
         if (settings.chatMode !== "plan") {
           updateChatMode("plan");
@@ -792,6 +802,7 @@ export default function App() {
       clearHistory,
       sendMessage,
       settings.model,
+      settings.chatMode,
       effectiveProjectId,
       updateChatMode,
       sendMode,

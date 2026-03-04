@@ -741,7 +741,7 @@ class TestCreateTaskTool:
                 assert call_args[0][0] == "test-session"
                 merged_vars = call_args[0][1]
                 assert merged_vars["task_claimed"] is True
-                assert merged_vars["claimed_task_id"] == mock_task.id
+                assert mock_task.id in merged_vars["claimed_tasks"]
 
 
 # =============================================================================
@@ -1331,7 +1331,7 @@ class TestCloseTaskTool:
     async def test_close_task_clears_task_claimed_variables(
         self, mock_task_manager, mock_sync_manager
     ):
-        """close_task must clear task_claimed/claimed_task_id session variables.
+        """close_task must remove task from claimed_tasks session variables.
 
         Regression test for #9064: after successful close, the workflow state
         variables were not cleared due to scoping issues, causing stale
@@ -1356,12 +1356,11 @@ class TestCloseTaskTool:
             mock_session_manager.get.return_value = None
             MockSessionManager.return_value = mock_session_manager
 
-            # Session variables with task_claimed=True for this task
+            # Session variables with only this task claimed
             mock_sv_manager = MagicMock()
             mock_sv_manager.get_variables.return_value = {
                 "task_claimed": True,
-                "claimed_task_id": task_uuid,
-                "task_ref": "#42",
+                "claimed_tasks": {task_uuid: "#42"},
             }
             MockSVManager.return_value = mock_sv_manager
 
@@ -1389,13 +1388,12 @@ class TestCloseTaskTool:
             )
 
             assert "error" not in result
-            # Variables must be cleared after successful close
+            # Variables must show task removed from claimed_tasks
             mock_sv_manager.merge_variables.assert_called_once_with(
                 "test-session",
                 {
                     "task_claimed": False,
-                    "claimed_task_id": None,
-                    "task_ref": "",
+                    "claimed_tasks": {},
                 },
             )
 
@@ -2032,15 +2030,13 @@ class TestSessionVariableMirroring:
             )
 
             assert "error" not in result
-            # session_variables must be written with task_claimed=True and full UUID
-            mock_sv_manager.merge_variables.assert_called_once_with(
-                "test-session",
-                {
-                    "task_claimed": True,
-                    "claimed_task_id": task_uuid,
-                    "task_ref": "#200",
-                },
-            )
+            # session_variables must be written with task in claimed_tasks dict
+            mock_sv_manager.merge_variables.assert_called_once()
+            call_args = mock_sv_manager.merge_variables.call_args
+            merged = call_args[0][1]
+            assert merged["task_claimed"] is True
+            assert task_uuid in merged["claimed_tasks"]
+            assert merged["claimed_tasks"][task_uuid] == "#200"
 
     @pytest.mark.asyncio
     async def test_close_task_mirrors_clear_to_session_variables(
@@ -2069,8 +2065,7 @@ class TestSessionVariableMirroring:
             mock_sv_manager = MagicMock()
             mock_sv_manager.get_variables.return_value = {
                 "task_claimed": True,
-                "claimed_task_id": task_uuid,
-                "task_ref": "#200",
+                "claimed_tasks": {task_uuid: "#200"},
             }
             MockSVManager.return_value = mock_sv_manager
 
@@ -2097,13 +2092,12 @@ class TestSessionVariableMirroring:
             )
 
             assert "error" not in result
-            # session_variables must be cleared
+            # session_variables must show task removed
             mock_sv_manager.merge_variables.assert_called_once_with(
                 "test-session",
                 {
                     "task_claimed": False,
-                    "claimed_task_id": None,
-                    "task_ref": "",
+                    "claimed_tasks": {},
                 },
             )
 
@@ -2158,12 +2152,10 @@ class TestSessionVariableMirroring:
                 )
 
                 assert result["id"] == task_uuid
-                # session_variables must be written with full UUID (not truncated)
-                mock_sv_manager.merge_variables.assert_called_once_with(
-                    "test-session",
-                    {
-                        "task_claimed": True,
-                        "claimed_task_id": task_uuid,
-                        "task_ref": "#300",
-                    },
-                )
+                # session_variables must be written with task in claimed_tasks dict
+                mock_sv_manager.merge_variables.assert_called_once()
+                call_args = mock_sv_manager.merge_variables.call_args
+                merged = call_args[0][1]
+                assert merged["task_claimed"] is True
+                assert task_uuid in merged["claimed_tasks"]
+                assert merged["claimed_tasks"][task_uuid] == "#300"

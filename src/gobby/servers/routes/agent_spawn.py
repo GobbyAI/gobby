@@ -519,19 +519,18 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             # Optionally prepend agent preamble
             preamble = None
-            if agent_name != "default" or True:  # Always show preamble if available
-                from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
+            from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
-                try:
-                    from gobby.utils.project_context import get_project_context
+            try:
+                from gobby.utils.project_context import get_project_context
 
-                    ctx = get_project_context()
-                    pid = ctx.get("id") if ctx else None
-                    agent_body = resolve_agent(agent_name, server.services.database, project_id=pid)
-                    if agent_body:
-                        preamble = agent_body.build_prompt_preamble()
-                except (AgentResolutionError, Exception):
-                    pass
+                ctx = get_project_context()
+                pid = ctx.get("id") if ctx else None
+                agent_body = resolve_agent(agent_name, server.services.database, project_id=pid)
+                if agent_body:
+                    preamble = agent_body.build_prompt_preamble()
+            except (AgentResolutionError, Exception):
+                pass
 
             return {
                 "status": "success",

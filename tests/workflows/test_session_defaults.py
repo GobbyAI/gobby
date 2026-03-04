@@ -208,7 +208,10 @@ variables:
         assert result["orphaned"] == 1
 
     def test_all_expected_variables_synced(self, db) -> None:
-        """All 14 expected session-default variables should be synced."""
+        """All 14 expected session-default variables should be synced.
+
+        Note: task_ref was removed — claimed_tasks map handles this now.
+        """
         sync_bundled_variables(db)
         mgr = LocalWorkflowDefinitionManager(db)
 
@@ -219,7 +222,6 @@ variables:
             "stop_attempts",
             "max_stop_attempts",
             "task_claimed",
-            "task_ref",
             "require_task_before_edit",
             "require_commit_before_close",
             "pre_existing_errors_triaged",

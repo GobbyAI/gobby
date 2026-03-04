@@ -557,6 +557,7 @@ class TestValidationToolSchemas:
         assert "changes_summary" in input_schema["properties"]
         assert "context_files" in input_schema["properties"]
 
+
 # ============================================================================
 # run_fix_attempt MCP Tool Tests
 # ============================================================================

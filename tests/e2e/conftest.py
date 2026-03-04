@@ -854,11 +854,7 @@ def _snapshot_dir(path: Path) -> dict[str, float]:
     """Return {relative_path: mtime} for all files under *path*."""
     if not path.exists():
         return {}
-    return {
-        str(p.relative_to(path)): p.stat().st_mtime
-        for p in path.rglob("*")
-        if p.is_file()
-    }
+    return {str(p.relative_to(path)): p.stat().st_mtime for p in path.rglob("*") if p.is_file()}
 
 
 def _production_daemon_running() -> bool:

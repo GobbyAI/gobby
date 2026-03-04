@@ -54,7 +54,7 @@ class _TestHandler(AgentEventHandlerMixin):
         self._skill_manager = MagicMock()
         self._skills_config = None
         self._session_task_manager = None
-        self._dispatch_boundary_summaries_fn = MagicMock()
+        self._dispatch_session_summaries_fn = MagicMock()
         self._get_machine_id = MagicMock(return_value="machine-1")
         self._resolve_project_id = MagicMock(return_value="proj-1")
         self._handler_map = {}
@@ -89,7 +89,7 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
 
-        result = handler.handle_before_agent(event)
+        handler.handle_before_agent(event)
         handler._session_manager.update_session_status.assert_called_with("sess-1", "active")
 
     def test_clear_command_generates_summaries(self) -> None:
@@ -100,8 +100,8 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
 
-        result = handler.handle_before_agent(event)
-        handler._dispatch_boundary_summaries_fn.assert_called_once_with("sess-1", False)
+        handler.handle_before_agent(event)
+        handler._dispatch_session_summaries_fn.assert_called_once_with("sess-1", False, None)
 
     def test_exit_command_generates_summaries(self) -> None:
         handler = _TestHandler()
@@ -111,8 +111,8 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
 
-        result = handler.handle_before_agent(event)
-        handler._dispatch_boundary_summaries_fn.assert_called_once()
+        handler.handle_before_agent(event)
+        handler._dispatch_session_summaries_fn.assert_called_once()
 
     def test_skill_interception(self) -> None:
         handler = _TestHandler()
@@ -412,7 +412,7 @@ class TestHandlePreCompact:
 
     def test_claude_updates_status(self) -> None:
         handler = _TestHandler()
-        handler._dispatch_boundary_summaries_fn = MagicMock()
+        handler._dispatch_session_summaries_fn = MagicMock()
         event = _make_event(
             event_type=HookEventType.PRE_COMPACT,
             source=SessionSource.CLAUDE,
@@ -423,7 +423,7 @@ class TestHandlePreCompact:
         result = handler.handle_pre_compact(event)
         assert result.decision == "allow"
         handler._session_manager.update_session_status.assert_called_with("sess-1", "handoff_ready")
-        handler._dispatch_boundary_summaries_fn.assert_called_once()
+        handler._dispatch_session_summaries_fn.assert_called_once_with("sess-1", False, None)
 
     def test_no_session_id(self) -> None:
         handler = _TestHandler()

@@ -634,7 +634,10 @@ export function useChat() {
           const ref = info.session_ref as string | undefined;
           if (ref) setSessionRef(ref);
           const dbSid = info.db_session_id as string | undefined;
-          if (dbSid) setDbSessionId(dbSid);
+          const infoConvId = info.conversation_id as string | undefined;
+          if (dbSid && (!infoConvId || infoConvId === conversationIdRef.current)) {
+            setDbSessionId(dbSid);
+          }
           const branch = info.current_branch as string | undefined;
           if (branch !== undefined) setCurrentBranch(branch);
           const wtPath = info.worktree_path as string | undefined;
@@ -749,7 +752,19 @@ export function useChat() {
           // Map initial messages into chat format with proper tool call grouping
           const msgs = (result.messages as ApiMessage[]) || [];
           const mapped = mapApiMessages(msgs);
-          setMessages(mapped);
+          // Preserve REST-loaded transcript when re-attaching to viewed session
+          if (viewingSessionIdRef.current === sid && messagesRef.current.length > 0) {
+            const mappedById = new Map(mapped.map(m => [m.id, m]));
+            // Merge updates into existing messages, then append truly new ones
+            const existingIds = new Set(messagesRef.current.map(m => m.id));
+            const merged = messagesRef.current.map(m => mappedById.get(m.id) ?? m);
+            const newMsgs = mapped.filter(m => !existingIds.has(m.id));
+            if (newMsgs.length > 0 || mappedById.size > 0) {
+              setMessages([...merged, ...newMsgs]);
+            }
+          } else {
+            setMessages(mapped);
+          }
           setIsStreaming(false);
           setIsThinking(false);
           setSessionRef((result.ref as string) ?? null);
@@ -1536,6 +1551,7 @@ export function useChat() {
     setCanvasSurfaces(new Map());
     setCanvasPanel(null);
     setDbSessionId(null);
+    saveDbSessionId(null);
     setContextUsage({
       totalInputTokens: 0,
       outputTokens: 0,
@@ -1885,6 +1901,11 @@ export function useChat() {
 
   // View a CLI session (read-only, no WS subscription — loads via REST)
   const viewSession = useCallback((sessionId: string) => {
+    // Skip if already viewing/attached to this session
+    if (viewingSessionIdRef.current === sessionId || attachedSessionIdRef.current === sessionId) {
+      return;
+    }
+
     // Detach from any active WS subscription first
     if (attachedSessionIdRef.current) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {

@@ -56,12 +56,12 @@ class TranscriptAnalyzer:
         self.parser = parser or ClaudeTranscriptParser()
 
     def extract_handoff_context(
-        self, turns: list[dict[str, Any]], max_turns: int = 150
+        self, turns: list[dict[str, Any]], max_turns: int | None = None
     ) -> HandoffContext:
         """
         Extract context for autonomous handoff.
 
-        Analyzes recent turns to find:
+        Analyzes all turns to find:
         - Active task state from gobby-tasks calls
         - Files modified from Edit/Write/Bash calls
         - Git commits from Bash calls
@@ -70,11 +70,12 @@ class TranscriptAnalyzer:
 
         Args:
             turns: List of transcript turns (dicts)
-            max_turns: Maximum number of turns to look back for context
+            max_turns: Deprecated, ignored. All turns are processed.
 
         Returns:
             HandoffContext object populated with extracted data
         """
+        _ = max_turns  # Deprecated — all turns are now processed
         context = HandoffContext()
 
         if not turns:
@@ -99,9 +100,8 @@ class TranscriptAnalyzer:
                     context.initial_goal = str(content).strip()
                 break
 
-        # 2. Analyze Recent Activity (Scan backwards)
-        # We look at the last `max_turns` or less
-        relevant_turns = turns[-max_turns:] if len(turns) > max_turns else turns
+        # 2. Analyze Recent Activity (Scan all turns)
+        relevant_turns = turns
 
         # Track what we've found to avoid duplicates where appropriate
         found_active_task = False

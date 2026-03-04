@@ -40,12 +40,14 @@ def _make_rule_row(
     row.description = description
     row.tags = tags or []
     row.workflow_type = workflow_type
-    row.definition_json = definition_json or json.dumps({
-        "event": "before_tool",
-        "group": "test-group",
-        "effect": {"type": "block", "tools": ["Bash"], "reason": "test"},
-        "when": "not task_claimed",
-    })
+    row.definition_json = definition_json or json.dumps(
+        {
+            "event": "before_tool",
+            "group": "test-group",
+            "effect": {"type": "block", "tools": ["Bash"], "reason": "test"},
+            "when": "not task_claimed",
+        }
+    )
     row.deleted_at = None
     return row
 
@@ -104,9 +106,7 @@ class TestListRules:
             result = cli_runner.invoke(rules, ["list", "--group", "worker-safety"])
             assert result.exit_code == 0
             assert "group-rule" in result.output
-            mock_manager.list_rules_by_group.assert_called_once_with(
-                "worker-safety", enabled=None
-            )
+            mock_manager.list_rules_by_group.assert_called_once_with("worker-safety", enabled=None)
 
     def test_list_filter_enabled(self, cli_runner, mock_manager) -> None:
         from gobby.cli.rules import rules
@@ -393,8 +393,9 @@ class TestAuditRules:
             mock_audit.get_entries.assert_called_once()
             # Session should be passed through
             call_kwargs = mock_audit.get_entries.call_args
-            assert call_kwargs[1].get("session_id") == "sess-123" or \
-                   (len(call_kwargs[0]) > 0 and "sess-123" in str(call_kwargs))
+            assert call_kwargs[1].get("session_id") == "sess-123" or (
+                len(call_kwargs[0]) > 0 and "sess-123" in str(call_kwargs)
+            )
 
     def test_audit_json(self, cli_runner) -> None:
         from datetime import UTC, datetime

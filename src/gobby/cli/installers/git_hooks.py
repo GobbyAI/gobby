@@ -88,9 +88,6 @@ if command -v gobby >/dev/null 2>&1; then
     if git diff --name-only 2>/dev/null | grep -q "\.gobby/tasks.jsonl"; then
         git add .gobby/tasks.jsonl 2>/dev/null || true
     fi
-    if git diff --name-only 2>/dev/null | grep -q "\.gobby/tasks_meta.json"; then
-        git add .gobby/tasks_meta.json 2>/dev/null || true
-    fi
 fi
 """,
     "pre-push": """

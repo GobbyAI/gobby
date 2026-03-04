@@ -296,7 +296,6 @@ class TestShowStatusEdgeCases:
 class TestGetDaemonUrl:
     @patch("gobby.cli.agents.get_daemon_url", return_value="http://localhost:60887")
     def test_get_daemon_url(self, mock_url: MagicMock) -> None:
-
         result = mock_url()
         assert result == "http://localhost:60887"
 

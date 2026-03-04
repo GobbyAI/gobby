@@ -38,7 +38,8 @@ def registry(mock_worktree_storage, mock_git_manager):
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_success(registry, mock_worktree_storage, mock_git_manager):
+async def test_create_worktree_success(registry, mock_worktree_storage, mock_git_manager) -> None:
+    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -64,12 +65,14 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
         branch_name="feature/test",
         base_branch="main",
         create_branch=True,
+        use_local=False,
     )
     mock_worktree_storage.create.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git_manager):
+async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git_manager) -> None:
+    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = False
     mock_git_manager.create_worktree.return_value.error = "Git error"
     mock_worktree_storage.get_by_branch.return_value = None
@@ -85,7 +88,7 @@ async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_existing(registry, mock_worktree_storage):
+async def test_create_worktree_existing(registry, mock_worktree_storage) -> None:
     existing = Worktree(
         id="wt-123",
         project_id="proj-1",
@@ -111,7 +114,8 @@ async def test_create_worktree_existing(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktree_storage):
+async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktree_storage) -> None:
+    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -143,7 +147,126 @@ async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktr
 
 
 @pytest.mark.asyncio
-async def test_get_worktree_found(registry, mock_worktree_storage, mock_git_manager):
+async def test_create_worktree_use_local_explicit(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    """Test create_worktree with explicit use_local=True passes through."""
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = Worktree(
+        id="wt-local",
+        project_id="proj-1",
+        task_id=None,
+        branch_name="feature/local",
+        worktree_path="/tmp/wt/feature-local",
+        base_branch="develop",
+        agent_session_id=None,
+        status="active",
+        created_at="now",
+        updated_at="now",
+        merged_at=None,
+    )
+    result = await registry.call(
+        "create_worktree",
+        {
+            "branch_name": "feature/local",
+            "base_branch": "develop",
+            "worktree_path": "/tmp/wt/feature-local",
+            "use_local": True,
+        },
+    )
+    assert result["success"] is True
+    mock_git_manager.create_worktree.assert_called_once_with(
+        worktree_path="/tmp/wt/feature-local",
+        branch_name="feature/local",
+        base_branch="develop",
+        create_branch=True,
+        use_local=True,
+    )
+    # Auto-detection should NOT be called when use_local is explicit
+    mock_git_manager.has_unpushed_commits.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_worktree_auto_detects_unpushed(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    """Test create_worktree auto-sets use_local=True when base_branch has unpushed commits."""
+    mock_git_manager.has_unpushed_commits.return_value = (True, 3)
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = Worktree(
+        id="wt-auto-local",
+        project_id="proj-1",
+        task_id=None,
+        branch_name="feature/auto-local",
+        worktree_path="/tmp/wt/feature-auto-local",
+        base_branch="main",
+        agent_session_id=None,
+        status="active",
+        created_at="now",
+        updated_at="now",
+        merged_at=None,
+    )
+    result = await registry.call(
+        "create_worktree",
+        {
+            "branch_name": "feature/auto-local",
+            "worktree_path": "/tmp/wt/feature-auto-local",
+        },
+    )
+    assert result["success"] is True
+    mock_git_manager.has_unpushed_commits.assert_called_once_with("main")
+    mock_git_manager.create_worktree.assert_called_once_with(
+        worktree_path="/tmp/wt/feature-auto-local",
+        branch_name="feature/auto-local",
+        base_branch="main",
+        create_branch=True,
+        use_local=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_worktree_no_unpushed_uses_remote(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    """Test create_worktree defaults to use_local=False when no unpushed commits."""
+    mock_git_manager.has_unpushed_commits.return_value = (False, 0)
+    mock_git_manager.create_worktree.return_value.success = True
+    mock_worktree_storage.get_by_branch.return_value = None
+    mock_worktree_storage.create.return_value = Worktree(
+        id="wt-remote",
+        project_id="proj-1",
+        task_id=None,
+        branch_name="feature/remote",
+        worktree_path="/tmp/wt/feature-remote",
+        base_branch="main",
+        agent_session_id=None,
+        status="active",
+        created_at="now",
+        updated_at="now",
+        merged_at=None,
+    )
+    result = await registry.call(
+        "create_worktree",
+        {
+            "branch_name": "feature/remote",
+            "worktree_path": "/tmp/wt/feature-remote",
+        },
+    )
+    assert result["success"] is True
+    mock_git_manager.has_unpushed_commits.assert_called_once_with("main")
+    mock_git_manager.create_worktree.assert_called_once_with(
+        worktree_path="/tmp/wt/feature-remote",
+        branch_name="feature/remote",
+        base_branch="main",
+        create_branch=True,
+        use_local=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_worktree_found(registry, mock_worktree_storage, mock_git_manager) -> None:
     wt = Worktree(
         id="wt-123",
         project_id="proj-1",
@@ -172,7 +295,7 @@ async def test_get_worktree_found(registry, mock_worktree_storage, mock_git_mana
 
 
 @pytest.mark.asyncio
-async def test_get_worktree_not_found(registry, mock_worktree_storage):
+async def test_get_worktree_not_found(registry, mock_worktree_storage) -> None:
     mock_worktree_storage.get.return_value = None
     result = await registry.call("get_worktree", {"worktree_id": "missing"})
     assert result["success"] is False
@@ -180,7 +303,7 @@ async def test_get_worktree_not_found(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_list_worktrees(registry, mock_worktree_storage):
+async def test_list_worktrees(registry, mock_worktree_storage) -> None:
     wt1 = Worktree(
         id="1",
         project_id="p1",
@@ -204,7 +327,7 @@ async def test_list_worktrees(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_claim_worktree_success(registry, mock_worktree_storage):
+async def test_claim_worktree_success(registry, mock_worktree_storage) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -226,7 +349,7 @@ async def test_claim_worktree_success(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_claim_worktree_already_claimed(registry, mock_worktree_storage):
+async def test_claim_worktree_already_claimed(registry, mock_worktree_storage) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -247,7 +370,7 @@ async def test_claim_worktree_already_claimed(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_release_worktree(registry, mock_worktree_storage):
+async def test_release_worktree(registry, mock_worktree_storage) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -269,7 +392,7 @@ async def test_release_worktree(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git_manager):
+async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git_manager) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -299,7 +422,7 @@ async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git
 @pytest.mark.asyncio
 async def test_delete_worktree_uncommitted_changes(
     registry, mock_worktree_storage, mock_git_manager
-):
+) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -332,7 +455,7 @@ async def test_delete_worktree_uncommitted_changes(
 
 
 @pytest.mark.asyncio
-async def test_sync_worktree(registry, mock_worktree_storage, mock_git_manager):
+async def test_sync_worktree(registry, mock_worktree_storage, mock_git_manager) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -357,7 +480,7 @@ async def test_sync_worktree(registry, mock_worktree_storage, mock_git_manager):
 
 
 @pytest.mark.asyncio
-async def test_detect_stale_worktrees(registry, mock_worktree_storage):
+async def test_detect_stale_worktrees(registry, mock_worktree_storage) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -379,7 +502,7 @@ async def test_detect_stale_worktrees(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_cleanup_stale_worktrees(registry, mock_worktree_storage, mock_git_manager):
+async def test_cleanup_stale_worktrees(registry, mock_worktree_storage, mock_git_manager) -> None:
     wt = Worktree(
         id="wt-1",
         project_id="p1",
@@ -701,7 +824,9 @@ class TestInstallProviderHooks:
 
 
 @pytest.mark.asyncio
-async def test_get_worktree_path_not_exists(registry, mock_worktree_storage, mock_git_manager):
+async def test_get_worktree_path_not_exists(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
     """Test get_worktree when path doesn't exist on disk."""
     wt = Worktree(
         id="wt-123",
@@ -725,7 +850,7 @@ async def test_get_worktree_path_not_exists(registry, mock_worktree_storage, moc
 
 
 @pytest.mark.asyncio
-async def test_claim_worktree_not_found(registry, mock_worktree_storage):
+async def test_claim_worktree_not_found(registry, mock_worktree_storage) -> None:
     """Test claim_worktree when worktree not found."""
     mock_worktree_storage.get.return_value = None
     result = await registry.call(
@@ -736,7 +861,7 @@ async def test_claim_worktree_not_found(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_release_worktree_not_found(registry, mock_worktree_storage):
+async def test_release_worktree_not_found(registry, mock_worktree_storage) -> None:
     """Test release_worktree when worktree not found."""
     mock_worktree_storage.get.return_value = None
     result = await registry.call("release_worktree", {"worktree_id": "nonexistent"})
@@ -746,7 +871,7 @@ async def test_release_worktree_not_found(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_delete_worktree_not_found(registry, mock_worktree_storage):
+async def test_delete_worktree_not_found(registry, mock_worktree_storage) -> None:
     """Test delete_worktree is idempotent when worktree not found."""
     mock_worktree_storage.get.return_value = None
     result = await registry.call("delete_worktree", {"worktree_id": "nonexistent"})
@@ -755,7 +880,9 @@ async def test_delete_worktree_not_found(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_delete_worktree_path_not_exists(registry, mock_worktree_storage, mock_git_manager):
+async def test_delete_worktree_path_not_exists(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
     """Test delete_worktree when path doesn't exist (orphaned DB record)."""
     wt = Worktree(
         id="wt-1",
@@ -783,7 +910,9 @@ async def test_delete_worktree_path_not_exists(registry, mock_worktree_storage, 
 
 
 @pytest.mark.asyncio
-async def test_delete_worktree_git_failure(registry, mock_worktree_storage, mock_git_manager):
+async def test_delete_worktree_git_failure(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
     """Test delete_worktree when git delete fails."""
     wt = Worktree(
         id="wt-1",
@@ -809,7 +938,7 @@ async def test_delete_worktree_git_failure(registry, mock_worktree_storage, mock
 
 
 @pytest.mark.asyncio
-async def test_sync_worktree_not_found(registry, mock_worktree_storage):
+async def test_sync_worktree_not_found(registry, mock_worktree_storage) -> None:
     """Test sync_worktree when worktree not found."""
     mock_worktree_storage.get.return_value = None
     result = await registry.call("sync_worktree", {"worktree_id": "nonexistent"})
@@ -818,7 +947,7 @@ async def test_sync_worktree_not_found(registry, mock_worktree_storage):
 
 
 @pytest.mark.asyncio
-async def test_sync_worktree_failure(registry, mock_worktree_storage, mock_git_manager):
+async def test_sync_worktree_failure(registry, mock_worktree_storage, mock_git_manager) -> None:
     """Test sync_worktree when sync fails."""
     wt = Worktree(
         id="wt-1",
@@ -845,7 +974,7 @@ async def test_sync_worktree_failure(registry, mock_worktree_storage, mock_git_m
 
 
 @pytest.mark.asyncio
-async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_manager):
+async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_manager) -> None:
     """Merge worktree successfully (fully isolated in worktree)."""
     wt = Worktree(
         id="wt-1",
@@ -861,14 +990,10 @@ async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_
         merged_at=None,
     )
     mock_worktree_storage.get.return_value = wt
-    mock_git_manager._run_git.return_value = MagicMock(
-        returncode=0, stdout="main", stderr=""
-    )
+    mock_git_manager._run_git.return_value = MagicMock(returncode=0, stdout="main", stderr="")
     mock_worktree_storage.mark_merged.return_value = True
 
-    result = await registry.call(
-        "merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"}
-    )
+    result = await registry.call("merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"})
 
     assert result["success"] is True
     assert result["source_branch"] == "feature/test"
@@ -878,7 +1003,9 @@ async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_
     calls = mock_git_manager._run_git.call_args_list
     merge_call = [c for c in calls if c[0][0][:1] == ["merge"] and "--no-edit" in c[0][0]]
     assert len(merge_call) == 1
-    assert merge_call[0].kwargs.get("cwd") == "/tmp/wt1" or merge_call[0][1].get("cwd") == "/tmp/wt1"
+    assert (
+        merge_call[0].kwargs.get("cwd") == "/tmp/wt1" or merge_call[0][1].get("cwd") == "/tmp/wt1"
+    )
     # Verify push_command is returned for the agent to execute
     assert result["push_command"] == "git push --no-verify origin feature/test:main"
     # Verify NO push was executed by the tool (agent handles push)
@@ -887,7 +1014,7 @@ async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_
 
 
 @pytest.mark.asyncio
-async def test_merge_worktree_not_found(registry, mock_worktree_storage):
+async def test_merge_worktree_not_found(registry, mock_worktree_storage) -> None:
     """Merge fails when worktree not found."""
     mock_worktree_storage.get.return_value = None
 
@@ -902,7 +1029,7 @@ async def test_merge_worktree_not_found(registry, mock_worktree_storage):
 @pytest.mark.asyncio
 async def test_merge_worktree_default_target_branch(
     registry, mock_worktree_storage, mock_git_manager
-):
+) -> None:
     """Merge defaults target_branch to worktree's base_branch."""
     wt = Worktree(
         id="wt-1",
@@ -918,9 +1045,7 @@ async def test_merge_worktree_default_target_branch(
         merged_at=None,
     )
     mock_worktree_storage.get.return_value = wt
-    mock_git_manager._run_git.return_value = MagicMock(
-        returncode=0, stdout="develop", stderr=""
-    )
+    mock_git_manager._run_git.return_value = MagicMock(returncode=0, stdout="develop", stderr="")
     mock_worktree_storage.mark_merged.return_value = True
 
     result = await registry.call("merge_worktree", {"worktree_id": "wt-1"})
@@ -934,7 +1059,7 @@ async def test_merge_worktree_default_target_branch(
 
 
 @pytest.mark.asyncio
-async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git_manager):
+async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git_manager) -> None:
     """Merge detects conflicts in worktree and aborts cleanly."""
     wt = Worktree(
         id="wt-1",
@@ -965,9 +1090,7 @@ async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git
 
     mock_git_manager._run_git.side_effect = _run_git_side_effect
 
-    result = await registry.call(
-        "merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"}
-    )
+    result = await registry.call("merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"})
 
     assert result["success"] is False
     assert result["has_conflicts"] is True
@@ -975,8 +1098,7 @@ async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git
     mock_worktree_storage.mark_merged.assert_not_called()
     # Verify merge --abort was called to clean up the worktree
     abort_calls = [
-        c for c in mock_git_manager._run_git.call_args_list
-        if c[0][0] == ["merge", "--abort"]
+        c for c in mock_git_manager._run_git.call_args_list if c[0][0] == ["merge", "--abort"]
     ]
     assert len(abort_calls) == 1
 
@@ -984,7 +1106,7 @@ async def test_merge_worktree_conflict(registry, mock_worktree_storage, mock_git
 @pytest.mark.asyncio
 async def test_merge_worktree_non_conflict_failure(
     registry, mock_worktree_storage, mock_git_manager
-):
+) -> None:
     """Merge fails with non-conflict error."""
     wt = Worktree(
         id="wt-1",
@@ -1014,9 +1136,7 @@ async def test_merge_worktree_non_conflict_failure(
 
     mock_git_manager._run_git.side_effect = _run_git_side_effect
 
-    result = await registry.call(
-        "merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"}
-    )
+    result = await registry.call("merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"})
 
     assert result["success"] is False
     assert result["has_conflicts"] is False
@@ -1026,7 +1146,7 @@ async def test_merge_worktree_non_conflict_failure(
 @pytest.mark.asyncio
 async def test_merge_worktree_explicit_source_branch(
     registry, mock_worktree_storage, mock_git_manager
-):
+) -> None:
     """Agent can specify source_branch explicitly."""
     wt = Worktree(
         id="wt-1",
@@ -1042,9 +1162,7 @@ async def test_merge_worktree_explicit_source_branch(
         merged_at=None,
     )
     mock_worktree_storage.get.return_value = wt
-    mock_git_manager._run_git.return_value = MagicMock(
-        returncode=0, stdout="", stderr=""
-    )
+    mock_git_manager._run_git.return_value = MagicMock(returncode=0, stdout="", stderr="")
     mock_worktree_storage.mark_merged.return_value = True
 
     result = await registry.call(
@@ -1057,17 +1175,14 @@ async def test_merge_worktree_explicit_source_branch(
     # push_command should use the explicit source branch
     assert result["push_command"] == "git push --no-verify origin my-branch:main"
     # No push executed by the tool
-    push_calls = [
-        c for c in mock_git_manager._run_git.call_args_list
-        if c[0][0][:1] == ["push"]
-    ]
+    push_calls = [c for c in mock_git_manager._run_git.call_args_list if c[0][0][:1] == ["push"]]
     assert len(push_calls) == 0
 
 
 @pytest.mark.asyncio
 async def test_merge_worktree_no_main_repo_operations(
     registry, mock_worktree_storage, mock_git_manager
-):
+) -> None:
     """All git commands run in the worktree, never the main repo."""
     wt = Worktree(
         id="wt-1",
@@ -1083,14 +1198,10 @@ async def test_merge_worktree_no_main_repo_operations(
         merged_at=None,
     )
     mock_worktree_storage.get.return_value = wt
-    mock_git_manager._run_git.return_value = MagicMock(
-        returncode=0, stdout="", stderr=""
-    )
+    mock_git_manager._run_git.return_value = MagicMock(returncode=0, stdout="", stderr="")
     mock_worktree_storage.mark_merged.return_value = True
 
-    result = await registry.call(
-        "merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"}
-    )
+    result = await registry.call("merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"})
 
     assert result["success"] is True
     # Every _run_git call must have cwd set to the worktree path

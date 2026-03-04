@@ -6,8 +6,8 @@ rules:
     event: stop
     enabled: false
     priority: 50
-    when: "variables.get('mode_level', 2) >= 1 and variables.get('task_claimed') and variables.get('claimed_task_id') and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)"
+    when: "variables.get('mode_level', 2) >= 1 and variables.get('task_claimed') and variables.get('claimed_tasks') and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)"
     effect:
       type: block
       reason: |
-        Task {{ task_ref or '(unknown)' }} is still in_progress. Commit and close_task().
+        Tasks still in_progress: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}. Commit and close_task().

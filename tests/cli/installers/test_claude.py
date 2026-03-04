@@ -1092,10 +1092,25 @@ class TestCleanProjectHooks:
         settings = {
             "hooks": {
                 "SessionStart": [
-                    {"hooks": [{"type": "command", "command": "python hook_dispatcher.py --type=session-start"}]}
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python hook_dispatcher.py --type=session-start",
+                            }
+                        ]
+                    }
                 ],
                 "PreToolUse": [
-                    {"matcher": "*", "hooks": [{"type": "command", "command": "python hook_dispatcher.py --type=pre-tool-use"}]}
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python hook_dispatcher.py --type=pre-tool-use",
+                            }
+                        ],
+                    }
                 ],
             },
             "allowedTools": ["tool1"],
@@ -1121,7 +1136,14 @@ class TestCleanProjectHooks:
         settings = {
             "hooks": {
                 "SessionStart": [
-                    {"hooks": [{"type": "command", "command": "python hook_dispatcher.py --type=session-start"}]}
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python hook_dispatcher.py --type=session-start",
+                            }
+                        ]
+                    }
                 ],
                 "PreToolUse": [
                     {"matcher": "*", "hooks": [{"type": "command", "command": "my-custom-linter"}]}
@@ -1197,7 +1219,14 @@ class TestCleanProjectHooks:
         project_settings = {
             "hooks": {
                 "SessionStart": [
-                    {"hooks": [{"type": "command", "command": "python hook_dispatcher.py --type=session-start"}]}
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python hook_dispatcher.py --type=session-start",
+                            }
+                        ]
+                    }
                 ],
             }
         }

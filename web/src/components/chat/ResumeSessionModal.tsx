@@ -140,7 +140,7 @@ export function ResumeSessionModal({
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {session.title || `Session ${session.ref || session.id.slice(0, 8)}`}
+                    {session.seq_num != null ? `#${session.seq_num}: ` : ''}{session.title || `Session ${session.ref || session.id.slice(0, 8)}`}
                   </div>
                   <div style={{ fontSize: "12px", color: "var(--text-muted, #888)", marginTop: "2px" }}>
                     {SOURCE_LABELS[session.source] ?? session.source}

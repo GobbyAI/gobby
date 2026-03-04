@@ -33,7 +33,10 @@ class TestKillTerminalSession:
 
         assert result is True
         mock_exec.assert_called_once_with(
-            "tmux", "kill-pane", "-t", "%49",
+            "tmux",
+            "kill-pane",
+            "-t",
+            "%49",
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )

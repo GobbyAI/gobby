@@ -117,7 +117,9 @@ export function MobileChatDrawer({
               </div>
             )}
             {sessions.map((session) => {
-              const title = session.title || `Chat ${session.ref}`
+              const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
+              const titleText = session.title || `Chat ${session.ref}`;
+              const displayTitle = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
               const isActive = session.external_id === activeSessionId
               return (
                 <div
@@ -130,8 +132,8 @@ export function MobileChatDrawer({
                 >
                   <div className="session-item-main">
                     <span className={`session-source-dot ${session.status === 'paused' ? 'status-paused' : 'web-chat'}`} />
-                    <span className="session-name" title={title}>
-                      {title}
+                    <span className="session-name" title={displayTitle}>
+                      {displayTitle}
                     </span>
                   </div>
                   <div className="session-item-actions">

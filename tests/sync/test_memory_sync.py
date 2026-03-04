@@ -541,3 +541,120 @@ class TestBackupManagerRename:
         count = manager.backup_sync()
 
         assert count == 0
+
+
+class TestExportMerge:
+    """Tests for merge-aware export (preserves file-only records)."""
+
+    @pytest.fixture
+    def manager_with_memories(self, mock_db):
+        """Create a sync manager whose DB returns memories B and C."""
+        mm = MagicMock()
+        mm.list_memories = MagicMock(
+            return_value=[
+                Memory(
+                    id="m-b",
+                    content="memory B",
+                    memory_type="fact",
+                    created_at="2023-01-02T00:00:00Z",
+                    updated_at="2023-01-02T00:00:00Z",
+                    access_count=0,
+                    last_accessed_at=None,
+                    tags=["db"],
+                    project_id="p1",
+                    source_type="user",
+                    source_session_id=None,
+                ),
+                Memory(
+                    id="m-c",
+                    content="memory C",
+                    memory_type="fact",
+                    created_at="2023-01-03T00:00:00Z",
+                    updated_at="2023-01-03T00:00:00Z",
+                    access_count=0,
+                    last_accessed_at=None,
+                    tags=["db"],
+                    project_id="p1",
+                    source_type="user",
+                    source_session_id=None,
+                ),
+            ]
+        )
+        config = MemoryBackupConfig(enabled=True, export_debounce=0.1)
+        return MemorySyncManager(mock_db, mm, config)
+
+    def test_export_merges_with_existing_file(self, manager_with_memories, tmp_path) -> None:
+        """File has A, B (old). DB has B, C. Result: A (file), B (DB version), C (DB)."""
+        mem_file = tmp_path / "memories.jsonl"
+        # Write file with records A and B (file version)
+        file_records = [
+            {"id": "m-a", "content": "memory A", "type": "fact", "tags": ["file"]},
+            {"id": "m-b-old", "content": "memory B", "type": "fact", "tags": ["file"]},
+        ]
+        with open(mem_file, "w") as f:
+            for rec in file_records:
+                f.write(json.dumps(rec) + "\n")
+
+        manager_with_memories.export_path = mem_file
+        count = manager_with_memories.backup_sync()
+
+        assert count == 3  # A (file-only) + B (DB override) + C (DB-only)
+
+        # Parse results
+        with open(mem_file) as f:
+            results = {json.loads(line)["content"].strip(): json.loads(line) for line in f}
+
+        # A preserved from file
+        assert "memory A" in results
+        assert results["memory A"]["tags"] == ["file"]
+
+        # B overridden by DB version
+        assert "memory B" in results
+        assert results["memory B"]["tags"] == ["db"]
+        assert results["memory B"]["id"] == "m-b"
+
+        # C added from DB
+        assert "memory C" in results
+
+    def test_export_preserves_file_only_records(self, mock_db, tmp_path) -> None:
+        """File-only records survive even when DB is empty."""
+        mm = MagicMock()
+        mm.list_memories = MagicMock(return_value=[])
+        config = MemoryBackupConfig(enabled=True, export_debounce=0.1)
+        manager = MemorySyncManager(mock_db, mm, config)
+
+        mem_file = tmp_path / "memories.jsonl"
+        file_records = [
+            {"id": "m-x", "content": "remote memory X", "type": "fact", "tags": ["remote"]},
+            {"id": "m-y", "content": "remote memory Y", "type": "fact", "tags": ["remote"]},
+        ]
+        with open(mem_file, "w") as f:
+            for rec in file_records:
+                f.write(json.dumps(rec) + "\n")
+
+        manager.export_path = mem_file
+        count = manager.backup_sync()
+
+        assert count == 2
+        with open(mem_file) as f:
+            contents = [json.loads(line)["content"] for line in f]
+        assert "remote memory X" in contents
+        assert "remote memory Y" in contents
+
+    def test_export_handles_corrupt_file_lines(self, manager_with_memories, tmp_path) -> None:
+        """Corrupt JSON lines in existing file are skipped, valid lines preserved."""
+        mem_file = tmp_path / "memories.jsonl"
+        with open(mem_file, "w") as f:
+            f.write('{"id": "m-a", "content": "memory A", "type": "fact", "tags": ["file"]}\n')
+            f.write("this is not valid json\n")
+            f.write('{"id": "m-d", "content": "memory D", "type": "fact", "tags": ["file"]}\n')
+            f.write("\n")  # empty line
+
+        manager_with_memories.export_path = mem_file
+        count = manager_with_memories.backup_sync()
+
+        # A + D from file, B + C from DB = 4
+        assert count == 4
+        with open(mem_file) as f:
+            contents = {json.loads(line)["content"].strip() for line in f}
+        assert contents == {"memory A", "memory B", "memory C", "memory D"}

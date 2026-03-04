@@ -247,44 +247,24 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except Exception as e:
                 logger.debug("Best-effort session close linking failed: %s", e)
 
-        # Clear workflow task_claimed state if this was the claimed task
-        # Respects the clear_task_on_close variable (defaults to True if not set)
+        # Remove closed task from claimed_tasks dict
         # This is done here because Claude Code's post-tool-use hook doesn't include
         # the tool result, so the detection_helpers can't verify close succeeded
         if resolved_session_id:
             try:
+                from gobby.workflows.task_claim_state import remove_claimed_task
+
                 session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
-                # Always resolve ref before UUID comparison
-                claimed_task_id = session_vars.get("claimed_task_id")
-                if claimed_task_id:
-                    try:
-                        claimed_task_id = resolve_task_id_for_mcp(ctx.task_manager, claimed_task_id)
-                    except Exception as e:
-                        logger.debug("Resolution of claimed_task_id failed: %s", e)
-
-                # Compare with normalized UUIDs to handle format differences
-                ids_match = False
-                if claimed_task_id and resolved_id:
-                    try:
-                        ids_match = str(uuid.UUID(claimed_task_id)) == str(uuid.UUID(resolved_id))
-                    except (ValueError, TypeError):
-                        ids_match = claimed_task_id == resolved_id
-
-                if ids_match:
-                    clear_on_close = session_vars.get("clear_task_on_close", True)
-                    if clear_on_close:
-                        ctx.session_var_manager.merge_variables(
-                            resolved_session_id,
-                            {
-                                "task_claimed": False,
-                                "claimed_task_id": None,
-                                "task_ref": "",
-                            },
-                        )
-                        logger.debug("Cleared task_claimed for session %s", resolved_session_id)
+                merge_dict = remove_claimed_task(session_vars, resolved_id)
+                ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
+                logger.debug(
+                    "Removed task %s from claimed_tasks for session %s",
+                    resolved_id,
+                    resolved_session_id,
+                )
             except Exception as e:
                 logger.warning(
-                    "Failed to clear task_claimed for session %s: %s",
+                    "Failed to update claimed_tasks for session %s: %s",
                     resolved_session_id,
                     e,
                 )
@@ -621,17 +601,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except Exception as e:
             logger.debug("Best-effort session claim linking failed: %s", e)
 
-        # Set task_claimed session variable (enables Edit/Write hooks)
+        # Set claimed_tasks session variable (enables Edit/Write hooks)
         # This mirrors create_task behavior in _crud.py
         try:
-            ctx.session_var_manager.merge_variables(
-                resolved_session_id,
-                {
-                    "task_claimed": True,
-                    "claimed_task_id": resolved_id,
-                    "task_ref": f"#{task.seq_num}" if task.seq_num else resolved_id,
-                },
-            )
+            from gobby.workflows.task_claim_state import add_claimed_task
+
+            session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
+            ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+            merge_dict = add_claimed_task(session_vars, resolved_id, ref)
+            ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
         except Exception as e:
             logger.debug("Best-effort session variable setting failed: %s", e)
 

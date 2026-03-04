@@ -414,8 +414,8 @@ def test_resolve_project_ref_by_name() -> None:
     assert result == "uuid-from-name"
 
 
-def test_resolve_project_ref_not_found() -> None:
-    """Returns None when project not found by uuid or name."""
+def test_resolve_project_ref_not_found_returns_none() -> None:
+    """Returns None when project not found and exit_on_not_found=False."""
     from gobby.cli.utils import resolve_project_ref
 
     mock_db = MagicMock()
@@ -427,8 +427,25 @@ def test_resolve_project_ref_not_found() -> None:
         patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
-        result = resolve_project_ref("nonexistent")
+        result = resolve_project_ref("nonexistent", exit_on_not_found=False)
     assert result is None
+
+
+def test_resolve_project_ref_not_found_exits() -> None:
+    """Exits when project not found and exit_on_not_found=True."""
+    from gobby.cli.utils import resolve_project_ref
+
+    mock_db = MagicMock()
+    mock_manager = MagicMock()
+    mock_manager.get.return_value = None
+    mock_manager.get_by_name.return_value = None
+
+    with (
+        patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
+        patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
+        pytest.raises(SystemExit),
+    ):
+        resolve_project_ref("nonexistent", exit_on_not_found=True)
     mock_db.close.assert_called_once()
 
 
@@ -721,6 +738,7 @@ def test_kill_all_gobby_daemons_no_processes() -> None:
     mock_config.websocket.port = 60888
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.load_config", return_value=mock_config),
         patch("gobby.cli.utils.psutil.process_iter", return_value=[]),
         patch("gobby.cli.utils.psutil.Process") as mock_proc_cls,
@@ -739,6 +757,7 @@ def test_kill_all_gobby_daemons_config_fallback() -> None:
     from gobby.cli.utils import kill_all_gobby_daemons
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.load_config", side_effect=Exception("no config")),
         patch("gobby.cli.utils.psutil.process_iter", return_value=[]),
         patch("gobby.cli.utils.psutil.Process") as mock_proc_cls,
@@ -772,6 +791,7 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
     parent_proc.pid = 1
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.load_config", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
@@ -805,6 +825,7 @@ def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
     parent_proc.pid = 1
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.load_config", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
@@ -842,6 +863,7 @@ def test_kill_all_gobby_daemons_port_match() -> None:
     parent_proc.pid = 1
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.load_config", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
@@ -870,6 +892,7 @@ def test_kill_all_gobby_daemons_skips_self() -> None:
     parent_proc.pid = 1
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.load_config", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
@@ -897,6 +920,7 @@ def test_kill_all_gobby_daemons_handles_process_error() -> None:
     parent_proc.pid = 1
 
     with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
         patch("gobby.cli.utils.load_config", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
@@ -1125,7 +1149,9 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
 
     with (
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.utils._is_process_alive", side_effect=lambda pid: next(alive_calls, False)),
+        patch(
+            "gobby.cli.utils._is_process_alive", side_effect=lambda pid: next(alive_calls, False)
+        ),
         patch("gobby.cli.utils.psutil.Process", return_value=mock_parent),
         patch("gobby.cli.utils.os.kill") as mock_kill,
         patch("gobby.cli.utils.time.sleep"),

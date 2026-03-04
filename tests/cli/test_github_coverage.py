@@ -1,4 +1,5 @@
 """Tests for cli/github.py — targeting uncovered lines."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -37,9 +38,7 @@ def _mock_github_deps(
 class TestGithubStatus:
     @patch("gobby.cli.github.GitHubIntegration")
     @patch("gobby.cli.github.get_github_deps")
-    def test_status_text(
-        self, mock_deps: MagicMock, mock_gh: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_status_text(self, mock_deps: MagicMock, mock_gh: MagicMock, runner: CliRunner) -> None:
         tm, mcp, pm, pid = _mock_github_deps(github_repo="owner/repo")
         mock_deps.return_value = (tm, mcp, pm, pid)
         tm.db.fetchone.return_value = {"count": 3}
@@ -50,9 +49,7 @@ class TestGithubStatus:
 
     @patch("gobby.cli.github.GitHubIntegration")
     @patch("gobby.cli.github.get_github_deps")
-    def test_status_json(
-        self, mock_deps: MagicMock, mock_gh: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_status_json(self, mock_deps: MagicMock, mock_gh: MagicMock, runner: CliRunner) -> None:
         tm, mcp, pm, pid = _mock_github_deps()
         mock_deps.return_value = (tm, mcp, pm, pid)
         tm.db.fetchone.return_value = {"count": 0}
@@ -143,9 +140,7 @@ class TestGithubImport:
         tm, mcp, pm, pid = _mock_github_deps()
         mock_deps.return_value = (tm, mcp, pm, pid)
         mock_async.return_value = []
-        result = runner.invoke(
-            github, ["import", "owner/repo", "--json"], catch_exceptions=False
-        )
+        result = runner.invoke(github, ["import", "owner/repo", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
         assert '"count": 0' in result.output
 
@@ -181,20 +176,14 @@ class TestGithubImport:
 class TestGithubSync:
     @patch("gobby.cli.github.asyncio.run", return_value={"ok": True})
     @patch("gobby.cli.github.get_sync_service")
-    def test_sync_text(
-        self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_sync_text(self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(github, ["sync", "task-uuid"], catch_exceptions=False)
         assert result.exit_code == 0
 
     @patch("gobby.cli.github.asyncio.run", return_value={"ok": True})
     @patch("gobby.cli.github.get_sync_service")
-    def test_sync_json(
-        self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner
-    ) -> None:
-        result = runner.invoke(
-            github, ["sync", "task-uuid", "--json"], catch_exceptions=False
-        )
+    def test_sync_json(self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner) -> None:
+        result = runner.invoke(github, ["sync", "task-uuid", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
 
     @patch("gobby.cli.github.asyncio.run", side_effect=ValueError("bad"))
@@ -218,24 +207,27 @@ class TestGithubSync:
 # github pr
 # ---------------------------------------------------------------------------
 class TestGithubPr:
-    @patch("gobby.cli.github.asyncio.run", return_value={"number": 42, "html_url": "https://github.com/pr/42"})
+    @patch(
+        "gobby.cli.github.asyncio.run",
+        return_value={"number": 42, "html_url": "https://github.com/pr/42"},
+    )
     @patch("gobby.cli.github.get_sync_service")
-    def test_pr_text(
-        self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_pr_text(self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(
-            github, ["pr", "task-uuid", "--head", "feature-branch"],
+            github,
+            ["pr", "task-uuid", "--head", "feature-branch"],
             catch_exceptions=False,
         )
         assert result.exit_code == 0
         assert "#42" in result.output
         assert "https://github.com/pr/42" in result.output
 
-    @patch("gobby.cli.github.asyncio.run", return_value={"number": 1, "url": "https://api.github.com/pr/1"})
+    @patch(
+        "gobby.cli.github.asyncio.run",
+        return_value={"number": 1, "url": "https://api.github.com/pr/1"},
+    )
     @patch("gobby.cli.github.get_sync_service")
-    def test_pr_json(
-        self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_pr_json(self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(
             github,
             ["pr", "task-uuid", "--head", "feat", "--json"],
@@ -245,11 +237,10 @@ class TestGithubPr:
 
     @patch("gobby.cli.github.asyncio.run", return_value={"number": 1})
     @patch("gobby.cli.github.get_sync_service")
-    def test_pr_no_url(
-        self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner
-    ) -> None:
+    def test_pr_no_url(self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(
-            github, ["pr", "task-uuid", "--head", "feat"],
+            github,
+            ["pr", "task-uuid", "--head", "feat"],
             catch_exceptions=False,
         )
         assert result.exit_code == 0
@@ -261,7 +252,8 @@ class TestGithubPr:
         self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner
     ) -> None:
         result = runner.invoke(
-            github, ["pr", "task-uuid", "--head", "feat"],
+            github,
+            ["pr", "task-uuid", "--head", "feat"],
             catch_exceptions=False,
         )
         assert result.exit_code != 0
@@ -272,7 +264,8 @@ class TestGithubPr:
         self, mock_svc: MagicMock, _async: MagicMock, runner: CliRunner
     ) -> None:
         result = runner.invoke(
-            github, ["pr", "task-uuid", "--head", "feat"],
+            github,
+            ["pr", "task-uuid", "--head", "feat"],
             catch_exceptions=False,
         )
         assert result.exit_code != 0

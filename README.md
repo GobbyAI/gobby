@@ -32,7 +32,7 @@ Note: Gobby is currently in alpha. Expect rough edges and breaking changes until
 If you've tried Beads or TaskMaster, you know the pain: databases that corrupt, agents that can't figure out the schema, worktrees that fall out of sync. Gobby's task system was designed by someone who got fed up with all of them.
 
 - **Dependency graphs** that agents actually understand
-- **TDD expansion** — describe a feature, get red/green/blue subtasks with test-first ordering  
+- **TDD expansion** — describe a feature, get red/green/blue subtasks with test-first ordering
 - **Validation gates** — tasks can't close without passing criteria (with git diff context)
 - **Git-native sync** — `.gobby/tasks.jsonl` lives in your repo, works with worktrees
 - **Commit linking** — `[task-id] feat: thing` auto-links commits to tasks
@@ -90,7 +90,7 @@ require-task:
     reason: "Claim a task before editing files."
 ```
 
-11 bundled rule groups covering safety, tool hygiene, task enforcement, stop gates, memory lifecycle, and more. Plus on-demand step-based workflows and deterministic pipelines.
+13 bundled rule groups covering safety, tool hygiene, task enforcement, stop gates, memory lifecycle, and more. Plus on-demand step-based workflows and deterministic pipelines.
 
 ### 🌳 Worktree Orchestration
 
@@ -383,19 +383,27 @@ Gobby exposes tools via MCP that your AI coding assistant can use:
 
 ## For AI Agents
 
-**If you're an AI agent reading this:** Check out [docs/AGENT_INSTRUCTIONS.md](docs/AGENT_INSTRUCTIONS.md) for your operating procedures, and [CLAUDE.md](CLAUDE.md) for Claude Code-specific guidance.
+**If you're an AI agent reading this:** Check out [CLAUDE.md](CLAUDE.md) for operating guidance.
+
+## Authentication & AI Vendor Policies
+
+Gobby uses the Claude Agent SDK for web chat and workflow agents (subscription mode by default, intended for individual use). For commercial/production use, configure API keys per your AI vendor's terms. Recent Gemini CLI TOS changes prohibit using Gemini CLI OAuth tokens in third-party software.
+
+See [AUTH.md](AUTH.md) for details on authentication modes and AI vendor policies.
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the full plan, but highlights:
 
-**Shipped:** Task system v2, TDD expansion, rule engine (declarative enforcement with 11 bundled rule groups), on-demand workflows, MCP proxy with progressive discovery, session handoffs, memory v4 with embeddings, hooks for all CLIs, unified agent spawning with P2P messaging, worktree and clone orchestration, skills system, pipeline system, cron scheduler, coordinator pipeline, web UI (tasks kanban/tree/Gantt/graph, memory with Neo4j knowledge graph, sessions with transcripts, chat with voice and model switching, cron jobs, configuration, skills, projects, agent registry, file browser), tmux first-class support, personal workspace, code decomposition, DB-backed agent registry
+**Shipped:** Task system v2, TDD expansion, rule engine (13 bundled rule groups), MCP proxy with progressive discovery, session handoffs, memory v5 (Qdrant + knowledge graph), hooks for all 6 CLIs, coordinator pipeline with developer/QA/merge agent trio, autonomous SDK agent execution, session handoff & digest overhaul, stop-gate enforcement, legacy workflow removal, pipeline resume on daemon restart, web UI (tasks, memory, sessions, chat with voice, cron, config, skills, projects, agents, file browser), skills system, pipeline system, worktree/clone orchestration
 
-**Beta:** Autonomous orchestration (conductor daemon, token budget tracking, review gates)
+**In progress:** Orchestration v3 — single worktree per epic, agent system overhaul, parallel dispatch, deterministic TDD enforcement
 
-**Next:** Task expansion workflows, CLI auto-detection, coordinator finalization, web UI buildout, security posture for MCP, SWE-bench evaluation, bug fix sprint
+**Near term:** UI fit & polish for v1 launch
 
-**Vision:** Always local first, but Pro cloud features to keep the lights on: Fleet management, Plugin ecosystem, Team workflows, Enterprise hardening
+**After v1:** OpenTelemetry integration, Ollama support
+
+**Future:** Pro cloud features, fleet management, plugin ecosystem v2
 
 ## Changelog
 

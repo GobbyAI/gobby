@@ -54,6 +54,9 @@ dependencies = [
     "faster-whisper>=1.0.0",
     # Cisco skill-scanner for skill safety scanning
     "skill-scanner>=0.1.1",
+    # Native SDK executors for autonomous mode
+    "google-genai>=1.0.0",
+    "openai>=1.0.0",
 ]
 
 [project.scripts]

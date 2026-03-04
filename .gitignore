@@ -223,7 +223,6 @@ bmad-custom-src/
 .DS_Store
 .scripts/
 .gobby/config.yaml
-.gobby/tasks_meta.json
 .gobby/agents/
 .gobby/workflows/
 .gobby/plugins/
@@ -231,8 +230,10 @@ bmad-custom-src/
 .gobby/docs/
 .gobby/screenshots/
 .gobby/plans/
+.gobby/session_summaries/
 reports/
 bandit_report.json
+coderabbit.md
 ./*.txt
 ./*.log
 _bmad/

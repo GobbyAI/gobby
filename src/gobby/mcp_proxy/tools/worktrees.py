@@ -13,6 +13,7 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import platform
@@ -286,6 +287,7 @@ def create_worktrees_registry(
         task_id: str | None = None,
         worktree_path: str | None = None,
         create_branch: bool = True,
+        use_local: bool | None = None,
         project_path: str | None = None,
         provider: Literal[
             "claude", "gemini", "codex", "antigravity", "cursor", "windsurf", "copilot"
@@ -301,6 +303,8 @@ def create_worktrees_registry(
             task_id: Optional task ID to link to this worktree.
             worktree_path: Optional custom path (defaults to ../{branch_name}).
             create_branch: Whether to create a new branch (default: True).
+            use_local: If True, branch from local ref instead of origin/ (preserves unpushed commits).
+                       If None (default), auto-detects: uses local when base_branch has unpushed commits.
             project_path: Path to project directory (pass cwd from CLI).
             provider: CLI provider to install hooks for (claude, gemini, codex, antigravity, cursor, windsurf, copilot).
                      If specified, installs hooks so agents can communicate with daemon.
@@ -335,12 +339,32 @@ def create_worktrees_registry(
             project_name = Path(resolved_git_mgr.repo_path).name
             worktree_path = _generate_worktree_path(branch_name, project_name)
 
+        # Auto-detect use_local when not explicitly set
+        resolved_use_local = use_local
+        if resolved_use_local is None and create_branch:
+            try:
+                has_unpushed, unpushed_count = await asyncio.to_thread(
+                    resolved_git_mgr.has_unpushed_commits, base_branch
+                )
+                if has_unpushed:
+                    resolved_use_local = True
+                    logger.info(
+                        "Auto-detected %d unpushed commit(s) on '%s', using local branch ref",
+                        unpushed_count,
+                        base_branch,
+                    )
+            except Exception as e:
+                logger.warning("Auto-detect unpushed commits failed: %s", e)
+        if resolved_use_local is None:
+            resolved_use_local = False
+
         # Create git worktree
         result = resolved_git_mgr.create_worktree(
             worktree_path=worktree_path,
             branch_name=branch_name,
             base_branch=base_branch,
             create_branch=create_branch,
+            use_local=resolved_use_local,
         )
 
         if not result.success:

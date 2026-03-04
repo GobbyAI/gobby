@@ -639,7 +639,3 @@ class ClaudeTranscriptParser:
 
     # Backward-compatible alias
     is_clear_command = is_session_boundary
-
-
-# Backward-compatible alias for existing code
-TranscriptProcessor = ClaudeTranscriptParser

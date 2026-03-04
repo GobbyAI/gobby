@@ -1,4 +1,5 @@
 """Tests for tasks/_lifecycle.py — targeting uncovered lines."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -17,6 +18,7 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_task(
     *,
@@ -85,7 +87,6 @@ def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
 class TestCloseTask:
     """Tests for the close_task lifecycle tool."""
 
-
     @pytest.mark.asyncio
     async def test_close_task_get_returns_none(self, mock_task_manager, mock_sync_manager):
         """Returns error when get_task returns None after resolve."""
@@ -99,7 +100,6 @@ class TestCloseTask:
         assert "error" in result
         assert "not found" in result["error"]
 
-
     @pytest.mark.asyncio
     async def test_close_commit_requirements_fail(self, mock_task_manager, mock_sync_manager):
         """Returns error when commit requirements fail."""
@@ -107,7 +107,9 @@ class TestCloseTask:
         mock_task_manager.get_task.return_value = task
 
         with (
-            patch("gobby.mcp_proxy.tools.tasks._lifecycle.validate_commit_requirements") as mock_vcr,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle.validate_commit_requirements"
+            ) as mock_vcr,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
             patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSM,
         ):
@@ -129,8 +131,6 @@ class TestCloseTask:
         assert result["error"] == "missing_commits"
 
 
-
-
 # ---------------------------------------------------------------------------
 # reopen_task tests
 # ---------------------------------------------------------------------------
@@ -149,7 +149,6 @@ class TestReopenTask:
             {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
         )
         assert "error" not in result
-
 
     @pytest.mark.asyncio
     async def test_reopen_value_error(self, mock_task_manager, mock_sync_manager):
@@ -181,9 +180,7 @@ class TestDeleteTask:
         mock_task_manager.delete_task.return_value = True
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "delete_task", {"task_id": task.id}
-        )
+        result = await registry.call("delete_task", {"task_id": task.id})
         assert "error" not in result
         assert result["ref"] == "#42"
 
@@ -208,9 +205,7 @@ class TestDeleteTask:
         )
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "delete_task", {"task_id": task.id, "cascade": False}
-        )
+        result = await registry.call("delete_task", {"task_id": task.id, "cascade": False})
         assert result["error"] == "has_dependents"
         assert "suggestion" in result
 
@@ -219,14 +214,10 @@ class TestDeleteTask:
         """Returns specific error when task has children."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.delete_task.side_effect = ValueError(
-            "Cannot delete: has children"
-        )
+        mock_task_manager.delete_task.side_effect = ValueError("Cannot delete: has children")
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "delete_task", {"task_id": task.id, "cascade": False}
-        )
+        result = await registry.call("delete_task", {"task_id": task.id, "cascade": False})
         assert result["error"] == "has_children"
 
     @pytest.mark.asyncio
@@ -237,9 +228,7 @@ class TestDeleteTask:
         mock_task_manager.delete_task.return_value = False
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "delete_task", {"task_id": task.id}
-        )
+        result = await registry.call("delete_task", {"task_id": task.id})
         assert "error" in result
         assert "not found" in result["error"]
 
@@ -258,9 +247,7 @@ class TestLabels:
         mock_task_manager.add_label.return_value = task
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "add_label", {"task_id": task.id, "label": "new"}
-        )
+        result = await registry.call("add_label", {"task_id": task.id, "label": "new"})
         assert "error" not in result
 
     @pytest.mark.asyncio
@@ -274,16 +261,13 @@ class TestLabels:
         )
         assert "error" in result
 
-
     @pytest.mark.asyncio
     async def test_remove_label_success(self, mock_task_manager, mock_sync_manager):
         task = _make_task(labels=[])
         mock_task_manager.remove_label.return_value = task
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
-        result = await registry.call(
-            "remove_label", {"task_id": task.id, "label": "old"}
-        )
+        result = await registry.call("remove_label", {"task_id": task.id, "label": "old"})
         assert "error" not in result
 
     @pytest.mark.asyncio
@@ -358,7 +342,6 @@ class TestEscalateTask:
             },
         )
         assert "error" not in result
-
 
 
 # ---------------------------------------------------------------------------

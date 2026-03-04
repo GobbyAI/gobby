@@ -422,6 +422,7 @@ class TestClaimTaskSessionVariables:
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
+            sample_task.seq_num = 42
             mock_task_manager.get_task.return_value = sample_task
             mock_task_manager.update_task.return_value = sample_task
 
@@ -438,7 +439,7 @@ class TestClaimTaskSessionVariables:
             assert call_args[0][0] == "my-session-id"
             merged_vars = call_args[0][1]
             assert merged_vars["task_claimed"] is True
-            assert merged_vars["claimed_task_id"] == sample_task.id
+            assert merged_vars["claimed_tasks"].get(sample_task.id) == "#42"
 
 
 class TestClaimTaskVsUpdateTask:

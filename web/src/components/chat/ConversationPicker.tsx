@@ -164,7 +164,9 @@ export function ConversationPicker({
                 <div className="terminals-empty-sidebar">No conversations</div>
               )}
               {filtered.map((session) => {
-                const title = session.title || `Chat ${session.ref}`;
+                const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
+                const titleText = session.title || `Chat ${session.ref}`;
+                const title = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
                 const isActive = session.external_id === activeSessionId && !viewingSessionId;
                 const isDeleting = deletingIds?.has(session.id) ?? false;
                 return (
@@ -318,7 +320,9 @@ export function ConversationPicker({
                 ? cliSessions
                 : cliSessions.slice(0, Math.max(0, TERMINAL_INITIAL_LIMIT - agents.length))
               ).map((session) => {
-                const title = session.title || session.ref || "CLI Session";
+                const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
+                const titleText = session.title || session.ref || "CLI Session";
+                const title = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
                 const isViewing = session.id === viewingSessionId;
                 const isPaused = session.status === "paused";
                 return (

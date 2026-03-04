@@ -183,9 +183,7 @@ class TestInstallFromTemplate:
         """Create a skill manager."""
         return LocalSkillManager(db)
 
-    def test_install_from_template_creates_installed_copy(
-        self, storage: LocalSkillManager
-    ) -> None:
+    def test_install_from_template_creates_installed_copy(self, storage: LocalSkillManager) -> None:
         """Installing a template creates an installed copy."""
         template = storage.create_skill(
             name="test-skill",
@@ -204,9 +202,7 @@ class TestInstallFromTemplate:
         assert installed.content == "# Test"
         assert installed.id != template.id
 
-    def test_install_from_template_rejects_non_template(
-        self, storage: LocalSkillManager
-    ) -> None:
+    def test_install_from_template_rejects_non_template(self, storage: LocalSkillManager) -> None:
         """Cannot install from a non-template skill."""
         skill = storage.create_skill(
             name="regular-skill",
@@ -216,9 +212,7 @@ class TestInstallFromTemplate:
         with pytest.raises(ValueError, match="not a template"):
             storage.install_from_template(skill.id)
 
-    def test_install_from_template_rejects_duplicate(
-        self, storage: LocalSkillManager
-    ) -> None:
+    def test_install_from_template_rejects_duplicate(self, storage: LocalSkillManager) -> None:
         """Cannot install if installed copy already exists."""
         template = storage.create_skill(
             name="test-skill",
@@ -249,9 +243,7 @@ class TestInstallFromTemplate:
         installed = storage.list_skills(source="installed")
         assert len(installed) == 3
 
-    def test_install_all_templates_skips_existing(
-        self, storage: LocalSkillManager
-    ) -> None:
+    def test_install_all_templates_skips_existing(self, storage: LocalSkillManager) -> None:
         """install_all_templates skips templates that already have installed copies."""
         t1 = storage.create_skill(
             name="has-copy",
@@ -292,9 +284,7 @@ class TestSoftDelete:
 
     def test_delete_soft_deletes(self, storage: LocalSkillManager) -> None:
         """delete_skill sets deleted_at rather than removing the row."""
-        skill = storage.create_skill(
-            name="to-delete", description="Delete me", content="# Delete"
-        )
+        skill = storage.create_skill(name="to-delete", description="Delete me", content="# Delete")
         result = storage.delete_skill(skill.id)
         assert result is True
 
@@ -321,14 +311,10 @@ class TestSoftDelete:
         found = storage.get_by_name("to-restore")
         assert found is not None
 
-    def test_list_excludes_deleted_by_default(
-        self, storage: LocalSkillManager
-    ) -> None:
+    def test_list_excludes_deleted_by_default(self, storage: LocalSkillManager) -> None:
         """list_skills excludes soft-deleted by default."""
         storage.create_skill(name="alive", description="Alive", content="# A")
-        to_delete = storage.create_skill(
-            name="dead", description="Dead", content="# D"
-        )
+        to_delete = storage.create_skill(name="dead", description="Dead", content="# D")
         storage.delete_skill(to_delete.id)
 
         skills = storage.list_skills()
@@ -400,25 +386,21 @@ class TestSourceTaxonomy:
         )
         assert skill.source == "template"
 
-    def test_move_to_project(
-        self, storage: LocalSkillManager, project_id: str
-    ) -> None:
+    def test_move_to_project(self, storage: LocalSkillManager, project_id: str) -> None:
         """move_to_project changes source to 'project'."""
-        skill = storage.create_skill(
-            name="movable", description="Move me", content="# Move"
-        )
+        skill = storage.create_skill(name="movable", description="Move me", content="# Move")
         assert skill.source == "installed"
 
         moved = storage.move_to_project(skill.id, project_id)
         assert moved.source == "project"
         assert moved.project_id == project_id
 
-    def test_move_to_installed(
-        self, storage: LocalSkillManager, project_id: str
-    ) -> None:
+    def test_move_to_installed(self, storage: LocalSkillManager, project_id: str) -> None:
         """move_to_installed changes source back to 'installed'."""
         skill = storage.create_skill(
-            name="movable", description="Move me", content="# Move",
+            name="movable",
+            description="Move me",
+            content="# Move",
             project_id=project_id,
         )
         assert skill.source == "project"
@@ -427,9 +409,7 @@ class TestSourceTaxonomy:
         assert moved.source == "installed"
         assert moved.project_id is None
 
-    def test_move_template_raises(
-        self, storage: LocalSkillManager, project_id: str
-    ) -> None:
+    def test_move_template_raises(self, storage: LocalSkillManager, project_id: str) -> None:
         """Cannot move a template skill."""
         template = storage.create_skill(
             name="template-skill",
@@ -443,23 +423,13 @@ class TestSourceTaxonomy:
         with pytest.raises(ValueError, match="Cannot move a template"):
             storage.move_to_installed(template.id)
 
-    def test_list_skills_source_filter(
-        self, storage: LocalSkillManager, project_id: str
-    ) -> None:
+    def test_list_skills_source_filter(self, storage: LocalSkillManager, project_id: str) -> None:
         """list_skills source param filters by exact source value."""
-        storage.create_skill(
-            name="tmpl", description="T", content="#", source="template"
-        )
-        storage.create_skill(
-            name="inst", description="I", content="#"
-        )
-        storage.create_skill(
-            name="proj", description="P", content="#", project_id=project_id
-        )
+        storage.create_skill(name="tmpl", description="T", content="#", source="template")
+        storage.create_skill(name="inst", description="I", content="#")
+        storage.create_skill(name="proj", description="P", content="#", project_id=project_id)
 
-        templates = storage.list_skills(
-            include_templates=True, source="template"
-        )
+        templates = storage.list_skills(include_templates=True, source="template")
         assert len(templates) == 1
         assert templates[0].name == "tmpl"
 
@@ -473,9 +443,7 @@ class TestSourceTaxonomy:
 
     def test_count_skills_with_source(self, storage: LocalSkillManager) -> None:
         """count_skills respects source filter."""
-        storage.create_skill(
-            name="tmpl", description="T", content="#", source="template"
-        )
+        storage.create_skill(name="tmpl", description="T", content="#", source="template")
         storage.create_skill(name="inst", description="I", content="#")
 
         assert storage.count_skills(source="template", include_templates=True) == 1
@@ -499,9 +467,7 @@ class TestPropagateToInstalled:
     def storage(self, db: LocalDatabase) -> LocalSkillManager:
         return LocalSkillManager(db)
 
-    def test_propagate_updates_installed_copy(
-        self, storage: LocalSkillManager
-    ) -> None:
+    def test_propagate_updates_installed_copy(self, storage: LocalSkillManager) -> None:
         """When a template is updated, changes propagate to the installed copy."""
         from gobby.skills.parser import ParsedSkill
         from gobby.skills.sync import _propagate_to_installed

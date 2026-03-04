@@ -25,8 +25,6 @@ from gobby.utils.project_context import get_project_context
     help="File containing changes summary",
 )
 @click.option("--max-iterations", "-i", type=int, default=1, help="Max validation retry attempts")
-@click.option("--external", is_flag=True, help="Use external validator agent")
-@click.option("--skip-build", is_flag=True, help="Skip build verification before validation")
 @click.option("--history", is_flag=True, help="Show validation history instead of validating")
 @click.option("--recurring", is_flag=True, help="Show recurring issues instead of validating")
 def validate_task_cmd(
@@ -34,8 +32,6 @@ def validate_task_cmd(
     summary: str | None,
     summary_file: str | None,
     max_iterations: int,
-    external: bool,
-    skip_build: bool,
     history: bool,
     recurring: bool,
 ) -> None:

@@ -170,7 +170,7 @@
 }
 
 .rule-edit-chip-remove:hover {
-  color: #ef4444;
+  color: var(--color-destructive, #ef4444);
 }
 
 .rule-edit-chip-add {
@@ -215,7 +215,7 @@
 }
 
 .rule-edit-kv-remove:hover {
-  color: #ef4444;
+  color: var(--color-destructive, #ef4444);
 }
 
 .rule-edit-kv-add {
@@ -233,6 +233,18 @@
 .rule-edit-kv-add:hover {
   border-color: var(--text-muted);
   color: var(--text-primary);
+}
+
+/* Conflict warning */
+.rule-edit-conflict-warning {
+  font-size: calc(var(--font-size-base) * 0.75);
+  color: var(--color-warning-foreground, #92400e);
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 40%, transparent);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  line-height: 1.4;
 }
 
 /* Effect type badge colors */
@@ -299,6 +311,43 @@
 
 .rule-edit-codemirror .codemirror-container {
   height: 150px;
+}
+
+/* MCP call schema-aware fields */
+.rule-edit-tool-desc {
+  font-size: calc(var(--font-size-base) * 0.6875);
+  color: var(--text-muted);
+  padding: 2px 0;
+  line-height: 1.4;
+}
+
+.rule-edit-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+.rule-edit-kv-label {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(var(--font-size-base) * 0.75);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rule-edit-required {
+  color: var(--color-destructive, #ef4444);
+  margin-left: 2px;
+}
+
+.rule-edit-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Read-only display */

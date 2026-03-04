@@ -393,6 +393,7 @@ class TestCheckDeadAutonomousAgents:
         registry: RunningAgentRegistry,
     ) -> None:
         """Still-running autonomous tasks are left untouched."""
+
         async def _long_running() -> str:
             await asyncio.sleep(3600)
             return "done"

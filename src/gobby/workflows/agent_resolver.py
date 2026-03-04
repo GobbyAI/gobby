@@ -141,7 +141,9 @@ def resolve_agent(
         body = load_body(current_name)
         if not body:
             if not chain:
-                # Top level agent not found
+                # Top level agent not found — for "default", return Pydantic defaults
+                if name == "default":
+                    return AgentDefinitionBody(name="default")
                 return None
             else:
                 raise AgentResolutionError(f"Parent agent '{current_name}' not found for '{name}'.")

@@ -25,6 +25,16 @@ from gobby.mcp_proxy.daemon_control import (
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries
 
+LLM_TASK_TOOLS = (
+    "close_task",
+    "expand_task",
+    "apply_tdd",
+    "suggest_next_task",
+    "validate_task",
+    "validate_and_fix",
+    "run_fix_attempt",
+)
+
 __all__ = [
     "create_stdio_mcp_server",
     "check_daemon_http_health",
@@ -109,12 +119,7 @@ class DaemonProxy:
         ):
             timeout = config.mcp_client_proxy.tool_timeouts[tool_name]
         # Fallback for LLM-based task tools if not explicit in config
-        elif tool_name in (
-            "expand_task",
-            "apply_tdd",
-            "suggest_next_task",
-            "validate_task",
-        ):
+        elif tool_name in LLM_TASK_TOOLS:
             timeout = 300.0
         # Wait tools: use the requested timeout plus a buffer
         elif tool_name in (

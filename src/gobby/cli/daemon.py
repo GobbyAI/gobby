@@ -26,6 +26,7 @@ from .utils import (
     kill_all_gobby_daemons,
     setup_logging,
     spawn_ui_server,
+    stop_watchdog,
     wait_for_port_available,
 )
 from .utils import (
@@ -50,7 +51,7 @@ def _neo4j_start(gobby_home: Path) -> None:
     try:
         from gobby.config.app import load_config
 
-        config = load_config(create_default=False)
+        config = load_config()
 
         # Inject neo4j auth from config (format: "user:password")
         if config.memory.neo4j_auth:
@@ -206,7 +207,10 @@ def start(
         except Exception:
             pid_file.unlink()
 
-    # Kill any existing gobby processes
+    # Kill any existing watchdog before spawning a new one
+    stop_watchdog(quiet=True)
+
+    # Kill any existing gobby daemon processes
     click.echo("Checking for existing gobby processes...")
     killed_count = kill_all_gobby_daemons()
     if killed_count > 0:

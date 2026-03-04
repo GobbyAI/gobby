@@ -202,4 +202,3 @@ class TestStatusNeo4jDisplay:
     def test_status_omits_neo4j_when_no_data(self) -> None:
         msg = format_status_message(running=True, pid=123)
         assert "Neo4j" not in msg
-

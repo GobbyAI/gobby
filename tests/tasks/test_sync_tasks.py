@@ -1,6 +1,5 @@
 import asyncio
 import json
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -232,32 +231,24 @@ class TestTaskSyncManager:
         assert t2_fresh.title == "File Newer"
 
     @pytest.mark.integration
-    def test_export_skips_when_unchanged(self, sync_manager, task_manager, sample_project) -> None:
-        """Test that export doesn't update meta file when content unchanged."""
-        # Create a task and export
+    def test_export_always_writes_fresh_content(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """Test that export always writes correct content, even if file was externally modified."""
         task_manager.create_task(sample_project["id"], "Task 1")
         sync_manager.export_to_jsonl()
 
-        meta_path = sync_manager.export_path.parent / "tasks_meta.json"
-        assert meta_path.exists()
+        # Read correct content
+        correct_content = sync_manager.export_path.read_text()
+        assert "Task 1" in correct_content
 
-        # Read initial meta
-        with open(meta_path) as f:
-            initial_meta = json.load(f)
-        initial_timestamp = initial_meta["last_exported"]
+        # Externally overwrite the file (simulates git checkout/merge)
+        sync_manager.export_path.write_text('{"id": "stale", "title": "Stale data"}\n')
 
-        # Wait a bit to ensure timestamp would differ
-        time.sleep(0.1)
-
-        # Export again without changes
+        # Export again — should restore correct content
         sync_manager.export_to_jsonl()
-
-        # Meta file should NOT have been updated (timestamp unchanged)
-        with open(meta_path) as f:
-            final_meta = json.load(f)
-
-        assert final_meta["last_exported"] == initial_timestamp
-        assert final_meta["content_hash"] == initial_meta["content_hash"]
+        restored_content = sync_manager.export_path.read_text()
+        assert restored_content == correct_content
 
 
 class TestGetSyncStatus:
@@ -272,20 +263,8 @@ class TestGetSyncStatus:
         assert result["synced"] is False
 
     @pytest.mark.integration
-    def test_get_sync_status_no_meta_file(self, sync_manager) -> None:
-        """Test sync status when export file exists but meta file doesn't."""
-        # Create export file without meta
-        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
-        sync_manager.export_path.write_text("{}\n")
-
-        result = sync_manager.get_sync_status()
-
-        assert result["status"] == "no_meta"
-        assert result["synced"] is False
-
-    @pytest.mark.integration
     def test_get_sync_status_available(self, sync_manager, task_manager, sample_project) -> None:
-        """Test sync status when both files exist."""
+        """Test sync status when export file exists."""
         # Create and export a task
         task_manager.create_task(sample_project["id"], "Test Task")
         sync_manager.export_to_jsonl()
@@ -294,25 +273,6 @@ class TestGetSyncStatus:
 
         assert result["status"] == "available"
         assert result["synced"] is True
-        assert "last_exported" in result
-        assert "hash" in result
-        assert result["hash"] is not None
-
-    @pytest.mark.integration
-    def test_get_sync_status_error_on_corrupt_meta(self, sync_manager) -> None:
-        """Test sync status when meta file is corrupted."""
-        # Create export file
-        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
-        sync_manager.export_path.write_text("{}\n")
-
-        # Create corrupted meta file
-        meta_path = sync_manager.export_path.parent / "tasks_meta.json"
-        meta_path.write_text("not valid json{{{")
-
-        result = sync_manager.get_sync_status()
-
-        assert result["status"] == "error"
-        assert result["synced"] is False
 
 
 class TestImportEdgeCases:
@@ -490,6 +450,203 @@ class TestImportEdgeCases:
             sync_manager.import_from_jsonl()
 
 
+class TestClosedStateRoundTrip:
+    """Tests that closed task metadata survives export → import round-trip."""
+
+    @pytest.mark.integration
+    def test_closed_task_round_trip_preserves_all_fields(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """Test that a closed task with full metadata survives export → import."""
+        task = task_manager.create_task(sample_project["id"], "Task to close")
+
+        # Simulate a fully closed task with all metadata
+        sync_manager.db.execute(
+            """UPDATE tasks SET
+                status = 'closed',
+                closed_at = '2026-01-15T10:00:00+00:00',
+                closed_reason = 'completed',
+                closed_commit_sha = 'abc123def456',
+                labels = '["bug", "p0"]',
+                category = 'code',
+                agent_name = 'fix-agent',
+                accepted_by_user = 1,
+                requires_user_review = 1,
+                is_expanded = 1,
+                expansion_status = 'completed',
+                complexity_score = 3,
+                estimated_subtasks = 5,
+                expansion_context = 'expanded from epic',
+                use_external_validator = 1,
+                reference_doc = 'docs/spec.md',
+                github_issue_number = 42,
+                github_pr_number = 99,
+                github_repo = 'owner/repo',
+                linear_issue_id = 'LIN-123',
+                linear_team_id = 'TEAM-1',
+                start_date = '2026-01-10',
+                due_date = '2026-01-20',
+                workflow_name = 'tdd',
+                verification = 'tests pass',
+                sequence_order = 3
+            WHERE id = ?""",
+            (task.id,),
+        )
+
+        # Export
+        sync_manager.export_to_jsonl()
+
+        # Verify JSONL has the closed fields
+        lines = sync_manager.export_path.read_text().strip().split("\n")
+        data = json.loads(lines[0])
+        assert data["status"] == "closed"
+        assert data["closed_at"] is not None
+        assert data["closed_reason"] == "completed"
+        assert data["closed_commit_sha"] == "abc123def456"
+        assert data["labels"] == ["bug", "p0"]
+        assert data["category"] == "code"
+        assert data["agent_name"] == "fix-agent"
+        assert data["accepted_by_user"] is True
+        assert data["requires_user_review"] is True
+        assert data["is_expanded"] is True
+        assert data["expansion_status"] == "completed"
+        assert data["github_issue_number"] == 42
+        assert data["github_pr_number"] == 99
+        assert data["github_repo"] == "owner/repo"
+        assert data["linear_issue_id"] == "LIN-123"
+        assert data["linear_team_id"] == "TEAM-1"
+        assert data["start_date"] == "2026-01-10"
+        assert data["due_date"] == "2026-01-20"
+        assert data["workflow_name"] == "tdd"
+        assert data["verification"] == "tests pass"
+        assert data["sequence_order"] == 3
+        assert data["reference_doc"] == "docs/spec.md"
+        assert data["complexity_score"] == 3
+        assert data["estimated_subtasks"] == 5
+
+        # Delete task from DB to simulate fresh import
+        sync_manager.db.execute("PRAGMA foreign_keys = OFF")
+        sync_manager.db.execute("DELETE FROM tasks WHERE id = ?", (task.id,))
+        sync_manager.db.execute("PRAGMA foreign_keys = ON")
+        row = sync_manager.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task.id,))
+        assert row is None
+
+        # Import from JSONL
+        sync_manager.import_from_jsonl()
+
+        # Verify all closed state fields survived
+        reimported = task_manager.get_task(task.id)
+        assert reimported is not None
+        assert reimported.status == "closed"
+        # closed_at is normalized with microsecond precision during export
+        assert reimported.closed_at == "2026-01-15T10:00:00.000000+00:00"
+        assert reimported.closed_reason == "completed"
+        assert reimported.closed_commit_sha == "abc123def456"
+        assert reimported.labels == ["bug", "p0"]
+        assert reimported.category == "code"
+        assert reimported.agent_name == "fix-agent"
+        assert reimported.accepted_by_user is True
+        assert reimported.requires_user_review is True
+        assert reimported.is_expanded is True
+        assert reimported.expansion_status == "completed"
+        assert reimported.github_issue_number == 42
+        assert reimported.github_pr_number == 99
+        assert reimported.github_repo == "owner/repo"
+        assert reimported.linear_issue_id == "LIN-123"
+        assert reimported.linear_team_id == "TEAM-1"
+        assert reimported.start_date == "2026-01-10"
+        assert reimported.due_date == "2026-01-20"
+        assert reimported.workflow_name == "tdd"
+        assert reimported.verification == "tests pass"
+        assert reimported.sequence_order == 3
+        assert reimported.reference_doc == "docs/spec.md"
+        assert reimported.complexity_score == 3
+        assert reimported.estimated_subtasks == 5
+
+    @pytest.mark.integration
+    def test_update_path_preserves_session_local_fields(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """Test that UPDATE import path preserves session-local columns."""
+        task = task_manager.create_task(sample_project["id"], "Session task")
+
+        # Set session-local fields that should NOT be wiped by import
+        # Disable FK checks since session IDs reference sessions table
+        sync_manager.db.execute("PRAGMA foreign_keys = OFF")
+        sync_manager.db.execute(
+            """UPDATE tasks SET
+                assignee = 'session-uuid-123',
+                created_in_session_id = 'session-aaa',
+                closed_in_session_id = 'session-bbb',
+                compacted_at = '2026-01-10T00:00:00+00:00',
+                summary = 'Compaction summary text',
+                updated_at = '2020-01-01T00:00:00+00:00'
+            WHERE id = ?""",
+            (task.id,),
+        )
+        sync_manager.db.execute("PRAGMA foreign_keys = ON")
+
+        # Create JSONL with newer timestamp to trigger UPDATE path
+        jsonl_data = {
+            "id": task.id,
+            "title": "Updated title from JSONL",
+            "description": "Updated desc",
+            "status": "closed",
+            "closed_at": "2026-02-01T00:00:00+00:00",
+            "closed_reason": "done",
+            "created_at": task.created_at,
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+            "priority": 2,
+            "task_type": "task",
+        }
+
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(sync_manager.export_path, "w") as f:
+            f.write(json.dumps(jsonl_data) + "\n")
+
+        sync_manager.import_from_jsonl()
+
+        # Verify synced fields were updated
+        updated = task_manager.get_task(task.id)
+        assert updated.title == "Updated title from JSONL"
+        assert updated.status == "closed"
+        assert updated.closed_at == "2026-02-01T00:00:00+00:00"
+        assert updated.closed_reason == "done"
+
+        # Verify session-local fields were PRESERVED (not wiped to NULL)
+        row = sync_manager.db.fetchone(
+            "SELECT assignee, created_in_session_id, closed_in_session_id, "
+            "compacted_at, summary FROM tasks WHERE id = ?",
+            (task.id,),
+        )
+        assert row["assignee"] == "session-uuid-123"
+        assert row["created_in_session_id"] == "session-aaa"
+        assert row["closed_in_session_id"] == "session-bbb"
+        assert row["compacted_at"] == "2026-01-10T00:00:00+00:00"
+        assert row["summary"] == "Compaction summary text"
+
+    @pytest.mark.integration
+    def test_export_includes_priority_and_task_type(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """Test that export includes priority and task_type fields."""
+        task = task_manager.create_task(sample_project["id"], "Typed task")
+        sync_manager.db.execute(
+            "UPDATE tasks SET priority = 1, task_type = 'bug' WHERE id = ?",
+            (task.id,),
+        )
+
+        sync_manager.export_to_jsonl()
+
+        lines = sync_manager.export_path.read_text().strip().split("\n")
+        data = json.loads(lines[0])
+        assert data["priority"] == 1
+        assert data["task_type"] == "bug"
+
+
 class TestExportEdgeCases:
     """Tests for export edge cases and error handling."""
 
@@ -565,29 +722,6 @@ class TestExportEdgeCases:
         data = json.loads(lines[0])
 
         assert data["commits"] == ["commit1", "commit2"]
-
-    @pytest.mark.integration
-    def test_export_with_corrupted_meta_file(
-        self, sync_manager, task_manager, sample_project
-    ) -> None:
-        """Test export handles corrupted meta file."""
-        task_manager.create_task(sample_project["id"], "Task 1")
-
-        # Create corrupted meta file first
-        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
-        meta_path = sync_manager.export_path.parent / "tasks_meta.json"
-        meta_path.write_text("not valid json{{{")
-
-        # Export should work despite corrupted meta
-        sync_manager.export_to_jsonl()
-
-        assert sync_manager.export_path.exists()
-
-        # Meta should now be valid
-        with open(meta_path) as f:
-            meta = json.load(f)
-        assert "content_hash" in meta
-        assert "last_exported" in meta
 
     @pytest.mark.integration
     def test_export_error_propagates(self, sync_manager, task_manager, sample_project) -> None:

@@ -78,9 +78,35 @@ def detect_task_claim(
             if isinstance(result, dict) and result.get("error"):
                 return
 
-        variables["task_claimed"] = False
-        variables["claimed_task_id"] = None
-        logger.info(f"Session {session_id}: task_claimed=False (detected close_task success)")
+        # Resolve closed task UUID from tool arguments
+        arguments = tool_input.get("arguments", {}) or {}
+        closed_task_id: str | None = None
+        raw_close_id = arguments.get("task_id")
+        if raw_close_id and task_manager:
+            from gobby.storage.tasks import TaskNotFoundError
+
+            try:
+                closed_task = task_manager.get_task(raw_close_id)
+                if closed_task:
+                    closed_task_id = closed_task.id
+            except (ValueError, KeyError, TaskNotFoundError) as e:
+                logger.warning(f"Cannot resolve closed task ref '{raw_close_id}': {e}")
+                return
+
+        if closed_task_id:
+            from gobby.workflows.task_claim_state import remove_claimed_task
+
+            merge = remove_claimed_task(variables, closed_task_id)
+            variables.update(merge)
+            logger.info(
+                f"Session {session_id}: removed {closed_task_id} from claimed_tasks "
+                f"(task_claimed={merge['task_claimed']})"
+            )
+        else:
+            logger.warning(
+                f"Session {session_id}: could not resolve closed task ref — "
+                f"skipping claimed_tasks update"
+            )
         return
 
     if inner_tool_name not in ("create_task", "update_task", "claim_task"):
@@ -132,13 +158,21 @@ def detect_task_claim(
         logger.debug(f"Skipping task claim state update - no valid UUID for {inner_tool_name}")
         return
 
-    variables["task_claimed"] = True
-    variables["claimed_task_id"] = task_id
+    from gobby.workflows.task_claim_state import add_claimed_task
+
+    # Resolve ref for display
+    ref = task_id
+    if task_manager:
+        try:
+            task_obj = task_manager.get_task(task_id)
+            if task_obj and task_obj.seq_num:
+                ref = f"#{task_obj.seq_num}"
+        except Exception as e:
+            logger.debug("Failed to resolve task ref for %s: %s", task_id, e)
+    merge = add_claimed_task(variables, task_id, ref)
+    variables.update(merge)
     variables["session_had_task"] = True
-    logger.info(
-        f"Session {session_id}: task_claimed=True, claimed_task_id={task_id} "
-        f"(via {inner_tool_name})"
-    )
+    logger.info(f"Session {session_id}: added {task_id} to claimed_tasks (via {inner_tool_name})")
 
     # Auto-link task to session
     if inner_tool_name in ("update_task", "claim_task"):

@@ -127,6 +127,9 @@ def resolve_project_ref(project_ref: str | None, exit_on_not_found: bool = True)
     finally:
         db.close()
 
+    if exit_on_not_found:
+        click.echo(f"Project not found: {project_ref}", err=True)
+        raise SystemExit(1)
     return None
 
 
@@ -296,21 +299,26 @@ def wait_for_port_available(port: int, host: str = "localhost", timeout: float =
 
 def kill_all_gobby_daemons() -> int:
     """
-    Find and kill all gobby DAEMON processes (not CLI commands).
+    Find and kill all gobby DAEMON and WATCHDOG processes (not CLI commands).
 
-    Only kills processes that are actually running daemon servers,
+    Only kills processes that are actually running daemon servers or watchdogs,
     not CLI invocations or other tools.
 
     Detection methods:
     1. Matches gobby.runner (the main daemon process)
-    2. Matches processes listening on daemon ports (60887/60888)
+    2. Matches gobby.watchdog (the watchdog process)
+    3. Matches processes listening on daemon ports (60887/60888)
 
     Returns:
         Number of processes killed
     """
+    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+        logger.warning("kill_all_gobby_daemons called during test — skipping")
+        return 0
+
     # Load config to get the configured ports
     try:
-        config = load_config(create_default=False)
+        config = load_config()
         http_port = config.daemon_port
         ws_port = config.websocket.port
     except Exception:
@@ -343,13 +351,15 @@ def kill_all_gobby_daemons() -> int:
             cmdline = proc.cmdline()
             cmdline_str = " ".join(cmdline)
 
-            # Match gobby.runner which is the actual daemon process
-            # Started via: python -m gobby.runner
+            # Match gobby.runner and gobby.watchdog processes
+            # Started via: python -m gobby.runner / python -m gobby.watchdog
             is_gobby_daemon = (
                 "python" in cmdline_str.lower()
                 and (
-                    # Match gobby.runner (new package)
+                    # Match gobby.runner (the main daemon process)
                     "gobby.runner" in cmdline_str
+                    # Match gobby.watchdog (the watchdog process)
+                    or "gobby.watchdog" in cmdline_str
                     # Also match legacy gobby_client.runner if it exists
                     or "gobby_client.runner" in cmdline_str
                 )
@@ -379,7 +389,13 @@ def kill_all_gobby_daemons() -> int:
                 click.echo(f"Found gobby daemon (PID {proc.pid}): {cmdline_str[:100]}")
 
                 # Try graceful shutdown first (SIGTERM)
+                from gobby.runner_maintenance import write_shutdown_source
+
                 try:
+                    try:
+                        write_shutdown_source("cli_kill_all")
+                    except Exception as e:
+                        logger.warning("Failed to write shutdown source: %s", e)
                     proc.send_signal(signal.SIGTERM)
                     # Wait up to 5 seconds for graceful shutdown
                     proc.wait(timeout=5)
@@ -411,7 +427,7 @@ def init_local_storage() -> "LocalDatabase":
     from gobby.storage.database import LocalDatabase
     from gobby.storage.migrations import run_migrations
 
-    config = load_config(create_default=False)
+    config = load_config()
     hub_db_path = Path(config.database_path).expanduser()
 
     # Ensure hub db directory exists
@@ -845,6 +861,12 @@ def stop_daemon(quiet: bool = False) -> bool:
 
     try:
         # Send SIGTERM signal for graceful shutdown
+        try:
+            from gobby.runner_maintenance import write_shutdown_source
+
+            write_shutdown_source("cli_stop")
+        except Exception:
+            pass  # Best-effort — must not prevent os.kill below
         os.kill(pid, signal.SIGTERM)
         if not quiet:
             click.echo(f"Sent shutdown signal to Gobby daemon (PID {pid})")

@@ -140,220 +140,44 @@ def register_handoff_tools(
 
             return result
 
-        # --- Automated fallback ---
-        import json
-        import subprocess  # nosec B404 - subprocess needed for git commands
-        from pathlib import Path
+        # --- Automated fallback — delegate to shared function ---
+        from gobby.sessions.summarize import generate_session_summaries
 
-        from gobby.sessions.analyzer import TranscriptAnalyzer
-        from gobby.sessions.formatting import format_handoff_as_markdown
-        from gobby.workflows.git_utils import get_file_changes, get_git_diff_summary
-        from gobby.workflows.summary_actions import (
-            _format_structured_context,
-            format_turns_for_llm,
+        summary_result = await generate_session_summaries(
+            session_id=session.id,
+            session_manager=session_manager,
+            llm_service=llm_service,
+            db=getattr(session_manager, "db", None),
+            write_file=write_file,
+            output_path=output_path,
+            set_handoff_ready=set_handoff_ready,
+            compact_only=compact and not full,
+            full_only=full and not compact,
         )
 
-        # Get transcript path
-        transcript_path = session.jsonl_path
-        if not transcript_path:
-            return {
-                "success": False,
-                "error": "No transcript path for session",
-                "session_id": session.id,
-            }
+        if not summary_result.get("success"):
+            return summary_result
 
-        path = Path(transcript_path)
-        if not path.exists():
-            return {
-                "success": False,
-                "error": "Transcript file not found",
-                "path": transcript_path,
-            }
-
-        # Read and parse transcript
-        turns = []
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    turns.append(json.loads(line))
-
-        # Analyze transcript
-        analyzer = TranscriptAnalyzer()
-        handoff_ctx = analyzer.extract_handoff_context(turns)
-
-        # Enrich with real-time git status
-        if not handoff_ctx.git_status:
-            try:
-                result_proc = subprocess.run(  # nosec B603 B607 - hardcoded git command
-                    ["git", "status", "--short"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    cwd=path.parent,
-                )
-                handoff_ctx.git_status = (
-                    result_proc.stdout.strip() if result_proc.returncode == 0 else ""
-                )
-            except Exception as e:
-                import logging
-
-                logging.getLogger(__name__).debug("Git status is optional, failed: %s", e)
-
-        # Get recent git commits
-        try:
-            result_proc = subprocess.run(  # nosec B603 B607 - hardcoded git command
-                ["git", "log", "--oneline", "-10", "--format=%H|%s"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                cwd=path.parent,
-            )
-            if result_proc.returncode == 0:
-                commits = []
-                for line in result_proc.stdout.strip().split("\n"):
-                    if "|" in line:
-                        hash_val, message = line.split("|", 1)
-                        commits.append({"hash": hash_val, "message": message})
-                if commits:
-                    handoff_ctx.git_commits = commits
-        except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).debug("Git log is optional, failed: %s", e)
-
-        # Determine what to generate (neither flag = both)
-        generate_compact = compact or not full
-        generate_full = full or not compact
-
-        # Generate content
-        compact_markdown = None
-        full_markdown = None
-        full_error = None
-
-        if generate_compact:
-            compact_markdown = format_handoff_as_markdown(handoff_ctx)
-
-        if generate_full:
-            try:
-                # Use injected llm_service, fallback to ClaudeLLMProvider
-                provider = None
-                if llm_service:
-                    provider = llm_service.get_default_provider()
-                if not provider:
-                    from gobby.config.app import load_config
-                    from gobby.llm.claude import ClaudeLLMProvider
-
-                    config = load_config()
-                    provider = ClaudeLLMProvider(config)
-
-                # Use injected transcript_processor, fallback to ClaudeTranscriptParser
-                parser = transcript_processor
-                if not parser:
-                    from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
-
-                    parser = ClaudeTranscriptParser()
-
-                # Get prompt template
-                prompt_template = None
-                try:
-                    from gobby.prompts.loader import PromptLoader
-
-                    loader = PromptLoader(db=session_manager.db)
-                    prompt_obj = loader.load("handoff/session_end")
-                    prompt_template = prompt_obj.content
-                except FileNotFoundError:
-                    pass
-
-                if not prompt_template:
-                    raise ValueError("No prompt template found for handoff/session_end")
-
-                # Prepare context for LLM
-                last_turns = parser.extract_turns_since_clear(turns, max_turns=50)
-                last_messages = parser.extract_last_messages(turns, num_pairs=2)
-                last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
-
-                # Gather real git data (matches summary_actions.generate_summary)
-                file_changes = get_file_changes()
-                git_diff_summary = get_git_diff_summary()
-                structured_context = _format_structured_context(handoff_ctx)
-
-                context = {
-                    "transcript_summary": format_turns_for_llm(last_turns),
-                    "last_messages": last_messages_str,
-                    "git_status": handoff_ctx.git_status or "",
-                    "file_changes": file_changes,
-                    "git_diff_summary": git_diff_summary,
-                    "structured_context": structured_context,
-                    "external_id": session.id[:12],
-                    "session_id": session.id,
-                    "session_source": session.source,
-                }
-
-                full_markdown = await provider.generate_summary(
-                    context, prompt_template=prompt_template
-                )
-
-            except Exception as e:
-                full_error = str(e)
-                if full and not compact:
-                    return {
-                        "success": False,
-                        "error": f"Failed to generate full summary: {e}",
-                        "session_id": session.id,
-                    }
-
-        # Always save to database
-        if compact_markdown:
-            session_manager.update_compact_markdown(session.id, compact_markdown)
-        if full_markdown:
-            session_manager.update_summary(session.id, summary_markdown=full_markdown)
-
-        # Set handoff_ready status
-        if set_handoff_ready:
-            session_manager.update_status(session.id, "handoff_ready")
-
-        # Save to file if requested
-        files_written: list[str] = []
-        if write_file:
-            from gobby.workflows.summary_actions import _write_summary_file
-
-            if full_markdown:
-                full_path: str | None = await _write_summary_file(
-                    session.id, full_markdown, output_path, session_manager, mode="full"
-                )
-                if full_path:
-                    files_written.append(full_path)
-
-            if compact_markdown:
-                compact_path: str | None = await _write_summary_file(
-                    session.id, compact_markdown, output_path, session_manager, mode="compact"
-                )
-                if compact_path:
-                    files_written.append(compact_path)
-
-        result_dict: dict[str, Any] = {
-            "success": True,
-            "session_id": session.id,
-            "mode": "automated",
-            "compact_length": len(compact_markdown) if compact_markdown else 0,
-            "full_length": len(full_markdown) if full_markdown else 0,
-            "full_error": full_error,
-            "files_written": files_written,
-            "context_summary": {
-                "has_active_task": bool(handoff_ctx.active_gobby_task),
-                "files_modified_count": len(handoff_ctx.files_modified),
-                "git_commits_count": len(handoff_ctx.git_commits),
-                "has_initial_goal": bool(handoff_ctx.initial_goal),
-            },
-        }
+        # Add mode marker for MCP response
+        summary_result["mode"] = "automated"
+        if notes:
+            summary_result["notes"] = notes
 
         # Send to peer if requested
         if to_session:
-            send_content = full_markdown or compact_markdown or ""
+            # Prefer full summary, fall back to compact
+            session_after = session_manager.get(session.id)
+            send_content = ""
+            if session_after:
+                send_content = (
+                    session_after.summary_markdown or session_after.compact_markdown or ""
+                )
             if send_content:
-                result_dict["send_result"] = _send_to_peer(session.id, to_session, send_content)
+                summary_result["send_result"] = _send_to_peer(session.id, to_session, send_content)
+            else:
+                summary_result["send_result"] = {"success": False, "reason": "no_content"}
 
-        return result_dict
+        return summary_result
 
     @registry.tool(
         name="get_handoff_context",

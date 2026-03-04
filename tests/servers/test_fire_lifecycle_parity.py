@@ -62,9 +62,7 @@ def _make_session(db_session_id: str = "sess-123", seq_num: int = 42) -> MagicMo
     return session
 
 
-def _make_workflow_handler(
-    decision: str = "allow", context: str | None = None
-) -> MagicMock:
+def _make_workflow_handler(decision: str = "allow", context: str | None = None) -> MagicMock:
     handler = MagicMock()
     response = HookResponse(decision=decision, context=context)
     handler.evaluate.return_value = response
@@ -101,7 +99,9 @@ class TestFireLifecycleBlockingWebhooks:
         dispatcher.get_blocking_decision.return_value = ("block", "Policy violation")
         host.webhook_dispatcher = dispatcher
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "block"
@@ -118,7 +118,9 @@ class TestFireLifecycleBlockingWebhooks:
         dispatcher.config.endpoints = []  # No matching endpoints
         host.webhook_dispatcher = dispatcher
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -135,7 +137,9 @@ class TestFireLifecycleBlockingWebhooks:
         dispatcher._matches_event.side_effect = RuntimeError("Webhook crash")
         host.webhook_dispatcher = dispatcher
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -146,7 +150,9 @@ class TestFireLifecycleBlockingWebhooks:
         host._chat_sessions["conv-1"] = _make_session()
         host.workflow_handler = _make_workflow_handler()
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -161,7 +167,9 @@ class TestFireLifecycleBlockingWebhooks:
         dispatcher.config.enabled = False
         host.webhook_dispatcher = dispatcher
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -185,7 +193,9 @@ class TestFireLifecycleBroadcasting:
         broadcaster.broadcast_event = AsyncMock()
         host.hook_broadcaster = broadcaster
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -209,7 +219,9 @@ class TestFireLifecycleBroadcasting:
         broadcaster.broadcast_event = AsyncMock(side_effect=RuntimeError("Broadcast failed"))
         host.hook_broadcaster = broadcaster
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         # Should still return a valid result despite broadcast error
         assert result is not None
@@ -221,7 +233,9 @@ class TestFireLifecycleBroadcasting:
         host._chat_sessions["conv-1"] = _make_session()
         host.workflow_handler = _make_workflow_handler()
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -252,7 +266,9 @@ class TestFireLifecycleMessagePiggyback:
         mgr.get_undelivered_messages.return_value = [msg]
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert "[Pending P2P messages from other sessions]:" in result["context"]
@@ -276,7 +292,9 @@ class TestFireLifecycleMessagePiggyback:
         mgr.get_undelivered_messages.return_value = [msg]
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.AFTER_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.AFTER_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert "Task completed" in result["context"]
@@ -330,7 +348,9 @@ class TestFireLifecycleMessagePiggyback:
         mgr.get_undelivered_messages.return_value = []
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert "Pending P2P messages" not in (result["context"] or "")
@@ -353,7 +373,9 @@ class TestFireLifecycleMessagePiggyback:
         mgr.get_undelivered_messages.return_value = [msg]
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         # Should contain both rule context and message context
@@ -370,7 +392,9 @@ class TestFireLifecycleMessagePiggyback:
         mgr.get_undelivered_messages.side_effect = RuntimeError("DB error")
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -381,7 +405,9 @@ class TestFireLifecycleMessagePiggyback:
         host._chat_sessions["conv-1"] = _make_session()
         host.workflow_handler = _make_workflow_handler()
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -423,7 +449,9 @@ class TestFireLifecycleFullParity:
         mgr.get_undelivered_messages.return_value = [msg]
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "allow"
@@ -457,7 +485,9 @@ class TestFireLifecycleFullParity:
         mgr = MagicMock()
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "block"
@@ -481,7 +511,9 @@ class TestFireLifecycleFullParity:
         mgr = MagicMock()
         host.inter_session_msg_manager = mgr
 
-        result = await host._fire_lifecycle("conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"})
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
 
         assert result is not None
         assert result["decision"] == "block"

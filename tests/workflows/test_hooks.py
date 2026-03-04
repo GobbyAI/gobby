@@ -701,9 +701,9 @@ class TestVariablePersistence:
         for i in range(3):
             await handler._evaluate_rules(event)
             variables = session_var_manager.get_variables("test-session")
-            assert variables.get("custom_counter") == i + 1, (
-                f"After evaluation {i + 1}, custom_counter should be {i + 1}"
-            )
+            assert (
+                variables.get("custom_counter") == i + 1
+            ), f"After evaluation {i + 1}, custom_counter should be {i + 1}"
 
     @pytest.mark.asyncio
     async def test_session_variables_visible_to_rule_conditions(
@@ -751,6 +751,7 @@ class TestVariablePersistence:
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
         mock_task.id = "task-uuid-observer"
+        mock_task.seq_num = 99
         mock_task_manager.get_task.return_value = mock_task
 
         rule_engine = RuleEngine(db=db)
@@ -771,7 +772,10 @@ class TestVariablePersistence:
                     "tool_name": "claim_task",
                     "arguments": {"task_id": "#99"},
                 },
-                "tool_output": {"success": True, "result": {"id": "task-uuid-observer", "status": "in_progress"}},
+                "tool_output": {
+                    "success": True,
+                    "result": {"id": "task-uuid-observer", "status": "in_progress"},
+                },
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
             },
@@ -782,12 +786,11 @@ class TestVariablePersistence:
 
         variables = session_var_manager.get_variables("test-session")
         assert variables.get("task_claimed") is True
-        assert variables.get("claimed_task_id") == "task-uuid-observer"
+        assert "task-uuid-observer" in variables.get("claimed_tasks", {})
+        assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
 
     @pytest.mark.asyncio
-    async def test_observer_and_rule_changes_both_persisted(
-        self, db, session_var_manager
-    ) -> None:
+    async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
         """Both observer changes and rule set_variable effects should persist."""
         from gobby.workflows.rule_engine import RuleEngine
 
@@ -804,7 +807,10 @@ class TestVariablePersistence:
 
         # Insert a rule that fires on after_tool and sets a counter
         self._insert_set_variable_rule(
-            db, "test-tool-counter", "after_tool", "tool_counter",
+            db,
+            "test-tool-counter",
+            "after_tool",
+            "tool_counter",
             "variables.get('tool_counter', 0) + 1",
         )
 
@@ -820,7 +826,10 @@ class TestVariablePersistence:
                     "tool_name": "claim_task",
                     "arguments": {"task_id": "#99"},
                 },
-                "tool_output": {"success": True, "result": {"id": "task-uuid-both", "status": "in_progress"}},
+                "tool_output": {
+                    "success": True,
+                    "result": {"id": "task-uuid-both", "status": "in_progress"},
+                },
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
             },

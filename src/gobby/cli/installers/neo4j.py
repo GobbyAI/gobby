@@ -34,7 +34,7 @@ def _resolve_neo4j_auth() -> str:
     try:
         from gobby.config.app import load_config
 
-        config = load_config(create_default=False)
+        config = load_config()
         if config.memory.neo4j_auth:
             return config.memory.neo4j_auth
     except (OSError, ValueError, AttributeError):

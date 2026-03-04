@@ -218,6 +218,9 @@ class Watchdog:
                     pid = int(f.read().strip())
 
                 logger.info(f"Stopping existing daemon (PID {pid})")
+                from gobby.runner_maintenance import write_shutdown_source
+
+                write_shutdown_source("watchdog")
                 os.kill(pid, signal.SIGTERM)
 
                 # Wait for graceful shutdown
@@ -247,7 +250,7 @@ class Watchdog:
 
         # Start new daemon
         try:
-            config = load_config(create_default=False)
+            config = load_config()
             log_file = Path(config.logging.client).expanduser()
             error_log_file = Path(config.logging.client_error).expanduser()
 
@@ -374,7 +377,7 @@ def main() -> None:
 
     # Load config to get log file path
     try:
-        config = load_config(create_default=False)
+        config = load_config()
         log_file = Path(config.logging.watchdog).expanduser()
         log_file.parent.mkdir(parents=True, exist_ok=True)
         watchdog_config = config.watchdog

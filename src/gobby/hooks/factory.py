@@ -80,10 +80,6 @@ class _WorkflowComponents:
     handler: WorkflowHookHandler
 
 
-# Backward-compatible alias (moved from hook_manager.py)
-TranscriptProcessor = ClaudeTranscriptParser
-
-
 @dataclass
 class HookManagerComponents:
     """All subsystem instances created by HookManagerFactory."""
@@ -177,7 +173,7 @@ class HookManagerFactory:
             timeout=5.0,
             logger=hook_logger,
         )
-        transcript_processor = TranscriptProcessor(logger_instance=hook_logger)
+        transcript_processor = ClaudeTranscriptParser(logger_instance=hook_logger)
 
         # Create storage layer
         storage = cls._create_storage(database)

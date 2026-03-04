@@ -285,9 +285,7 @@ class TestPromptPreview:
     ) -> None:
         """Preview generates prompt from task context."""
         task = _create_task(task_manager, test_project.id, "Fix login bug")
-        response = client.post(
-            f"/api/agents/spawn/prompt-preview?task_id={task.id}"
-        )
+        response = client.post(f"/api/agents/spawn/prompt-preview?task_id={task.id}")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
@@ -295,7 +293,5 @@ class TestPromptPreview:
 
     def test_preview_missing_task(self, client: TestClient) -> None:
         """Preview for nonexistent task returns 404."""
-        response = client.post(
-            "/api/agents/spawn/prompt-preview?task_id=nonexistent"
-        )
+        response = client.post("/api/agents/spawn/prompt-preview?task_id=nonexistent")
         assert response.status_code == 404

@@ -553,7 +553,6 @@ gobby tasks compact                     # Compaction commands
 
 - **Database**: `~/.gobby/gobby-hub.db` (SQLite)
 - **Git sync**: `.gobby/tasks.jsonl` (or `~/.gobby/tasks/{project}.jsonl` in stealth mode)
-- **Metadata**: `.gobby/tasks_meta.json`
 
 ## Task ID Format
 

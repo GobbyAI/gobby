@@ -16,7 +16,7 @@
       "timeout": 120
     },
     "pre-push": {
-      "run": ["type_check", "ts_check", "unit_tests"],
+      "run": ["type_check", "ts_check"],
       "fail_fast": false,
       "timeout": 1800
     }

@@ -209,10 +209,12 @@ class TestResolveProvider:
 class TestCreateExecutor:
     """Tests for create_executor function.
 
-    New routing logic:
-    - api_key/adc modes: Route to LiteLLMExecutor for unified cost tracking
-    - subscription mode (Claude): Route to ClaudeExecutor
-    - cli mode (Codex): Route to CodexExecutor
+    Routing logic:
+    - claude (subscription/api_key) -> ClaudeExecutor (SDK handles auth)
+    - gemini (api_key/adc) -> GeminiExecutor (native google-genai SDK)
+    - codex (subscription/cli) -> CodexExecutor (CLI subprocess)
+    - codex (api_key) -> OpenAIExecutor (native openai SDK)
+    - litellm (any) -> LiteLLMExecutor (fallback)
     """
 
     def test_create_claude_subscription_uses_claude_executor(self) -> None:
@@ -232,59 +234,52 @@ class TestCreateExecutor:
             assert executor.provider_name == "claude"
             mock_create.assert_called_once()
 
-    def test_create_claude_api_key_uses_litellm(self) -> None:
-        """Test Claude with api_key mode routes to LiteLLMExecutor."""
+    def test_create_claude_api_key_uses_claude_executor(self) -> None:
+        """Test Claude with api_key mode uses ClaudeExecutor (SDK handles auth)."""
         mock_config = MagicMock()
         mock_provider_config = MagicMock()
         mock_provider_config.auth_mode = "api_key"
         mock_config.llm_providers.claude = mock_provider_config
 
-        with patch("gobby.llm.resolver._create_litellm_executor_for_provider") as mock_create:
+        with patch("gobby.llm.resolver._create_claude_executor") as mock_create:
             mock_executor = MagicMock()
-            mock_executor.provider_name = "litellm"
+            mock_executor.provider_name = "claude"
             mock_create.return_value = mock_executor
 
             create_executor("claude", config=mock_config)
 
             mock_create.assert_called_once()
-            # Verify provider and auth_mode were passed
-            call_args = mock_create.call_args
-            assert call_args[0][0] == "claude"  # provider
-            assert call_args[0][1] == "api_key"  # auth_mode
 
-    def test_create_gemini_routes_to_litellm(self) -> None:
-        """Test Gemini routes to LiteLLMExecutor for all auth modes."""
+    def test_create_gemini_api_key_uses_gemini_executor(self) -> None:
+        """Test Gemini with api_key routes to GeminiExecutor."""
         mock_config = MagicMock()
         mock_provider_config = MagicMock()
         mock_provider_config.auth_mode = "api_key"
         mock_config.llm_providers.gemini = mock_provider_config
 
-        with patch("gobby.llm.resolver._create_litellm_executor_for_provider") as mock_create:
+        with patch("gobby.llm.resolver._create_gemini_executor") as mock_create:
             mock_executor = MagicMock()
-            mock_executor.provider_name = "litellm"
+            mock_executor.provider_name = "gemini"
             mock_create.return_value = mock_executor
 
             create_executor("gemini", config=mock_config)
 
             mock_create.assert_called_once()
-            call_args = mock_create.call_args
-            assert call_args[0][0] == "gemini"
 
-    def test_create_gemini_adc_routes_to_litellm(self) -> None:
-        """Test Gemini ADC routes to LiteLLMExecutor."""
+    def test_create_gemini_adc_uses_gemini_executor(self) -> None:
+        """Test Gemini ADC routes to GeminiExecutor."""
         mock_config = MagicMock()
         mock_provider_config = MagicMock()
         mock_provider_config.auth_mode = "adc"
         mock_config.llm_providers.gemini = mock_provider_config
 
-        with patch("gobby.llm.resolver._create_litellm_executor_for_provider") as mock_create:
+        with patch("gobby.llm.resolver._create_gemini_executor") as mock_create:
             mock_executor = MagicMock()
             mock_create.return_value = mock_executor
 
             create_executor("gemini", config=mock_config)
 
-            call_args = mock_create.call_args
-            assert call_args[0][1] == "adc"  # auth_mode
+            mock_create.assert_called_once()
 
     def test_create_codex_cli_uses_codex_executor(self) -> None:
         """Test Codex with cli/subscription mode uses CodexExecutor."""
@@ -303,29 +298,24 @@ class TestCreateExecutor:
             assert executor.provider_name == "codex"
             mock_create.assert_called_once()
 
-    def test_create_codex_api_key_uses_litellm(self) -> None:
-        """Test Codex with api_key mode routes to LiteLLMExecutor."""
+    def test_create_codex_api_key_uses_openai_executor(self) -> None:
+        """Test Codex with api_key mode routes to OpenAIExecutor."""
         mock_config = MagicMock()
         mock_provider_config = MagicMock()
         mock_provider_config.auth_mode = "api_key"
         mock_config.llm_providers.codex = mock_provider_config
 
-        with patch("gobby.llm.resolver._create_litellm_executor_for_provider") as mock_create:
+        with patch("gobby.llm.resolver._create_openai_executor") as mock_create:
             mock_executor = MagicMock()
+            mock_executor.provider_name = "openai"
             mock_create.return_value = mock_executor
 
             create_executor("codex", config=mock_config)
 
             mock_create.assert_called_once()
-            call_args = mock_create.call_args
-            assert call_args[0][0] == "codex"
 
     def test_create_litellm_executor(self) -> None:
-        """Test creating a LiteLLM executor.
-
-        Direct litellm provider usage routes through _create_litellm_executor
-        (not _create_litellm_executor_for_provider).
-        """
+        """Test creating a LiteLLM executor (explicit litellm provider)."""
         with patch("gobby.llm.resolver._create_litellm_executor") as mock_create:
             mock_executor = MagicMock()
             mock_executor.provider_name = "litellm"
@@ -336,17 +326,10 @@ class TestCreateExecutor:
             assert executor.provider_name == "litellm"
             mock_create.assert_called_once()
 
-    def test_unknown_provider_routes_to_litellm(self) -> None:
-        """Test that unknown provider routes to LiteLLM for api_key mode."""
-        # With the new routing, unknown providers with api_key mode route to LiteLLM
-        with patch("gobby.llm.resolver._create_litellm_executor_for_provider") as mock_create:
-            mock_executor = MagicMock()
-            mock_create.return_value = mock_executor
-
-            # Unknown provider with default api_key mode routes to LiteLLM
-            create_executor("openai")  # openai is handled like codex
-
-            mock_create.assert_called_once()
+    def test_unknown_provider_raises_error(self) -> None:
+        """Test that unknown provider/auth_mode combo raises ExecutorCreationError."""
+        with pytest.raises(ExecutorCreationError):
+            create_executor("openai")
 
     def test_invalid_provider_raises_error(self) -> None:
         """Test that invalid provider name raises InvalidProviderError."""
@@ -504,7 +487,7 @@ class TestCreateClaudeExecutorIntegration:
         with patch("shutil.which", return_value="/usr/bin/claude"):
             from gobby.llm.resolver import _create_claude_executor
 
-            executor = _create_claude_executor(None, None)
+            executor = _create_claude_executor(None, None, None)
 
             assert executor.provider_name == "claude"
             assert executor.auth_mode == "subscription"
@@ -550,76 +533,92 @@ class TestCreateCodexExecutorIntegration:
             assert executor.auth_mode == "subscription"
 
 
-class TestCreateLitellmExecutorForProviderIntegration:
-    """Integration tests for _create_litellm_executor_for_provider."""
+class TestCreateGeminiExecutorIntegration:
+    """Integration tests for _create_gemini_executor."""
 
-    def test_creates_executor_for_claude(self) -> None:
-        """Test creating LiteLLM executor for Claude api_key mode."""
+    def test_creates_executor_api_key(self) -> None:
+        """Test creating GeminiExecutor with api_key mode."""
         import sys
         from unittest.mock import MagicMock, patch
 
-        mock_litellm = MagicMock()
+        mock_genai = MagicMock()
+        mock_google = MagicMock()
+        mock_google.genai = mock_genai
 
-        with patch.dict(sys.modules, {"litellm": mock_litellm}):
-            from gobby.llm.resolver import _create_litellm_executor_for_provider
+        with patch.dict(
+            sys.modules,
+            {
+                "google": mock_google,
+                "google.genai": mock_genai,
+                "google.genai.types": mock_genai.types,
+            },
+        ):
+            from gobby.llm.resolver import _create_gemini_executor
 
-            executor = _create_litellm_executor_for_provider(
-                provider="claude",
-                auth_mode="api_key",
-                provider_config=None,
-                config=None,
-                model=None,
-            )
+            mock_config = MagicMock()
+            mock_config.llm_providers.api_keys = {"GEMINI_API_KEY": "test-key"}
 
-            assert executor.provider_name == "litellm"
-            assert executor.provider == "claude"
+            executor = _create_gemini_executor(None, mock_config, None, "api_key")
+
+            assert executor.provider_name == "gemini"
             assert executor.auth_mode == "api_key"
-            assert executor.default_model == "opus"
+            assert executor.api_key == "test-key"
 
-    def test_creates_executor_for_gemini_adc(self) -> None:
-        """Test creating LiteLLM executor for Gemini ADC mode."""
+    def test_creates_executor_adc(self) -> None:
+        """Test creating GeminiExecutor with adc mode."""
         import sys
         from unittest.mock import MagicMock, patch
 
-        mock_litellm = MagicMock()
+        mock_genai = MagicMock()
+        mock_google = MagicMock()
+        mock_google.genai = mock_genai
 
-        with patch.dict(sys.modules, {"litellm": mock_litellm}):
-            with patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}, clear=False):
-                from gobby.llm.resolver import _create_litellm_executor_for_provider
+        with patch.dict(
+            sys.modules,
+            {
+                "google": mock_google,
+                "google.genai": mock_genai,
+                "google.genai.types": mock_genai.types,
+            },
+        ):
+            from gobby.llm.resolver import _create_gemini_executor
 
-                executor = _create_litellm_executor_for_provider(
-                    provider="gemini",
-                    auth_mode="adc",
-                    provider_config=None,
-                    config=None,
-                    model=None,
-                )
+            mock_provider_config = MagicMock()
+            mock_provider_config.models = None
+            mock_provider_config.project = "my-project"
+            mock_provider_config.location = "us-east1"
 
-                assert executor.provider == "gemini"
-                assert executor.auth_mode == "adc"
-                assert "gemini" in executor.default_model.lower()
+            executor = _create_gemini_executor(mock_provider_config, None, None, "adc")
+
+            assert executor.auth_mode == "adc"
+            assert executor.project == "my-project"
+            assert executor.location == "us-east1"
 
     def test_uses_model_from_provider_config(self) -> None:
         """Test that model from provider config is used."""
         import sys
         from unittest.mock import MagicMock, patch
 
-        mock_litellm = MagicMock()
+        mock_genai = MagicMock()
+        mock_google = MagicMock()
+        mock_google.genai = mock_genai
 
-        with patch.dict(sys.modules, {"litellm": mock_litellm}):
-            from gobby.llm.resolver import _create_litellm_executor_for_provider
+        with patch.dict(
+            sys.modules,
+            {
+                "google": mock_google,
+                "google.genai": mock_genai,
+                "google.genai.types": mock_genai.types,
+            },
+        ):
+            from gobby.llm.resolver import _create_gemini_executor
 
             mock_provider_config = MagicMock()
             mock_provider_config.models = "gemini-1.5-pro, gemini-2.0-flash"
-            mock_provider_config.api_base = None
+            mock_provider_config.project = None
+            mock_provider_config.location = None
 
-            executor = _create_litellm_executor_for_provider(
-                provider="gemini",
-                auth_mode="api_key",
-                provider_config=mock_provider_config,
-                config=None,
-                model=None,
-            )
+            executor = _create_gemini_executor(mock_provider_config, None, None)
 
             assert executor.default_model == "gemini-1.5-pro"
 
@@ -628,24 +627,101 @@ class TestCreateLitellmExecutorForProviderIntegration:
         import sys
         from unittest.mock import MagicMock, patch
 
-        mock_litellm = MagicMock()
+        mock_genai = MagicMock()
+        mock_google = MagicMock()
+        mock_google.genai = mock_genai
 
-        with patch.dict(sys.modules, {"litellm": mock_litellm}):
-            from gobby.llm.resolver import _create_litellm_executor_for_provider
+        with patch.dict(
+            sys.modules,
+            {
+                "google": mock_google,
+                "google.genai": mock_genai,
+                "google.genai.types": mock_genai.types,
+            },
+        ):
+            from gobby.llm.resolver import _create_gemini_executor
 
             mock_provider_config = MagicMock()
             mock_provider_config.models = "gemini-1.5-pro"
+            mock_provider_config.project = None
+            mock_provider_config.location = None
+
+            executor = _create_gemini_executor(mock_provider_config, None, "gemini-2.5-pro")
+
+            assert executor.default_model == "gemini-2.5-pro"
+
+
+class TestCreateOpenAIExecutorIntegration:
+    """Integration tests for _create_openai_executor."""
+
+    def test_creates_executor(self) -> None:
+        """Test creating OpenAIExecutor."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        mock_openai = MagicMock()
+
+        with patch.dict(sys.modules, {"openai": mock_openai}):
+            from gobby.llm.resolver import _create_openai_executor
+
+            mock_config = MagicMock()
+            mock_config.llm_providers.api_keys = {"OPENAI_API_KEY": "sk-test"}
+
+            executor = _create_openai_executor(None, mock_config, None)
+
+            assert executor.provider_name == "openai"
+            assert executor.api_key == "sk-test"
+            assert executor.default_model == "gpt-4o"
+
+    def test_uses_model_from_config(self) -> None:
+        """Test that model from provider config is used."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        mock_openai = MagicMock()
+
+        with patch.dict(sys.modules, {"openai": mock_openai}):
+            from gobby.llm.resolver import _create_openai_executor
+
+            mock_provider_config = MagicMock()
+            mock_provider_config.models = "gpt-4.1, gpt-4o-mini"
             mock_provider_config.api_base = None
 
-            executor = _create_litellm_executor_for_provider(
-                provider="gemini",
-                auth_mode="api_key",
-                provider_config=mock_provider_config,
-                config=None,
-                model="gemini-2.0-flash-exp",
-            )
+            executor = _create_openai_executor(mock_provider_config, None, None)
 
-            assert executor.default_model == "gemini-2.0-flash-exp"
+            assert executor.default_model == "gpt-4.1"
+
+    def test_model_override_takes_precedence(self) -> None:
+        """Test that explicit model override takes precedence."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        mock_openai = MagicMock()
+
+        with patch.dict(sys.modules, {"openai": mock_openai}):
+            from gobby.llm.resolver import _create_openai_executor
+
+            executor = _create_openai_executor(None, None, "gpt-4.1-nano")
+
+            assert executor.default_model == "gpt-4.1-nano"
+
+    def test_uses_api_base_from_config(self) -> None:
+        """Test that api_base from provider config is used."""
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        mock_openai = MagicMock()
+
+        with patch.dict(sys.modules, {"openai": mock_openai}):
+            from gobby.llm.resolver import _create_openai_executor
+
+            mock_provider_config = MagicMock()
+            mock_provider_config.models = None
+            mock_provider_config.api_base = "https://custom.api.com/v1"
+
+            executor = _create_openai_executor(mock_provider_config, None, None)
+
+            assert executor.api_base == "https://custom.api.com/v1"
 
 
 class TestResolveProviderAdvanced:
@@ -790,20 +866,20 @@ class TestCreateExecutorAdvanced:
             assert exc_info.value.provider == "claude"
             assert exc_info.value.reason == "test reason"
 
-    def test_create_executor_with_config_routes_to_litellm(self) -> None:
-        """Test create_executor with api_key mode routes to LiteLLM."""
+    def test_create_executor_with_api_key_routes_to_native_executor(self) -> None:
+        """Test create_executor with api_key mode routes to native executor."""
         mock_config = MagicMock()
         mock_provider_config = MagicMock()
         mock_provider_config.auth_mode = "api_key"
         mock_config.llm_providers.claude = mock_provider_config
 
-        with patch("gobby.llm.resolver._create_litellm_executor_for_provider") as mock_create:
+        with patch("gobby.llm.resolver._create_claude_executor") as mock_create:
             mock_executor = MagicMock()
             mock_create.return_value = mock_executor
 
             create_executor("claude", config=mock_config)
 
-            # Should route to LiteLLM for api_key mode
+            # Should route to ClaudeExecutor for api_key mode (SDK handles auth)
             mock_create.assert_called_once()
 
 
@@ -825,7 +901,7 @@ class TestExecutorCreationWithConfig:
             mock_config = MagicMock()
             mock_config.models = "claude-opus-4-5, claude-sonnet-4-5"
 
-            executor = _create_claude_executor(mock_config, None)
+            executor = _create_claude_executor(mock_config, None, None)
 
             assert executor.default_model == "claude-opus-4-5"
 
@@ -839,7 +915,7 @@ class TestExecutorCreationWithConfig:
             mock_config = MagicMock()
             mock_config.models = "claude-sonnet-4-5"
 
-            executor = _create_claude_executor(mock_config, "claude-opus-4-20250514")
+            executor = _create_claude_executor(mock_config, None, "claude-opus-4-20250514")
 
             assert executor.default_model == "claude-opus-4-20250514"
 
@@ -853,7 +929,7 @@ class TestExecutorCreationWithConfig:
             mock_config = MagicMock()
             mock_config.models = ""  # Empty string
 
-            executor = _create_claude_executor(mock_config, None)
+            executor = _create_claude_executor(mock_config, None, None)
 
             assert executor.default_model == "opus"
 
@@ -867,20 +943,34 @@ class TestExecutorCreationWithConfig:
             mock_config = MagicMock()
             mock_config.models = "  ,  ,  "  # Whitespace-only entries
 
-            executor = _create_claude_executor(mock_config, None)
+            executor = _create_claude_executor(mock_config, None, None)
 
             assert executor.default_model == "opus"
 
-    def test_claude_executor_always_subscription_mode(self) -> None:
-        """Test Claude executor always uses subscription mode."""
+    def test_claude_executor_default_subscription_mode(self) -> None:
+        """Test Claude executor defaults to subscription mode."""
         from unittest.mock import patch
 
         with patch("shutil.which", return_value="/usr/bin/claude"):
             from gobby.llm.resolver import _create_claude_executor
 
-            executor = _create_claude_executor(None, None)
+            executor = _create_claude_executor(None, None, None)
 
             assert executor.auth_mode == "subscription"
+
+    def test_claude_executor_api_key_mode(self) -> None:
+        """Test Claude executor with api_key mode."""
+        from unittest.mock import MagicMock
+
+        from gobby.llm.resolver import _create_claude_executor
+
+        mock_config = MagicMock()
+        mock_config.llm_providers.api_keys = {"ANTHROPIC_API_KEY": "sk-ant-test"}
+
+        executor = _create_claude_executor(None, mock_config, None, auth_mode="api_key")
+
+        assert executor.auth_mode == "api_key"
+        assert executor.api_key == "sk-ant-test"
 
     def test_litellm_executor_with_models_config(self) -> None:
         """Test LiteLLM executor uses first model from config."""

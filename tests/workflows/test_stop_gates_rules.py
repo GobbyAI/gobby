@@ -240,7 +240,7 @@ class TestRequireTaskClose:
             "mode_level": 2,
             "stop_attempts": 1,
             "task_claimed": True,
-            "claimed_task_id": "task-123",
+            "claimed_tasks": {"task-123": "#1"},
         }
         evaluator = SafeExpressionEvaluator(
             context={"variables": variables},

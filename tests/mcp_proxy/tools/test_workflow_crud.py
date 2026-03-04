@@ -180,9 +180,7 @@ class TestUpdateWorkflow:
         created = create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
         defn_id = created["definition"]["id"]
 
-        result = update_workflow_definition(
-            def_manager, loader, definition_id=defn_id, priority=25
-        )
+        result = update_workflow_definition(def_manager, loader, definition_id=defn_id, priority=25)
 
         assert result["success"] is True
         assert result["definition"]["priority"] == 25
@@ -326,9 +324,7 @@ class TestDeleteWorkflow:
             source="bundled",
         )
 
-        result = delete_workflow_definition(
-            def_manager, loader, name="bundled-wf", force=True
-        )
+        result = delete_workflow_definition(def_manager, loader, name="bundled-wf", force=True)
 
         assert result["success"] is True
         assert def_manager.get_by_name("bundled-wf") is None
@@ -568,7 +564,8 @@ class TestPipelineTypeFiltering:
         assert err is None
 
     def test_require_pipeline_not_found(
-        self, def_manager: LocalWorkflowDefinitionManager,
+        self,
+        def_manager: LocalWorkflowDefinitionManager,
     ) -> None:
         from gobby.mcp_proxy.tools.pipelines import _require_pipeline
 

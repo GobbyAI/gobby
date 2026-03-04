@@ -159,16 +159,14 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     pass  # nosec B110 - best-effort linking
 
             # Set session variables for Claude Code (CC doesn't include tool results in PostToolUse)
-            # This mirrors close_task behavior in _lifecycle.py
+            # This mirrors claim_task behavior in _lifecycle.py
             try:
-                ctx.session_var_manager.merge_variables(
-                    resolved_session_id,
-                    {
-                        "task_claimed": True,
-                        "claimed_task_id": task.id,
-                        "task_ref": f"#{task.seq_num}" if task.seq_num else task.id,
-                    },
-                )
+                from gobby.workflows.task_claim_state import add_claimed_task
+
+                session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
+                ref = f"#{task.seq_num}" if task.seq_num else task.id
+                merge_dict = add_claimed_task(session_vars, task.id, ref)
+                ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
             except Exception as e:
                 logger.debug("Best-effort session variable update failed: %s", e)
 

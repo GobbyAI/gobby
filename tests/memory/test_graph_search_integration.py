@@ -81,8 +81,7 @@ class TestEntityLabelAndMemoryLinkage:
 
         # Check that SET n:_Entity query was called
         entity_label_calls = [
-            c for c in mock_neo4j.query.call_args_list
-            if "SET n:_Entity" in str(c)
+            c for c in mock_neo4j.query.call_args_list if "SET n:_Entity" in str(c)
         ]
         assert len(entity_label_calls) >= 1
 
@@ -105,16 +104,12 @@ class TestEntityLabelAndMemoryLinkage:
 
         # Check Memory node was created
         memory_merge_calls = [
-            c for c in mock_neo4j.query.call_args_list
-            if "MERGE (m:Memory" in str(c)
+            c for c in mock_neo4j.query.call_args_list if "MERGE (m:Memory" in str(c)
         ]
         assert len(memory_merge_calls) >= 1
 
         # Check MENTIONED_IN link was created
-        mentioned_calls = [
-            c for c in mock_neo4j.query.call_args_list
-            if "MENTIONED_IN" in str(c)
-        ]
+        mentioned_calls = [c for c in mock_neo4j.query.call_args_list if "MENTIONED_IN" in str(c)]
         assert len(mentioned_calls) >= 1
 
     async def test_add_to_graph_no_mentioned_in_without_memory_id(
@@ -136,7 +131,8 @@ class TestEntityLabelAndMemoryLinkage:
 
         # No MENTIONED_IN or Memory merge calls
         mentioned_calls = [
-            c for c in mock_neo4j.query.call_args_list
+            c
+            for c in mock_neo4j.query.call_args_list
             if "MENTIONED_IN" in str(c) or "MERGE (m:Memory" in str(c)
         ]
         assert len(mentioned_calls) == 0
@@ -196,9 +192,7 @@ class TestSearchEntitiesByVector:
         mock_neo4j: AsyncMock,
     ) -> None:
         """search_entities_by_vector returns empty list on connection error."""
-        mock_neo4j.vector_search = AsyncMock(
-            side_effect=Neo4jConnectionError("refused")
-        )
+        mock_neo4j.vector_search = AsyncMock(side_effect=Neo4jConnectionError("refused"))
 
         results = await service.search_entities_by_vector(
             query_embedding=[0.1, 0.2],
@@ -279,9 +273,7 @@ class TestFindRelatedMemoryIds:
         mock_neo4j: AsyncMock,
     ) -> None:
         """find_related_memory_ids returns empty on connection error."""
-        mock_neo4j.query = AsyncMock(
-            side_effect=Neo4jConnectionError("refused")
-        )
+        mock_neo4j.query = AsyncMock(side_effect=Neo4jConnectionError("refused"))
 
         result = await service.find_related_memory_ids(entity_names=["Python"])
 

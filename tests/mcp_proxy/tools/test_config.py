@@ -263,10 +263,7 @@ class TestConfigKeyToSecretName:
     """Tests for config_key_to_secret_name helper."""
 
     def test_simple_key(self) -> None:
-        assert (
-            config_key_to_secret_name("voice.elevenlabs_api_key")
-            == "elevenlabs_api_key"
-        )
+        assert config_key_to_secret_name("voice.elevenlabs_api_key") == "elevenlabs_api_key"
 
     def test_nested_key(self) -> None:
         assert config_key_to_secret_name("a.b.c") == "c"

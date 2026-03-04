@@ -170,9 +170,7 @@ def test_show_workflow_with_tools(cli_runner, mock_loader) -> None:
 def test_status_no_session(cli_runner) -> None:
     import click
 
-    with patch(
-        "gobby.cli.workflows.common.get_session_var_manager", return_value=MagicMock()
-    ):
+    with patch("gobby.cli.workflows.common.get_session_var_manager", return_value=MagicMock()):
         with patch(
             "gobby.cli.workflows.common.resolve_session_id",
             side_effect=click.ClickException("No active session found"),
@@ -213,9 +211,7 @@ def test_status_json_format(cli_runner, mock_session_var_manager) -> None:
                 "counter": 5,
             }
 
-            result = cli_runner.invoke(
-                workflows, ["status", "--session", "sess1", "--json"]
-            )
+            result = cli_runner.invoke(workflows, ["status", "--session", "sess1", "--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -350,9 +346,7 @@ def test_audit_json_format(cli_runner) -> None:
             mock_audit.get_entries.return_value = [mock_entry]
             MockAudit.return_value = mock_audit
 
-            result = cli_runner.invoke(
-                workflows, ["audit", "--session", "sess1", "--json"]
-            )
+            result = cli_runner.invoke(workflows, ["audit", "--session", "sess1", "--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -407,9 +401,7 @@ def test_set_variable_integer(cli_runner, mock_session_var_manager) -> None:
             result = cli_runner.invoke(workflows, ["set-var", "max_retries", "5"])
 
             assert result.exit_code == 0
-            mock_session_var_manager.set_variable.assert_called_once_with(
-                "sess1", "max_retries", 5
-            )
+            mock_session_var_manager.set_variable.assert_called_once_with("sess1", "max_retries", 5)
 
 
 def test_set_variable_null(cli_runner, mock_session_var_manager) -> None:
@@ -422,9 +414,7 @@ def test_set_variable_null(cli_runner, mock_session_var_manager) -> None:
             result = cli_runner.invoke(workflows, ["set-var", "existing", "null"])
 
             assert result.exit_code == 0
-            mock_session_var_manager.set_variable.assert_called_once_with(
-                "sess1", "existing", None
-            )
+            mock_session_var_manager.set_variable.assert_called_once_with("sess1", "existing", None)
 
 
 # ==============================================================================

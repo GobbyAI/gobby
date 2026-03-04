@@ -642,7 +642,6 @@ def _resolve_config_values(
 def load_config(
     config_file: str | None = None,
     cli_overrides: dict[str, Any] | None = None,
-    create_default: bool = False,
     secret_resolver: Callable[[str], str | None] | None = None,
     config_store: Any | None = None,
 ) -> DaemonConfig:
@@ -655,7 +654,6 @@ def load_config(
     Args:
         config_file: Path hint for locating bootstrap.yaml (default: ~/.gobby/)
         cli_overrides: Dictionary of CLI argument overrides
-        create_default: Unused (kept for API compatibility)
         secret_resolver: Optional callable for resolving secrets (checked before env vars)
         config_store: Optional ConfigStore instance for DB-first resolution
 

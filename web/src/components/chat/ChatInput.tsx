@@ -40,6 +40,7 @@ interface ChatInputProps {
   agentShowScopeToggle?: boolean
   agentHasGlobal?: boolean
   agentHasProject?: boolean
+  isMobile?: boolean
 }
 
 export function ChatInput({
@@ -73,6 +74,7 @@ export function ChatInput({
   agentShowScopeToggle = false,
   agentHasGlobal = false,
   agentHasProject = false,
+  isMobile = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -200,8 +202,12 @@ export function ChatInput({
         return
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
-  }, [handleSubmit, isStreaming, onStop, showPalette, paletteItems, selectedIndex, handlePaletteSelect])
+    if (isMobile) {
+      if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); handleSubmit() }
+    } else {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
+    }
+  }, [handleSubmit, isStreaming, onStop, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
 
@@ -365,6 +371,13 @@ export function ChatInput({
             aria-label={disabled ? 'Message input — connecting' : isStreaming ? 'Message input — streaming' : voiceMode ? 'Message input — voice mode' : 'Message input'}
             disabled={disabled}
             rows={1}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-form-type="other"
+            data-lpignore="true"
+            data-1p-ignore
           />
 
           <div className="flex gap-1 shrink-0">

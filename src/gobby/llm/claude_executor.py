@@ -1,10 +1,9 @@
 """
-Claude implementation of AgentExecutor for subscription mode only.
+Claude implementation of AgentExecutor using the Claude Agent SDK.
 
-This executor uses the Claude Agent SDK with CLI for Pro/Team subscriptions.
-
-Note: api_key mode is now routed through LiteLLMExecutor for unified cost tracking.
-Use the resolver.create_executor() function which handles routing automatically.
+Supports both subscription (CLI-based auth) and api_key (direct API key)
+authentication modes. Both use claude-agent-sdk — the SDK handles auth
+differences internally.
 """
 
 import asyncio
@@ -18,6 +17,7 @@ from typing import Any, Literal, cast
 from gobby.llm.executor import (
     AgentExecutor,
     AgentResult,
+    CostInfo,
     ToolCallRecord,
     ToolHandler,
     ToolResult,
@@ -26,33 +26,23 @@ from gobby.llm.executor import (
 
 logger = logging.getLogger(__name__)
 
-# Auth mode type - subscription only, api_key routes through LiteLLM
-ClaudeAuthMode = Literal["subscription"]
+ClaudeAuthMode = Literal["subscription", "api_key"]
 
 
 class ClaudeExecutor(AgentExecutor):
     """
-    Claude implementation of AgentExecutor for subscription mode only.
+    Claude implementation of AgentExecutor using claude-agent-sdk.
 
-    Uses Claude Agent SDK with CLI for Pro/Team subscriptions. This executor
-    is for subscription-based authentication only.
+    Supports both authentication modes:
+    - subscription: Uses Claude CLI for Pro/Team subscription auth.
+    - api_key: Uses direct API key auth via the SDK.
 
-    For api_key mode, use LiteLLMExecutor with provider="claude" which routes
-    through anthropic/model-name for unified cost tracking.
-
-    The executor implements a proper agentic loop:
-    1. Send prompt to Claude with tool schemas via SDK
-    2. When Claude requests a tool, call tool_handler
-    3. Send tool result back to Claude
-    4. Repeat until Claude stops requesting tools or limits are reached
+    Both modes use the same claude-agent-sdk — the SDK handles auth
+    differences internally.
 
     Example:
         >>> executor = ClaudeExecutor(auth_mode="subscription")
-        >>> result = await executor.run(
-        ...     prompt="Create a task",
-        ...     tools=[ToolSchema(name="create_task", ...)],
-        ...     tool_handler=my_handler,
-        ... )
+        >>> executor = ClaudeExecutor(auth_mode="api_key", api_key="sk-ant-...")
     """
 
     _cli_path: str
@@ -61,35 +51,40 @@ class ClaudeExecutor(AgentExecutor):
         self,
         auth_mode: ClaudeAuthMode = "subscription",
         default_model: str = "opus",
+        api_key: str | None = None,
     ):
         """
-        Initialize ClaudeExecutor for subscription mode.
+        Initialize ClaudeExecutor.
 
         Args:
-            auth_mode: Must be "subscription". API key mode is handled by LiteLLMExecutor.
+            auth_mode: "subscription" for CLI auth, "api_key" for direct API key.
             default_model: Default model to use if not specified in run().
+            api_key: Anthropic API key (required for api_key mode).
 
         Raises:
-            ValueError: If auth_mode is not "subscription" or Claude CLI not found.
+            ValueError: If subscription mode and Claude CLI not found,
+                       or api_key mode and no key provided.
         """
-        if auth_mode != "subscription":
+        if auth_mode not in ("subscription", "api_key"):
             raise ValueError(
-                "ClaudeExecutor only supports subscription mode. "
-                "For api_key mode, use LiteLLMExecutor with provider='claude'."
+                f"Unsupported auth_mode '{auth_mode}'. Use 'subscription' or 'api_key'."
             )
 
         self.auth_mode = auth_mode
         self.default_model = default_model
+        self.api_key = api_key
         self.logger = logger
         self._cli_path = ""
 
-        # Verify Claude CLI is available for subscription mode
-        cli_path = shutil.which("claude")
-        if not cli_path:
-            raise ValueError(
-                "Claude CLI not found in PATH. Install Claude Code for subscription mode."
-            )
-        self._cli_path = cli_path
+        if auth_mode == "subscription":
+            cli_path = shutil.which("claude")
+            if not cli_path:
+                raise ValueError(
+                    "Claude CLI not found in PATH. Install Claude Code for subscription mode."
+                )
+            self._cli_path = cli_path
+        elif auth_mode == "api_key" and not api_key:
+            raise ValueError("api_key is required for api_key auth mode.")
 
     @property
     def provider_name(self) -> str:
@@ -145,10 +140,10 @@ class ClaudeExecutor(AgentExecutor):
         timeout: float,
     ) -> AgentResult:
         """
-        Run using Claude Agent SDK with subscription auth.
+        Run using Claude Agent SDK.
 
-        This mode uses the claude-agent-sdk which handles subscription
-        authentication through the Claude CLI.
+        Handles both subscription (CLI auth) and api_key (direct key) modes.
+        The SDK manages auth differences internally.
         """
         from claude_agent_sdk import (
             AssistantMessage,
@@ -230,16 +225,23 @@ class ClaudeExecutor(AgentExecutor):
         # Build allowed tools list
         allowed_tools = [f"mcp__gobby-executor__{t.name}" for t in tools]
 
-        # Configure SDK options
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt or "You are a helpful assistant.",
-            max_turns=max_turns,
-            model=model,
-            allowed_tools=allowed_tools,
-            permission_mode="bypassPermissions",
-            cli_path=self._cli_path,
-            mcp_servers=mcp_servers,
-        )
+        # Configure SDK options — auth mode determines CLI path vs API key
+        sdk_kwargs: dict[str, Any] = {
+            "system_prompt": system_prompt or "You are a helpful assistant.",
+            "max_turns": max_turns,
+            "model": model,
+            "allowed_tools": allowed_tools,
+            "permission_mode": "bypassPermissions",
+            "mcp_servers": mcp_servers,
+        }
+
+        if self.auth_mode == "subscription":
+            sdk_kwargs["cli_path"] = self._cli_path
+        else:
+            # api_key mode — pass key directly to SDK
+            sdk_kwargs["api_key"] = self.api_key
+
+        options = ClaudeAgentOptions(**sdk_kwargs)
 
         # Track turns in outer scope so timeout handler can access the count
         turns_counter = [0]
@@ -247,10 +249,12 @@ class ClaudeExecutor(AgentExecutor):
         async def _run_query() -> AgentResult:
             result_text = ""
             turns_used = 0
+            result_msg: ResultMessage | None = None
 
             try:
                 async for message in query(prompt=prompt, options=options):
                     if isinstance(message, ResultMessage):
+                        result_msg = message
                         if message.result:
                             result_text = message.result
                     elif isinstance(message, AssistantMessage):
@@ -269,11 +273,33 @@ class ClaudeExecutor(AgentExecutor):
                                 if isinstance(block, ToolResultBlock):
                                     self.logger.debug(f"ToolResultBlock: {block.tool_use_id}")
 
+                # Build cost info for api_key mode
+                cost_info: CostInfo | None = None
+                if self.auth_mode == "api_key":
+                    # Extract token counts from the last ResultMessage
+                    prompt_tokens = 0
+                    completion_tokens = 0
+                    total_cost = 0.0
+                    # Walk messages to find the ResultMessage with usage
+                    # (result_msg captured during iteration above)
+                    if result_msg and result_msg.usage:
+                        prompt_tokens = result_msg.usage.get("input_tokens", 0)
+                        completion_tokens = result_msg.usage.get("output_tokens", 0)
+                    if result_msg and result_msg.total_cost_usd is not None:
+                        total_cost = result_msg.total_cost_usd
+                    cost_info = CostInfo(
+                        model=model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        total_cost=total_cost,
+                    )
+
                 return AgentResult(
                     output=result_text,
                     status="success",
                     tool_calls=tool_calls,
                     turns_used=turns_used,
+                    cost_info=cost_info,
                 )
 
             except Exception as e:

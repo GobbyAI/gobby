@@ -59,7 +59,9 @@ def _create_test_rule(
     return row.id
 
 
-def _create_test_workflow(def_manager: LocalWorkflowDefinitionManager, name: str = "test-wf") -> str:
+def _create_test_workflow(
+    def_manager: LocalWorkflowDefinitionManager, name: str = "test-wf"
+) -> str:
     """Create a non-rule workflow to verify filtering."""
     row = def_manager.create(
         name=name,

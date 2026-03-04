@@ -365,7 +365,9 @@ class TestGetMessagesEdgeCases:
 
         test_client = TestClient(server.app)
 
-        response = test_client.get(f"/api/sessions/{session.id}/messages?limit=50&offset=10&role=user")
+        response = test_client.get(
+            f"/api/sessions/{session.id}/messages?limit=50&offset=10&role=user"
+        )
 
         assert response.status_code == 200
         data = response.json()

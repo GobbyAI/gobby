@@ -4,6 +4,7 @@ import hashlib
 import logging
 import re
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from gobby.workflows.definitions import AgentDefinitionBody
 
 _derive_logger = logging.getLogger(__name__)
+
+SUMMARY_GENERATION_TIMEOUT_S = 90
 
 
 @dataclass
@@ -396,20 +399,41 @@ class SessionEventHandlerMixin(EventHandlersBase):
             if current_vars.get("auto_inject_handoff", True):
                 parent = self._session_storage.get(parent_session_id)
                 if parent:
-                    # For /clear: generate boundary summaries now (no pre-clear hook
-                    # fires in Claude Code, so summaries don't exist yet).
-                    # For /compact: PRE_COMPACT already generated compact_markdown.
+                    # For /clear: summary generation was kicked off by
+                    # BEFORE_AGENT (fire-and-forget). Poll until it arrives.
+                    # For /compact: PRE_COMPACT already kicked it off.
                     if session_source == "clear" and not parent.summary_markdown:
-                        if self._dispatch_boundary_summaries_fn:
+                        # Ensure generation is started (idempotent if already running)
+                        summary_event = threading.Event()
+                        max_wait_s = SUMMARY_GENERATION_TIMEOUT_S
+                        dispatched = False
+                        if self._dispatch_session_summaries_fn:
                             try:
-                                self._dispatch_boundary_summaries_fn(parent_session_id, False)
+                                self._dispatch_session_summaries_fn(
+                                    parent_session_id, True, summary_event
+                                )
+                                dispatched = True
                             except Exception as e:
                                 self.logger.warning(
-                                    f"Failed to generate boundary summaries "
+                                    f"Failed to dispatch session summaries "
                                     f"for parent {parent_session_id}: {e}"
                                 )
-                            # Re-read parent after generation
-                            parent = self._session_storage.get(parent_session_id)
+
+                        # Wait for summary generation to complete
+                        if dispatched:
+                            if summary_event.wait(timeout=max_wait_s):
+                                self.logger.debug(
+                                    "Session summary signaled for parent %s",
+                                    parent_session_id,
+                                )
+                            else:
+                                self.logger.warning(
+                                    "Timed out waiting for session summary for parent %s after %.0fs",
+                                    parent_session_id,
+                                    max_wait_s,
+                                )
+                        # Re-read parent after generation
+                        parent = self._session_storage.get(parent_session_id)
 
                     handoff_vars: dict[str, Any] = {}
                     if parent and session_source == "clear" and parent.summary_markdown:
@@ -424,8 +448,7 @@ class SessionEventHandlerMixin(EventHandlersBase):
                     if session_source in ("compact", "clear"):
                         _TASK_CLAIM_KEYS = (
                             "task_claimed",
-                            "claimed_task_id",
-                            "task_ref",
+                            "claimed_tasks",
                             "session_had_task",
                         )
                         task_handoff = {
@@ -433,29 +456,28 @@ class SessionEventHandlerMixin(EventHandlersBase):
                         }
                         if task_handoff:
                             sv_mgr.merge_variables(session_id, task_handoff)
-                            # Re-assign task and re-link to new session
-                            if task_handoff.get("task_claimed") and task_handoff.get(
-                                "claimed_task_id"
-                            ):
-                                claimed_id = task_handoff["claimed_task_id"]
-                                if self._task_manager:
-                                    try:
-                                        self._task_manager.update_task(
-                                            claimed_id, assignee=session_id
-                                        )
-                                    except Exception as e:
-                                        self.logger.debug(
-                                            f"Best-effort task re-assignment failed for session={session_id} task={claimed_id}: {e}"
-                                        )
-                                if self._session_task_manager:
-                                    try:
-                                        self._session_task_manager.link_task(
-                                            session_id, claimed_id, "claimed"
-                                        )
-                                    except Exception as e:
-                                        self.logger.debug(
-                                            f"Best-effort session-task link failed for session={session_id} task={claimed_id}: {e}"
-                                        )
+                            # Re-assign all claimed tasks and re-link to new session
+                            claimed_tasks = task_handoff.get("claimed_tasks") or {}
+                            if task_handoff.get("task_claimed") and claimed_tasks:
+                                for claimed_id in claimed_tasks:
+                                    if self._task_manager:
+                                        try:
+                                            self._task_manager.update_task(
+                                                claimed_id, assignee=session_id
+                                            )
+                                        except Exception as e:
+                                            self.logger.debug(
+                                                f"Best-effort task re-assignment failed for session={session_id} task={claimed_id}: {e}"
+                                            )
+                                    if self._session_task_manager:
+                                        try:
+                                            self._session_task_manager.link_task(
+                                                session_id, claimed_id, "claimed"
+                                            )
+                                        except Exception as e:
+                                            self.logger.debug(
+                                                f"Best-effort session-task link failed for session={session_id} task={claimed_id}: {e}"
+                                            )
 
         # Populate task_context session variable for inject_context rule templates
         if event.task_id and session_id and self._session_storage:

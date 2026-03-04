@@ -334,6 +334,19 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     onAllEnabledChange(allEnabled)
   }, [filteredRules, onAllEnabledChange])
 
+  const conflictWarning = useMemo(() => {
+    const isNew = !sidebarRule || sidebarRule.id === '__new__'
+    if (isNew && !ruleForm.name) return null
+    const conflicts = rules.filter(r =>
+      r.name !== (sidebarRule?.id === '__new__' ? '' : sidebarRule?.name) &&
+      r.event === ruleForm.event &&
+      r.priority === ruleForm.priority
+    )
+    if (conflicts.length === 0) return null
+    const names = conflicts.map(r => r.name).join(', ')
+    return `Priority ${ruleForm.priority} on "${ruleForm.event}" conflicts with: ${names}`
+  }, [rules, sidebarRule, ruleForm.event, ruleForm.priority, ruleForm.name])
+
   return (
     <div className="rules-tab">
       {ConfirmDialogElement}
@@ -381,6 +394,7 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
         yamlContent={sidebarYaml}
         onYamlChange={setSidebarYaml}
         onYamlSave={handleSidebarYamlSave}
+        conflictWarning={conflictWarning}
       />
     </div>
   )
@@ -514,4 +528,3 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
     </div>
   )
 }
-

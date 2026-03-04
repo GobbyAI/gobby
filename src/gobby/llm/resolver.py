@@ -261,9 +261,11 @@ def create_executor(
     Create an AgentExecutor for the given provider.
 
     Routing strategy:
-    - api_key and adc auth modes: Route to LiteLLMExecutor for unified cost tracking
-    - subscription mode (Claude): Route to ClaudeExecutor (Claude Agent SDK)
-    - cli mode (Codex): Route to CodexExecutor (Codex CLI subprocess)
+    - claude (subscription/api_key) -> ClaudeExecutor (claude-agent-sdk)
+    - gemini (api_key/adc) -> GeminiExecutor (google-genai SDK)
+    - codex (subscription/cli) -> CodexExecutor (CLI subprocess)
+    - codex (api_key) -> OpenAIExecutor (openai SDK)
+    - litellm (any) -> LiteLLMExecutor (fallback)
 
     Args:
         provider: Provider name (claude, gemini, litellm, codex).
@@ -291,28 +293,27 @@ def create_executor(
         auth_mode = getattr(provider_config, "auth_mode", "api_key") or "api_key"
 
     try:
-        # Route based on auth_mode:
-        # - subscription (Claude) -> ClaudeExecutor
-        # - cli (Codex) -> CodexExecutor
-        # - api_key/adc (all providers) -> LiteLLMExecutor
+        # Route based on provider + auth_mode:
+        # - claude (subscription/api_key) -> ClaudeExecutor (SDK handles auth)
+        # - gemini (api_key/adc) -> GeminiExecutor (native google-genai SDK)
+        # - codex (subscription/cli) -> CodexExecutor (CLI subprocess)
+        # - codex (api_key) -> OpenAIExecutor (native openai SDK)
+        # - litellm (any) -> LiteLLMExecutor (fallback only)
 
-        if provider == "claude" and auth_mode == "subscription":
-            # Subscription mode requires Claude Agent SDK
-            return _create_claude_executor(provider_config, model)
+        if provider == "claude" and auth_mode in ("subscription", "api_key"):
+            return _create_claude_executor(provider_config, config, model, auth_mode)
+
+        elif provider == "gemini" and auth_mode in ("api_key", "adc"):
+            return _create_gemini_executor(provider_config, config, model, auth_mode)
 
         elif provider == "codex" and auth_mode in ("subscription", "cli"):
-            # CLI mode requires Codex CLI subprocess
             return _create_codex_executor(provider_config, model, auth_mode)
 
-        elif provider == "litellm":
-            # Direct LiteLLM usage
-            return _create_litellm_executor(provider_config, config, model)
+        elif provider == "codex" and auth_mode == "api_key":
+            return _create_openai_executor(provider_config, config, model)
 
-        elif auth_mode in ("api_key", "adc"):
-            # Route all api_key and adc modes through LiteLLM for unified cost tracking
-            return _create_litellm_executor_for_provider(
-                provider, auth_mode, provider_config, config, model
-            )
+        elif provider == "litellm":
+            return _create_litellm_executor(provider_config, config, model)
 
         else:
             raise ExecutorCreationError(
@@ -328,30 +329,31 @@ def create_executor(
 
 def _create_claude_executor(
     provider_config: "LLMProviderConfig | None",
+    config: "DaemonConfig | None",
     model: str | None,
+    auth_mode: str = "subscription",
 ) -> AgentExecutor:
-    """
-    Create ClaudeExecutor for subscription mode only.
+    """Create ClaudeExecutor for subscription or api_key mode."""
+    from gobby.llm.claude_executor import ClaudeAuthMode, ClaudeExecutor
 
-    Note: api_key mode is now routed through LiteLLMExecutor for unified cost tracking.
-    This function should only be called when auth_mode is "subscription".
-    """
-    from gobby.llm.claude_executor import ClaudeExecutor
-
-    # Subscription mode only - api_key mode routes through LiteLLM
     default_model = "opus"
+    api_key: str | None = None
 
     if provider_config:
-        # Get first model from comma-separated list if set
         models_str = getattr(provider_config, "models", None)
         if models_str:
             models = [m.strip() for m in models_str.split(",") if m.strip()]
             if models:
                 default_model = models[0]
 
+    if auth_mode == "api_key" and config and config.llm_providers:
+        api_keys = config.llm_providers.api_keys or {}
+        api_key = api_keys.get("ANTHROPIC_API_KEY")
+
     return ClaudeExecutor(
-        auth_mode="subscription",
+        auth_mode=cast("ClaudeAuthMode", auth_mode),
         default_model=model or default_model,
+        api_key=api_key,
     )
 
 
@@ -387,36 +389,53 @@ def _create_litellm_executor(
     )
 
 
-def _create_litellm_executor_for_provider(
-    provider: str,
-    auth_mode: str,
+def _create_gemini_executor(
+    provider_config: "LLMProviderConfig | None",
+    config: "DaemonConfig | None",
+    model: str | None,
+    auth_mode: str = "api_key",
+) -> AgentExecutor:
+    """Create GeminiExecutor using the native google-genai SDK."""
+    from gobby.llm.gemini_executor import GeminiAuthMode, GeminiExecutor
+
+    default_model = "gemini-2.0-flash"
+    api_key: str | None = None
+    project: str | None = None
+    location: str | None = None
+
+    if provider_config:
+        models_str = getattr(provider_config, "models", None)
+        if models_str:
+            models = [m.strip() for m in models_str.split(",") if m.strip()]
+            if models:
+                default_model = models[0]
+        project = getattr(provider_config, "project", None)
+        location = getattr(provider_config, "location", None)
+
+    if config and config.llm_providers:
+        api_keys = config.llm_providers.api_keys or {}
+        api_key = api_keys.get("GEMINI_API_KEY") or api_keys.get("GOOGLE_API_KEY")
+
+    return GeminiExecutor(
+        auth_mode=cast("GeminiAuthMode", auth_mode),
+        default_model=model or default_model,
+        api_key=api_key,
+        project=project,
+        location=location,
+    )
+
+
+def _create_openai_executor(
     provider_config: "LLMProviderConfig | None",
     config: "DaemonConfig | None",
     model: str | None,
 ) -> AgentExecutor:
-    """
-    Create LiteLLMExecutor configured for a specific provider's api_key/adc mode.
+    """Create OpenAIExecutor using the native openai SDK."""
+    from gobby.llm.openai_executor import OpenAIExecutor
 
-    This routes provider-specific calls through LiteLLM for unified cost tracking:
-    - Claude (api_key) -> anthropic/model
-    - Gemini (api_key) -> gemini/model
-    - Gemini (adc) -> vertex_ai/model
-    - Codex/OpenAI (api_key) -> model (no prefix)
-    """
-    from gobby.llm.litellm_executor import AuthModeType, LiteLLMExecutor, ProviderType
-
-    # Default models per provider
-    default_models = {
-        "claude": "opus",
-        "gemini": "gemini-2.0-flash",
-        "codex": "gpt-4o",
-        "openai": "gpt-4o",
-    }
-
-    # Determine model from config
-    default_model = default_models.get(provider, "gpt-4o-mini")
-    api_base = None
-    api_keys: dict[str, str] | None = None
+    default_model = "gpt-4o"
+    api_key: str | None = None
+    api_base: str | None = None
 
     if provider_config:
         models_str = getattr(provider_config, "models", None)
@@ -426,19 +445,14 @@ def _create_litellm_executor_for_provider(
                 default_model = models[0]
         api_base = getattr(provider_config, "api_base", None)
 
-    # Get API keys from llm_providers.api_keys
     if config and config.llm_providers:
-        api_keys = config.llm_providers.api_keys or None
+        api_keys = config.llm_providers.api_keys or {}
+        api_key = api_keys.get("OPENAI_API_KEY")
 
-    # Cast auth_mode to the expected literal type
-    litellm_auth_mode = auth_mode if auth_mode in ("api_key", "adc") else "api_key"
-
-    return LiteLLMExecutor(
+    return OpenAIExecutor(
         default_model=model or default_model,
+        api_key=api_key,
         api_base=api_base,
-        api_keys=api_keys,
-        provider=cast(ProviderType, provider),
-        auth_mode=cast(AuthModeType, litellm_auth_mode),
     )
 
 

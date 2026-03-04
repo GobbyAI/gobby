@@ -1,6 +1,6 @@
 """Tests for src/mcp_proxy/actions.py - MCP Actions."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -220,5 +220,3 @@ class TestRemoveMcpServer:
         assert result["success"] is False
         assert "Database error" in result["error"]
         assert result["name"] == "error-server"
-
-

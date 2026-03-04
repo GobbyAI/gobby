@@ -158,9 +158,7 @@ class TestInterAgentMessagingE2E:
             arguments={"session_id": parent_session_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("success") is True, (
-            f"deliver_pending_messages (parent) failed: {result}"
-        )
+        assert result.get("success") is True, f"deliver_pending_messages (parent) failed: {result}"
         parent_messages = result.get("messages", [])
         assert len(parent_messages) >= 1, "Parent should have received at least 1 message"
 
@@ -174,9 +172,9 @@ class TestInterAgentMessagingE2E:
             ),
             None,
         )
-        assert response_msg is not None, (
-            f"Expected response from child not found in: {parent_messages}"
-        )
+        assert (
+            response_msg is not None
+        ), f"Expected response from child not found in: {parent_messages}"
 
         # Cleanup: Unregister the test agent
         cli_events.unregister_test_agent(run_id)

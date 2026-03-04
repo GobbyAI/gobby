@@ -896,9 +896,7 @@ class TestCleanupStaleClones:
             ),
         ]
 
-        result = await registry.call(
-            "cleanup_stale_clones", {"hours": 24, "dry_run": True}
-        )
+        result = await registry.call("cleanup_stale_clones", {"hours": 24, "dry_run": True})
 
         assert result["success"] is True
         assert result["dry_run"] is True
@@ -930,9 +928,7 @@ class TestCleanupStaleClones:
             ),
         ]
 
-        result = await registry.call(
-            "cleanup_stale_clones", {"hours": 24, "dry_run": False}
-        )
+        result = await registry.call("cleanup_stale_clones", {"hours": 24, "dry_run": False})
 
         assert result["success"] is True
         assert result["dry_run"] is False
@@ -940,9 +936,7 @@ class TestCleanupStaleClones:
         assert result["cleaned"][0]["files_deleted"] is False
 
     @pytest.mark.asyncio
-    async def test_cleanup_with_delete_files(
-        self, registry, mock_clone_storage, mock_git_manager
-    ):
+    async def test_cleanup_with_delete_files(self, registry, mock_clone_storage, mock_git_manager):
         """Cleanup deletes clone files when delete_files=True."""
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
@@ -971,9 +965,7 @@ class TestCleanupStaleClones:
         assert result["success"] is True
         assert result["cleaned"][0]["marked_stale"] is True
         assert result["cleaned"][0]["files_deleted"] is True
-        mock_git_manager.delete_clone.assert_called_once_with(
-            "/tmp/clones/old", force=True
-        )
+        mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/old", force=True)
 
     @pytest.mark.asyncio
     async def test_cleanup_delete_files_failure(

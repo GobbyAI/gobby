@@ -1089,8 +1089,13 @@ class TestAgentRunnerHookIntegration:
         executor = MagicMock()
 
         async def run_impl(
-            prompt, tools, tool_handler, system_prompt=None, model=None,
-            max_turns=10, timeout=120.0,
+            prompt,
+            tools,
+            tool_handler,
+            system_prompt=None,
+            model=None,
+            max_turns=10,
+            timeout=120.0,
         ):
             # Simulate a single tool call
             result = await tool_handler("Bash", {"command": "sqlite3 test.db"})
@@ -1135,16 +1140,25 @@ class TestAgentRunnerHookIntegration:
         return AgentRunContext(session=mock_session, run=mock_run)
 
     async def test_hook_enriches_failed_tool_error(
-        self, hook_runner, mock_workflow_handler, failing_tool_handler,
-        capturing_executor, tool_results,
+        self,
+        hook_runner,
+        mock_workflow_handler,
+        failing_tool_handler,
+        capturing_executor,
+        tool_results,
     ):
         """When workflow_handler is set and tool fails, error is enriched with context."""
         hook_runner.workflow_handler = mock_workflow_handler
 
         # Re-wire executor to use the failing handler
         async def run_impl(
-            prompt, tools, tool_handler, system_prompt=None, model=None,
-            max_turns=10, timeout=120.0,
+            prompt,
+            tools,
+            tool_handler,
+            system_prompt=None,
+            model=None,
+            max_turns=10,
+            timeout=120.0,
         ):
             result = await tool_handler("Bash", {"command": "sqlite3 test.db"})
             tool_results.append(result)
@@ -1164,15 +1178,24 @@ class TestAgentRunnerHookIntegration:
         mock_workflow_handler.evaluate.assert_called_once()
 
     async def test_hook_enriches_success_result(
-        self, hook_runner, mock_workflow_handler, succeeding_tool_handler,
-        capturing_executor, tool_results,
+        self,
+        hook_runner,
+        mock_workflow_handler,
+        succeeding_tool_handler,
+        capturing_executor,
+        tool_results,
     ):
         """When workflow_handler is set and tool succeeds, result gets context appended."""
         hook_runner.workflow_handler = mock_workflow_handler
 
         async def run_impl(
-            prompt, tools, tool_handler, system_prompt=None, model=None,
-            max_turns=10, timeout=120.0,
+            prompt,
+            tools,
+            tool_handler,
+            system_prompt=None,
+            model=None,
+            max_turns=10,
+            timeout=120.0,
         ):
             result = await tool_handler("Bash", {"command": "echo hi"})
             tool_results.append(result)
@@ -1190,14 +1213,23 @@ class TestAgentRunnerHookIntegration:
         assert "Recovery guidance" in str(tool_results[0].result)
 
     async def test_no_handler_works_without_enrichment(
-        self, hook_runner, failing_tool_handler, capturing_executor, tool_results,
+        self,
+        hook_runner,
+        failing_tool_handler,
+        capturing_executor,
+        tool_results,
     ):
         """When workflow_handler is None, tool results pass through unmodified."""
         assert hook_runner.workflow_handler is None
 
         async def run_impl(
-            prompt, tools, tool_handler, system_prompt=None, model=None,
-            max_turns=10, timeout=120.0,
+            prompt,
+            tools,
+            tool_handler,
+            system_prompt=None,
+            model=None,
+            max_turns=10,
+            timeout=120.0,
         ):
             result = await tool_handler("Bash", {"command": "bad cmd"})
             tool_results.append(result)
@@ -1215,7 +1247,11 @@ class TestAgentRunnerHookIntegration:
         assert "Recovery guidance" not in tool_results[0].error
 
     async def test_hook_eval_exception_is_fail_open(
-        self, hook_runner, failing_tool_handler, capturing_executor, tool_results,
+        self,
+        hook_runner,
+        failing_tool_handler,
+        capturing_executor,
+        tool_results,
     ):
         """If workflow_handler.evaluate raises, the tool result passes through unmodified."""
         bad_handler = MagicMock()
@@ -1223,8 +1259,13 @@ class TestAgentRunnerHookIntegration:
         hook_runner.workflow_handler = bad_handler
 
         async def run_impl(
-            prompt, tools, tool_handler, system_prompt=None, model=None,
-            max_turns=10, timeout=120.0,
+            prompt,
+            tools,
+            tool_handler,
+            system_prompt=None,
+            model=None,
+            max_turns=10,
+            timeout=120.0,
         ):
             result = await tool_handler("Bash", {"command": "bad cmd"})
             tool_results.append(result)
@@ -1243,7 +1284,11 @@ class TestAgentRunnerHookIntegration:
         assert "Recovery guidance" not in tool_results[0].error
 
     async def test_hook_no_context_leaves_result_unchanged(
-        self, hook_runner, failing_tool_handler, capturing_executor, tool_results,
+        self,
+        hook_runner,
+        failing_tool_handler,
+        capturing_executor,
+        tool_results,
     ):
         """When workflow_handler returns no context, result is unchanged."""
         empty_handler = MagicMock()
@@ -1251,8 +1296,13 @@ class TestAgentRunnerHookIntegration:
         hook_runner.workflow_handler = empty_handler
 
         async def run_impl(
-            prompt, tools, tool_handler, system_prompt=None, model=None,
-            max_turns=10, timeout=120.0,
+            prompt,
+            tools,
+            tool_handler,
+            system_prompt=None,
+            model=None,
+            max_turns=10,
+            timeout=120.0,
         ):
             result = await tool_handler("Bash", {"command": "bad cmd"})
             tool_results.append(result)
@@ -1269,7 +1319,11 @@ class TestAgentRunnerHookIntegration:
         assert tool_results[0].error == "column 'foo' does not exist"
 
     async def test_hook_event_has_correct_fields(
-        self, hook_runner, failing_tool_handler, capturing_executor, tool_results,
+        self,
+        hook_runner,
+        failing_tool_handler,
+        capturing_executor,
+        tool_results,
     ):
         """Verify the HookEvent passed to evaluate has correct structure."""
         from gobby.hooks.events import HookEventType, SessionSource
@@ -1285,8 +1339,13 @@ class TestAgentRunnerHookIntegration:
         hook_runner.workflow_handler = handler
 
         async def run_impl(
-            prompt, tools, tool_handler, system_prompt=None, model=None,
-            max_turns=10, timeout=120.0,
+            prompt,
+            tools,
+            tool_handler,
+            system_prompt=None,
+            model=None,
+            max_turns=10,
+            timeout=120.0,
         ):
             result = await tool_handler("Bash", {"command": "sqlite3 test.db"})
             tool_results.append(result)

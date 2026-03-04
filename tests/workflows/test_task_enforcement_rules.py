@@ -50,7 +50,6 @@ TASK_ENFORCEMENT_RULES = {
     "block-skip-validation-with-commit",
     "block-ask-during-stop-compliance",
     "track-task-claim",
-    "track-task-release",
 }
 
 
@@ -58,15 +57,15 @@ class TestTaskEnforcementSync:
     """Test that task-enforcement.yaml syncs correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All 7 task-enforcement rules should sync to workflow_definitions."""
+        """All 6 task-enforcement rules should sync to workflow_definitions."""
         _sync_bundled(db)
 
         rules = manager.list_all(workflow_type="rule")
         rule_names = {r.name for r in rules}
 
-        assert TASK_ENFORCEMENT_RULES.issubset(rule_names), (
-            f"Missing: {TASK_ENFORCEMENT_RULES - rule_names}"
-        )
+        assert TASK_ENFORCEMENT_RULES.issubset(
+            rule_names
+        ), f"Missing: {TASK_ENFORCEMENT_RULES - rule_names}"
 
     def test_all_rules_have_group(self, db, manager) -> None:
         """All rules should have group='task-enforcement'."""
@@ -399,31 +398,3 @@ class TestTrackTaskClaim:
         assert body.when is not None
         assert "claim_task" in body.when
         assert "create_task" in body.when
-
-
-class TestTrackTaskRelease:
-    """Verify track-task-release clears task_claimed on close."""
-
-    def test_sets_task_claimed_false(self, db, manager) -> None:
-        """Should set task_claimed to false."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("track-task-release")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "after_tool"
-        assert body.effect.type == "set_variable"
-        assert body.effect.variable == "task_claimed"
-        assert body.effect.value is False
-
-    def test_when_matches_close_and_release(self, db, manager) -> None:
-        """Should fire on close_task and release_task."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("track-task-release")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.when is not None
-        assert "close_task" in body.when
-        assert "release_task" in body.when

@@ -578,7 +578,6 @@ class TestSuggestNextTaskWithSessionId:
         """Test suggest_next_task auto-scopes when session_id has session_task variable."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 
-
         task_manager = MagicMock()
 
         # Create child task (descendant of session_task)
@@ -688,7 +687,6 @@ class TestSuggestNextTaskWithSessionId:
     ) -> None:
         """Test suggest_next_task returns session_task_complete when scoped epic is closed."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
-
 
         task_manager = MagicMock()
 

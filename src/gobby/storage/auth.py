@@ -19,25 +19,10 @@ REMEMBER_ME_DURATION = timedelta(days=30)  # Remember me checked
 
 
 class AuthStore:
-    """Manages auth sessions in SQLite.
-
-    Table is created lazily on first use.
-    """
+    """Manages auth sessions in SQLite."""
 
     def __init__(self, db: DatabaseProtocol) -> None:
         self.db = db
-        self._ensure_table()
-
-    def _ensure_table(self) -> None:
-        """Create the auth_sessions table if it doesn't exist."""
-        self.db.execute(
-            """CREATE TABLE IF NOT EXISTS auth_sessions (
-                token TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                expires_at TEXT NOT NULL,
-                remember_me INTEGER NOT NULL DEFAULT 0
-            )"""
-        )
 
     def create_session(self, remember_me: bool = False) -> tuple[str, datetime]:
         """Create a new auth session.

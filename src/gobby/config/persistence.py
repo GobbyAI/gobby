@@ -66,17 +66,18 @@ class MemoryConfig(BaseModel):
         ),
     )
     neo4j_url: str | None = Field(
-        default=None,
+        default="http://localhost:8474",
         description=(
             "Neo4j HTTP API URL for knowledge graph visualization. "
-            "Example: 'http://localhost:7474' or 'http://localhost:8474'. "
+            "Uses port 8474 (mapped from 7474) to avoid conflicts. "
             "Set automatically by 'gobby install neo4j'."
         ),
     )
     neo4j_auth: str | None = Field(
-        default=None,
+        default="neo4j:gobbyneo4j",
         description=(
             "Neo4j authentication in 'user:password' format. "
+            "Default matches docker-compose.neo4j.yml fallback password. "
             "Set automatically during 'gobby install neo4j'. "
             "Supports ${ENV_VAR} pattern for env var expansion at load time."
         ),

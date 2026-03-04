@@ -301,7 +301,7 @@ class TestInstallCursor:
         try:
             with (
                 patch("gobby.cli.installers.cursor.get_install_dir", return_value=install_dir),
-                    patch(
+                patch(
                     "gobby.cli.installers.cursor.install_shared_content",
                     return_value={
                         "workflows": [],
@@ -333,7 +333,7 @@ class TestInstallCursor:
         try:
             with (
                 patch("gobby.cli.installers.cursor.get_install_dir", return_value=install_dir),
-                    patch(
+                patch(
                     "gobby.cli.installers.cursor.install_shared_content",
                     return_value={
                         "workflows": [],
@@ -514,7 +514,7 @@ class TestInstallCursor:
         try:
             with (
                 patch("gobby.cli.installers.cursor.get_install_dir", return_value=install_dir),
-                    patch(
+                patch(
                     "gobby.cli.installers.cursor.install_shared_content",
                     return_value={
                         "workflows": [],

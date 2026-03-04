@@ -183,14 +183,9 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         # Get skills statistics
         skills_stats: dict[str, Any] = {"total": 0}
-        if server._internal_manager:
+        if server.skill_manager is not None:
             try:
-                for registry in server._internal_manager.get_all_registries():
-                    if registry.name == "gobby-skills":
-                        result = await registry.call("count_skills", {})
-                        if result.get("success"):
-                            skills_stats["total"] = result.get("count", 0)
-                        break
+                skills_stats["total"] = server.skill_manager.count_skills()
             except Exception as e:
                 logger.warning(f"Failed to get skills stats: {e}")
 

@@ -131,12 +131,19 @@ class TestResolveProjectRef:
                 result = resolve_project_ref("my-named-project")
                 assert result == project.id
 
-    def test_not_found(self, temp_db) -> None:
-        """Test project not found returns None."""
+    def test_not_found_returns_none(self, temp_db) -> None:
+        """Test project not found returns None when exit_on_not_found=False."""
         with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
             with patch.object(temp_db, "close"):
-                result = resolve_project_ref("nonexistent-project")
+                result = resolve_project_ref("nonexistent-project", exit_on_not_found=False)
                 assert result is None
+
+    def test_not_found_exits(self, temp_db) -> None:
+        """Test project not found exits when exit_on_not_found=True."""
+        with patch("gobby.cli.utils.LocalDatabase", return_value=temp_db):
+            with patch.object(temp_db, "close"):
+                with pytest.raises(SystemExit):
+                    resolve_project_ref("nonexistent-project", exit_on_not_found=True)
 
 
 # ==============================================================================
@@ -502,12 +509,13 @@ class TestKillAllGobbyDaemons:
 
     def test_no_daemons_found(self) -> None:
         """Test when no gobby daemons are running."""
-        with patch("psutil.process_iter", return_value=[]):
-            with patch("gobby.cli.utils.load_config") as mock_config:
-                mock_config.return_value = MagicMock(daemon_port=60887)
-                mock_config.return_value.websocket.port = 60888
-                result = kill_all_gobby_daemons()
-                assert result == 0
+        with patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}):
+            with patch("psutil.process_iter", return_value=[]):
+                with patch("gobby.cli.utils.load_config") as mock_config:
+                    mock_config.return_value = MagicMock(daemon_port=60887)
+                    mock_config.return_value.websocket.port = 60888
+                    result = kill_all_gobby_daemons()
+                    assert result == 0
 
     def test_finds_and_kills_daemon(self) -> None:
         """Test finding and killing a gobby daemon."""
@@ -517,15 +525,16 @@ class TestKillAllGobbyDaemons:
         mock_proc.connections.return_value = []
         mock_proc.wait.return_value = None
 
-        with patch("psutil.process_iter", return_value=[mock_proc]):
-            with patch("gobby.cli.utils.load_config") as mock_config:
-                mock_config.return_value = MagicMock(daemon_port=60887)
-                mock_config.return_value.websocket.port = 60888
-                with patch("os.getpid", return_value=99999):
-                    with patch("os.getppid", return_value=99998):
-                        result = kill_all_gobby_daemons()
-                        assert result == 1
-                        mock_proc.send_signal.assert_called_with(signal.SIGTERM)
+        with patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}):
+            with patch("psutil.process_iter", return_value=[mock_proc]):
+                with patch("gobby.cli.utils.load_config") as mock_config:
+                    mock_config.return_value = MagicMock(daemon_port=60887)
+                    mock_config.return_value.websocket.port = 60888
+                    with patch("os.getpid", return_value=99999):
+                        with patch("os.getppid", return_value=99998):
+                            result = kill_all_gobby_daemons()
+                            assert result == 1
+                            mock_proc.send_signal.assert_called_with(signal.SIGTERM)
 
     def test_skips_cli_processes(self) -> None:
         """Test that CLI processes are not killed."""
@@ -534,14 +543,15 @@ class TestKillAllGobbyDaemons:
         mock_proc.cmdline.return_value = ["python", "-m", "gobby.cli", "start"]
         mock_proc.connections.return_value = []
 
-        with patch("psutil.process_iter", return_value=[mock_proc]):
-            with patch("gobby.cli.utils.load_config") as mock_config:
-                mock_config.return_value = MagicMock(daemon_port=60887)
-                mock_config.return_value.websocket.port = 60888
-                with patch("os.getpid", return_value=99999):
-                    with patch("os.getppid", return_value=99998):
-                        result = kill_all_gobby_daemons()
-                        assert result == 0
+        with patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}):
+            with patch("psutil.process_iter", return_value=[mock_proc]):
+                with patch("gobby.cli.utils.load_config") as mock_config:
+                    mock_config.return_value = MagicMock(daemon_port=60887)
+                    mock_config.return_value.websocket.port = 60888
+                    with patch("os.getpid", return_value=99999):
+                        with patch("os.getppid", return_value=99998):
+                            result = kill_all_gobby_daemons()
+                            assert result == 0
 
 
 # ==============================================================================

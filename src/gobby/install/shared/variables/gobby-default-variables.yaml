@@ -19,9 +19,9 @@ variables:
   task_claimed:
     value: false
     description: Default task_claimed to false
-  task_ref:
-    value: ''
-    description: Default task_ref to empty string
+  claimed_tasks:
+    value: {}
+    description: "Map of claimed task UUIDs to refs ({uuid: '#N'}) for this session"
   require_task_before_edit:
     value: true
     description: Default require_task_before_edit to true

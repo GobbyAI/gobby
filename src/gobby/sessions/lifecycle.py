@@ -256,6 +256,38 @@ class SessionLifecycleManager:
         except Exception as e:
             logger.warning(f"Memory extraction failed for session {session_id}: {e}")
 
+    async def _generate_summaries_if_needed(self, session_id: str) -> None:
+        """Generate summaries for a session that's missing them.
+
+        Safety net for ungraceful exits — if on_session_end or /clear never
+        triggered summary generation, this catches it during background
+        transcript processing.
+        """
+        if not self.llm_service:
+            return
+
+        session = self.session_manager.get(session_id)
+        if not session or session.summary_markdown:
+            return
+
+        # Only generate if there's a transcript to read
+        if not session.jsonl_path:
+            return
+
+        try:
+            from gobby.sessions.summarize import generate_session_summaries
+
+            await generate_session_summaries(
+                session_id=session_id,
+                session_manager=self.session_manager,
+                llm_service=self.llm_service,
+                db=self.db,
+                write_file=True,
+                set_handoff_ready=False,  # already expired, don't change status
+            )
+        except Exception as e:
+            logger.warning(f"Summary generation failed for session {session_id}: {e}")
+
     async def _process_session_transcript(self, session_id: str, jsonl_path: str | None) -> None:
         """
         Process a full transcript for a session.
@@ -346,3 +378,6 @@ class SessionLifecycleManager:
 
         # Extract memories from transcript (ungraceful exit fallback)
         await self._extract_memories_if_needed(session_id)
+
+        # Generate summaries if missing (ungraceful exit safety net)
+        await self._generate_summaries_if_needed(session_id)

@@ -276,9 +276,9 @@ class TestCreateDefinition:
 
 class TestUpdateDefinition:
     def test_update_fields(self, client: TestClient) -> None:
-        created = client.post(
-            "/api/agents/definitions", json={"name": "updatable"}
-        ).json()["definition"]
+        created = client.post("/api/agents/definitions", json={"name": "updatable"}).json()[
+            "definition"
+        ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
             json={"description": "Updated"},
@@ -287,9 +287,9 @@ class TestUpdateDefinition:
         assert response.json()["definition"]["description"] == "Updated"
 
     def test_update_no_fields_returns_400(self, client: TestClient) -> None:
-        created = client.post(
-            "/api/agents/definitions", json={"name": "no-update"}
-        ).json()["definition"]
+        created = client.post("/api/agents/definitions", json={"name": "no-update"}).json()[
+            "definition"
+        ]
         response = client.put(f"/api/agents/definitions/{created['id']}", json={})
         assert response.status_code == 400
 
@@ -301,19 +301,17 @@ class TestUpdateDefinition:
         assert response.status_code == 404
 
     def test_update_enabled_field(self, client: TestClient) -> None:
-        created = client.post(
-            "/api/agents/definitions", json={"name": "toggle-me"}
-        ).json()["definition"]
-        response = client.put(
-            f"/api/agents/definitions/{created['id']}", json={"enabled": False}
-        )
+        created = client.post("/api/agents/definitions", json={"name": "toggle-me"}).json()[
+            "definition"
+        ]
+        response = client.put(f"/api/agents/definitions/{created['id']}", json={"enabled": False})
         assert response.status_code == 200
         assert response.json()["definition"]["enabled"] is False
 
     def test_update_body_fields(self, client: TestClient) -> None:
-        created = client.post(
-            "/api/agents/definitions", json={"name": "body-update"}
-        ).json()["definition"]
+        created = client.post("/api/agents/definitions", json={"name": "body-update"}).json()[
+            "definition"
+        ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
             json={"model": "opus", "timeout": 600.0},
@@ -328,9 +326,9 @@ class TestUpdateDefinition:
 
 class TestDeleteDefinition:
     def test_delete_existing(self, client: TestClient) -> None:
-        created = client.post(
-            "/api/agents/definitions", json={"name": "deletable"}
-        ).json()["definition"]
+        created = client.post("/api/agents/definitions", json={"name": "deletable"}).json()[
+            "definition"
+        ]
         response = client.delete(f"/api/agents/definitions/{created['id']}")
         assert response.status_code == 200
         assert response.json()["deleted"] is True
@@ -340,9 +338,9 @@ class TestDeleteDefinition:
         assert response.status_code == 404
 
     def test_delete_idempotent(self, client: TestClient) -> None:
-        created = client.post(
-            "/api/agents/definitions", json={"name": "del-twice"}
-        ).json()["definition"]
+        created = client.post("/api/agents/definitions", json={"name": "del-twice"}).json()[
+            "definition"
+        ]
         client.delete(f"/api/agents/definitions/{created['id']}")
         response = client.delete(f"/api/agents/definitions/{created['id']}")
         assert response.status_code == 404
@@ -384,7 +382,9 @@ class TestImportDefinition:
             response = client.post("/api/agents/definitions/import/missing")
         assert response.status_code == 404
 
-    def test_import_with_project_id(self, client: TestClient, project_manager, tmp_path: Path) -> None:
+    def test_import_with_project_id(
+        self, client: TestClient, project_manager, tmp_path: Path
+    ) -> None:
         project = project_manager.create(name="import-proj", repo_path="/tmp/import-proj")
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()

@@ -1063,8 +1063,7 @@ class TestSessionStartHandoff:
         """Test task claim variables are copied from parent to child on compact."""
         parent_vars = {
             "task_claimed": True,
-            "claimed_task_id": "uuid-123",
-            "task_ref": "#42",
+            "claimed_tasks": {"uuid-123": "#42"},
             "session_had_task": True,
         }
         mock_sv_mgr = MagicMock()
@@ -1109,8 +1108,7 @@ class TestSessionStartHandoff:
             "new-sess-456",
             {
                 "task_claimed": True,
-                "claimed_task_id": "uuid-123",
-                "task_ref": "#42",
+                "claimed_tasks": {"uuid-123": "#42"},
                 "session_had_task": True,
             },
         )
@@ -1128,7 +1126,7 @@ class TestSessionStartHandoff:
         """Test that closed task (task_claimed=False) is not carried over on compact."""
         mock_sv_mgr = MagicMock()
         mock_sv_mgr.get_variables.side_effect = lambda sid: (
-            {"task_claimed": False, "claimed_task_id": "uuid-123"}
+            {"task_claimed": False, "claimed_tasks": {}}
             if sid == "parent-sess-123"
             else {"auto_inject_handoff": True}
         )
@@ -1182,8 +1180,7 @@ class TestSessionStartHandoff:
         """Test task claim variables are copied from parent to child on /clear."""
         parent_vars = {
             "task_claimed": True,
-            "claimed_task_id": "uuid-789",
-            "task_ref": "#99",
+            "claimed_tasks": {"uuid-789": "#99"},
         }
         mock_sv_mgr = MagicMock()
         mock_sv_mgr.get_variables.side_effect = lambda sid: (
@@ -1227,8 +1224,7 @@ class TestSessionStartHandoff:
             "new-sess-600",
             {
                 "task_claimed": True,
-                "claimed_task_id": "uuid-789",
-                "task_ref": "#99",
+                "claimed_tasks": {"uuid-789": "#99"},
             },
         )
         mock_dependencies["task_manager"].update_task.assert_called_once_with(

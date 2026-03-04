@@ -235,6 +235,7 @@ export function ChatPage({
                 isTranscribing={voice.isTranscribing}
                 voiceError={voice.voiceError}
                 onToggleVoice={voice.onToggleVoice}
+                isMobile={isMobile}
               />
             </div>
 
@@ -245,6 +246,7 @@ export function ChatPage({
                 panelWidth={canvas.panelWidth}
                 onResize={canvas.setPanelWidth}
                 onClose={canvas.closeCanvas}
+                isMobile={isMobile}
               />
             ) : isPanelOpen && activeArtifact ? (
               <>

@@ -129,20 +129,20 @@ def test_extract_handoff_context_max_turns() -> None:
     # So it won't see tool uses before that.
 
 
-def test_extract_handoff_context_default_max_turns_is_150() -> None:
-    """Test that default max_turns is 150 (increased from 100)."""
+def test_extract_handoff_context_max_turns_deprecated() -> None:
+    """Test that max_turns parameter is accepted but ignored (deprecated)."""
     import inspect
 
     from gobby.sessions.analyzer import TranscriptAnalyzer
 
-    # Check the function signature for default value
+    # max_turns still in signature for backward compat, defaults to None
     sig = inspect.signature(TranscriptAnalyzer.extract_handoff_context)
     max_turns_param = sig.parameters["max_turns"]
-    assert max_turns_param.default == 150, "Default max_turns should be 150"
+    assert max_turns_param.default is None, "Default max_turns should be None (deprecated)"
 
 
-def test_extract_handoff_context_explicit_max_turns_overrides_default() -> None:
-    """Test that explicit max_turns parameter overrides the default."""
+def test_extract_handoff_context_processes_all_turns() -> None:
+    """Test that all turns are processed regardless of max_turns."""
     # Create turns with file modifications at different positions
     turns = []
     for i in range(200):
@@ -163,13 +163,12 @@ def test_extract_handoff_context_explicit_max_turns_overrides_default() -> None:
 
     analyzer = TranscriptAnalyzer()
 
-    # With explicit max_turns=50, should only see files from last 50 turns
+    # Even with max_turns=50 passed, all turns should be processed
     ctx = analyzer.extract_handoff_context(turns, max_turns=50)
-    # Should have files from turns 150-199 (the last 50)
+    # Should have files from ALL turns, not just the last 50
     assert "/path/file199.py" in ctx.files_modified
-    assert "/path/file150.py" in ctx.files_modified
-    # Should NOT have file from turn 149 (outside the window)
-    assert "/path/file149.py" not in ctx.files_modified
+    assert "/path/file0.py" in ctx.files_modified
+    assert len(ctx.files_modified) == 200
 
 
 def test_malformed_tool_blocks_not_dict() -> None:
@@ -368,9 +367,11 @@ def test_large_transcript_max_turns_limits_scanning() -> None:
     # Should still get the initial goal from beginning
     assert ctx.initial_goal == "Original goal"
 
-    # Should only have files from the last 50 turns (late_100 through late_149)
-    assert all(f.startswith("/late_") for f in ctx.files_modified)
-    assert len(ctx.files_modified) == 50
+    # All turns are now processed (max_turns is deprecated/ignored)
+    # Should have files from both early and late turns
+    assert any(f.startswith("/late_") for f in ctx.files_modified)
+    assert any(f.startswith("/file_") for f in ctx.files_modified)
+    assert len(ctx.files_modified) == 150  # 100 early + 50 late
 
 
 def test_content_as_string_not_list() -> None:

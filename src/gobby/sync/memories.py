@@ -244,7 +244,6 @@ class MemoryBackupManager:
 
     def _export_to_files_sync(self, memories_file: Path) -> int:
         """Synchronous implementation of export."""
-        memories_file.parent.mkdir(parents=True, exist_ok=True)
         return self._export_memories_sync(memories_file)
 
     def _import_memories_sync(self, file_path: Path) -> int:
@@ -388,34 +387,77 @@ class MemoryBackupManager:
         return list(seen_content.values())
 
     def _export_memories_sync(self, file_path: Path) -> int:
-        """Export memories to JSONL file (sync) with deduplication and path sanitization."""
+        """Export memories to JSONL file (sync) with merge, deduplication, and path sanitization.
+
+        Merges DB records with existing file records so that memories from other
+        machines (pulled via git) are preserved. DB records are authoritative for
+        shared content; file-only records survive untouched.
+        """
         if not self.memory_manager:
             return 0
 
         try:
-            # Use high limit to export all memories for backup (default is 50)
-            memories = self.memory_manager.list_memories(limit=10000)
+            # 1. Read existing file records (preserves records from other machines)
+            existing_by_content: dict[str, dict[str, Any]] = {}
+            if file_path.exists():
+                try:
+                    with open(file_path, encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                                key = data.get("content", "").strip()
+                                if key:
+                                    existing_by_content[key] = data
+                            except json.JSONDecodeError as e:
+                                logger.debug(
+                                    "Skipping malformed JSONL line in %s: %s", file_path, e
+                                )
+                                continue
+                except OSError as e:
+                    logger.debug("Cannot read memories file %s: %s", file_path, e)
 
-            # Deduplicate by content before export
+            # 2. Build DB records (authoritative for local content)
+            memories: list[Any] = []
+            page_size = 1000
+            offset = 0
+            while True:
+                page = self.memory_manager.list_memories(limit=page_size, offset=offset)
+                memories.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
             unique_memories = self._deduplicate_memories(memories)
 
+            db_by_content: dict[str, dict[str, Any]] = {}
+            for memory in unique_memories:
+                sanitized = self._sanitize_content(memory.content)
+                key = sanitized.strip()
+                db_by_content[key] = {
+                    "id": memory.id,
+                    "content": sanitized,
+                    "type": memory.memory_type,
+                    "tags": memory.tags,
+                    "created_at": memory.created_at,
+                    "updated_at": memory.updated_at,
+                    "source": memory.source_type,
+                    "source_id": memory.source_session_id,
+                }
+
+            # 3. Merge: file-first, DB overrides shared content
+            merged = {**existing_by_content, **db_by_content}
+
+            # 4. Write merged set
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
-                for memory in unique_memories:
-                    data = {
-                        "id": memory.id,
-                        "content": self._sanitize_content(memory.content),
-                        "type": memory.memory_type,
-                        "tags": memory.tags,
-                        "created_at": memory.created_at,
-                        "updated_at": memory.updated_at,
-                        "source": memory.source_type,
-                        "source_id": memory.source_session_id,
-                    }
+                for data in merged.values():
                     f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
-            return len(unique_memories)
+            return len(merged)
         except Exception as e:
-            logger.error(f"Failed to export memories: {e}")
+            logger.error("Failed to export memories: %s", e, exc_info=True)
             return 0
 
 

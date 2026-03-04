@@ -307,10 +307,14 @@ class TestSubscriptionFiltering:
         mixin.clients = {ws: {"id": "1"}}
 
         await mixin.broadcast_agent_message(
-            event="message_sent", from_session="a", to_session="b",
+            event="message_sent",
+            from_session="a",
+            to_session="b",
         )
         await mixin.broadcast_agent_command(
-            event="command_sent", from_session="a", to_session="b",
+            event="command_sent",
+            from_session="a",
+            to_session="b",
         )
 
         assert len(ws.sent_messages) == 2
