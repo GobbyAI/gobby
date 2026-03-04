@@ -172,9 +172,9 @@ class TestInterAgentMessagingE2E:
             ),
             None,
         )
-        assert response_msg is not None, (
-            f"Expected response from child not found in: {parent_messages}"
-        )
+        assert (
+            response_msg is not None
+        ), f"Expected response from child not found in: {parent_messages}"
 
         # Cleanup: Unregister the test agent
         cli_events.unregister_test_agent(run_id)

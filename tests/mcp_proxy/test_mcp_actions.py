@@ -1,6 +1,6 @@
 """Tests for src/mcp_proxy/actions.py - MCP Actions."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

@@ -549,6 +549,6 @@ class TestWorkflowActivation:
         result = unwrap_result(raw_result)
 
         # Either has_workflow is False or workflow_name is None
-        assert result.get("has_workflow") is False or result.get("workflow_name") is None, (
-            f"Unexpected workflow status: {result}"
-        )
+        assert (
+            result.get("has_workflow") is False or result.get("workflow_name") is None
+        ), f"Unexpected workflow status: {result}"

@@ -276,13 +276,13 @@ class TestAutonomousSpawningGate:
         result = unwrap_result(raw_result)
 
         # Should suggest a task - suggest_next_task returns 'suggestion' key, not 'success'
-        assert result.get("suggestion") is not None, (
-            f"suggest_next_task returned no suggestion: {result}"
-        )
+        assert (
+            result.get("suggestion") is not None
+        ), f"suggest_next_task returned no suggestion: {result}"
         suggestion = result["suggestion"]
-        assert "ref" in suggestion or "id" in suggestion, (
-            f"Suggestion should have task info: {suggestion}"
-        )
+        assert (
+            "ref" in suggestion or "id" in suggestion
+        ), f"Suggestion should have task info: {suggestion}"
 
         # Verify the suggestion refers to the task we created
         suggested_id = None
