@@ -11,6 +11,9 @@ from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
 
+# Common helper functions for expression evaluation in pipelines.
+_PIPELINE_EVAL_FUNCS: dict[str, Any] = {"len": len, "bool": bool, "str": str, "int": int}
+
 # Env-var suffixes that indicate sensitive values (case-insensitive check).
 _SENSITIVE_SUFFIXES = (
     "_SECRET",
@@ -119,6 +122,9 @@ class StepRenderer:
                         rendered_step.invoke_pipeline["arguments"], render_context
                     )
 
+            if rendered_step.wait and isinstance(rendered_step.wait, dict):
+                rendered_step.wait = self.render_mcp_arguments(rendered_step.wait, render_context)
+
         except Exception as e:
             raise ValueError(f"Failed to render step {step.id}: {e}") from e
 
@@ -166,13 +172,28 @@ class StepRenderer:
             pass
         return value
 
+    def _resolve_expression(self, expr: str, context: dict[str, Any]) -> Any:
+        """Evaluate a pure ${{ expr }} and return the native value."""
+        evaluator = SafeExpressionEvaluator(context, _PIPELINE_EVAL_FUNCS)
+        return evaluator.evaluate_value(expr)
+
     def render_mcp_arguments(self, args: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         """Render template variables in MCP arguments and coerce types."""
         rendered: dict[str, Any] = {}
         for key, value in args.items():
             if isinstance(value, str):
-                rendered_val = self.render_string(value, context)
-                rendered[key] = self._coerce_value(rendered_val)
+                # Pure expression: "${{ expr }}" — preserve native type (list, dict, etc.)
+                m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", value.strip(), re.DOTALL)
+                if m:
+                    resolved = self._resolve_expression(m.group(1), context)
+                    # Coerce string results (e.g. "600" → 600) but preserve
+                    # native types like list/dict unchanged.
+                    rendered[key] = (
+                        self._coerce_value(resolved) if isinstance(resolved, str) else resolved
+                    )
+                else:
+                    rendered_val = self.render_string(value, context)
+                    rendered[key] = self._coerce_value(rendered_val)
             elif isinstance(value, dict):
                 rendered[key] = self.render_mcp_arguments(value, context)
             elif isinstance(value, list):
@@ -247,14 +268,7 @@ class StepRenderer:
                 "session_id": context.get("session_id"),
                 "parent_session_id": context.get("parent_session_id"),
             }
-            # Allow common helper functions for conditions
-            allowed_funcs: dict[str, Any] = {
-                "len": len,
-                "bool": bool,
-                "str": str,
-                "int": int,
-            }
-            evaluator = SafeExpressionEvaluator(eval_context, allowed_funcs)
+            evaluator = SafeExpressionEvaluator(eval_context, _PIPELINE_EVAL_FUNCS)
             return evaluator.evaluate(condition)
         except ValueError as e:
             if self.strict_conditions:

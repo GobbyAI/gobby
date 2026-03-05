@@ -2,14 +2,33 @@ tags: [stop-gates, enforcement, lifecycle]
 
 rules:
   require-error-triage:
-    description: "Block stop until pre-existing errors are triaged"
+    description: "Block stop if errors not triaged (3x circuit breaker)"
     event: stop
     enabled: false
-    priority: 30
-    when: "(variables.get('task_has_commits') and not variables.get('pre_existing_errors_triaged')) and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)"
-    effect:
-      type: block
-      reason: |
-        Triage pre-existing issues before stopping. Any errors you find are *your* responsibility to triage. 
-        Fix them if they are orthogonal to the task (code you touched won't pass CI),
-        or confirm none via set_variable(name="pre_existing_errors_triaged", value=true).
+    priority: 50
+    when: >
+      variables.get('task_has_commits')
+      and not variables.get('pre_existing_errors_triaged')
+      and variables.get('error_triage_blocks', 0) < 3
+    effects:
+      - type: set_variable
+        variable: error_triage_blocks
+        value: "{{ variables.get('error_triage_blocks', 0) + 1 }}"
+      - type: block
+        reason: |
+          Before stopping, run lint and tests on files you touched.
+
+          If you discover errors or test failures:
+          1. Check: is the failing code related to YOUR changes?
+             - Run `git diff --name-only` to see uncommitted changes.
+             - If the failure is in code YOU changed: fix it, commit, then stop.
+             - If the failure is pre-existing or in code you didn't touch:
+               create a bug task (do NOT claim it), then clear the gate.
+             - If another agent has uncommitted changes in the failing file:
+               create a bug task and move on.
+          2. Every error you discover must be either fixed or tasked before stopping.
+
+          After verification passes clean, confirm:
+          set_variable(name="pre_existing_errors_triaged", value=true)
+
+          (Attempt {{ variables.get('error_triage_blocks', 0) }}/3 — after 3 attempts, this gate opens)

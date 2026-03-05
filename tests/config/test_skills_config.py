@@ -12,10 +12,10 @@ class TestHubConfig:
         config = HubConfig(type="clawdhub")
         assert config.type == "clawdhub"
 
-    def test_hub_config_valid_skillhub(self) -> None:
-        """Test that 'skillhub' is a valid type."""
-        config = HubConfig(type="skillhub")
-        assert config.type == "skillhub"
+    def test_hub_config_valid_skillsmp(self) -> None:
+        """Test that 'skillsmp' is a valid type."""
+        config = HubConfig(type="skillsmp")
+        assert config.type == "skillsmp"
 
     def test_hub_config_valid_github_collection(self) -> None:
         """Test that 'github-collection' is a valid type."""
@@ -32,7 +32,7 @@ class TestHubConfig:
     def test_hub_config_optional_fields(self) -> None:
         """Test that optional fields are correctly set."""
         config = HubConfig(
-            type="skillhub",
+            type="skillsmp",
             base_url="https://example.com",
             repo="user/repo",
             branch="main",
@@ -45,7 +45,7 @@ class TestHubConfig:
 
     def test_hub_config_defaults(self) -> None:
         """Test that optional fields default to None."""
-        config = HubConfig(type="skillhub")
+        config = HubConfig(type="skillsmp")
         assert config.base_url is None
         assert config.repo is None
         assert config.branch is None
@@ -67,11 +67,11 @@ class TestSkillsConfigHubs:
         assert "anthropic-skills" in config.hubs
         assert "claude-plugins" in config.hubs
         assert "clawdhub" in config.hubs
-        assert "skillhub" in config.hubs
+        assert "skillsmp" in config.hubs
         assert len(config.hubs) == 4
         assert config.hubs["clawdhub"].type == "clawdhub"
-        assert config.hubs["skillhub"].type == "skillhub"
-        assert config.hubs["skillhub"].base_url == "https://www.skillhub.club/api/v1"
+        assert config.hubs["skillsmp"].type == "skillsmp"
+        assert config.hubs["skillsmp"].base_url == "https://skillsmp.com/api/v1"
         assert isinstance(config.hubs, dict)
 
     def test_hubs_single_hub(self) -> None:
@@ -89,7 +89,7 @@ class TestSkillsConfigHubs:
         config = SkillsConfig(
             hubs={
                 "clawdhub": HubConfig(type="clawdhub", base_url="https://clawdhub.com"),
-                "skillhub": HubConfig(type="skillhub", auth_key_name="SKILLHUB_KEY"),
+                "skillsmp": HubConfig(type="skillsmp", auth_key_name="SKILLHUB_KEY"),
                 "my-collection": HubConfig(
                     type="github-collection",
                     repo="user/my-skills",
@@ -99,8 +99,8 @@ class TestSkillsConfigHubs:
         )
         assert len(config.hubs) == 3
         assert config.hubs["clawdhub"].type == "clawdhub"
-        assert config.hubs["skillhub"].type == "skillhub"
-        assert config.hubs["skillhub"].auth_key_name == "SKILLHUB_KEY"
+        assert config.hubs["skillsmp"].type == "skillsmp"
+        assert config.hubs["skillsmp"].auth_key_name == "SKILLHUB_KEY"
         assert config.hubs["my-collection"].type == "github-collection"
         assert config.hubs["my-collection"].repo == "user/my-skills"
 
@@ -109,13 +109,13 @@ class TestSkillsConfigHubs:
         raw_config = {
             "hubs": {
                 "clawdhub": {"type": "clawdhub", "base_url": "https://clawdhub.com"},
-                "skillhub": {"type": "skillhub"},
+                "skillsmp": {"type": "skillsmp"},
             }
         }
         config = SkillsConfig(**raw_config)
         assert len(config.hubs) == 2
         assert config.hubs["clawdhub"].type == "clawdhub"
-        assert config.hubs["skillhub"].type == "skillhub"
+        assert config.hubs["skillsmp"].type == "skillsmp"
 
     def test_hubs_invalid_hub_config(self) -> None:
         """Test that invalid hub config raises ValidationError."""

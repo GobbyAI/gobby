@@ -20,9 +20,9 @@ These are enforced by hooks and workflows.
 12. **We don't leave options in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
 13. **Rule templates are not rules.** Templates must be installed in the rules engine and enabled in order to function. Templates are disabled by default. This is intentional. Before telling the user the template is disabled, check if the installed version is enabled.
 
-## Progressive Tool Disclosure Enforced by Hooks
+## Progressive Tool Discovery Enforced by Hooks
 
-Gobby uses an MCP proxy with progressive disclosure. This means that you can't just call any tool you want.
+Gobby uses an MCP proxy with progressive discovery. This means that you can't just call any tool you want.
 Each step (list_mcp_servers, list_tools, get_tool_schema, call_tool) is a separate top-level tool (e.g., mcp__gobby__list_mcp_servers).
 Load each via ToolSearch before first use.
 Do NOT try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
@@ -41,7 +41,7 @@ Gobby is a local-first daemon that unifies AI coding assistants (Claude Code, Ge
 
 - **Session management** that survives restarts and context compactions
 - **Task system** with dependency graphs, TDD expansion, and validation gates
-- **MCP proxy** with progressive disclosure (tools stay lightweight until needed)
+- **MCP proxy** with progressive discovery (tools stay lightweight until needed)
 - **Rule engine** with declarative enforcement (block, set_variable, inject_context, mcp_call)
 - **On-demand workflows** for structured multi-step processes (plan-execute, TDD, etc.)
 - **Pipeline system** for deterministic automation with approval gates
@@ -116,7 +116,7 @@ src/gobby/
 ├── mcp_proxy/            # MCP proxy layer
 │   ├── server.py         # FastMCP server implementation
 │   ├── manager.py        # MCPClientManager (connection pooling)
-│   ├── instructions.py   # MCP server instructions (progressive disclosure)
+│   ├── instructions.py   # MCP server instructions (progressive discovery)
 │   ├── tools/            # 20+ internal tool modules
 │   └── transports/       # HTTP, stdio, WebSocket transports
 │

@@ -476,6 +476,144 @@ class TestMCPTemplateRendering:
         assert rendered.mcp.arguments["outer"]["inner_num"] == 5
 
     @pytest.mark.asyncio
+    async def test_pure_expression_preserves_list(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Test that a pure ${{ expr }} returning a list preserves the list type."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+
+        step = PipelineStep(
+            id="list_step",
+            mcp=MCPStepConfig(
+                server="gobby-tasks",
+                tool="find_file_overlaps",
+                arguments={"task_ids": "${{ steps.execute.output.created }}"},
+            ),
+        )
+
+        context: dict = {
+            "inputs": {},
+            "steps": {"execute": {"output": {"created": ["#9633", "#9634", "#9635"]}}},
+        }
+
+        rendered = executor.renderer.render_step(step, context)
+        assert rendered.mcp.arguments["task_ids"] == ["#9633", "#9634", "#9635"]
+        assert isinstance(rendered.mcp.arguments["task_ids"], list)
+
+    @pytest.mark.asyncio
+    async def test_pure_expression_preserves_dict(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Test that a pure ${{ expr }} returning a dict preserves the dict type."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+
+        step = PipelineStep(
+            id="dict_step",
+            mcp=MCPStepConfig(
+                server="s",
+                tool="t",
+                arguments={"config": "${{ steps.prev.output.settings }}"},
+            ),
+        )
+
+        context: dict = {
+            "inputs": {},
+            "steps": {"prev": {"output": {"settings": {"timeout": 600, "retries": 3}}}},
+        }
+
+        rendered = executor.renderer.render_step(step, context)
+        assert rendered.mcp.arguments["config"] == {"timeout": 600, "retries": 3}
+        assert isinstance(rendered.mcp.arguments["config"], dict)
+
+    @pytest.mark.asyncio
+    async def test_mixed_string_with_list_renders_as_string(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Test that mixed strings containing ${{ }} still render as strings."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+
+        step = PipelineStep(
+            id="mixed_step",
+            mcp=MCPStepConfig(
+                server="s",
+                tool="t",
+                arguments={"prompt": "Process tasks: ${{ steps.prev.output.ids }}"},
+            ),
+        )
+
+        context: dict = {
+            "inputs": {},
+            "steps": {"prev": {"output": {"ids": ["#1", "#2"]}}},
+        }
+
+        rendered = executor.renderer.render_step(step, context)
+        assert isinstance(rendered.mcp.arguments["prompt"], str)
+        assert "Process tasks:" in rendered.mcp.arguments["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_pure_expression_preserves_scalar_types(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Test that pure expressions also work correctly for scalar values."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.templates import TemplateEngine
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            template_engine=TemplateEngine(),
+        )
+
+        step = PipelineStep(
+            id="scalar_step",
+            mcp=MCPStepConfig(
+                server="s",
+                tool="t",
+                arguments={
+                    "count": "${{ inputs.count }}",
+                    "name": "${{ inputs.name }}",
+                    "flag": "${{ inputs.flag }}",
+                },
+            ),
+        )
+
+        context: dict = {
+            "inputs": {"count": 42, "name": "test", "flag": True},
+            "steps": {},
+        }
+
+        rendered = executor.renderer.render_step(step, context)
+        assert rendered.mcp.arguments["count"] == 42
+        assert isinstance(rendered.mcp.arguments["count"], int)
+        assert rendered.mcp.arguments["name"] == "test"
+        assert rendered.mcp.arguments["flag"] is True
+
+    @pytest.mark.asyncio
     async def test_render_does_not_mutate_original(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:

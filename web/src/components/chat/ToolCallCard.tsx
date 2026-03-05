@@ -28,17 +28,17 @@ interface AskUserQuestionItem {
   multiSelect: boolean
 }
 
-function formatToolName(fullName: string): string {
+export function formatToolName(fullName: string): string {
   const parts = fullName.split('__')
   return parts[parts.length - 1] || fullName
 }
 
-function truncStr(str: string | undefined | null, max: number): string | null {
+export function truncStr(str: string | undefined | null, max: number): string | null {
   if (!str) return null
   return str.length > max ? str.slice(0, max - 1) + '\u2026' : str
 }
 
-function pathBasename(path: string): string {
+export function pathBasename(path: string): string {
   const parts = path.split('/')
   return parts[parts.length - 1] || path
 }
@@ -46,7 +46,7 @@ function pathBasename(path: string): string {
 const FILE_TOOLS = new Set(['Read', 'Write', 'Edit'])
 const COMPACT_HEADER_TOOLS = new Set(['Read', 'Bash', 'Grep', 'Glob', 'list_mcp_servers', 'ExitPlanMode'])
 
-function getToolSummary(call: ToolCall): string | null {
+export function getToolSummary(call: ToolCall): string | null {
   const args = call.arguments || {}
   const name = formatToolName(call.tool_name)
 
@@ -179,7 +179,7 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
   h: 'c', hpp: 'cpp', toml: 'toml', xml: 'xml', svg: 'xml',
 }
 
-function parseReadOutput(result: string): { content: string; startLine: number } | null {
+export function parseReadOutput(result: string): { content: string; startLine: number } | null {
   const lines = result.split('\n')
   const parsed: string[] = []
   let startLine = 1
@@ -202,12 +202,12 @@ function parseReadOutput(result: string): { content: string; startLine: number }
   return { content: parsed.join('\n').replace(/\n$/, ''), startLine }
 }
 
-interface GrepFileGroup {
+export interface GrepFileGroup {
   filePath: string
   lines: { lineNum: number; content: string }[]
 }
 
-function parseGrepOutput(result: string): GrepFileGroup[] | null {
+export function parseGrepOutput(result: string): GrepFileGroup[] | null {
   const lines = result.split('\n')
   const groups: GrepFileGroup[] = []
   let currentGroup: GrepFileGroup | null = null
@@ -236,7 +236,7 @@ function parseGrepOutput(result: string): GrepFileGroup[] | null {
   return groups.length > 0 ? groups : null
 }
 
-function getLanguageFromPath(filePath: string): string {
+export function getLanguageFromPath(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase() || ''
   return EXT_TO_LANGUAGE[ext] || 'text'
 }
@@ -258,7 +258,7 @@ const highlighterTheme = {
 }
 
 /** Compute a minimal line-level diff using Myers-style LCS. */
-function computeLineDiff(oldStr: string, newStr: string): { type: 'keep' | 'add' | 'remove'; line: string }[] {
+export function computeLineDiff(oldStr: string, newStr: string): { type: 'keep' | 'add' | 'remove'; line: string }[] {
   const oldLines = oldStr.split('\n')
   const newLines = newStr.split('\n')
   const n = oldLines.length
@@ -922,7 +922,7 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
 
 // --- Tier 1: Tool Chain wrapper (collapsible group of all calls between text blocks) ---
 
-function buildChainSummary(toolCalls: ToolCall[]): string {
+export function buildChainSummary(toolCalls: ToolCall[]): string {
   const counts = new Map<string, number>()
   for (const tc of toolCalls) {
     const name = formatToolName(tc.tool_name)

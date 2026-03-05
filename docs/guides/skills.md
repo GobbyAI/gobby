@@ -360,5 +360,5 @@ When using `suggest_next_task`, Gobby recommends relevant skills based on task c
 
 - [Agent Skills Specification](https://agentskills.io)
 - [SkillPort](https://github.com/gotalab/skillport) - Compatible skill format
-- [Workflows Guide](./workflows.md) - Integrate skills with workflows
+- [Rules Guide](./rules.md) - Integrate skills with rules
 - [MCP Tools Guide](./mcp-tools.md) - Full MCP tool reference

@@ -1402,7 +1402,7 @@ class TestSkillsHubListCommand:
             "success": True,
             "hubs": [
                 {"name": "clawdhub", "type": "clawdhub", "base_url": ""},
-                {"name": "skillhub", "type": "skillhub", "base_url": "https://skillhub.dev"},
+                {"name": "skillsmp", "type": "skillsmp", "base_url": "https://skillsmp.com/api/v1"},
             ],
         }
 

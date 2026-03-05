@@ -53,6 +53,7 @@ def create_clones_registry(
         task_id: str | None = None,
         base_branch: str = "main",
         depth: int = 1,
+        use_local: bool = False,
     ) -> dict[str, Any]:
         """
         Create a new git clone.
@@ -64,6 +65,8 @@ def create_clones_registry(
             task_id: Optional task ID to link
             base_branch: Base branch for the clone
             depth: Clone depth (default: 1 for shallow)
+            use_local: If True, clone from local repo path instead of remote URL.
+                       Forces full clone to preserve unpushed commits.
 
         Returns:
             Dict with clone info or error
@@ -75,22 +78,33 @@ def create_clones_registry(
             }
 
         try:
-            # Get remote URL if not provided
-            if not remote_url:
-                remote_url = git_manager.get_remote_url()
+            if use_local:
+                # Clone from local repo path — always full clone
+                source = str(git_manager.repo_path)
+                result = git_manager.full_clone(
+                    remote_url=source,
+                    clone_path=clone_path,
+                    branch=branch_name,
+                )
                 if not remote_url:
-                    return {
-                        "success": False,
-                        "error": "No remote URL provided and could not get from repository",
-                    }
+                    remote_url = git_manager.get_remote_url() or source
+            else:
+                # Get remote URL if not provided
+                if not remote_url:
+                    remote_url = git_manager.get_remote_url()
+                    if not remote_url:
+                        return {
+                            "success": False,
+                            "error": "No remote URL provided and could not get from repository",
+                        }
 
-            # Create the clone
-            result = git_manager.shallow_clone(
-                remote_url=remote_url,
-                clone_path=clone_path,
-                branch=branch_name,
-                depth=depth,
-            )
+                # Create the clone
+                result = git_manager.shallow_clone(
+                    remote_url=remote_url,
+                    clone_path=clone_path,
+                    branch=branch_name,
+                    depth=depth,
+                )
 
             if not result.success:
                 return {
@@ -149,6 +163,11 @@ def create_clones_registry(
                     "type": "integer",
                     "description": "Clone depth (default: 1 for shallow)",
                     "default": 1,
+                },
+                "use_local": {
+                    "type": "boolean",
+                    "description": "Clone from local repo path instead of remote URL (full clone, preserves unpushed commits)",
+                    "default": False,
                 },
             },
             "required": ["branch_name", "clone_path"],

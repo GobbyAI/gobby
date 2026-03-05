@@ -322,6 +322,20 @@ async def _generate_full_summary(
         git_diff_summary = get_git_diff_summary()
         structured_context = _format_structured_context(handoff_ctx)
 
+        # Enrich with DB context (same as compact path)
+        resolved_db = db or getattr(session_manager, "db", None)
+        claimed_tasks = (
+            await asyncio.to_thread(_get_claimed_tasks, session.id, resolved_db)
+            if resolved_db
+            else ""
+        )
+        session_memories = (
+            await asyncio.to_thread(_get_session_memories, session.id, resolved_db)
+            if resolved_db
+            else ""
+        )
+        first_digest_turn, recent_digest_turns = _extract_digest_turns(session.digest_markdown)
+
         context = {
             "transcript_summary": format_turns_for_llm(last_turns),
             "last_messages": last_messages_str,
@@ -329,6 +343,10 @@ async def _generate_full_summary(
             "file_changes": file_changes,
             "git_diff_summary": git_diff_summary,
             "structured_context": structured_context,
+            "claimed_tasks": claimed_tasks,
+            "session_memories": session_memories,
+            "first_digest_turn": first_digest_turn,
+            "recent_digest_turns": recent_digest_turns,
             "external_id": session.id[:12],
             "session_id": session.id,
             "session_source": session.source,

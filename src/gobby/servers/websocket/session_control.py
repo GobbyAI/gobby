@@ -402,6 +402,12 @@ class SessionControlMixin:
             await self._send_error(websocket, f"Invalid mode: {mode}. Must be one of {valid_modes}")
             return
 
+        # Track which conversation this client is in (for scoped broadcasts)
+        if conversation_id:
+            client_info = self.clients.get(websocket)
+            if client_info is not None:
+                client_info["conversation_id"] = conversation_id
+
         session = self._chat_sessions.get(conversation_id) if conversation_id else None
         if session is not None and conversation_id:
             session.set_chat_mode(mode)

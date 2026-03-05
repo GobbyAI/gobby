@@ -2,10 +2,10 @@ name: orchestrator
 type: pipeline
 version: "2.0"
 description: |
-  Async, parallel, dependency-aware orchestration pipeline.
-  Replaces coordinator with fire-and-forget agent dispatch,
-  merge-to-unblock for dependency resolution, and step workflow
-  enforcement on all spawned agents.
+  Async, dependency-aware orchestration pipeline with parallel dispatch.
+  Creates one worktree on first dispatch, reuses it for all subsequent tasks.
+  Dispatches multiple non-conflicting tasks in parallel using file annotations
+  to detect contention. Merge happens once at epic completion.
 
 inputs:
   session_task: null
@@ -24,6 +24,7 @@ inputs:
   poll_interval: 15
   max_iterations: 200
   _current_iteration: 0
+  _worktree_id: null
 
 steps:
   # --- Guard ---
@@ -33,6 +34,24 @@ steps:
 
   - id: fetch_origin
     exec: "git fetch origin"
+
+  # --- Get epic info (first iteration only, for branch naming) ---
+  - id: get_epic
+    condition: "${{ not inputs._worktree_id }}"
+    mcp:
+      server: gobby-tasks
+      tool: get_task
+      arguments:
+        task_id: "${{ inputs.session_task }}"
+
+  # --- Expand epic if not yet expanded (first iteration only) ---
+  - id: expand_epic
+    condition: "${{ (not inputs._worktree_id) and (get_epic.output.result.is_expanded == false) }}"
+    invoke_pipeline:
+      name: expand-task
+      arguments:
+        task_id: "${{ inputs.session_task }}"
+        session_id: "${{ session_id }}"
 
   # --- Scan task states ---
   - id: scan_open
@@ -74,20 +93,21 @@ steps:
       if [ "$DONE" = "true" ]; then echo "Orchestration complete. All tasks closed." >&2; fi;
       echo "{\"done\": $DONE}"
 
-  # --- Find next dispatchable task ---
+  # --- Find next dispatchable tasks (parallel: dispatch when below capacity) ---
   - id: find_next
-    condition: "${{ not all_closed.output.done }}"
+    condition: "${{ (not all_closed.output.done) and ((scan_in_progress.output.tasks | length) < inputs.max_concurrent) }}"
     mcp:
       server: gobby-tasks
-      tool: suggest_next_task
+      tool: suggest_next_tasks
       arguments:
         parent_task_id: "${{ inputs.session_task }}"
         session_id: "${{ session_id }}"
+        max_count: "${{ inputs.max_concurrent - (scan_in_progress.output.tasks | length) }}"
 
-  # --- MERGE PHASE (blocking — wait for merge agent) ---
-  # Merge when: approved tasks exist AND (no next task available OR final merge)
+  # --- MERGE PHASE (blocking — one merge at epic completion) ---
+  # Merge when: only approved tasks remain (no open, in_progress, or needs_review)
   - id: spawn_merge
-    condition: "${{ (scan_approved.output.tasks | length > 0) and ((not find_next.output.suggestion) or all_closed.output.done) }}"
+    condition: "${{ (scan_approved.output.tasks | length > 0) and (scan_open.output.tasks | length == 0) and (scan_in_progress.output.tasks | length == 0) and (scan_needs_review.output.tasks | length == 0) }}"
     mcp:
       server: gobby-agents
       tool: spawn_agent
@@ -101,45 +121,52 @@ steps:
 
   - id: wait_merge
     condition: "${{ spawn_merge.output.run_id if spawn_merge.output else '' }}"
-    mcp:
-      server: gobby-agents
-      tool: wait_for_agent
-      arguments:
-        run_id: "${{ spawn_merge.output.run_id }}"
-        timeout: "${{ inputs.wait_timeout }}"
-        kill_on_timeout: true
+    wait:
+      completion_id: "${{ spawn_merge.output.run_id }}"
+      timeout: "${{ inputs.wait_timeout }}"
 
   - id: fetch_after_merge
     condition: "${{ wait_merge.output.completed if wait_merge.output else '' }}"
     exec: 'bash -c ''git stash -q 2>/dev/null || true; git pull --rebase origin ${{ inputs.merge_target }}; rc=$?; if [ $rc -ne 0 ]; then if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then echo "Rebase conflict detected! Resolve conflicts and run `git rebase --continue`, or run `git rebase --abort` to cancel."; fi; exit $rc; fi; git stash pop -q 2>/dev/null || true; exit 0'''
 
-  # --- DISPATCH DEVELOPER (fire-and-forget) ---
+  # --- CREATE EPIC WORKTREE (first iteration only) ---
   - id: create_worktree
-    condition: "${{ find_next.output.suggestion.ref if find_next.output and find_next.output.suggestion else '' }}"
+    condition: "${{ (not inputs._worktree_id) and (find_next.output.suggestions[0].ref if find_next.output and find_next.output.suggestions else '') }}"
     mcp:
       server: gobby-worktrees
       tool: create_worktree
       arguments:
-        branch_name: "task-${{ find_next.output.suggestion.seq_num }}"
+        branch_name: "epic-${{ get_epic.output.result.seq_num }}"
         base_branch: "${{ inputs.merge_target }}"
-        task_id: "${{ find_next.output.suggestion.id }}"
+        task_id: "${{ inputs.session_task }}"
+        use_local: true
+        provider: "${{ inputs.developer_provider }}"
 
-  - id: spawn_developer
-    condition: "${{ create_worktree.output.worktree_id if create_worktree.output else '' }}"
+  # --- DISPATCH DEVELOPERS (fire-and-forget, parallel batch) ---
+  - id: spawn_developers
+    condition: "${{ find_next.output.suggestions | length > 0 if find_next.output else false }}"
     mcp:
       server: gobby-agents
-      tool: spawn_agent
+      tool: dispatch_batch
       arguments:
-        prompt: "Implement task ${{ find_next.output.suggestion.ref }}: ${{ find_next.output.suggestion.title }}"
+        suggestions: "${{ find_next.output.suggestions }}"
         agent: "${{ inputs.developer_agent }}"
-        task_id: "${{ find_next.output.suggestion.id }}"
-        worktree_id: "${{ create_worktree.output.worktree_id }}"
+        worktree_id: "${{ inputs._worktree_id or (create_worktree.output.worktree_id if create_worktree.output else '') }}"
         provider: "${{ inputs.developer_provider }}"
         model: "${{ inputs.developer_model }}"
         parent_session_id: "${{ session_id }}"
         mode: terminal
 
-  # --- DISPATCH QA (fire-and-forget) ---
+  # --- ANNOTATE OBSERVED FILES (post-hoc, one per iteration) ---
+  - id: annotate_observed
+    condition: "${{ scan_needs_review.output.tasks | length > 0 }}"
+    mcp:
+      server: gobby-tasks
+      tool: update_observed_files
+      arguments:
+        task_id: "${{ scan_needs_review.output.tasks[0].id }}"
+
+  # --- DISPATCH QA (fire-and-forget, with worktree context) ---
   - id: spawn_qa
     condition: "${{ scan_needs_review.output.tasks[0].id if scan_needs_review.output and scan_needs_review.output.tasks else '' }}"
     mcp:
@@ -149,6 +176,7 @@ steps:
         prompt: "Review and QA task ${{ scan_needs_review.output.tasks[0].ref }}"
         agent: "${{ inputs.qa_agent }}"
         task_id: "${{ scan_needs_review.output.tasks[0].id }}"
+        worktree_id: "${{ inputs._worktree_id or (create_worktree.output.worktree_id if create_worktree.output else '') }}"
         provider: "${{ inputs.qa_provider }}"
         model: "${{ inputs.qa_model }}"
         parent_session_id: "${{ session_id }}"
@@ -165,6 +193,7 @@ steps:
       name: orchestrator
       arguments:
         _current_iteration: "${{ inputs._current_iteration + 1 }}"
+        _worktree_id: "${{ inputs._worktree_id or (create_worktree.output.worktree_id if create_worktree.output else '') }}"
         session_task: "${{ inputs.session_task }}"
         merge_target: "${{ inputs.merge_target }}"
         developer_agent: "${{ inputs.developer_agent }}"

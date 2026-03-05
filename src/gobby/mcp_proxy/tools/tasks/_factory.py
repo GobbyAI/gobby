@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.task_dependencies import create_dependency_registry
 from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
 from gobby.mcp_proxy.tools.task_sync import create_sync_registry
 from gobby.mcp_proxy.tools.task_validation import create_validation_registry
+from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
@@ -115,6 +116,11 @@ def create_task_registry(
         task_manager=task_manager,
     )
     for tool_name, tool in readiness_registry._tools.items():
+        registry._tools[tool_name] = tool
+
+    # Merge affected files tools
+    affected_files_registry = create_affected_files_registry(ctx)
+    for tool_name, tool in affected_files_registry._tools.items():
         registry._tools[tool_name] = tool
 
     # Merge sync tools from extracted module (Strangler Fig pattern)

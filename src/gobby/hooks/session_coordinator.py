@@ -44,6 +44,7 @@ class SessionCoordinator:
         agent_run_manager: LocalAgentRunManager | None = None,
         worktree_manager: LocalWorktreeManager | None = None,
         logger: logging.Logger | None = None,
+        completion_registry: Any | None = None,
     ) -> None:
         """
         Initialize SessionCoordinator.
@@ -54,12 +55,14 @@ class SessionCoordinator:
             agent_run_manager: LocalAgentRunManager for agent run completion
             worktree_manager: LocalWorktreeManager for worktree release
             logger: Optional logger instance
+            completion_registry: CompletionEventRegistry for notifying on agent completion
         """
         self._session_storage = session_storage
         self._message_processor = message_processor
         self._agent_run_manager = agent_run_manager
         self._worktree_manager = worktree_manager
         self.logger = logger or logging.getLogger(__name__)
+        self._completion_registry = completion_registry
 
         # Session registration tracking (to avoid noisy logs)
         # Tracks which sessions have been registered with daemon
@@ -73,6 +76,10 @@ class SessionCoordinator:
 
         # Lock for session lookups to prevent race conditions (double firing)
         self._lookup_lock = threading.Lock()
+
+    def set_completion_registry(self, registry: Any) -> None:
+        """Inject completion registry after construction (avoids circular init ordering)."""
+        self._completion_registry = registry
 
     # ==================== REGISTRATION TRACKING ====================
 
@@ -303,11 +310,12 @@ class SessionCoordinator:
                 self.logger.warning(f"Agent run {agent_run_id} not found")
                 return
 
-            # Skip if already completed
+            # Skip DB update if already completed, but still fire completion event
             if agent_run.status not in ("pending", "running"):
                 self.logger.debug(
                     f"Agent run {agent_run_id} already in terminal state: {agent_run.status}"
                 )
+                self._notify_agent_completion(agent_run_id, agent_run.status)
                 return
 
             # Use summary as result if available
@@ -433,6 +441,9 @@ class SessionCoordinator:
                 f"(tool_calls={tool_calls_count}, turns={turns_used})"
             )
 
+            # Notify completion registry (fallback if kill_agent didn't fire it)
+            self._notify_agent_completion(agent_run_id, "success")
+
         except Exception as e:
             self.logger.error(f"Failed to complete agent run {agent_run_id}: {e}")
 
@@ -441,6 +452,24 @@ class SessionCoordinator:
             self.release_session_worktrees(session.id)
         except Exception as e:
             self.logger.warning(f"Failed to release worktrees for session {session.id}: {e}")
+
+    def _notify_agent_completion(self, run_id: str, status: str) -> None:
+        """Fire completion event for an agent run (fail-open, idempotent)."""
+        if not self._completion_registry:
+            return
+        try:
+            import asyncio
+
+            result = {"status": status, "run_id": run_id}
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(self._completion_registry.notify(run_id, result))
+            else:
+                loop.run_until_complete(self._completion_registry.notify(run_id, result))
+        except Exception:
+            self.logger.debug(
+                "Failed to notify completion registry for run %s", run_id, exc_info=True
+            )
 
     def release_session_worktrees(self, session_id: str) -> None:
         """

@@ -914,17 +914,20 @@ def create_skills_registry(
             hub_names_filter = [hub_name] if hub_name else None
 
             # Perform search
-            results = await hub_manager.search_all(
+            results, errors = await hub_manager.search_all(
                 query=query.strip(),
                 limit=limit,
                 hub_names=hub_names_filter,
             )
 
-            return {
+            response: dict[str, Any] = {
                 "success": True,
                 "count": len(results),
                 "results": results,
             }
+            if errors:
+                response["hub_errors"] = errors
+            return response
         except Exception as e:
             return {"success": False, "error": str(e)}
 

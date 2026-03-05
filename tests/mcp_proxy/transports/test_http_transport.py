@@ -26,14 +26,14 @@ pytestmark = pytest.mark.unit
 
 def _make_config(**overrides: Any) -> MCPServerConfig:
     """Create a real MCPServerConfig for HTTP transport."""
-    defaults = dict(
-        name="test-http",
-        project_id="proj-001",
-        transport="http",
-        url="http://localhost:8080/mcp",
-        headers={"Authorization": "Bearer tok"},
-        connect_timeout=2.0,
-    )
+    defaults = {
+        "name": "test-http",
+        "project_id": "proj-001",
+        "transport": "http",
+        "url": "http://localhost:8080/mcp",
+        "headers": {"Authorization": "Bearer tok"},
+        "connect_timeout": 2.0,
+    }
     defaults.update(overrides)
     return MCPServerConfig(**defaults)
 
@@ -543,7 +543,6 @@ class TestHTTPCleanupOwnerTask:
         # We need to trigger the TimeoutError path in _cleanup_owner_task.
         # The code does: task.cancel() then await asyncio.wait_for(task, timeout=2.0)
         # We patch asyncio.wait_for at the module level to raise TimeoutError directly.
-        original_wait_for = asyncio.wait_for
         call_count = 0
 
         async def mock_wait_for(fut, timeout=None):

@@ -564,9 +564,9 @@ class TestInitOutputFormat:
         # Check output structure — find lines by content rather than index
         # since a conditional "Tip:" line may appear before the project info
         output_lines = result.output.strip().split("\n")
-        init_line = next(l for l in output_lines if "format-test-project" in l)
-        id_line = next(l for l in output_lines if "Project ID:" in l)
-        config_line = next(l for l in output_lines if "Config:" in l)
+        init_line = next(line for line in output_lines if "format-test-project" in line)
+        id_line = next(line for line in output_lines if "Project ID:" in line)
+        config_line = next(line for line in output_lines if "Config:" in line)
         assert "format-test-project" in init_line
         assert "proj-format-test" in id_line
         assert config_line is not None

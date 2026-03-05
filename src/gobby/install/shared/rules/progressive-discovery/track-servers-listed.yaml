@@ -1,0 +1,13 @@
+tags: [progressive-discovery, enforcement, mcp]
+
+rules:
+  track-servers-listed:
+    description: "Mark servers as listed after list_mcp_servers"
+    event: after_tool
+    enabled: false
+    priority: 21
+    when: "event.data.get('mcp_tool') == 'list_mcp_servers' or event.data.get('tool_name') in ('list_mcp_servers', 'mcp__gobby__list_mcp_servers')"
+    effect:
+      type: set_variable
+      variable: servers_listed
+      value: true

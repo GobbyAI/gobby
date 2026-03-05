@@ -293,7 +293,7 @@ rules:
       - type: inject_context
         template: |
           Run your assigned pipeline: {{ _assigned_pipeline }}
-          Use progressive disclosure to call run_pipeline.
+          Use progressive discovery to call run_pipeline.
 ```
 
 Combined with existing tool restrictions for pipeline agents (agent has no steps defined, so tool restrictions come from the lockdown rules). Replaces three separate rules with one.

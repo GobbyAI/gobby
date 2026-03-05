@@ -1,0 +1,13 @@
+tags: [worker-safety, enforcement, agents]
+
+rules:
+  no-push-for-workers:
+    description: "Block git push for developer and QA agents"
+    event: before_tool
+    enabled: false
+    agent_scope: [developer, qa-reviewer]
+    effect:
+      type: block
+      tools: [Bash]
+      command_pattern: "git\\s+push"
+      reason: "Push is blocked. The merge agent handles pushing."

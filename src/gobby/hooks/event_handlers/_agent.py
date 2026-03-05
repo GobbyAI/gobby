@@ -64,7 +64,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         context_parts = []
 
         if session_id:
-            self.logger.debug(f"BEFORE_AGENT: session {session_id}, prompt_len={len(prompt)}")
+            self.logger.debug("BEFORE_AGENT: session %s, prompt_len=%d", session_id, len(prompt))
 
             # Update status to active (unless /clear or /exit)
             prompt_lower = prompt.strip().lower()
@@ -74,18 +74,18 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     if self._session_storage:
                         self._session_storage.reset_transcript_processed(session_id)
                 except Exception as e:
-                    self.logger.warning(f"Failed to update session status: {e}")
+                    self.logger.warning("Failed to update session status: %s", e)
 
             # Handle /clear command - generate boundary summaries before clear/exit
             # and set handoff_source so session-end marks the session handoff_ready.
             if prompt_lower in ("/clear", "/exit"):
-                self.logger.debug(f"Detected {prompt_lower} - generating session summaries")
+                self.logger.debug("Detected %s - generating session summaries", prompt_lower)
                 try:
                     if self._dispatch_session_summaries_fn:
                         self._dispatch_session_summaries_fn(session_id, False, None)
                 except Exception as e:
                     self.logger.warning(
-                        f"Failed to generate session summaries on {prompt_lower}: {e}"
+                        "Failed to generate session summaries on %s: %s", prompt_lower, e
                     )
                 # Belt-and-suspenders: set handoff_source directly in addition to
                 # the prepare-clear-handoff rule, so session-end marks handoff_ready
@@ -97,7 +97,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         sv_mgr = SessionVariableManager(self._session_storage.db)
                         sv_mgr.set_variable(session_id, "handoff_source", prompt_lower.lstrip("/"))
                     except Exception as e:
-                        self.logger.warning(f"Failed to set handoff_source: {e}")
+                        self.logger.warning("Failed to set handoff_source: %s", e)
 
         # Skill interception — runs before lifecycle workflows
         if self._skill_manager and prompt.strip():
@@ -111,7 +111,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     if suggestion:
                         context_parts.append(suggestion)
             except Exception as e:
-                self.logger.error(f"Failed skill interception: {e}", exc_info=True)
+                self.logger.error("Failed skill interception: %s", e, exc_info=True)
 
         response = HookResponse(
             decision="allow",
@@ -269,14 +269,14 @@ class AgentEventHandlerMixin(EventHandlersBase):
         context_parts: list[str] = []
 
         if session_id:
-            self.logger.debug(f"AFTER_AGENT: session {session_id}, cli={cli_source}")
+            self.logger.debug("AFTER_AGENT: session %s, cli=%s", session_id, cli_source)
             if self._session_manager:
                 try:
                     self._session_manager.update_session_status(session_id, "paused")
                 except Exception as e:
-                    self.logger.warning(f"Failed to update session status: {e}")
+                    self.logger.warning("Failed to update session status: %s", e)
         else:
-            self.logger.debug(f"AFTER_AGENT: cli={cli_source}")
+            self.logger.debug("AFTER_AGENT: cli=%s", cli_source)
 
         return HookResponse(
             decision="allow",
@@ -290,12 +290,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         context_parts: list[str] = []
 
         if session_id:
-            self.logger.debug(f"STOP: session {session_id}")
+            self.logger.debug("STOP: session %s", session_id)
             if self._session_manager:
                 try:
                     self._session_manager.update_session_status(session_id, "paused")
                 except Exception as e:
-                    self.logger.warning(f"Failed to update session status: {e}")
+                    self.logger.warning("Failed to update session status: %s", e)
         else:
             self.logger.debug("STOP")
 
@@ -319,11 +319,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         # Skip handoff logic for Gemini - it fires PreCompress too frequently
         if event.source == SessionSource.GEMINI:
-            self.logger.debug(f"PRE_COMPACT ({trigger}): session {session_id} [Gemini - skipped]")
+            self.logger.debug(
+                "PRE_COMPACT (%s): session %s [Gemini - skipped]", trigger, session_id
+            )
             return HookResponse(decision="allow")
 
         if session_id:
-            self.logger.debug(f"PRE_COMPACT ({trigger}): session {session_id}")
+            self.logger.debug("PRE_COMPACT (%s): session %s", trigger, session_id)
             # Mark session as handoff_ready so it can be found as parent after compact
             if self._session_manager:
                 self._session_manager.update_session_status(session_id, "handoff_ready")
@@ -332,9 +334,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 if self._dispatch_session_summaries_fn:
                     self._dispatch_session_summaries_fn(session_id, False, None)
             except Exception as e:
-                self.logger.warning(f"Failed to generate session summaries on compact: {e}")
+                self.logger.warning("Failed to generate session summaries on compact: %s", e)
         else:
-            self.logger.debug(f"PRE_COMPACT ({trigger})")
+            self.logger.debug("PRE_COMPACT (%s)", trigger)
 
         return HookResponse(decision="allow")
 
@@ -359,7 +361,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
-            self.logger.debug(f"SUBAGENT_STOP: session {session_id}")
+            self.logger.debug("SUBAGENT_STOP: session %s", session_id)
         else:
             self.logger.debug("SUBAGENT_STOP")
 

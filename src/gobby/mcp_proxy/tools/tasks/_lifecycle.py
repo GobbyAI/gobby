@@ -367,8 +367,35 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except (TaskNotFoundError, ValueError) as e:
             return {"error": str(e)}
 
+        # Capture assignee before reopen clears it (needed for session variable cleanup)
+        task = ctx.task_manager.get_task(resolved_id)
+        prior_assignee = task.assignee if task else None
+
         try:
             ctx.task_manager.reopen_task(resolved_id, reason=reason)
+
+            # Remove from claimed_tasks session variable for the prior assignee
+            if prior_assignee:
+                try:
+                    from gobby.workflows.task_claim_state import remove_claimed_task
+
+                    session_vars = ctx.session_var_manager.get_variables(prior_assignee)
+                    merge_dict = remove_claimed_task(session_vars, resolved_id)
+                    ctx.session_var_manager.merge_variables(prior_assignee, merge_dict)
+                    logger.debug(
+                        "Removed task %s from claimed_tasks for session %s on reopen",
+                        resolved_id,
+                        prior_assignee,
+                    )
+                except Exception as e:
+                    logger.debug("Best-effort claimed_tasks cleanup on reopen failed: %s", e)
+
+            # Update session-task link to reflect reopen
+            if prior_assignee:
+                try:
+                    ctx.session_task_manager.link_task(prior_assignee, resolved_id, "reopened")
+                except Exception as e:
+                    logger.debug("Best-effort session link update on reopen failed: %s", e)
 
             # Reactivate any associated worktrees that were marked merged/abandoned
             try:

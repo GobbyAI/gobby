@@ -143,6 +143,7 @@ class TestFindGeminiTranscript:
     def test_match_by_prefix(self, tmp_path) -> None:
         handler = _TestHandler()
         cwd = str(tmp_path / "project")
+
         # We need to mock this since we can't create in $HOME
         with patch("gobby.hooks.event_handlers._session.Path") as MockPath:
             mock_home = MagicMock()
@@ -181,9 +182,10 @@ class TestFindGeminiTranscript:
                 [MagicMock(__str__=lambda self: "/fake/session-recent.json")],  # fallback
             ]
 
-            handler._find_gemini_transcript({"cwd": "/some/cwd"}, "")
-            # Verify it attempted the fallback glob
+            result = handler._find_gemini_transcript({"cwd": "/some/cwd"}, "")
+            # Verify it attempted the fallback glob (returns None since mock file isn't readable)
             assert chain.glob.call_count >= 1
+            assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -533,8 +535,8 @@ class TestSessionMoreCoverage:
         mock_parent.seq_num = 1
 
         # storage.get(external) -> None
-        handler._session_storage.get.side_effect = (
-            lambda sid: mock_parent if sid == "parent-1" else None
+        handler._session_storage.get.side_effect = lambda sid: (
+            mock_parent if sid == "parent-1" else None
         )
         handler._session_storage.find_parent.return_value = mock_parent
 
@@ -695,3 +697,199 @@ class TestComposeSessionResponse:
             machine_id="m-1",
         )
         assert "sess-uuid-1" in result.system_message
+
+    def test_claimed_tasks_rendered_in_system_message(self) -> None:
+        handler = _TestHandler()
+        session = _make_session()
+
+        claimed = [
+            ("#42", "in_progress", "Fix auth bug"),
+            ("#43", "open", "Write tests"),
+        ]
+        result = handler._compose_session_response(
+            session=session,
+            session_id="sess-uuid-1",
+            external_id="ext-1",
+            parent_session_id=None,
+            machine_id="m-1",
+            claimed_tasks_info=claimed,
+        )
+        assert "Claimed Tasks: 2" in result.system_message
+        assert "#42 [in_progress] Fix auth bug" in result.system_message
+        assert "#43 [open] Write tests" in result.system_message
+        # First item uses ├─, last uses └─
+        assert "├─ #42" in result.system_message
+        assert "└─ #43" in result.system_message
+
+    def test_claimed_tasks_none_omits_section(self) -> None:
+        handler = _TestHandler()
+        session = _make_session()
+
+        result = handler._compose_session_response(
+            session=session,
+            session_id="sess-uuid-1",
+            external_id="ext-1",
+            parent_session_id=None,
+            machine_id="m-1",
+            claimed_tasks_info=None,
+        )
+        assert "Claimed Tasks" not in result.system_message
+
+    def test_single_claimed_task_uses_last_connector(self) -> None:
+        handler = _TestHandler()
+        session = _make_session()
+
+        claimed = [("#99", "in_progress", "Solo task")]
+        result = handler._compose_session_response(
+            session=session,
+            session_id="sess-uuid-1",
+            external_id="ext-1",
+            parent_session_id=None,
+            machine_id="m-1",
+            claimed_tasks_info=claimed,
+        )
+        assert "Claimed Tasks: 1" in result.system_message
+        assert "└─ #99 [in_progress] Solo task" in result.system_message
+
+
+# ---------------------------------------------------------------------------
+# _get_claimed_task_info / _build_claimed_task_context tests
+# ---------------------------------------------------------------------------
+
+
+class TestClaimedTaskHelpers:
+    """Tests for _get_claimed_task_info and _build_claimed_task_context."""
+
+    def test_no_session_id_returns_none(self) -> None:
+        handler = _TestHandler()
+        assert handler._get_claimed_task_info(None, "proj-1") is None
+
+    def test_no_session_storage_returns_none(self) -> None:
+        handler = _TestHandler()
+        handler._session_storage = None
+        assert handler._get_claimed_task_info("sess-1", "proj-1") is None
+
+    def test_no_task_manager_returns_none(self) -> None:
+        handler = _TestHandler()
+        handler._task_manager = None
+        assert handler._get_claimed_task_info("sess-1", "proj-1") is None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_no_claimed_tasks_returns_none(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {}
+        assert handler._get_claimed_task_info("sess-1", "proj-1") is None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_task_claimed_false_returns_none(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {
+            "task_claimed": False,
+            "claimed_tasks": {"uuid-1": True},
+        }
+        assert handler._get_claimed_task_info("sess-1", "proj-1") is None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_single_claimed_task(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-aaa": True},
+        }
+        task = MagicMock()
+        task.seq_num = 42
+        task.status = "in_progress"
+        task.title = "Fix auth bug"
+        handler._task_manager.get_task.return_value = task
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+        assert result == [("#42", "in_progress", "Fix auth bug")]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_multiple_claimed_tasks(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-aaa": True, "uuid-bbb": True},
+        }
+
+        task_a = MagicMock()
+        task_a.seq_num = 42
+        task_a.status = "in_progress"
+        task_a.title = "Fix auth"
+
+        task_b = MagicMock()
+        task_b.seq_num = 43
+        task_b.status = "open"
+        task_b.title = "Write tests"
+
+        handler._task_manager.get_task.side_effect = [task_a, task_b]
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+        assert result is not None
+        assert len(result) == 2
+        assert ("#42", "in_progress", "Fix auth") in result
+        assert ("#43", "open", "Write tests") in result
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_deleted_task_graceful_fallback(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {
+            "task_claimed": True,
+            "claimed_tasks": {"abcdef12-dead-0000-0000-000000000000": True},
+        }
+        handler._task_manager.get_task.side_effect = ValueError("Task not found")
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+        assert result is not None
+        assert len(result) == 1
+        assert result[0] == ("abcdef12", "unknown", "(deleted)")
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_no_seq_num_uses_uuid_prefix(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {
+            "task_claimed": True,
+            "claimed_tasks": {"abcdef12-1234-5678-9abc-000000000000": True},
+        }
+        task = MagicMock()
+        task.seq_num = None
+        task.status = "open"
+        task.title = "No seq task"
+        handler._task_manager.get_task.return_value = task
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+        assert result == [("abcdef12", "open", "No seq task")]
+
+    def test_session_variable_error_returns_none(self) -> None:
+        """DB errors (e.g. mocked DB) are handled gracefully."""
+        handler = _TestHandler()
+        # _session_storage.db is a MagicMock, so SessionVariableManager
+        # will fail — our try/except should catch it
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+        assert result is None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_build_claimed_task_context_none(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {}
+        assert handler._build_claimed_task_context("sess-1", "proj-1") is None
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_build_claimed_task_context_formatted(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm_cls.return_value.get_variables.return_value = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-aaa": True},
+        }
+        task = MagicMock()
+        task.seq_num = 42
+        task.status = "in_progress"
+        task.title = "Fix auth bug"
+        handler._task_manager.get_task.return_value = task
+
+        ctx = handler._build_claimed_task_context("sess-1", "proj-1")
+        assert ctx is not None
+        assert "## Claimed Tasks (Persisted)" in ctx
+        assert "#42 [in_progress] Fix auth bug" in ctx
+        assert "still assigned to you" in ctx

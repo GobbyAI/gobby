@@ -37,6 +37,7 @@ class AgentRun:
     started_at: str | None = None
     completed_at: str | None = None
     sdk_session_id: str | None = None
+    continuation_prompt: str | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> AgentRun:
@@ -59,6 +60,9 @@ class AgentRun:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             sdk_session_id=row["sdk_session_id"] if "sdk_session_id" in row.keys() else None,
+            continuation_prompt=row["continuation_prompt"]
+            if "continuation_prompt" in row.keys()
+            else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +85,7 @@ class AgentRun:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "sdk_session_id": self.sdk_session_id,
+            "continuation_prompt": self.continuation_prompt,
         }
 
 

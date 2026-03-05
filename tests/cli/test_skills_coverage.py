@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -861,10 +862,10 @@ class TestSkillsHub:
         )
         assert result.exit_code == 1
 
-    def test_hub_add_skillhub_no_url(self, runner: CliRunner) -> None:
+    def test_hub_add_skillsmp_no_url(self, runner: CliRunner) -> None:
         result = runner.invoke(
             skills,
-            ["hub", "add", "test-hub", "--type", "skillhub"],
+            ["hub", "add", "test-hub", "--type", "skillsmp"],
             obj=_make_config_obj(),
             catch_exceptions=False,
         )
@@ -893,7 +894,7 @@ class TestSkillsHub:
         mock_store_cls.return_value.get.return_value = None
         result = runner.invoke(
             skills,
-            ["hub", "add", "my-hub", "--type", "skillhub", "--url", "https://hub.example.com"],
+            ["hub", "add", "my-hub", "--type", "skillsmp", "--url", "https://hub.example.com"],
             obj=_make_config_obj(),
             catch_exceptions=False,
         )
@@ -911,10 +912,10 @@ class TestSkillsHub:
         runner: CliRunner,
     ) -> None:
         mock_config.return_value.database_path = "/tmp/test.db"
-        mock_store_cls.return_value.get.return_value = "skillhub"
+        mock_store_cls.return_value.get.return_value = "skillsmp"
         result = runner.invoke(
             skills,
-            ["hub", "add", "my-hub", "--type", "skillhub", "--url", "https://hub.example.com"],
+            ["hub", "add", "my-hub", "--type", "skillsmp", "--url", "https://hub.example.com"],
             obj=_make_config_obj(),
             catch_exceptions=False,
         )
@@ -930,7 +931,7 @@ class TestHelperFunctions:
 
         ctx = MagicMock(spec=["obj"])
         ctx.obj = None
-        with pytest.raises(Exception):
+        with pytest.raises(click.ClickException):
             get_daemon_client(ctx)
 
     def test_get_daemon_client_wrong_type(self, runner: CliRunner) -> None:
@@ -938,7 +939,7 @@ class TestHelperFunctions:
 
         ctx = MagicMock(spec=["obj"])
         ctx.obj = {"config": "not-a-DaemonConfig"}
-        with pytest.raises(Exception):
+        with pytest.raises(click.ClickException):
             get_daemon_client(ctx)
 
     @patch("gobby.cli.skills.DaemonClient")

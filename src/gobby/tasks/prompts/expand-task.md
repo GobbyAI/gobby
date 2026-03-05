@@ -16,6 +16,8 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
 | category | string | No | Task domain: "test", "code", "document", "research", "config", "manual", "unit", or "integration" |
 | validation_criteria | string | No | How to verify this subtask is complete |
 | depends_on | array[int] | No | Indices (0-based) of subtasks this one depends on |
+| affected_files | array[string] | No | File paths this subtask will create or modify (relative to repo root) |
+| parallel_group | string | No | Group label for subtasks that can run in parallel (e.g., "api-endpoints", "test-suite") |
 
 ## Example Output
 
@@ -27,6 +29,7 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
       "description": "Define tables for users, sessions, and permissions",
       "priority": 1,
       "category": "manual",
+      "affected_files": ["src/storage/migrations.py", "src/storage/schema.sql"],
       "validation_criteria": "Run migrations and verify tables exist"
     },
     {
@@ -34,6 +37,8 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
       "description": "Create repository classes for CRUD operations",
       "depends_on": [0],
       "category": "unit",
+      "affected_files": ["src/storage/users.py", "src/storage/sessions.py"],
+      "parallel_group": "data-layer",
       "validation_criteria": "Unit tests for all repository methods pass"
     },
     {
@@ -41,6 +46,8 @@ You MUST respond with a JSON object containing a "subtasks" array. Each subtask 
       "description": "REST endpoints for user management",
       "depends_on": [1],
       "category": "integration",
+      "affected_files": ["src/api/users.py", "src/api/sessions.py"],
+      "parallel_group": "api-endpoints",
       "validation_criteria": "Integration tests for all endpoints pass"
     }
   ]
@@ -63,6 +70,8 @@ Use `depends_on` to specify execution order:
 5. **Completeness**: The set of subtasks must fully accomplish the parent task.
 6. **JSON Only**: Output ONLY valid JSON - no markdown prose or explanation. Code fences (```json) are allowed.
 7. **No Scope Creep**: Do NOT include optional features, alternatives, or "nice-to-haves". Each subtask must be a concrete requirement from the parent task. Never invent additional features, suggest "consider also adding X", or include "(Optional)" sections. Implement exactly what is specified.
+8. **Affected Files**: Predict which files each subtask will create or modify. Use paths relative to the repo root. Be specific — list actual file paths from the codebase context, not directories.
+9. **Parallel Groups**: Assign a `parallel_group` label to subtasks that can safely run concurrently (no shared file edits). Subtasks sharing a group have the same dependencies and don't touch overlapping files.
 
 ## Validation Criteria Rules
 

@@ -73,7 +73,21 @@ class WorkflowHookHandler:
 
         Must run BEFORE rule evaluation so conditions have current data.
         """
-        from .observers import detect_mcp_call, detect_plan_mode_from_context, detect_task_claim
+        from .observers import (
+            detect_commit_link,
+            detect_mcp_call,
+            detect_plan_mode_from_context,
+            detect_task_claim,
+            reconcile_claimed_tasks,
+        )
+
+        # Reconcile stale claimed_tasks on STOP before rule evaluation
+        if event.event_type == HookEventType.STOP:
+            reconcile_claimed_tasks(
+                variables,
+                session_id,
+                task_manager=self._task_manager,
+            )
 
         # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
         if event.event_type == HookEventType.AFTER_TOOL:
@@ -84,6 +98,7 @@ class WorkflowHookHandler:
                 session_task_manager=self._session_task_manager,
                 task_manager=self._task_manager,
             )
+            detect_commit_link(event, variables, session_id)
             detect_mcp_call(event, variables, session_id)
 
         # Plan mode detection (BEFORE_AGENT for system reminder tags)
@@ -118,14 +133,10 @@ class WorkflowHookHandler:
             # Run built-in observers BEFORE rule evaluation
             self._run_observers(event, session_id, variables)
 
-            # Load rule_definitions from active agent definition
-            extra_rules = self._load_agent_rule_definitions(session_id, variables)
-
             response = await self.rule_engine.evaluate(
                 event=event,
                 session_id=session_id,
                 variables=variables,
-                extra_rules=extra_rules,
             )
 
             # Persist all variables changed by observers OR rule effects
@@ -140,76 +151,6 @@ class WorkflowHookHandler:
         except Exception as e:
             logger.error(f"RuleEngine evaluation failed: {e}", exc_info=True)
             raise
-
-    # Cache for agent rule_definitions (keyed by agent_type)
-    _agent_rules_cache: dict[str, list[tuple[Any, Any]] | None] = {}
-
-    def _load_agent_rule_definitions(
-        self,
-        session_id: str,
-        variables: dict[str, Any],
-    ) -> list[tuple[Any, Any]] | None:
-        """Load rule_definitions from the active agent definition for this session."""
-        if not self.rule_engine or not self.rule_engine.db:
-            return None
-
-        agent_type = variables.get("_agent_type")
-        if not agent_type:
-            return None
-
-        # Check cache
-        if agent_type in self._agent_rules_cache:
-            return self._agent_rules_cache[agent_type]
-
-        from gobby.storage.workflow_definitions import (
-            LocalWorkflowDefinitionManager,
-            WorkflowDefinitionRow,
-        )
-        from gobby.workflows.definitions import RuleDefinition, RuleDefinitionBody
-
-        mgr = LocalWorkflowDefinitionManager(self.rule_engine.db)
-        row = mgr.get_by_name(agent_type, include_templates=True)
-        if not row or row.workflow_type != "agent":
-            self._agent_rules_cache[agent_type] = None
-            return None
-
-        import json
-
-        try:
-            data = json.loads(row.definition_json)
-        except Exception:
-            self._agent_rules_cache[agent_type] = None
-            return None
-
-        raw_rules = data.get("rule_definitions", {})
-        if not raw_rules:
-            self._agent_rules_cache[agent_type] = None
-            return None
-
-        result: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]] = []
-        for rule_name, rule_data in raw_rules.items():
-            try:
-                rule_def = RuleDefinition.model_validate(rule_data)
-                body = rule_def.to_rule_definition_body()
-                synthetic_row = WorkflowDefinitionRow(
-                    id=f"agent-rule:{agent_type}:{rule_name}",
-                    name=f"{agent_type}:{rule_name}",
-                    definition_json=body.model_dump_json(),
-                    workflow_type="rule",
-                    priority=1,
-                    enabled=True,
-                    source="agent",
-                    created_at="",
-                    updated_at="",
-                )
-                result.append((synthetic_row, body))
-            except Exception as e:
-                logger.warning(f"Failed to parse agent rule {agent_type}:{rule_name}: {e}")
-                continue
-
-        cached = result or None
-        self._agent_rules_cache[agent_type] = cached
-        return cached
 
     def evaluate(self, event: HookEvent) -> HookResponse:
         """Evaluate rules for a hook event.

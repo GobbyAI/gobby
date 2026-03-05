@@ -69,9 +69,8 @@ jobs:
       # Just configure at https://pypi.org/manage/account/publishing/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        # Option 2: API token (uncomment below, comment out the above)
-        # with:
-        #   password: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          skip-existing: true
 
   github-release:
     name: Create GitHub Release

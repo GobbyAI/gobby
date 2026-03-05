@@ -70,7 +70,6 @@ class RuleEngine:
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
-        extra_rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]] | None = None,
     ) -> HookResponse:
         """Evaluate all matching rules for an event.
 
@@ -119,7 +118,6 @@ class RuleEngine:
             variables["consecutive_tool_blocks"] = 0
             variables["_last_blocked_tool"] = ""
             variables["tool_block_pending"] = False
-            variables["pre_existing_errors_triaged"] = False
             variables["stop_attempts"] = 0
 
         # Auto-increment stop attempts (universal — not configurable)
@@ -127,20 +125,19 @@ class RuleEngine:
             variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
             logger.debug(
                 "STOP gate diagnostics: session_id=%s, auto_task_ref=%r, "
-                "stop_attempts=%s, task_claimed=%s, claimed_tasks=%s",
+                "stop_attempts=%s, task_claimed=%s, claimed_tasks=%s, "
+                "pre_existing_errors_triaged=%s, error_triage_blocks=%s",
                 session_id,
                 variables.get("auto_task_ref"),
                 variables["stop_attempts"],
                 variables.get("task_claimed"),
                 variables.get("claimed_tasks"),
+                variables.get("pre_existing_errors_triaged"),
+                variables.get("error_triage_blocks", 0),
             )
 
         # 1. Load enabled rules for this event, sorted by priority
         rules = self._load_rules(rule_event)
-
-        # 1b. Append extra rules (e.g. from agent rule_definitions)
-        if extra_rules:
-            rules.extend((row, body) for row, body in extra_rules if body.event == rule_event)
 
         # 2. Apply session overrides
         overrides = self._load_session_overrides(session_id)
@@ -365,18 +362,12 @@ class RuleEngine:
         rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
         variables: dict[str, Any],
     ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
-        """Filter rules based on resolved selectors (if any) stored in session variables.
-
-        Rules with ``source='agent'`` (injected from agent rule_definitions)
-        always pass — they are not subject to the active-rules selector.
-        """
+        """Filter rules based on resolved selectors (if any) stored in session variables."""
         active_names = variables.get("_active_rule_names")
         if active_names is None:
             return rules  # no filter — current behavior preserved
         active_set = set(active_names)
-        return [
-            (row, body) for row, body in rules if row.name in active_set or row.source == "agent"
-        ]
+        return [(row, body) for row, body in rules if row.name in active_set]
 
     def _apply_effect(
         self,
@@ -418,11 +409,16 @@ class RuleEngine:
             variables["_observations"] = obs_list
 
         elif effect.type == "mcp_call":
+            raw_args = effect.arguments or {}
+            rendered_args = {
+                k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
+                for k, v in raw_args.items()
+            }
             mcp_calls.append(
                 {
                     "server": effect.server,
                     "tool": effect.tool,
-                    "arguments": effect.arguments or {},
+                    "arguments": rendered_args,
                     "background": effect.background,
                 }
             )
@@ -709,7 +705,7 @@ class RuleEngine:
         tool_name = event.data.get("tool_name", "")
         wf_name = instance.workflow_name
 
-        # Discovery tools always pass — agents need progressive disclosure in every step
+        # Discovery tools always pass — agents need progressive discovery in every step
         if tool_name.startswith("mcp__gobby__"):
             mcp_suffix = tool_name[len("mcp__gobby__") :]
             if is_discovery_tool(mcp_suffix):

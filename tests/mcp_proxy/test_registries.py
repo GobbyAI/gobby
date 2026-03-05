@@ -59,7 +59,6 @@ def test_setup_with_all_managers_none() -> None:
     registry_names = [r.name for r in registries]
     # Always-on registries should be present
     assert "gobby-workflows" in registry_names
-    assert "gobby-pipelines" in registry_names
     # These should NOT be present when their managers are None
     assert "gobby-memory" not in registry_names
     assert "gobby-metrics" not in registry_names
@@ -385,7 +384,7 @@ def test_setup_with_pipeline_executor() -> None:
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
-    assert "gobby-pipelines" in registry_names
+    assert "gobby-workflows" in registry_names
 
 
 def test_setup_pipelines_always_registered_even_without_executor() -> None:
@@ -400,7 +399,7 @@ def test_setup_pipelines_always_registered_even_without_executor() -> None:
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
-    assert "gobby-pipelines" in registry_names
+    assert "gobby-workflows" in registry_names
 
 
 def test_setup_pipelines_tools_accessible() -> None:
@@ -418,7 +417,7 @@ def test_setup_pipelines_tools_accessible() -> None:
     # Find the pipelines registry
     pipelines_registry = None
     for registry in manager.get_all_registries():
-        if registry.name == "gobby-pipelines":
+        if registry.name == "gobby-workflows":
             pipelines_registry = registry
             break
 
@@ -485,7 +484,7 @@ def test_setup_pipelines_tools_accessible_without_executor() -> None:
 
     pipelines_registry = None
     for registry in manager.get_all_registries():
-        if registry.name == "gobby-pipelines":
+        if registry.name == "gobby-workflows":
             pipelines_registry = registry
             break
 

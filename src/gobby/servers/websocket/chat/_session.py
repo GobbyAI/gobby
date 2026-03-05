@@ -170,7 +170,7 @@ class ChatSessionMixin:
         )
 
         # Wire mode-change callback so agent-initiated plan mode transitions
-        # (EnterPlanMode/ExitPlanMode) are broadcast to all connected clients
+        # (EnterPlanMode/ExitPlanMode) are broadcast to conversation clients only
         async def _notify_mode_changed(mode: str, reason: str) -> None:
             msg = json.dumps(
                 {
@@ -180,7 +180,11 @@ class ChatSessionMixin:
                     "reason": reason,
                 }
             )
-            for ws in list(self.clients.keys()):
+            for ws, meta in list(self.clients.items()):
+                # Only send to clients in this conversation (or untracked clients for compat)
+                cid = meta.get("conversation_id") if meta else None
+                if cid is not None and cid != conversation_id:
+                    continue
                 try:
                     await ws.send(msg)
                 except (ConnectionClosed, ConnectionClosedError):
@@ -198,7 +202,10 @@ class ChatSessionMixin:
                     "allowed_prompts": input_data.get("allowedPrompts"),
                 }
             )
-            for ws in list(self.clients.keys()):
+            for ws, meta in list(self.clients.items()):
+                cid = meta.get("conversation_id") if meta else None
+                if cid is not None and cid != conversation_id:
+                    continue
                 try:
                     await ws.send(msg)
                 except (ConnectionClosed, ConnectionClosedError):
@@ -381,20 +388,26 @@ class ChatSessionMixin:
         )
         t.add_done_callback(_log_session_start_error)
 
-        # Broadcast authoritative mode to frontend so it can override local storage
-        mode_msg = json.dumps(
-            {
-                "type": "mode_changed",
-                "conversation_id": conversation_id,
-                "mode": session.chat_mode,
-                "reason": "session_restored",
-            }
-        )
-        for ws in list(self.clients.keys()):
-            try:
-                await ws.send(mode_msg)
-            except (ConnectionClosed, ConnectionClosedError):
-                pass
+        # Broadcast authoritative mode to frontend so it can override local storage.
+        # Skip if the mode came from a pending client set_mode — echoing it back
+        # triggers a set_mode → mode_changed → set_mode feedback loop.
+        if not pending_mode:
+            mode_msg = json.dumps(
+                {
+                    "type": "mode_changed",
+                    "conversation_id": conversation_id,
+                    "mode": session.chat_mode,
+                    "reason": "session_restored",
+                }
+            )
+            for ws, meta in list(self.clients.items()):
+                cid = meta.get("conversation_id") if meta else None
+                if cid is not None and cid != conversation_id:
+                    continue
+                try:
+                    await ws.send(mode_msg)
+                except (ConnectionClosed, ConnectionClosedError):
+                    pass
 
         return session
 

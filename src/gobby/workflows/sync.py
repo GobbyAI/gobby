@@ -27,6 +27,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+VALID_WORKFLOW_TYPES = {"rule", "variable", "agent", "pipeline"}
+
 
 def get_bundled_rules_path() -> Path:
     """Get the path to bundled rules directory.
@@ -115,7 +117,7 @@ def sync_bundled_workflows(db: DatabaseProtocol) -> dict[str, Any]:
 
             # Derive metadata from the YAML content
             yaml_type = data.get("type", "")
-            workflow_type = "pipeline" if yaml_type == "pipeline" else "workflow"
+            workflow_type = yaml_type if yaml_type in VALID_WORKFLOW_TYPES else "pipeline"
             description = data.get("description", "")
             version = str(data.get("version", "1.0"))
             enabled = bool(data.get("enabled", False))
@@ -264,7 +266,7 @@ def sync_bundled_workflows(db: DatabaseProtocol) -> dict[str, Any]:
 
     orphan_rows = db.fetchall(
         "SELECT id, name FROM workflow_definitions "
-        "WHERE source = 'template' AND workflow_type = 'workflow' AND deleted_at IS NULL",
+        "WHERE source = 'template' AND workflow_type IN ('workflow', 'pipeline') AND deleted_at IS NULL",
     )
     result["orphaned"] = 0
     for row in orphan_rows:
@@ -274,6 +276,7 @@ def sync_bundled_workflows(db: DatabaseProtocol) -> dict[str, Any]:
             result["orphaned"] += 1
 
     _ensure_gobby_tag_on_installed(manager, "workflow")
+    _ensure_gobby_tag_on_installed(manager, "pipeline")
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(

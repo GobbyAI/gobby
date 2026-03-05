@@ -1,0 +1,16 @@
+tags: [progressive-discovery, enforcement, mcp]
+
+rules:
+  require-server-listed-for-schema:
+    description: "Block get_tool_schema without prior list_tools for that server"
+    event: before_tool
+    enabled: false
+    priority: 21
+    when: "variables.get('enforce_tool_schema_check') and not is_server_listed(tool_input)"
+    effect:
+      type: block
+      tools: ["mcp__gobby__get_tool_schema"]
+      reason: |
+        Call list_tools("{{ tool_input.get('server_name', 'unknown') }}") first, then retry.
+
+        Steps: list_mcp_servers → list_tools → get_tool_schema → call_tool.

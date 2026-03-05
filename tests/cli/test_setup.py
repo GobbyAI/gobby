@@ -86,7 +86,7 @@ def test_setup_delegates_to_node(
 
     with patch("subprocess.run", mock_run):
         runner = CliRunner()
-        result = runner.invoke(setup_mod.setup)
+        runner.invoke(setup_mod.setup)
 
     # subprocess.run should have been called
     assert mock_run.called

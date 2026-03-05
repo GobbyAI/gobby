@@ -194,7 +194,7 @@ Since the SDK doesn't fire SessionStart, session-lifecycle variables are never i
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `enforce_tool_schema_check` | `true` | Progressive disclosure |
+| `enforce_tool_schema_check` | `true` | Progressive discovery |
 | `require_task_before_edit` | `true` | Task-before-edit enforcement |
 | `unlocked_tools` | (unset) | Schema-unlocked tools list |
 | `servers_listed` | (unset) | Whether list_mcp_servers was called |

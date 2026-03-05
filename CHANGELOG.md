@@ -336,7 +336,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `rule_overrides` migration and rule-specific query helpers (#8805)
 - Wire dual evaluation into `WorkflowHookHandler` (#8807)
 - Extend bundled sync to handle rule YAML format (#8808)
-- Create rule YAML files: session-defaults (#8809), worker-safety (#8810), tool-hygiene (#8811), plan-mode (#8812), progressive-disclosure (#8813), task-enforcement (#8814), stop-gates (#8815), memory-lifecycle (#8817), context-handoff (#8818), auto-task (#8819)
+- Create rule YAML files: session-defaults (#8809), worker-safety (#8810), tool-hygiene (#8811), plan-mode (#8812), progressive-discovery (#8813), task-enforcement (#8814), stop-gates (#8815), memory-lifecycle (#8817), context-handoff (#8818), auto-task (#8819)
 - Create MCP rule tools: list, get, toggle, create, delete (#8820)
 - Create HTTP API routes for rules (#8821)
 - Add Rules tab with tabbed layout to WorkflowsPage (#8822)
@@ -1048,7 +1048,7 @@ New drag-and-drop workflow editor built with @xyflow/react.
 - Consolidate hook integration call sites (#8086)
 - Standardize args → arguments in MCP layer (#8056)
 - Remove hardcoded model aliases and resolve_model_id (#8185)
-- Remove redundant context injection (progressive disclosure + blind memory inject) (#8123)
+- Remove redundant context injection (progressive discovery + blind memory inject) (#8123)
 - Replace skill list injection with discovery guide skill (#8118)
 - Multi-workflow MCP activate/end workflow support (#8087)
 - Workflow status query updated for multi-workflow (#8089)
@@ -1399,9 +1399,9 @@ New drag-and-drop workflow editor built with @xyflow/react.
 - Add hook-based transcript assembly for Windsurf & Copilot (#7251)
 - Fix session transcript capture for non-Claude CLIs (#7248)
 
-#### Progressive Disclosure Enforcement
+#### Progressive Discovery Enforcement
 
-- Enforce progressive disclosure flow for MCP tool discovery (#7255)
+- Enforce progressive discovery flow for MCP tool discovery (#7255)
 - Merge discovering-tools skill into MCP instructions (#7254)
 
 ### Improvements
@@ -1564,11 +1564,11 @@ New drag-and-drop workflow editor built with @xyflow/react.
 - Replace confusing self-assignment no-ops with pass (#7137, #7082)
 - Clean up stale nosec bandit comments (#7073)
 - Delete claiming-tasks skill and merge into MCP instructions (#7252, #7253)
-- Add missing progressive disclosure tools to all allowed_tools lists (#7273)
+- Add missing progressive discovery tools to all allowed_tools lists (#7273)
 - Remove redundant blocked_tools/blocked_mcp_tools from worker workflows (#7271)
 - Move spawn_agent/activate_workflow to blocked_mcp_tools (#7272)
 - Remove invalid gobby-agents:get_tool_schema from shutdown allowed_mcp_tools (#7274)
-- Unblock progressive disclosure tools in wait_for_workers step (#7267)
+- Unblock progressive discovery tools in wait_for_workers step (#7267)
 - Add missing mock attributes to test_engine_extended fixture (#7256)
 - Session-lifecycle cleanup and test_viz.py (#7239)
 
@@ -1707,7 +1707,7 @@ New drag-and-drop workflow editor built with @xyflow/react.
 - Fix daemon stop/restart timeout by implementing proper shutdown (#6609)
 - Fix mypy errors and test failures (#6613, #6605)
 - Fix TYPE_CHECKING import and remove test_output.txt (#6610)
-- Fix progressive disclosure enforcement for `call_tool` (#6576)
+- Fix progressive discovery enforcement for `call_tool` (#6576)
 - Fix response consistency in `get_tool_schema` (#6586)
 - Fix `session_id` resolution, schema nesting, and worker model (#6578)
 - Fix return value and exception handling in `_artifacts.py` (#6577)
@@ -1720,7 +1720,7 @@ New drag-and-drop workflow editor built with @xyflow/react.
 - Fix test for `suggest_next_task` leaf task support (#6590)
 - Fix type annotation inconsistency in `resolve_session_task_value` (#6595)
 - Fix bandit B110 try-except-pass in `_tool.py` (#6593)
-- Fix colon syntax in progressive disclosure error message (#6579)
+- Fix colon syntax in progressive discovery error message (#6579)
 - Remove `os.environ` mutation from `_setup_litellm` (#6584)
 - Fix bundled template test paths (#6616)
 

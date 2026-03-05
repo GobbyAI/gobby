@@ -291,6 +291,9 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
+  const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
+  const [projectReady, setProjectReady] = useState(false);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
@@ -430,18 +433,35 @@ export default function App() {
     fetch(`${baseUrl}/api/config/ui-settings`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (cancelled || !data?.selectedProjectId) return;
-        setSelectedProjectId(data.selectedProjectId);
+        if (cancelled) return;
+        if (data?.selectedProjectId) {
+          setPendingProjectId(data.selectedProjectId);
+        }
+        setUiSettingsLoaded(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setUiSettingsLoaded(true);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Persist project selection to API
+  // Resolve project once: wait for both projects list and ui-settings fetch
+  useEffect(() => {
+    if (projectReady) return;
+    if (!uiSettingsLoaded || projectOptions.length === 0) return;
+
+    if (pendingProjectId && projectOptions.some((p) => p.id === pendingProjectId)) {
+      setSelectedProjectId(pendingProjectId);
+    }
+    setProjectReady(true);
+  }, [uiSettingsLoaded, projectOptions, pendingProjectId, projectReady]);
+
+  // Persist project selection to API (only after initial resolution)
   const isFirstProjectRender = useRef(true);
   useEffect(() => {
+    if (!projectReady) return;
     if (isFirstProjectRender.current) {
       isFirstProjectRender.current = false;
       return;
@@ -452,12 +472,13 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ selectedProjectId }),
     }).catch(() => {});
-  }, [selectedProjectId]);
+  }, [selectedProjectId, projectReady]);
 
   // When project changes, start fresh chat context for the new project.
   // The ConversationPicker will show the new project's conversations.
   const prevProjectRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!projectReady) return;
     if (
       effectiveProjectId &&
       prevProjectRef.current !== null &&
@@ -467,15 +488,16 @@ export default function App() {
       initialReconciliationDone.current = false;
     }
     prevProjectRef.current = effectiveProjectId ?? null;
-  }, [effectiveProjectId, startNewChat]);
+  }, [effectiveProjectId, startNewChat, projectReady]);
 
   // Sync global project filter into sessions hook for cross-page filtering
   useEffect(() => {
+    if (!projectReady) return;
     sessionsHook.setFilters((prev) => ({
       ...prev,
       projectId: effectiveProjectId ?? null,
     }));
-  }, [effectiveProjectId]);
+  }, [effectiveProjectId, projectReady]);
 
   // Web-chat sessions for main conversation list
   const webChatSessions = useMemo(
@@ -490,6 +512,7 @@ export default function App() {
   const initialReconciliationDone = useRef(false);
 
   useEffect(() => {
+    if (!projectReady) return;
     if (initialReconciliationDone.current) return;
     if (!effectiveProjectId || sessionsHook.isLoading) return;
 
@@ -505,14 +528,18 @@ export default function App() {
       // Unknown conversation_id — switch to most recent session
       const mostRecent = webChatSessions[0]; // sorted newest-first
       switchConversation(mostRecent.external_id, mostRecent.id);
+    } else {
+      // No sessions for this project — clear any stale messages from mount effect
+      startNewChat();
     }
-    // else: no sessions for this project — keep fresh UUID, user starts new chat
   }, [
+    projectReady,
     effectiveProjectId,
     sessionsHook.isLoading,
     webChatSessions,
     conversationId,
     switchConversation,
+    startNewChat,
   ]);
 
   // Wrap sendMessage to include the selected model + colon command interception

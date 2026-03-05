@@ -551,7 +551,7 @@ class TestHubTools:
     @pytest.mark.asyncio
     async def test_search_hub_success(self, mock_db):
         hub_manager = MagicMock()
-        hub_manager.search_all = AsyncMock(return_value=[{"name": "skill-1"}])
+        hub_manager.search_all = AsyncMock(return_value=([{"name": "skill-1"}], []))
 
         registry = _create_registry(mock_db, hub_manager=hub_manager)
         result = await registry.call("search_hub", {"query": "test"})

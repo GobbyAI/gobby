@@ -3,20 +3,31 @@
   "name": "gobby",
   "created_at": "2026-01-10T07:31:35.890720",
   "verification": {
+    "unit_tests": "uv run pytest tests/ -v",
+    "type_check": "uv run mypy src/",
     "lint": "uv run ruff check src/",
     "format": "uv run ruff format --check src/",
-    "type_check": "uv run mypy src/",
-    "ts_check": "cd web && npx tsc --noEmit",
-    "unit_tests": "uv run pytest tests/ -x -q"
+    "custom": {
+      "frontend_tests": "cd web && npm test",
+      "frontend_lint": "cd web && npm run lint",
+      "ts_check": "cd web && npm run type-check"
+    }
   },
   "hooks": {
     "pre-commit": {
-      "run": ["lint", "format"],
+      "run": [
+        "lint",
+        "format"
+      ],
       "fail_fast": true,
       "timeout": 120
     },
     "pre-push": {
-      "run": ["type_check", "ts_check"],
+      "run": [
+        "type_check",
+        "ts_check",
+        "frontend_tests"
+      ],
       "fail_fast": false,
       "timeout": 1800
     }

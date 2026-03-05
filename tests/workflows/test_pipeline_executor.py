@@ -892,6 +892,36 @@ class TestRendererInvokePipelineDict:
 
         assert rendered.invoke_pipeline["arguments"]["session_ref"] == "sess-xyz"
 
+    def test_renders_wait_completion_id(self, renderer) -> None:
+        """Wait step completion_id template should be rendered."""
+        step = PipelineStep(
+            id="wait_researcher",
+            wait={
+                "completion_id": "${{ steps.spawn_researcher.output.run_id }}",
+                "timeout": "${{ inputs.wait_timeout }}",
+            },
+        )
+        context = {
+            "inputs": {"wait_timeout": 600},
+            "steps": {"spawn_researcher": {"output": {"run_id": "run-abc123"}}},
+        }
+        rendered = renderer.render_step(step, context)
+
+        assert rendered.wait["completion_id"] == "run-abc123"
+        assert rendered.wait["timeout"] == 600
+
+    def test_renders_wait_preserves_literal_values(self, renderer) -> None:
+        """Wait step with literal values should pass through unchanged."""
+        step = PipelineStep(
+            id="wait_fixed",
+            wait={"completion_id": "fixed-id", "timeout": 300},
+        )
+        context = {"inputs": {}, "steps": {}}
+        rendered = renderer.render_step(step, context)
+
+        assert rendered.wait["completion_id"] == "fixed-id"
+        assert rendered.wait["timeout"] == 300
+
 
 class TestConditionEvaluation:
     """Tests for step condition evaluation."""

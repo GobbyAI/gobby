@@ -50,7 +50,7 @@ gobby tasks list --ready
 
 ### 🔌 MCP Proxy Without the Token Tax
 
-Connect 5 MCP servers and watch 50K+ tokens vanish before you write a single line of code. Gobby's proxy uses **progressive disclosure**—tools stay as lightweight metadata until you actually need them:
+Connect 5 MCP servers and watch 50K+ tokens vanish before you write a single line of code. Gobby's proxy uses **progressive discovery**—tools stay as lightweight metadata until you actually need them:
 
 ```text
 list_tools()           → Just names and descriptions (~200 tokens)

@@ -294,53 +294,6 @@ export function useChat() {
   // adopting the SDK session ID doesn't reset the user's mode to the default.
   const [conversationSwitchKey, setConversationSwitchKey] = useState(0);
 
-  // Fetch messages from DB on mount if we have a persisted dbSessionId
-  useEffect(() => {
-    const storedDbSid = loadDbSessionId();
-    const convId = conversationIdRef.current;
-    if (!storedDbSid) return;
-
-    let cancelled = false;
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-
-    // Validate session still exists before loading messages
-    fetch(`${baseUrl}/api/sessions/${storedDbSid}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((sessionData) => {
-        if (cancelled) return;
-        // Session gone or deleted — clear stale localStorage, start fresh
-        if (!sessionData?.session || sessionData.session.status === "deleted") {
-          saveDbSessionId(null);
-          const newId = uuid();
-          conversationIdRef.current = newId;
-          setConversationId(newId);
-          setConversationSwitchKey((k) => k + 1);
-          saveConversationId(newId);
-          setDbSessionId(null);
-          return;
-        }
-        // Session is live — fetch its messages
-        return fetch(
-          `${baseUrl}/api/sessions/${storedDbSid}/messages?limit=100&offset=0`,
-        )
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
-            if (cancelled || !data?.messages?.length) return;
-            if (conversationIdRef.current !== convId) return;
-            const mapped = mapApiMessages(data.messages);
-            if (mapped.length > 0) {
-              setMessages(mapped);
-            }
-          });
-      })
-      .catch((err) =>
-        console.error("Failed to validate/fetch session from DB:", err),
-      );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -451,6 +404,9 @@ export function useChat() {
   });
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  // Timestamp of last server-authoritative mode_changed — used to suppress
+  // redundant set_mode emissions on WS reconnect and session restore
+  const lastServerModeTimestampRef = useRef<number>(0);
 
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
@@ -506,8 +462,12 @@ export function useChat() {
         }),
       );
 
-      // Sync current mode to backend on every connect/reconnect
-      if (conversationIdRef.current) {
+      // Sync current mode to backend on connect/reconnect — but skip if
+      // the server just sent an authoritative mode_changed (avoids loop)
+      if (
+        conversationIdRef.current &&
+        Date.now() - lastServerModeTimestampRef.current > 2000
+      ) {
         ws.send(
           JSON.stringify({
             type: "set_mode",
@@ -602,8 +562,8 @@ export function useChat() {
               | string
               | undefined;
             if (newMode) {
-              currentModeRef.current = newMode;
-              // Clear plan approval UI when plan is approved or changes requested
+              lastServerModeTimestampRef.current = Date.now();
+              // Always process plan approval/rejection regardless of mode equality
               if (
                 reason === "plan_approved" ||
                 reason === "plan_changes_requested"
@@ -611,11 +571,6 @@ export function useChat() {
                 setPlanPendingApproval(false);
                 planContentRef.current = null;
               }
-              onModeChangedRef.current?.(newMode);
-              // After plan approval, auto-send a message to prompt the agent
-              // to begin execution. The agent's turn has already ended by the
-              // time the user clicks "Approve", so we send immediately here
-              // rather than waiting for a "done" handler that won't fire.
               if (
                 reason === "plan_approved" &&
                 pendingPlanExecutionRef.current
@@ -626,6 +581,12 @@ export function useChat() {
                     "Plan approved — proceed with implementation.",
                   );
                 }, 200);
+              }
+              // Only update mode and notify if it actually changed —
+              // prevents set_mode → mode_changed → setState → set_mode loop
+              if (newMode !== currentModeRef.current) {
+                currentModeRef.current = newMode;
+                onModeChangedRef.current?.(newMode);
               }
             }
           }
@@ -1366,10 +1327,17 @@ export function useChat() {
           // Restore chat mode from DB (corrects stale sessions list data)
           if (s.chat_mode) {
             const restored = s.chat_mode as ChatMode;
-            currentModeRef.current = restored;
-            onModeChangedRef.current?.(restored);
-            // Sync restored mode to backend session
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
+            // Only apply if mode actually differs from current
+            if (restored !== currentModeRef.current) {
+              currentModeRef.current = restored;
+              onModeChangedRef.current?.(restored);
+            }
+            // Sync restored mode to backend — but skip if the server
+            // just sent an authoritative mode_changed (avoids loop)
+            if (
+              wsRef.current?.readyState === WebSocket.OPEN &&
+              Date.now() - lastServerModeTimestampRef.current > 2000
+            ) {
               wsRef.current.send(
                 JSON.stringify({
                   type: "set_mode",

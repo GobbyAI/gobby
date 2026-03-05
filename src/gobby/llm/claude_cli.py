@@ -7,10 +7,10 @@ decomposition.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +40,12 @@ def find_cli_path() -> str | None:
         return None
 
 
-def verify_cli_path(cached_path: str | None) -> str | None:
+async def verify_cli_path(cached_path: str | None) -> str | None:
     """
     Verify CLI path is still valid and retry if needed.
 
     Handles race condition when npm install updates Claude Code during hook execution.
-    Uses exponential backoff retry to wait for npm install to complete.
+    Uses exponential backoff retry with async sleep to avoid blocking the event loop.
 
     Args:
         cached_path: Previously cached CLI path to verify.
@@ -75,7 +75,7 @@ def verify_cli_path(cached_path: str | None) -> str | None:
                 logger.debug(
                     f"Claude CLI not found, waiting {delay}s before retry {attempt + 1}/{max_retries}"
                 )
-                time.sleep(delay)
+                await asyncio.sleep(delay)
             else:
                 logger.warning(f"Claude CLI not found in PATH after {max_retries} retries")
                 cli_path = None

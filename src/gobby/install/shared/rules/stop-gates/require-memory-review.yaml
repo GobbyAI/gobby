@@ -1,0 +1,20 @@
+tags: [stop-gates, enforcement, lifecycle, gobby]
+
+rules:
+  require-memory-review:
+    description: "Nudge memory review when significant work was done before stopping"
+    event: stop
+    enabled: false
+    priority: 20
+    when: "variables.get('pending_memory_review') and variables.get('task_has_commits') and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)"
+    effect:
+      type: block
+      reason: |
+        You made changes this session. Consider saving any valuable memories
+        before stopping. Use `create_memory` on gobby-memory for insights
+        worth preserving across sessions.
+
+        If nothing new was learned, clear the gate:
+        `set_variable(name="pending_memory_review", value=false, session_id="...")`
+
+        Do NOT create memories for bugs or errors — create tasks instead.

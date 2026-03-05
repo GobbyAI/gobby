@@ -37,6 +37,7 @@ class LocalPipelineExecutionManager:
         inputs_json: str | None = None,
         session_id: str | None = None,
         parent_execution_id: str | None = None,
+        continuation_prompt: str | None = None,
     ) -> PipelineExecution:
         """Create a new pipeline execution.
 
@@ -45,6 +46,7 @@ class LocalPipelineExecutionManager:
             inputs_json: JSON string of input parameters
             session_id: Session that triggered the execution
             parent_execution_id: Parent execution for nested pipelines
+            continuation_prompt: Instructions for wake notification on completion
 
         Returns:
             Created PipelineExecution instance
@@ -57,9 +59,10 @@ class LocalPipelineExecutionManager:
                 """
                 INSERT INTO pipeline_executions (
                     id, pipeline_name, project_id, status, inputs_json,
-                    session_id, parent_execution_id, created_at, updated_at
+                    session_id, parent_execution_id, continuation_prompt,
+                    created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     execution_id,
@@ -69,6 +72,7 @@ class LocalPipelineExecutionManager:
                     inputs_json,
                     session_id,
                     parent_execution_id,
+                    continuation_prompt,
                     now,
                     now,
                 ),
@@ -114,7 +118,15 @@ class LocalPipelineExecutionManager:
         """
         now = datetime.now(UTC).isoformat()
         completed_at = (
-            now if status in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED) else None
+            now
+            if status
+            in (
+                ExecutionStatus.COMPLETED,
+                ExecutionStatus.FAILED,
+                ExecutionStatus.CANCELLED,
+                ExecutionStatus.INTERRUPTED,
+            )
+            else None
         )
 
         self.db.execute(
@@ -365,17 +377,19 @@ class LocalPipelineExecutionManager:
         )
         return StepExecution.from_row(row) if row else None
 
-    def fail_stale_running_executions(self, exclude_ids: set[str] | None = None) -> int:
-        """Mark running executions and their steps as failed.
+    def interrupt_stale_running_executions(self, exclude_ids: set[str] | None = None) -> int:
+        """Mark running executions and their steps as interrupted.
 
         Called during daemon startup to recover from unclean shutdowns.
+        Uses INTERRUPTED status (non-terminal) instead of FAILED so pipelines
+        with resume_on_restart=true can be re-queued.
         Leaves waiting_approval executions alone (they can still be approved).
 
         Args:
             exclude_ids: Execution IDs to skip (e.g. resumable pipelines).
 
         Returns:
-            Number of executions marked as failed.
+            Number of executions marked as interrupted.
         """
         now = datetime.now(UTC).isoformat()
 
@@ -412,17 +426,16 @@ class LocalPipelineExecutionManager:
             ),
         )
 
-        # Fail running pipeline executions
+        # Mark running pipeline executions as interrupted
         cursor = self.db.execute(
             f"""
             UPDATE pipeline_executions
-            SET status = ?, outputs_json = ?, completed_at = ?, updated_at = ?
+            SET status = ?, outputs_json = ?, updated_at = ?
             WHERE status = ? AND project_id = ?{exec_exclude_clause}
             """,  # nosec B608
             (
-                ExecutionStatus.FAILED.value,
+                ExecutionStatus.INTERRUPTED.value,
                 '{"error": "Daemon restarted while execution was in progress"}',
-                now,
                 now,
                 ExecutionStatus.RUNNING.value,
                 self.project_id,
@@ -432,8 +445,12 @@ class LocalPipelineExecutionManager:
 
         count: int = cursor.rowcount if cursor else 0
         if count > 0:
-            logger.info(f"Marked {count} stale running executions as failed after restart")
+            logger.info(f"Marked {count} stale running executions as interrupted after restart")
         return count
+
+    def fail_stale_running_executions(self, exclude_ids: set[str] | None = None) -> int:
+        """Backwards-compatible alias for interrupt_stale_running_executions."""
+        return self.interrupt_stale_running_executions(exclude_ids=exclude_ids)
 
     def get_expired_approval_steps(self) -> list[StepExecution]:
         """Get step executions where approval has timed out.
@@ -457,6 +474,63 @@ class LocalPipelineExecutionManager:
             (StepStatus.WAITING_APPROVAL.value, self.project_id),
         )
         return [StepExecution.from_row(row) for row in rows]
+
+    # ── Completion Subscriber CRUD ──
+
+    def add_completion_subscriber(self, completion_id: str, session_id: str) -> None:
+        """Add a subscriber for a completion event (idempotent).
+
+        Args:
+            completion_id: Execution or run ID to subscribe to
+            session_id: Session to notify on completion
+        """
+        self.db.execute(
+            """
+            INSERT OR IGNORE INTO completion_subscribers (completion_id, session_id)
+            VALUES (?, ?)
+            """,
+            (completion_id, session_id),
+        )
+
+    def add_completion_subscribers(self, completion_id: str, session_ids: list[str]) -> None:
+        """Bulk add subscribers for a completion event.
+
+        Args:
+            completion_id: Execution or run ID to subscribe to
+            session_ids: Sessions to notify on completion
+        """
+        if not session_ids:
+            return
+        self.db.executemany(
+            "INSERT OR IGNORE INTO completion_subscribers (completion_id, session_id) VALUES (?, ?)",
+            [(completion_id, sid) for sid in session_ids],
+        )
+
+    def get_completion_subscribers(self, completion_id: str) -> list[str]:
+        """Get all subscriber session IDs for a completion event.
+
+        Args:
+            completion_id: Execution or run ID
+
+        Returns:
+            List of subscribed session IDs
+        """
+        rows = self.db.fetchall(
+            "SELECT session_id FROM completion_subscribers WHERE completion_id = ?",
+            (completion_id,),
+        )
+        return [row["session_id"] for row in rows]
+
+    def remove_completion_subscribers(self, completion_id: str) -> None:
+        """Remove all subscribers for a completion event.
+
+        Args:
+            completion_id: Execution or run ID
+        """
+        self.db.execute(
+            "DELETE FROM completion_subscribers WHERE completion_id = ?",
+            (completion_id,),
+        )
 
     def get_steps_for_execution(self, execution_id: str) -> list[StepExecution]:
         """Get all steps for an execution.

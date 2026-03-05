@@ -40,12 +40,12 @@ class TestSkillSourceType:
             description="A skill from a hub",
             content="Content",
             source_type="hub",
-            hub_name="skillhub",
+            hub_name="skillsmp",
             hub_slug="code-review",
         )
         d = skill.to_dict()
         assert d["source_type"] == "hub"
-        assert d["hub_name"] == "skillhub"
+        assert d["hub_name"] == "skillsmp"
         assert d["hub_slug"] == "code-review"
 
 

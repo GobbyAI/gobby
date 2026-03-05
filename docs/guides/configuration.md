@@ -384,7 +384,7 @@ gobby-tasks:
 
 ### Workflow Engine
 
-Step-based workflow enforcement. See [workflows.md](workflows.md) for details.
+Step-based workflow enforcement. See [rules.md](rules.md) for details.
 
 ```yaml
 workflow:
@@ -769,5 +769,5 @@ All values are validated via Pydantic:
 
 - [search.md](search.md) - Search configuration details
 - [memory.md](memory.md) - Memory system details
-- [workflows.md](workflows.md) - Workflow configuration
+- [rules.md](rules.md) - Rule engine configuration
 - [webhooks-and-plugins.md](webhooks-and-plugins.md) - Extension development

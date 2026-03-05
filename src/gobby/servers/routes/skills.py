@@ -360,16 +360,19 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             return {"query": q, "results": [], "count": 0}
         try:
             hub_names = [hub_name] if hub_name else None
-            results = await server.hub_manager.search_all(
+            results, errors = await server.hub_manager.search_all(
                 query=q,
                 limit=limit,
                 hub_names=hub_names,
             )
-            return {
+            response: dict[str, Any] = {
                 "query": q,
                 "results": results,
                 "count": len(results),
             }
+            if errors:
+                response["hub_errors"] = errors
+            return response
         except Exception as e:
             logger.error(f"Failed to search hubs: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e

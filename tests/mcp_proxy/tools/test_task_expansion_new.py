@@ -374,6 +374,292 @@ class TestGetExpansionSpec:
         assert "not found" in result["error"].lower()
 
 
+class TestValidateExpansionSpec:
+    """Tests for validate_expansion_spec tool."""
+
+    @pytest.mark.asyncio
+    async def test_validate_valid_spec(
+        self,
+        expansion_registry: dict,
+        parent_task: str,
+    ) -> None:
+        """Test validating a structurally correct spec."""
+        save_fn = expansion_registry["save_expansion_spec"].func
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        spec = {
+            "subtasks": [
+                {
+                    "title": "First task",
+                    "description": "Do the first thing",
+                    "category": "code",
+                },
+                {
+                    "title": "Second task",
+                    "description": "Do the second thing",
+                    "category": "code",
+                    "depends_on": [0],
+                },
+            ]
+        }
+        await save_fn(task_id=parent_task, spec=spec)
+
+        result = await validate_fn(task_id=parent_task)
+
+        assert result["valid"] is True
+        assert result["errors"] == []
+        assert result["subtask_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_validate_no_spec(
+        self,
+        expansion_registry: dict,
+        parent_task: str,
+    ) -> None:
+        """Test validating when no spec is saved."""
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        result = await validate_fn(task_id=parent_task)
+
+        assert "error" in result
+        assert "no expansion spec" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_validate_empty_subtasks(
+        self,
+        expansion_registry: dict,
+        parent_task: str,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        """Test validating spec with empty subtasks list."""
+        # Directly set expansion_context to bypass save_expansion_spec validation
+        task_manager.update_task(
+            parent_task,
+            expansion_context=json.dumps({"subtasks": []}),
+            expansion_status="pending",
+        )
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        result = await validate_fn(task_id=parent_task)
+
+        assert result["valid"] is False
+        assert any("no subtasks" in e.lower() for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_validate_missing_required_fields(
+        self,
+        expansion_registry: dict,
+        parent_task: str,
+        task_manager: LocalTaskManager,
+    ) -> None:
+        """Test validating spec with missing title, description, category."""
+        task_manager.update_task(
+            parent_task,
+            expansion_context=json.dumps(
+                {
+                    "subtasks": [
+                        {"title": ""},  # empty title, no description, no category
+                    ]
+                }
+            ),
+            expansion_status="pending",
+        )
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        result = await validate_fn(task_id=parent_task)
+
+        assert result["valid"] is False
+        errors_text = " ".join(result["errors"])
+        assert "title" in errors_text.lower()
+        assert "description" in errors_text.lower()
+        assert "category" in errors_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_validate_self_reference(
+        self,
+        expansion_registry: dict,
+        parent_task: str,
+    ) -> None:
+        """Test validating spec with self-referencing dependency."""
+        save_fn = expansion_registry["save_expansion_spec"].func
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        spec = {
+            "subtasks": [
+                {
+                    "title": "Task A",
+                    "description": "Do A",
+                    "category": "code",
+                    "depends_on": [0],  # self-reference
+                },
+            ]
+        }
+        await save_fn(task_id=parent_task, spec=spec)
+
+        result = await validate_fn(task_id=parent_task)
+
+        assert result["valid"] is False
+        assert any("self-reference" in e for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_validate_out_of_bounds_dep(
+        self,
+        expansion_registry: dict,
+        parent_task: str,
+    ) -> None:
+        """Test validating spec with out-of-bounds dependency index."""
+        save_fn = expansion_registry["save_expansion_spec"].func
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        spec = {
+            "subtasks": [
+                {
+                    "title": "Task A",
+                    "description": "Do A",
+                    "category": "code",
+                    "depends_on": [5],  # out of bounds
+                },
+            ]
+        }
+        await save_fn(task_id=parent_task, spec=spec)
+
+        result = await validate_fn(task_id=parent_task)
+
+        assert result["valid"] is False
+        assert any("out of bounds" in e for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_validate_circular_dependency(
+        self,
+        expansion_registry: dict,
+        parent_task: str,
+    ) -> None:
+        """Test validating spec with circular dependencies."""
+        save_fn = expansion_registry["save_expansion_spec"].func
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        spec = {
+            "subtasks": [
+                {
+                    "title": "Task A",
+                    "description": "Do A",
+                    "category": "code",
+                    "depends_on": [1],
+                },
+                {
+                    "title": "Task B",
+                    "description": "Do B",
+                    "category": "code",
+                    "depends_on": [0],  # A->B->A cycle
+                },
+            ]
+        }
+        await save_fn(task_id=parent_task, spec=spec)
+
+        result = await validate_fn(task_id=parent_task)
+
+        assert result["valid"] is False
+        assert any("circular" in e.lower() for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_validate_plan_section_coverage_missing(
+        self,
+        expansion_registry: dict,
+        task_manager: LocalTaskManager,
+        test_project: str,
+    ) -> None:
+        """Test that validation catches missing plan section coverage."""
+        # Create task with plan sections in description
+        task = task_manager.create_task(
+            project_id=test_project,
+            title="Plan task",
+            task_type="epic",
+            description="## Plan\n\n### 1.1 Add models\nDetails...\n\n### 1.2 Add routes\nDetails...\n\n### 1.3 Add tests\nDetails...",
+        )
+
+        # Spec only covers 1.1 and 1.2, not 1.3
+        spec = {
+            "subtasks": [
+                {
+                    "title": "1.1 Add models",
+                    "description": "Section 1.1 content",
+                    "category": "code",
+                },
+                {
+                    "title": "1.2 Add routes",
+                    "description": "Section 1.2 content",
+                    "category": "code",
+                    "depends_on": [0],
+                },
+            ]
+        }
+        task_manager.update_task(
+            task.id,
+            expansion_context=json.dumps(spec),
+            expansion_status="pending",
+        )
+
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+        result = await validate_fn(task_id=task.id)
+
+        assert result["valid"] is False
+        assert any("1.3" in e for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_validate_plan_section_coverage_complete(
+        self,
+        expansion_registry: dict,
+        task_manager: LocalTaskManager,
+        test_project: str,
+    ) -> None:
+        """Test that validation passes when all plan sections are covered."""
+        task = task_manager.create_task(
+            project_id=test_project,
+            title="Plan task",
+            task_type="epic",
+            description="### 1.1 Models\nContent\n\n### 1.2 Routes\nContent",
+        )
+
+        spec = {
+            "subtasks": [
+                {
+                    "title": "1.1 Models",
+                    "description": "Section 1.1 implementation",
+                    "category": "code",
+                },
+                {
+                    "title": "1.2 Routes",
+                    "description": "Section 1.2 implementation",
+                    "category": "code",
+                },
+            ]
+        }
+        task_manager.update_task(
+            task.id,
+            expansion_context=json.dumps(spec),
+            expansion_status="pending",
+        )
+
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+        result = await validate_fn(task_id=task.id)
+
+        assert result["valid"] is True
+        assert result["errors"] == []
+
+    @pytest.mark.asyncio
+    async def test_validate_task_not_found(
+        self,
+        expansion_registry: dict,
+    ) -> None:
+        """Test validating spec for non-existent task."""
+        validate_fn = expansion_registry["validate_expansion_spec"].func
+
+        result = await validate_fn(task_id="nonexistent")
+
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+
 class TestExpansionWithSeqNum:
     """Tests for expansion with sequential task numbers."""
 

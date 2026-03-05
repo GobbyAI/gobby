@@ -479,6 +479,38 @@ async def spawn_agent_impl(
         except Exception as e:
             logger.warning(f"Failed to update child_session_id for {run_id}: {e}")
 
+        # 12b. Create WorkflowInstance for agent step workflow (post-spawn).
+        # Must happen AFTER execute_spawn creates the child session record,
+        # because workflow_instances.session_id has a FK to sessions(id).
+        # Uses spawn_result.child_session_id (the real session) instead of
+        # the pre-generated session_id which is not the actual child session
+        # for terminal mode.
+        step_wf_name = (initial_variables or {}).get("_step_workflow_name")
+        if step_wf_name and agent_body and agent_body.steps and db:
+            try:
+                from gobby.workflows.definitions import WorkflowInstance
+                from gobby.workflows.state_manager import WorkflowInstanceManager
+
+                step_instance = WorkflowInstance(
+                    id=str(uuid.uuid4()),
+                    session_id=spawn_result.child_session_id,
+                    workflow_name=step_wf_name,
+                    enabled=True,
+                    priority=10,
+                    current_step=agent_body.steps[0].name,
+                    variables=dict(agent_body.step_variables),
+                )
+                WorkflowInstanceManager(db).save_instance(step_instance)
+                logger.info(
+                    "Created step workflow instance %s for session %s (agent=%s, step=%s)",
+                    step_wf_name,
+                    spawn_result.child_session_id,
+                    agent_body.name,
+                    agent_body.steps[0].name,
+                )
+            except Exception as e:
+                logger.error(f"Failed to create step workflow instance: {e}", exc_info=True)
+
         # Post-spawn health check: verify tmux session is still alive.
         if spawn_result.terminal_type == "tmux" and spawn_result.tmux_session_name:
 

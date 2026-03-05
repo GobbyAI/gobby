@@ -123,7 +123,7 @@ class HTTPServer:
                 )
                 logger.debug("Merge resolution and inter-session messaging subsystems initialized")
 
-            # Setup internal registries (gobby-tasks, gobby-memory, gobby-pipelines, etc.)
+            # Setup internal registries (gobby-tasks, gobby-memory, gobby-workflows, etc.)
             self._internal_manager = setup_internal_registries(
                 _config=services.config,
                 _session_manager=None,  # Not needed for internal registries
@@ -152,6 +152,7 @@ class HTTPServer:
                 config_store=services.config_store,
                 config_setter=lambda c: setattr(services, "config", c),
                 memory_sync_manager=services.memory_sync_manager,
+                completion_registry=services.completion_registry,
             )
             registry_count = len(self._internal_manager)
             logger.debug(f"Internal registries initialized: {registry_count} registries")
@@ -476,6 +477,17 @@ class HTTPServer:
                     app.state.hook_manager._session_coordinator
                 )
                 logger.debug("Session coordinator connected to agent lifecycle monitor")
+
+            # Wire completion_registry to session_coordinator for agent completion events
+            if (
+                hasattr(app.state, "hook_manager")
+                and hasattr(app.state.hook_manager, "_session_coordinator")
+                and self.services.completion_registry
+            ):
+                app.state.hook_manager._session_coordinator.set_completion_registry(
+                    self.services.completion_registry
+                )
+                logger.debug("Completion registry connected to session coordinator")
 
             # Initialize canvas broadcaster
             from gobby.mcp_proxy.tools.canvas import set_broadcaster

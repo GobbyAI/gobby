@@ -9,10 +9,12 @@ Documentation guides for using Gobby's features.
 | [tasks.md](tasks.md) | Task management with dependencies, validation, and git sync |
 | [sessions.md](sessions.md) | Session lifecycle, handoffs, and context management |
 | [memory.md](memory.md) | Persistent knowledge across sessions |
-| [workflows.md](workflows.md) | Lifecycle, step-based, and pipeline workflow engine |
+| [workflows-overview.md](workflows-overview.md) | How rules, agents, and pipelines fit together |
+| [rules.md](rules.md) | Rule engine — events, effects, conditions, enforcement |
 | [pipelines.md](pipelines.md) | Pipeline workflows with data flow and approval gates |
 | [lobster-migration.md](lobster-migration.md) | Migrating from Lobster to Gobby pipelines |
 | [search.md](search.md) | Unified search with TF-IDF, embeddings, and hybrid modes |
+| [testing.md](testing.md) | Token-efficient test/lint/typecheck infrastructure for agents |
 
 ## Parallel Development
 
@@ -42,7 +44,7 @@ Documentation guides for using Gobby's features.
 | [skills.md](skills.md) | Skill discovery and management |
 | [hook-schemas.md](hook-schemas.md) | Hook event system |
 | [webhooks-and-plugins.md](webhooks-and-plugins.md) | Webhook and plugin development |
-| [workflow-actions.md](workflow-actions.md) | Workflow action reference |
+| [variables.md](variables.md) | Session variables, conditions, and safe expression evaluator |
 
 ## API & Architecture
 
@@ -78,7 +80,7 @@ Documentation guides for using Gobby's features.
 
 1. Read [agents.md](agents.md) - Spawn subagents
 2. Read [worktrees.md](worktrees.md) - Parallel development
-3. Read [workflows.md](workflows.md) - Enforce processes
+3. Read [rules.md](rules.md) - Enforce processes
 
 ### Building Integrations
 

@@ -1,6 +1,6 @@
 # Rule Authoring Guide
 
-Practical guidance for writing Gobby rules. For the full reference (events, effects, fields), see [workflows.md](./workflows.md).
+Practical guidance for writing Gobby rules. For the full reference (events, effects, fields), see [rules.md](./rules.md).
 
 ---
 

@@ -139,6 +139,21 @@ class ChatMessagingMixin:
             return ""
         return f"Session {from_session[:8]}: "
 
+    @staticmethod
+    def _classify_chat_error(exc: Exception) -> tuple[str, str]:
+        """Return (user_message, error_code) for a chat exception."""
+        msg = str(exc).lower()
+        if "rate_limit" in msg or "429" in msg:
+            return "Rate limited by Claude API. Please wait and try again.", "RATE_LIMITED"
+        if "auth" in msg or "401" in msg or "403" in msg or "api_key" in msg:
+            return "Authentication error with Claude API.", "AUTH_ERROR"
+        if isinstance(exc, TimeoutError) or "timeout" in msg:
+            return "Request timed out. Please try again.", "TIMEOUT"
+        if "connection" in msg:
+            return "Connection to Claude API failed. Please try again.", "CONNECTION_ERROR"
+        exc_type = type(exc).__name__
+        return f"An error occurred ({exc_type}). Check daemon logs for details.", "INTERNAL_ERROR"
+
     async def _handle_chat_message(self, websocket: Any, data: dict[str, Any]) -> None:
         """
         Handle chat_message using a persistent ClaudeSDKClient-backed ChatSession.
@@ -203,6 +218,9 @@ class ChatMessagingMixin:
             logger.warning("Chat message from unregistered client")
             return
 
+        # Track which conversation this client is in (for scoped broadcasts)
+        client_info["conversation_id"] = conversation_id
+
         # Extract inject_context for tool result injection into LLM conversation
         inject_context = data.get("inject_context")
 
@@ -255,12 +273,26 @@ class ChatMessagingMixin:
         accumulated_text = ""
         after_tool_call = False  # Track tool→text transitions to prevent sentence collisions
         has_sent_text = False  # Survives accumulated_text flushes for separator injection
+        ws_connected = True
 
         def _base_msg(**fields: Any) -> dict[str, Any]:
             """Build a response dict, always including request_id for stream correlation."""
             msg: dict[str, Any] = fields
             msg["request_id"] = request_id
             return msg
+
+        async def _safe_send(msg: dict[str, Any]) -> bool:
+            """Send a message to the WebSocket, returning False if disconnected."""
+            nonlocal ws_connected
+            if not ws_connected:
+                return False
+            try:
+                await websocket.send(json.dumps(msg))
+                return True
+            except (ConnectionClosed, ConnectionClosedError):
+                ws_connected = False
+                logger.debug("Client disconnected during chat stream for %s", conversation_id[:8])
+                return False
 
         def _session_ref() -> str | None:
             """Get the session ref (#N) for the current conversation."""
@@ -291,26 +323,32 @@ class ChatMessagingMixin:
                 )
                 await message_manager.store_messages(db_sid, [msg])
             except Exception as e:
-                logger.warning(f"Failed to persist {role} message for {conversation_id[:8]}: {e}")
+                logger.error(f"Failed to persist {role} message for {conversation_id[:8]}: {e}")
+                try:
+                    await _safe_send(
+                        {
+                            "type": "chat_warning",
+                            "conversation_id": conversation_id,
+                            "warning": "Message may not be saved to history",
+                            "code": "PERSIST_FAILED",
+                        }
+                    )
+                except Exception:
+                    pass
 
         async def _emit_pending_approval(tool_name: str, arguments: dict[str, Any]) -> None:
             """Emit pending_approval tool_status to the client."""
-            try:
-                await websocket.send(
-                    json.dumps(
-                        _base_msg(
-                            type="tool_status",
-                            message_id=assistant_message_id,
-                            conversation_id=conversation_id,
-                            tool_call_id=f"approval-{uuid4().hex[:8]}",
-                            status="pending_approval",
-                            tool_name=tool_name,
-                            arguments=arguments,
-                        )
-                    )
+            await _safe_send(
+                _base_msg(
+                    type="tool_status",
+                    message_id=assistant_message_id,
+                    conversation_id=conversation_id,
+                    tool_call_id=f"approval-{uuid4().hex[:8]}",
+                    status="pending_approval",
+                    tool_name=tool_name,
+                    arguments=arguments,
                 )
-            except (ConnectionClosed, ConnectionClosedError):
-                pass
+            )
 
         # Track pending tool calls so we can persist tool_name + arguments
         # when ToolResultEvent arrives (it only has tool_call_id)
@@ -366,7 +404,18 @@ class ChatMessagingMixin:
                 )
                 await message_manager.store_messages(db_sid, [tool_use_msg, tool_result_msg])
             except Exception as e:
-                logger.warning(f"Failed to persist tool call for {conversation_id[:8]}: {e}")
+                logger.error(f"Failed to persist tool call for {conversation_id[:8]}: {e}")
+                try:
+                    await _safe_send(
+                        {
+                            "type": "chat_warning",
+                            "conversation_id": conversation_id,
+                            "warning": "Tool call may not be saved to history",
+                            "code": "PERSIST_FAILED",
+                        }
+                    )
+                except Exception:
+                    pass
 
         gen: AsyncIterator[Any] | None = None
         try:
@@ -485,16 +534,15 @@ class ChatMessagingMixin:
             gen = session.send_message(sdk_content)
             async for event in gen:
                 if isinstance(event, ThinkingEvent):
-                    await websocket.send(
-                        json.dumps(
-                            _base_msg(
-                                type="chat_thinking",
-                                message_id=assistant_message_id,
-                                conversation_id=conversation_id,
-                                content=event.content,
-                            )
+                    if not await _safe_send(
+                        _base_msg(
+                            type="chat_thinking",
+                            message_id=assistant_message_id,
+                            conversation_id=conversation_id,
+                            content=event.content,
                         )
-                    )
+                    ):
+                        break
                 elif isinstance(event, TextChunk):
                     # Plan approval boundary — start a fresh message so
                     # post-approval text doesn't concatenate with pre-approval text.
@@ -519,17 +567,16 @@ class ChatMessagingMixin:
                     if content.strip():
                         has_sent_text = True
                     accumulated_text += content
-                    await websocket.send(
-                        json.dumps(
-                            _base_msg(
-                                type="chat_stream",
-                                message_id=assistant_message_id,
-                                conversation_id=conversation_id,
-                                content=content,
-                                done=False,
-                            )
+                    if not await _safe_send(
+                        _base_msg(
+                            type="chat_stream",
+                            message_id=assistant_message_id,
+                            conversation_id=conversation_id,
+                            content=content,
+                            done=False,
                         )
-                    )
+                    ):
+                        break
                 elif isinstance(event, ToolCallEvent):
                     # Flush accumulated text as a separate message before tool calls.
                     # This prevents text segments from merging across tool boundaries
@@ -542,24 +589,29 @@ class ChatMessagingMixin:
                         "tool_name": event.tool_name,
                         "arguments": event.arguments,
                     }
-                    await websocket.send(
-                        json.dumps(
-                            _base_msg(
-                                type="tool_status",
-                                message_id=assistant_message_id,
-                                conversation_id=conversation_id,
-                                tool_call_id=event.tool_call_id,
-                                status="calling",
-                                tool_name=event.tool_name,
-                                server_name=event.server_name,
-                                arguments=event.arguments,
-                            )
+                    if not await _safe_send(
+                        _base_msg(
+                            type="tool_status",
+                            message_id=assistant_message_id,
+                            conversation_id=conversation_id,
+                            tool_call_id=event.tool_call_id,
+                            status="calling",
+                            tool_name=event.tool_name,
+                            server_name=event.server_name,
+                            arguments=event.arguments,
                         )
-                    )
+                    ):
+                        break
                 elif isinstance(event, ToolResultEvent):
                     after_tool_call = True
                     # Persist tool_use + tool_result pair to DB
                     pending = pending_tool_calls.pop(event.tool_call_id, {})
+                    if not pending:
+                        logger.warning(
+                            "ToolResultEvent for %s arrived before ToolCallEvent "
+                            "(tool_name will be 'unknown')",
+                            event.tool_call_id,
+                        )
                     await _persist_tool_call(
                         tool_call_id=event.tool_call_id,
                         tool_name=pending.get("tool_name", "unknown"),
@@ -567,19 +619,18 @@ class ChatMessagingMixin:
                         tool_result=event.result if event.success else event.error,
                         is_error=not event.success,
                     )
-                    await websocket.send(
-                        json.dumps(
-                            _base_msg(
-                                type="tool_status",
-                                message_id=assistant_message_id,
-                                conversation_id=conversation_id,
-                                tool_call_id=event.tool_call_id,
-                                status="completed" if event.success else "error",
-                                result=event.result,
-                                error=event.error,
-                            )
+                    if not await _safe_send(
+                        _base_msg(
+                            type="tool_status",
+                            message_id=assistant_message_id,
+                            conversation_id=conversation_id,
+                            tool_call_id=event.tool_call_id,
+                            status="completed" if event.success else "error",
+                            result=event.result,
+                            error=event.error,
                         )
-                    )
+                    ):
+                        break
                 elif isinstance(event, DoneEvent):
                     # Persist remaining assistant text (after last tool call, if any)
                     if accumulated_text.strip():
@@ -654,7 +705,7 @@ class ChatMessagingMixin:
                         )
                         conversation_id = sdk_sid
 
-                    await websocket.send(json.dumps(done_msg))
+                    await _safe_send(done_msg)
 
                     # Persist usage to DB (best-effort)
                     db_sid = getattr(session, "db_session_id", None)
@@ -743,8 +794,9 @@ class ChatMessagingMixin:
             # Client disconnected mid-stream — not an error
             logger.debug(f"Client disconnected during chat stream for {conversation_id}")
 
-        except Exception:
+        except Exception as exc:
             logger.exception(f"Chat error for conversation {conversation_id}")
+            error_msg, error_code = self._classify_chat_error(exc)
             try:
                 await websocket.send(
                     json.dumps(
@@ -752,7 +804,8 @@ class ChatMessagingMixin:
                             type="chat_error",
                             message_id=assistant_message_id,
                             conversation_id=conversation_id,
-                            error="An internal error occurred",
+                            error=error_msg,
+                            code=error_code,
                         )
                     )
                 )

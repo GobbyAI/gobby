@@ -137,6 +137,45 @@ class TestCreateClone:
         assert result["success"] is True
         assert result["clone"]["task_id"] == "task-456"
 
+    @pytest.mark.asyncio
+    async def test_create_clone_use_local(self, registry, mock_clone_storage, mock_git_manager):
+        """Create clone with use_local clones from local repo path."""
+        mock_git_manager.full_clone.return_value = MagicMock(success=True)
+        mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
+        mock_clone_storage.create.return_value = Clone(
+            id="clone-local",
+            project_id="proj-1",
+            branch_name="feature",
+            clone_path="/tmp/clones/local",
+            base_branch="main",
+            task_id=None,
+            agent_session_id=None,
+            status="active",
+            remote_url="https://github.com/user/repo.git",
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at="now",
+            updated_at="now",
+        )
+
+        result = await registry.call(
+            "create_clone",
+            {
+                "branch_name": "feature",
+                "clone_path": "/tmp/clones/local",
+                "use_local": True,
+            },
+        )
+
+        assert result["success"] is True
+        assert result["clone"]["id"] == "clone-local"
+        # Should use full_clone (not shallow_clone) when use_local=True
+        mock_git_manager.full_clone.assert_called_once()
+        mock_git_manager.shallow_clone.assert_not_called()
+        # Source should be the local repo path
+        call_args = mock_git_manager.full_clone.call_args
+        assert call_args.kwargs["remote_url"] == str(mock_git_manager.repo_path)
+
 
 class TestGetClone:
     """Tests for get_clone tool."""

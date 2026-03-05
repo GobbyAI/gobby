@@ -199,12 +199,15 @@ def create_rule(
     if deleted_row is not None and deleted_row.deleted_at and deleted_row.workflow_type == "rule":
         def_manager.hard_delete(deleted_row.id)
 
+    tags = definition.get("tags")
+
     row = def_manager.create(
         name=name,
         definition_json=json.dumps(definition),
         workflow_type="rule",
         enabled=True,
         source="installed",
+        tags=tags,
     )
     logger.info("Created rule '%s' (id=%s)", name, row.id)
 

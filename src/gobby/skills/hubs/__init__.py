@@ -10,7 +10,7 @@ from gobby.skills.hubs.claude_plugins import ClaudePluginsProvider
 from gobby.skills.hubs.clawdhub import ClawdHubProvider
 from gobby.skills.hubs.github_collection import GitHubCollectionProvider
 from gobby.skills.hubs.manager import HubManager
-from gobby.skills.hubs.skillhub import SkillHubProvider
+from gobby.skills.hubs.skillsmp import SkillsMPProvider
 
 __all__ = [
     "ClaudePluginsProvider",
@@ -21,5 +21,5 @@ __all__ = [
     "HubProvider",
     "HubSkillDetails",
     "HubSkillInfo",
-    "SkillHubProvider",
+    "SkillsMPProvider",
 ]

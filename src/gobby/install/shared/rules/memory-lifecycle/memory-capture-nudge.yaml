@@ -17,3 +17,6 @@ rules:
         Do NOT generalize one-time instructions into conventions. Only save
         if the user explicitly asked you to remember, or the fact would
         require multi-step exploration to rediscover. It's fine to save nothing.
+
+        Do NOT create memories for bugs, errors, or issues you encounter.
+        Create tasks instead so they get fixed.

@@ -7,9 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
-
 from gobby.config.app import DaemonConfig
-
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -311,7 +309,7 @@ class TestHubs:
         assert response.status_code == 200
 
     def test_search_hubs(self, client: TestClient, hub_manager) -> None:
-        hub_manager.search_all = AsyncMock(return_value=[{"name": "h1"}])
+        hub_manager.search_all = AsyncMock(return_value=([{"name": "h1"}], {}))
         response = client.get("/api/skills/hubs/search?q=test&hub_name=hubbie")
         assert response.status_code == 200
         assert response.json()["count"] == 1

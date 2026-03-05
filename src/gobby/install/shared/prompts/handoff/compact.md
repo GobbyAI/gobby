@@ -15,9 +15,10 @@ optional_variables:
   - recent_digest_turns
 ---
 You are creating a session continuation summary after a compaction event.
-Compact summaries are for in-session continuity. Be MORE detailed than session-end summaries.
+Compact summaries are for in-session continuity. Be concise and action-oriented.
+Focus only on what's needed to resume work immediately.
 Preserve exact error messages verbatim, not paraphrases.
-Keep total response under 1500 words.
+Keep total response under 1000 words.
 
 ## Ground Truth: Structured Data
 

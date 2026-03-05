@@ -1,0 +1,12 @@
+tags: [worker-safety, enforcement, agents]
+
+rules:
+  no-agent-spawn-for-merge:
+    description: "Block agent spawning for merge agents"
+    event: before_tool
+    enabled: false
+    agent_scope: [merge]
+    effect:
+      type: block
+      mcp_tools: ["gobby-agents:spawn_agent"]
+      reason: "Spawning agents is not allowed in merge workflow."

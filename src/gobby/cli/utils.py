@@ -880,6 +880,8 @@ def stop_daemon(quiet: bool = False) -> bool:
                 if not quiet:
                     click.echo("Gobby daemon stopped successfully")
                 pid_file.unlink(missing_ok=True)
+                # Sweep for orphaned watchdog/daemon processes that could respawn
+                kill_all_gobby_daemons()
                 return True
 
         # Process didn't stop gracefully - try force kill
@@ -897,6 +899,8 @@ def stop_daemon(quiet: bool = False) -> bool:
             if not quiet:
                 click.echo("Gobby daemon force killed successfully")
             pid_file.unlink(missing_ok=True)
+            # Sweep for orphaned watchdog/daemon processes that could respawn
+            kill_all_gobby_daemons()
             return True
 
         if not quiet:

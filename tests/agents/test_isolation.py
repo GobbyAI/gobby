@@ -620,6 +620,109 @@ class TestCloneIsolationHandler:
         assert ctx.clone_id == "clone-123"
         assert ctx.branch_name == "my-branch"
         mock_clone_manager.create_clone.assert_called_once()
+        # Should default to shallow=True, use_local=False when no git_manager
+        call_kwargs = mock_clone_manager.create_clone.call_args.kwargs
+        assert call_kwargs.get("shallow") is True
+        assert call_kwargs.get("use_local") is False
+
+    @pytest.mark.asyncio
+    async def test_prepare_environment_uses_local_with_unpushed_commits(self) -> None:
+        """Test prepare_environment uses local clone when unpushed commits detected."""
+        mock_clone_manager = MagicMock()
+        mock_clone_manager.create_clone.return_value = MagicMock(
+            success=True,
+            clone_path="/tmp/clones/my-branch",
+        )
+
+        mock_clone_storage = MagicMock()
+        mock_clone_storage.get_by_branch.return_value = None
+        mock_clone_storage.create.return_value = MagicMock(
+            id="clone-456",
+            clone_path="/tmp/clones/my-branch",
+            branch_name="my-branch",
+        )
+
+        mock_git_manager = MagicMock()
+        mock_git_manager.get_current_branch.return_value = "main"
+        mock_git_manager.has_unpushed_commits.return_value = (True, 3)
+
+        handler = CloneIsolationHandler(
+            clone_manager=mock_clone_manager,
+            clone_storage=mock_clone_storage,
+            git_manager=mock_git_manager,
+        )
+
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="my-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        ctx = await handler.prepare_environment(config)
+
+        assert ctx.isolation_type == "clone"
+        assert ctx.clone_id == "clone-456"
+        # Should use full clone from local when unpushed commits exist
+        call_kwargs = mock_clone_manager.create_clone.call_args.kwargs
+        assert call_kwargs.get("use_local") is True
+        assert call_kwargs.get("shallow") is False
+
+    @pytest.mark.asyncio
+    async def test_prepare_environment_no_local_without_unpushed(self) -> None:
+        """Test prepare_environment uses remote clone when no unpushed commits."""
+        mock_clone_manager = MagicMock()
+        mock_clone_manager.create_clone.return_value = MagicMock(
+            success=True,
+            clone_path="/tmp/clones/my-branch",
+        )
+
+        mock_clone_storage = MagicMock()
+        mock_clone_storage.get_by_branch.return_value = None
+        mock_clone_storage.create.return_value = MagicMock(
+            id="clone-789",
+            clone_path="/tmp/clones/my-branch",
+            branch_name="my-branch",
+        )
+
+        mock_git_manager = MagicMock()
+        mock_git_manager.get_current_branch.return_value = "main"
+        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
+
+        handler = CloneIsolationHandler(
+            clone_manager=mock_clone_manager,
+            clone_storage=mock_clone_storage,
+            git_manager=mock_git_manager,
+        )
+
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="my-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        ctx = await handler.prepare_environment(config)
+
+        assert ctx.isolation_type == "clone"
+        # Should use shallow remote clone when no unpushed commits
+        call_kwargs = mock_clone_manager.create_clone.call_args.kwargs
+        assert call_kwargs.get("use_local") is False
+        assert call_kwargs.get("shallow") is True
 
     @pytest.mark.asyncio
     async def test_prepare_environment_reuses_existing_clone(self) -> None:

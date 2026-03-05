@@ -4,13 +4,14 @@ import type { HubInfo, HubSkillResult } from '../../hooks/useSkills'
 interface SkillHubBrowserProps {
   hubs: HubInfo[]
   hubResults: HubSkillResult[]
+  hubErrors: Record<string, string>
   onFetchHubs: () => void
   onSearch: (query: string, hubName?: string) => void
   onInstall: (hubName: string, slug: string) => void
   installing: string | null
 }
 
-export function SkillHubBrowser({ hubs, hubResults, onFetchHubs, onSearch, onInstall, installing }: SkillHubBrowserProps) {
+export function SkillHubBrowser({ hubs, hubResults, hubErrors, onFetchHubs, onSearch, onInstall, installing }: SkillHubBrowserProps) {
   const [selectedHub, setSelectedHub] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -61,6 +62,16 @@ export function SkillHubBrowser({ hubs, hubResults, onFetchHubs, onSearch, onIns
           <button className="skill-hub-search-btn" onClick={handleSearch}>Search</button>
         </div>
       </div>
+
+      {Object.keys(hubErrors).length > 0 && (
+        <div className="skill-hub-errors">
+          {Object.entries(hubErrors).map(([hub, error]) => (
+            <div key={hub} className="skill-hub-error">
+              <strong>{hub}:</strong> {error}
+            </div>
+          ))}
+        </div>
+      )}
 
       {hubs.length === 0 && (
         <div className="skill-hub-empty">

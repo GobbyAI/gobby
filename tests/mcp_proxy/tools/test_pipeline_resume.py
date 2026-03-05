@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.mcp_proxy.tools.pipelines._execution import (
+from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _background_tasks,
     resume_interrupted_pipelines,
 )
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _clear_background_tasks() -> Generator[None, None, None]:
+def _clear_background_tasks() -> Generator[None]:
     """Ensure _background_tasks is empty before and after each test."""
     _background_tasks.clear()
     yield

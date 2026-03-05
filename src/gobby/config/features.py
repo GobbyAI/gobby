@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 __all__ = [
     "ChatConfig",
     "ReviewConfig",
+    "TestSummarizerConfig",
     "ToolSummarizerConfig",
     "RecommendToolsConfig",
     "ImportMCPServerConfig",
@@ -383,6 +384,32 @@ class ProjectVerificationConfig(BaseModel):
                 result[field] = cmd
         result.update(self.custom)
         return result
+
+
+class TestSummarizerConfig(BaseModel):
+    """Test/lint/typecheck output summarization configuration."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable LLM-based test output summarization on failure",
+    )
+    provider: str = Field(
+        default="claude",
+        description="LLM provider to use for output summarization",
+    )
+    model: str = Field(
+        default="haiku",
+        description="Model to use for output summarization (fast/cheap recommended)",
+    )
+    max_output_lines: int = Field(
+        default=200,
+        description="Max lines of output sent to LLM for summarization",
+    )
+    timeout: int = Field(
+        default=30,
+        gt=0,
+        description="Timeout in seconds for the LLM summarization call",
+    )
 
 
 class ReviewConfig(BaseModel):

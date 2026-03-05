@@ -52,7 +52,6 @@ class TestAgentDefinitionBodyModel:
         body = AgentDefinitionBody(name="developer")
         assert body.name == "developer"
         assert body.description is None
-        assert body.extends is None
         assert body.role is None
         assert body.goal is None
         assert body.personality is None
@@ -107,11 +106,11 @@ class TestAgentDefinitionBodyModel:
         assert body.enabled is False
 
     def test_field_count(self) -> None:
-        """AgentDefinitionBody has exactly 18 fields."""
+        """AgentDefinitionBody has exactly 19 fields (extends and rule_definitions removed, steps/step_variables/exit_condition added)."""
         from gobby.workflows.definitions import AgentDefinitionBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 18, f"Expected 18 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 19, f"Expected 19 fields, got {len(fields)}: {list(fields.keys())}"
 
     def test_workflows_default_empty(self) -> None:
         """Workflows defaults to empty AgentWorkflows."""

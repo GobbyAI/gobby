@@ -1,0 +1,22 @@
+tags: [pipeline-enforcement, context, agents]
+
+rules:
+  pipeline-auto-run:
+    description: "Auto-run assigned pipeline on session start"
+    event: session_start
+    enabled: false
+    priority: 10
+    when: "variables.get('_assigned_pipeline')"
+    effects:
+      - type: inject_context
+        template: |
+          ## Pipeline Execution Mode
+          You are a pipeline execution agent. Your pipeline ({{ _assigned_pipeline }}) is starting automatically.
+          Monitor progress and handle any approval gates via MCP tools.
+      - type: mcp_call
+        server: gobby-workflows
+        tool: run_pipeline
+        arguments:
+          name: "{{ _assigned_pipeline }}"
+          session_id: "{{ event.session_id }}"
+        background: true

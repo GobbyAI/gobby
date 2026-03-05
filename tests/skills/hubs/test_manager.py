@@ -54,20 +54,20 @@ class TestHubManager:
         """Test HubManager with hub configs."""
         configs = {
             "clawdhub": HubConfig(type="clawdhub", base_url="https://clawdhub.com"),
-            "skillhub": HubConfig(type="skillhub", base_url="https://skillhub.dev"),
+            "skillsmp": HubConfig(type="skillsmp", base_url="https://skillsmp.dev"),
         }
         manager = HubManager(configs=configs)
         hubs = manager.list_hubs()
         assert len(hubs) == 2
         assert "clawdhub" in hubs
-        assert "skillhub" in hubs
+        assert "skillsmp" in hubs
 
     def test_init_with_api_keys(self) -> None:
         """Test HubManager with API keys."""
         configs = {
-            "skillhub": HubConfig(
-                type="skillhub",
-                base_url="https://skillhub.dev",
+            "skillsmp": HubConfig(
+                type="skillsmp",
+                base_url="https://skillsmp.dev",
                 auth_key_name="SKILLHUB_KEY",
             ),
         }
@@ -80,7 +80,7 @@ class TestHubManager:
         """Test list_hubs returns configured hub names."""
         configs = {
             "hub-a": HubConfig(type="clawdhub", base_url="https://a.com"),
-            "hub-b": HubConfig(type="skillhub", base_url="https://b.com"),
+            "hub-b": HubConfig(type="skillsmp", base_url="https://b.com"),
             "hub-c": HubConfig(type="github-collection", repo="user/repo"),
         }
         manager = HubManager(configs=configs)
@@ -123,14 +123,14 @@ class TestHubManager:
         """Test get_provider passes auth token from api_keys."""
         configs = {
             "authed-hub": HubConfig(
-                type="skillhub",
+                type="skillsmp",
                 base_url="https://hub.com",
                 auth_key_name="MY_SECRET",
             ),
         }
         api_keys = {"MY_SECRET": "token123"}
         manager = HubManager(configs=configs, api_keys=api_keys)
-        manager.register_provider_factory("skillhub", MockProvider)
+        manager.register_provider_factory("skillsmp", MockProvider)
 
         provider = manager.get_provider("authed-hub")
         assert provider.auth_token == "token123"
@@ -139,13 +139,13 @@ class TestHubManager:
         """Test get_provider with missing auth key uses None."""
         configs = {
             "hub": HubConfig(
-                type="skillhub",
+                type="skillsmp",
                 base_url="https://hub.com",
                 auth_key_name="MISSING_KEY",
             ),
         }
         manager = HubManager(configs=configs, api_keys={})
-        manager.register_provider_factory("skillhub", MockProvider)
+        manager.register_provider_factory("skillsmp", MockProvider)
 
         provider = manager.get_provider("hub")
         assert provider.auth_token is None
@@ -204,20 +204,20 @@ class TestCreateProvider:
         assert provider.provider_type == "clawdhub"
         assert isinstance(provider, ClawdHubMock)
 
-    def test_create_provider_returns_correct_type_for_skillhub(self) -> None:
-        """Test _create_provider returns correct provider for skillhub type."""
+    def test_create_provider_returns_correct_type_for_skillsmp(self) -> None:
+        """Test _create_provider returns correct provider for skillsmp type."""
 
         class SkillHubMock(MockProvider):
             @property
             def provider_type(self) -> str:
-                return "skillhub"
+                return "skillsmp"
 
-        configs = {"hub": HubConfig(type="skillhub", base_url="https://skillhub.dev")}
+        configs = {"hub": HubConfig(type="skillsmp", base_url="https://skillsmp.dev")}
         manager = HubManager(configs=configs)
-        manager.register_provider_factory("skillhub", SkillHubMock)
+        manager.register_provider_factory("skillsmp", SkillHubMock)
 
         provider = manager._create_provider("hub")
-        assert provider.provider_type == "skillhub"
+        assert provider.provider_type == "skillsmp"
         assert isinstance(provider, SkillHubMock)
 
     def test_create_provider_returns_correct_type_for_github_collection(self) -> None:
@@ -249,14 +249,14 @@ class TestCreateProvider:
         """Test _create_provider passes auth token from api_keys."""
         configs = {
             "hub": HubConfig(
-                type="skillhub",
+                type="skillsmp",
                 base_url="https://hub.com",
                 auth_key_name="API_KEY",
             )
         }
         api_keys = {"API_KEY": "secret-token"}
         manager = HubManager(configs=configs, api_keys=api_keys)
-        manager.register_provider_factory("skillhub", MockProvider)
+        manager.register_provider_factory("skillsmp", MockProvider)
 
         provider = manager._create_provider("hub")
         assert provider.auth_token == "secret-token"
@@ -300,9 +300,10 @@ class TestSearchAll:
         provider_a.search = AsyncMock(return_value=[mock_result_a])
         provider_b.search = AsyncMock(return_value=[mock_result_b])
 
-        results = await manager.search_all("test")
+        results, errors = await manager.search_all("test")
 
         assert len(results) == 2
+        assert errors == {}
         slugs = [r["slug"] for r in results]
         assert "skill-a" in slugs
         assert "skill-b" in slugs
@@ -327,7 +328,7 @@ class TestSearchAll:
         provider_b.search = AsyncMock(return_value=[])
 
         with patch("asyncio.gather", wraps=asyncio.gather) as mock_gather:
-            await manager.search_all("test")
+            results, errors = await manager.search_all("test")
             # asyncio.gather should be called
             mock_gather.assert_called_once()
 
@@ -353,11 +354,14 @@ class TestSearchAll:
         provider_bad.search = AsyncMock(side_effect=RuntimeError("Provider error"))
 
         # Should not raise, should return results from working providers
-        results = await manager.search_all("test")
+        results, errors = await manager.search_all("test")
 
         # Should have result from good hub only
         assert len(results) == 1
         assert results[0]["slug"] == "good-skill"
+        # Error from bad hub should be surfaced
+        assert "bad-hub" in errors
+        assert "Provider error" in errors["bad-hub"]
 
     @pytest.mark.asyncio
     async def test_search_all_with_specific_hubs(self) -> None:
@@ -383,9 +387,10 @@ class TestSearchAll:
             provider.search = AsyncMock(return_value=[result])
 
         # Only search hub-a and hub-c
-        results = await manager.search_all("test", hub_names=["hub-a", "hub-c"])
+        results, errors = await manager.search_all("test", hub_names=["hub-a", "hub-c"])
 
         assert len(results) == 2
+        assert errors == {}
         slugs = [r["slug"] for r in results]
         assert "skill-a" in slugs
         assert "skill-c" in slugs
@@ -410,7 +415,9 @@ class TestSearchAll:
         )
 
         # Include unknown hub - should not raise
-        results = await manager.search_all("test", hub_names=["hub-a", "unknown-hub"])
+        results, errors = await manager.search_all("test", hub_names=["hub-a", "unknown-hub"])
 
         assert len(results) == 1
         assert results[0]["slug"] == "skill-a"
+        # Unknown hub should be reported in errors
+        assert "unknown-hub" in errors

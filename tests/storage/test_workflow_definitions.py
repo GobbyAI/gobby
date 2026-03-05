@@ -47,7 +47,7 @@ SAMPLE_PIPELINE_DEFINITION = json.dumps(
 SAMPLE_YAML = """\
 name: yaml-workflow
 description: Imported from YAML
-type: step
+type: pipeline
 version: "2.0"
 enabled: true
 priority: 50
@@ -450,7 +450,7 @@ def test_import_from_yaml(manager: LocalWorkflowDefinitionManager) -> None:
 
     assert row.name == "yaml-workflow"
     assert row.description.strip() == "Imported from YAML"
-    assert row.workflow_type == "workflow"
+    assert row.workflow_type == "pipeline"
     assert row.version == "2.0"
     assert row.enabled is True
     assert row.priority == 50

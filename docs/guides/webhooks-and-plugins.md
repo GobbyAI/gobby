@@ -531,7 +531,7 @@ gobby status --plugins
 
 ## See Also
 
-- [Workflow Guide](workflows.md) - Complete workflow documentation
-- [Workflow Actions Reference](../architecture/workflow-actions.md) - All action types
+- [Rules Guide](rules.md) - Rule engine documentation (events, effects, conditions)
+- [Workflows Overview](workflows-overview.md) - How rules, agents, and pipelines fit together
 - [Example Plugin](../../examples/plugins/example_notify.py) - Full plugin implementation
 - [Code Guardian Plugin](../../examples/plugins/code_guardian.py) - Advanced plugin example

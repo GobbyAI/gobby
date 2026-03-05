@@ -189,7 +189,21 @@ def start(
             click.echo("Neo4j installed, auto-starting containers...")
             _neo4j_start(gobby_dir)
 
-    # Check if already running
+    # Kill any existing watchdog before spawning a new one
+    stop_watchdog(quiet=True)
+
+    # Kill any existing gobby daemon processes (including orphaned watchdogs)
+    # Do this BEFORE the PID file check so orphaned processes that respawned
+    # the daemon during restart don't cause a false "already running" error
+    click.echo("Checking for existing gobby processes...")
+    killed_count = kill_all_gobby_daemons()
+    if killed_count > 0:
+        click.echo(f"Stopped {killed_count} existing process(es)")
+        time.sleep(2.0)  # Wait for ports to be released
+    else:
+        click.echo("No existing processes found")
+
+    # Check if already running (after sweep, so only truly independent instances remain)
     if pid_file.exists():
         try:
             with open(pid_file) as f:
@@ -206,18 +220,6 @@ def start(
                 pid_file.unlink()
         except Exception:
             pid_file.unlink()
-
-    # Kill any existing watchdog before spawning a new one
-    stop_watchdog(quiet=True)
-
-    # Kill any existing gobby daemon processes
-    click.echo("Checking for existing gobby processes...")
-    killed_count = kill_all_gobby_daemons()
-    if killed_count > 0:
-        click.echo(f"Stopped {killed_count} existing process(es)")
-        time.sleep(2.0)  # Wait for ports to be released
-    else:
-        click.echo("No existing processes found")
 
     # Check ports
     http_port = config.daemon_port

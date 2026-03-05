@@ -150,7 +150,7 @@ class HubProvider(ABC):
     @property
     @abstractmethod
     def provider_type(self) -> str:
-        """The type identifier for this provider (e.g., 'clawdhub', 'skillhub')."""
+        """The type identifier for this provider (e.g., 'clawdhub', 'skillsmp')."""
         ...
 
     @abstractmethod

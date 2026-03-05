@@ -36,7 +36,7 @@ class HubManager:
         ```python
         configs = {
             "clawdhub": HubConfig(type="clawdhub", base_url="https://clawdhub.com"),
-            "skillhub": HubConfig(type="skillhub", auth_key_name="SKILLHUB_KEY"),
+            "skillsmp": HubConfig(type="skillsmp", auth_key_name="SKILLSMP_API_KEY"),
         }
         api_keys = {"SKILLHUB_KEY": "secret123"}
 
@@ -80,7 +80,7 @@ class HubManager:
         """Register a provider factory for a hub type.
 
         Args:
-            hub_type: The hub type identifier (e.g., 'clawdhub', 'skillhub')
+            hub_type: The hub type identifier (e.g., 'clawdhub', 'skillsmp')
             factory: The provider class to instantiate for this type
         """
         self._factories[hub_type] = factory
@@ -214,7 +214,7 @@ class HubManager:
         query: str,
         limit: int = 20,
         hub_names: list[str] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
         """Search across multiple hubs in parallel.
 
         Uses asyncio.gather for concurrent searches across all providers,
@@ -226,20 +226,24 @@ class HubManager:
             hub_names: Specific hubs to search (None for all)
 
         Returns:
-            Combined list of results from all hubs
+            Tuple of (combined results list, per-hub error dict)
         """
         hubs_to_search = hub_names or self.list_hubs()
+        errors: dict[str, str] = {}
 
         # Filter to valid hubs only
         valid_hubs = []
         for hub_name in hubs_to_search:
             if not self.has_hub(hub_name):
                 logger.warning(f"Skipping unknown hub: {hub_name}")
+                errors[hub_name] = f"Unknown hub: {hub_name}"
             else:
                 valid_hubs.append(hub_name)
 
         if not valid_hubs:
-            return []
+            return [], errors
+
+        hub_errors: dict[str, str] = {}
 
         async def search_hub(hub_name: str) -> list[dict[str, Any]]:
             """Search a single hub and return results as dicts."""
@@ -249,6 +253,7 @@ class HubManager:
                 return [r.to_dict() for r in hub_results]
             except Exception as e:
                 logger.error(f"Error searching hub {hub_name}: {e}")
+                hub_errors[hub_name] = str(e)
                 return []
 
         # Execute all searches in parallel
@@ -262,4 +267,5 @@ class HubManager:
         for hub_results in all_results:
             results.extend(hub_results)
 
-        return results
+        errors.update(hub_errors)
+        return results, errors

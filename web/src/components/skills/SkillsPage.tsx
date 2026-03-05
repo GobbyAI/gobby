@@ -42,6 +42,7 @@ export function SkillsPage() {
     refreshSkills,
     hubs,
     hubResults,
+    hubErrors,
     fetchHubs,
     searchHub,
     installFromHub,
@@ -385,6 +386,7 @@ export function SkillsPage() {
           <SkillHubBrowser
             hubs={hubs}
             hubResults={hubResults}
+            hubErrors={hubErrors}
             onFetchHubs={fetchHubs}
             onSearch={searchHub}
             onInstall={handleHubInstall}

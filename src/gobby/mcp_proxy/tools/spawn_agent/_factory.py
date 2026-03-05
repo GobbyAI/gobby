@@ -6,6 +6,7 @@ and delegates to spawn_agent_impl for execution.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -28,7 +29,7 @@ def _load_agent_body(
     db: DatabaseProtocol | None,
     project_id: str | None = None,
 ) -> AgentDefinitionBody | None:
-    """Load an agent definition from workflow_definitions, applying extends chain.
+    """Load an agent definition from workflow_definitions via direct lookup.
 
     Args:
         name: Agent name to look up.
@@ -36,18 +37,57 @@ def _load_agent_body(
         project_id: Optional project id for scoped agents.
 
     Returns:
-        AgentDefinitionBody if found and resolved cleanly, None otherwise.
+        AgentDefinitionBody if found, None otherwise.
     """
     if db is None:
         return None
 
-    from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
+    from gobby.workflows.agent_resolver import resolve_agent
 
-    try:
-        return resolve_agent(name, db, project_id=project_id)
-    except AgentResolutionError as e:
-        logger.error(f"Agent resolution failed: {e}")
-        return None
+    return resolve_agent(name, db, project_id=project_id)
+
+
+def _register_agent_step_workflow(
+    agent_body: AgentDefinitionBody,
+    db: DatabaseProtocol,
+) -> str:
+    """Register a synthetic WorkflowDefinition from agent's inline steps.
+
+    Creates or updates a workflow definition in the DB that the step enforcement
+    engine can look up via WorkflowInstance.workflow_name.
+
+    Returns the workflow name.
+    """
+    from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+    step_workflow_name = f"{agent_body.name}-steps"
+    def_manager = LocalWorkflowDefinitionManager(db)
+
+    wf_data = {
+        "name": step_workflow_name,
+        "description": f"Auto-generated step workflow for {agent_body.name} agent",
+        "type": "step",
+        "version": "2.0",
+        "enabled": False,
+        "steps": [step.model_dump() for step in (agent_body.steps or [])],
+        "variables": agent_body.step_variables,
+        "exit_condition": agent_body.exit_condition,
+    }
+    definition_json = json.dumps(wf_data)
+
+    existing = def_manager.get_by_name(step_workflow_name)
+    if existing:
+        def_manager.update(existing.id, definition_json=definition_json)
+    else:
+        def_manager.create(
+            name=step_workflow_name,
+            definition_json=definition_json,
+            workflow_type="workflow",
+            enabled=False,
+            source="agent",
+        )
+
+    return step_workflow_name
 
 
 def create_spawn_agent_registry(
@@ -59,6 +99,7 @@ def create_spawn_agent_registry(
     clone_manager: Any | None = None,
     session_manager: Any | None = None,
     db: DatabaseProtocol | None = None,
+    completion_registry: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create a spawn_agent tool registry with the unified spawn_agent tool.
@@ -194,6 +235,11 @@ def create_spawn_agent_registry(
             if agent_body.workflows.variables:
                 initial_variables.update(agent_body.workflows.variables)
 
+        # Auto-register inline step workflow if agent has steps
+        if agent_body and agent_body.steps and db:
+            step_wf_name = _register_agent_step_workflow(agent_body, db)
+            initial_variables["_step_workflow_name"] = step_wf_name
+
         # Inject _assigned_pipeline if the workflow is a PipelineDefinition
         if effective_workflow:
             from gobby.workflows.loader import WorkflowLoader
@@ -209,7 +255,7 @@ def create_spawn_agent_registry(
                 logger.warning("Workflow %r not found for agent spawn", effective_workflow)
 
         # Delegate to spawn_agent_impl
-        return await spawn_agent_impl(
+        result = await spawn_agent_impl(
             prompt=effective_prompt,
             runner=runner,
             agent_body=agent_body,
@@ -243,4 +289,132 @@ def create_spawn_agent_registry(
             db=db,
         )
 
+        # Auto-subscribe parent session + lineage to agent completion events
+        run_id = result.get("run_id")
+        if result.get("success") and run_id and completion_registry and resolved_parent_session_id:
+            _auto_subscribe_agent(
+                completion_registry,
+                run_id,
+                resolved_parent_session_id,
+                session_manager,
+                db,
+            )
+
+        return result
+
+    @registry.tool(
+        name="dispatch_batch",
+        description=(
+            "Dispatch multiple agents in parallel for non-conflicting tasks. "
+            "Takes task briefs from suggest_next_tasks and spawns an agent for each. "
+            "Uses asyncio.gather for concurrent spawning."
+        ),
+    )
+    async def dispatch_batch(
+        suggestions: list[dict[str, Any]],
+        agent: str = "developer",
+        worktree_id: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        parent_session_id: str | None = None,
+        mode: str = "terminal",
+    ) -> dict[str, Any]:
+        """Dispatch multiple agents for non-conflicting tasks.
+
+        Args:
+            suggestions: Task briefs from suggest_next_tasks output
+            agent: Agent definition name (default: "developer")
+            worktree_id: Shared worktree ID for all agents
+            provider: AI provider override
+            model: Model override
+            parent_session_id: Parent session reference
+            mode: Execution mode (default: "terminal")
+
+        Returns:
+            Dict with dispatched count and per-task results
+        """
+        import asyncio
+
+        if not suggestions:
+            return {"dispatched": 0, "results": []}
+
+        async def _spawn_one(suggestion: dict[str, Any]) -> dict[str, Any]:
+            task_ref = suggestion.get("ref", suggestion.get("id", "unknown"))
+            task_title = suggestion.get("title", "")
+            task_id = suggestion.get("id")
+            try:
+                result = await spawn_agent(
+                    prompt=f"Implement task {task_ref}: {task_title}",
+                    agent=agent,
+                    task_id=task_id,
+                    worktree_id=worktree_id,
+                    provider=provider,
+                    model=model,
+                    parent_session_id=parent_session_id,
+                    mode=mode,
+                )
+                return {
+                    "task_ref": task_ref,
+                    "run_id": result.get("run_id", ""),
+                    "success": result.get("success", False),
+                }
+            except Exception as e:
+                logger.error(f"Failed to spawn agent for {task_ref}: {e}")
+                return {
+                    "task_ref": task_ref,
+                    "run_id": "",
+                    "success": False,
+                    "error": str(e),
+                }
+
+        results = await asyncio.gather(*[_spawn_one(s) for s in suggestions])
+        dispatched = sum(1 for r in results if r["success"])
+
+        return {
+            "dispatched": dispatched,
+            "results": list(results),
+        }
+
     return registry
+
+
+def _auto_subscribe_agent(
+    completion_registry: Any,
+    run_id: str,
+    parent_session_id: str,
+    session_manager: Any | None,
+    db: Any | None,
+) -> None:
+    """Register a completion event for an agent run and subscribe parent lineage."""
+    lineage_ids: list[str] = [parent_session_id]
+    if session_manager:
+        try:
+            from gobby.agents.session import ChildSessionManager
+
+            child_mgr = ChildSessionManager(session_manager)
+            lineage = child_mgr.get_session_lineage(parent_session_id)
+            lineage_ids = [s.id for s in lineage]
+            if parent_session_id not in lineage_ids:
+                lineage_ids.append(parent_session_id)
+        except Exception:
+            logger.debug(
+                "Could not resolve session lineage for %s", parent_session_id, exc_info=True
+            )
+
+    try:
+        completion_registry.register(run_id, subscribers=lineage_ids)
+    except Exception:
+        logger.debug("Failed to register completion event for run %s", run_id, exc_info=True)
+        return
+
+    # Persist subscribers for restart recovery
+    if db is not None:
+        try:
+            from gobby.storage.pipelines import LocalPipelineExecutionManager
+
+            em = LocalPipelineExecutionManager(db=db, project_id="")
+            em.add_completion_subscribers(run_id, lineage_ids)
+        except Exception:
+            logger.debug(
+                "Failed to persist completion subscribers for run %s", run_id, exc_info=True
+            )

@@ -57,9 +57,9 @@ class TestCreatePipelinesRegistry:
     ) -> None:
         """Test that create_pipelines_registry returns an InternalToolRegistry."""
         from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -71,9 +71,9 @@ class TestCreatePipelinesRegistry:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that list_pipelines tool is registered."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -86,15 +86,15 @@ class TestCreatePipelinesRegistry:
 
     def test_registry_name(self, mock_loader, mock_executor, mock_execution_manager) -> None:
         """Test that registry has correct name."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
         )
 
-        assert registry.name == "gobby-pipelines"
+        assert registry.name == "gobby-workflows"
 
 
 class TestListPipelinesTool:
@@ -105,11 +105,11 @@ class TestListPipelinesTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that list_pipelines calls loader.discover_pipeline_workflows()."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_loader.discover_pipeline_workflows.return_value = []
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -130,7 +130,7 @@ class TestListPipelinesTool:
         """Test that list_pipelines returns pipeline names and descriptions."""
         from pathlib import Path
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         # Create mock discovered pipelines
         pipeline1 = PipelineDefinition(
@@ -161,7 +161,7 @@ class TestListPipelinesTool:
             ),
         ]
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -189,7 +189,7 @@ class TestListPipelinesTool:
         """Test that list_pipelines indicates if pipeline is project-specific."""
         from pathlib import Path
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         pipeline = PipelineDefinition(
             name="local",
@@ -206,7 +206,7 @@ class TestListPipelinesTool:
             ),
         ]
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -221,11 +221,11 @@ class TestListPipelinesTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that list_pipelines passes project_path to discover."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_loader.discover_pipeline_workflows.return_value = []
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -243,11 +243,11 @@ class TestListPipelinesTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that list_pipelines handles no pipelines found."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_loader.discover_pipeline_workflows.return_value = []
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -266,9 +266,9 @@ class TestRunPipelineTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that run_pipeline tool is registered."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -286,7 +286,7 @@ class TestRunPipelineTool:
         """Test that run_pipeline loads the pipeline via loader."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         pipeline = PipelineDefinition(
@@ -307,7 +307,7 @@ class TestRunPipelineTool:
         )
         mock_executor.execute = AsyncMock(return_value=execution)
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -327,7 +327,7 @@ class TestRunPipelineTool:
         """Test that run_pipeline creates execution and launches background task."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         pipeline = PipelineDefinition(
             name="deploy",
@@ -336,7 +336,7 @@ class TestRunPipelineTool:
         mock_loader.load_pipeline.return_value = pipeline
         mock_executor.execute = AsyncMock(return_value=MagicMock())
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -360,7 +360,7 @@ class TestRunPipelineTool:
         """Test that run_pipeline returns running status immediately (fire-and-forget)."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         pipeline = PipelineDefinition(
             name="deploy",
@@ -369,7 +369,7 @@ class TestRunPipelineTool:
         mock_loader.load_pipeline.return_value = pipeline
         mock_executor.execute = AsyncMock(return_value=MagicMock())
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -383,7 +383,7 @@ class TestRunPipelineTool:
         assert result["success"] is True
         assert result["status"] == "running"
         assert result["execution_id"] == "pe-abc123"
-        assert "get_pipeline_status" in result["message"]
+        assert "notified" in result["message"].lower() or "started" in result["message"].lower()
 
     @pytest.mark.asyncio
     async def test_run_pipeline_returns_running_even_if_approval_needed(
@@ -396,7 +396,7 @@ class TestRunPipelineTool:
         """
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ApprovalRequired
 
         pipeline = PipelineDefinition(
@@ -415,7 +415,7 @@ class TestRunPipelineTool:
             )
         )
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -435,11 +435,11 @@ class TestRunPipelineTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that run_pipeline returns error when pipeline not found."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_loader.load_pipeline.return_value = None
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -463,7 +463,7 @@ class TestRunPipelineTool:
         """
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         pipeline = PipelineDefinition(
             name="deploy",
@@ -473,7 +473,7 @@ class TestRunPipelineTool:
 
         mock_executor.execute = AsyncMock(side_effect=RuntimeError("Execution failed"))
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -494,9 +494,9 @@ class TestRunPipelineTool:
         self, mock_loader, mock_execution_manager
     ) -> None:
         """Test that run_pipeline returns error when no executor configured."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: None,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -518,9 +518,9 @@ class TestApprovePipelineTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that approve_pipeline tool is registered."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -538,7 +538,7 @@ class TestApprovePipelineTool:
         """Test that approve_pipeline calls executor.approve()."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         execution = PipelineExecution(
@@ -551,7 +551,7 @@ class TestApprovePipelineTool:
         )
         mock_executor.approve = AsyncMock(return_value=execution)
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -574,7 +574,7 @@ class TestApprovePipelineTool:
         """Test that approve_pipeline returns execution status after approval."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         execution = PipelineExecution(
@@ -588,7 +588,7 @@ class TestApprovePipelineTool:
         )
         mock_executor.approve = AsyncMock(return_value=execution)
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -610,11 +610,11 @@ class TestApprovePipelineTool:
         """Test that approve_pipeline returns error for invalid token."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_executor.approve = AsyncMock(side_effect=ValueError("Invalid or expired token"))
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -631,9 +631,9 @@ class TestApprovePipelineTool:
     @pytest.mark.asyncio
     async def test_approve_pipeline_no_executor(self, mock_loader, mock_execution_manager) -> None:
         """Test that approve_pipeline returns error when no executor configured."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: None,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -655,9 +655,9 @@ class TestRejectPipelineTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that reject_pipeline tool is registered."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -675,7 +675,7 @@ class TestRejectPipelineTool:
         """Test that reject_pipeline calls executor.reject()."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         execution = PipelineExecution(
@@ -688,7 +688,7 @@ class TestRejectPipelineTool:
         )
         mock_executor.reject = AsyncMock(return_value=execution)
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -711,7 +711,7 @@ class TestRejectPipelineTool:
         """Test that reject_pipeline returns cancelled status."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         execution = PipelineExecution(
@@ -724,7 +724,7 @@ class TestRejectPipelineTool:
         )
         mock_executor.reject = AsyncMock(return_value=execution)
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -746,11 +746,11 @@ class TestRejectPipelineTool:
         """Test that reject_pipeline returns error for invalid token."""
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_executor.reject = AsyncMock(side_effect=ValueError("Invalid or expired token"))
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -767,9 +767,9 @@ class TestRejectPipelineTool:
     @pytest.mark.asyncio
     async def test_reject_pipeline_no_executor(self, mock_loader, mock_execution_manager) -> None:
         """Test that reject_pipeline returns error when no executor configured."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: None,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -791,9 +791,9 @@ class TestGetPipelineStatusTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that get_pipeline_status tool is registered."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -809,7 +809,7 @@ class TestGetPipelineStatusTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that get_pipeline_status returns execution with all fields."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         execution = PipelineExecution(
@@ -824,7 +824,7 @@ class TestGetPipelineStatusTool:
         mock_execution_manager.get_execution.return_value = execution
         mock_execution_manager.get_steps_for_execution.return_value = []
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -846,7 +846,7 @@ class TestGetPipelineStatusTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that get_pipeline_status includes step_executions list."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import (
             ExecutionStatus,
             PipelineExecution,
@@ -880,7 +880,7 @@ class TestGetPipelineStatusTool:
         mock_execution_manager.get_execution.return_value = execution
         mock_execution_manager.get_steps_for_execution.return_value = [step1, step2]
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -904,11 +904,11 @@ class TestGetPipelineStatusTool:
         self, mock_loader, mock_executor, mock_execution_manager
     ) -> None:
         """Test that get_pipeline_status returns error when not found."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         mock_execution_manager.get_execution.return_value = None
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -927,9 +927,9 @@ class TestGetPipelineStatusTool:
         self, mock_loader, mock_executor
     ) -> None:
         """Test that get_pipeline_status returns error when no manager configured."""
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: None,
@@ -954,7 +954,7 @@ class TestDynamicPipelineTools:
         """Test that pipelines with expose_as_tool=True are exposed as tools."""
         from pathlib import Path
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         # Create a pipeline with expose_as_tool=True
         pipeline = PipelineDefinition(
@@ -976,7 +976,7 @@ class TestDynamicPipelineTools:
         mock_loader.discover_pipeline_workflows.return_value = discovered
         mock_loader.discover_pipeline_workflows_sync.return_value = discovered
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -994,7 +994,7 @@ class TestDynamicPipelineTools:
         """Test that pipelines with expose_as_tool=False are NOT exposed as tools."""
         from pathlib import Path
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         # Create a pipeline without expose_as_tool (defaults to False)
         pipeline = PipelineDefinition(
@@ -1015,7 +1015,7 @@ class TestDynamicPipelineTools:
         mock_loader.discover_pipeline_workflows.return_value = discovered
         mock_loader.discover_pipeline_workflows_sync.return_value = discovered
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -1033,7 +1033,7 @@ class TestDynamicPipelineTools:
         """Test that dynamic pipeline tools have the pipeline's description."""
         from pathlib import Path
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         pipeline = PipelineDefinition(
             name="deploy",
@@ -1054,7 +1054,7 @@ class TestDynamicPipelineTools:
         mock_loader.discover_pipeline_workflows.return_value = discovered
         mock_loader.discover_pipeline_workflows_sync.return_value = discovered
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -1072,7 +1072,7 @@ class TestDynamicPipelineTools:
         """Test that dynamic pipeline tools include input schema from pipeline inputs."""
         from pathlib import Path
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         pipeline = PipelineDefinition(
             name="deploy",
@@ -1097,7 +1097,7 @@ class TestDynamicPipelineTools:
         mock_loader.discover_pipeline_workflows.return_value = discovered
         mock_loader.discover_pipeline_workflows_sync.return_value = discovered
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -1120,7 +1120,7 @@ class TestDynamicPipelineTools:
         from pathlib import Path
         from unittest.mock import AsyncMock
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
         from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
         pipeline = PipelineDefinition(
@@ -1155,7 +1155,7 @@ class TestDynamicPipelineTools:
         )
         mock_executor.execute = AsyncMock(return_value=execution)
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -1177,7 +1177,7 @@ class TestDynamicPipelineTools:
         """Test that multiple pipelines with expose_as_tool=True all get tools."""
         from pathlib import Path
 
-        from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         pipeline1 = PipelineDefinition(
             name="build",
@@ -1224,7 +1224,7 @@ class TestDynamicPipelineTools:
         mock_loader.discover_pipeline_workflows.return_value = discovered
         mock_loader.discover_pipeline_workflows_sync.return_value = discovered
 
-        registry = create_pipelines_registry(
+        registry = create_workflows_registry(
             loader=mock_loader,
             executor_getter=lambda: mock_executor,
             execution_manager_getter=lambda: mock_execution_manager,
@@ -1236,3 +1236,88 @@ class TestDynamicPipelineTools:
         assert "pipeline:build" in tool_names
         assert "pipeline:test" in tool_names
         assert "pipeline:internal" not in tool_names
+
+
+class TestWaitForCompletionTool:
+    """Tests for the wait_for_completion MCP tool."""
+
+    @pytest.fixture
+    def completion_registry(self) -> MagicMock:
+        """Create a mock completion registry."""
+        registry = MagicMock()
+        registry.wait = AsyncMock()
+        return registry
+
+    @pytest.fixture
+    def registry(self, mock_loader, mock_executor, mock_execution_manager, completion_registry):
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+        return create_workflows_registry(
+            loader=mock_loader,
+            executor_getter=lambda: mock_executor,
+            execution_manager_getter=lambda: mock_execution_manager,
+            completion_registry=completion_registry,
+        )
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_result_on_success(self, registry, completion_registry) -> None:
+        completion_registry.wait.return_value = {"status": "success", "run_id": "run-1"}
+
+        result = await registry.call(
+            "wait_for_completion", {"completion_id": "run-1", "timeout": 60}
+        )
+
+        assert result["success"] is True
+        assert result["status"] == "success"
+        assert result["completion_id"] == "run-1"
+        completion_registry.wait.assert_awaited_once_with("run-1", timeout=60)
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_error_when_not_registered(
+        self, registry, completion_registry
+    ) -> None:
+        completion_registry.wait.side_effect = KeyError("not registered")
+
+        result = await registry.call("wait_for_completion", {"completion_id": "bogus"})
+
+        assert result["success"] is False
+        assert "not registered" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_error_on_timeout(self, registry, completion_registry) -> None:
+        completion_registry.wait.side_effect = TimeoutError()
+
+        result = await registry.call(
+            "wait_for_completion", {"completion_id": "run-1", "timeout": 5}
+        )
+
+        assert result["success"] is False
+        assert "Timed out" in result["error"]
+        assert result["timeout"] == 5
+
+    @pytest.mark.asyncio
+    async def test_wait_no_registry_returns_error(
+        self, mock_loader, mock_executor, mock_execution_manager
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+        registry = create_workflows_registry(
+            loader=mock_loader,
+            executor_getter=lambda: mock_executor,
+            execution_manager_getter=lambda: mock_execution_manager,
+            completion_registry=None,
+        )
+
+        result = await registry.call("wait_for_completion", {"completion_id": "run-1"})
+
+        assert result["success"] is False
+        assert "not available" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_wait_with_no_timeout(self, registry, completion_registry) -> None:
+        completion_registry.wait.return_value = {"status": "success"}
+
+        result = await registry.call("wait_for_completion", {"completion_id": "run-1"})
+
+        assert result["success"] is True
+        completion_registry.wait.assert_awaited_once_with("run-1", timeout=None)

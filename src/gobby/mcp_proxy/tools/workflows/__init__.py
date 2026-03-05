@@ -1,22 +1,26 @@
 """
 Internal MCP tools for Gobby Workflow System.
 
-Exposes functionality for:
-- get_workflow: Get details about a specific workflow definition
-- list_workflows: Discover available workflow definitions
-- get_workflow_status: Get current workflow state
-- set_variable: Set a workflow variable for the session
-- get_variable: Get workflow variable(s) for the session
-- import_workflow: Import a workflow from a file path
-- reload_cache: Clear the workflow loader cache to pick up file changes
+Umbrella server for workflows, pipelines, rules, variables, and agent definitions.
 
 These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
+from collections.abc import Callable
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.workflows._agents import (
+    create_agent_definition,
+    delete_agent_definition,
+    get_agent_definition,
+    list_agent_definitions,
+    toggle_agent_definition,
+    update_agent_rules,
+    update_agent_steps,
+    update_agent_variables,
+)
 from gobby.mcp_proxy.tools.workflows._definitions import (
     create_workflow_definition,
     delete_workflow_definition,
@@ -25,6 +29,7 @@ from gobby.mcp_proxy.tools.workflows._definitions import (
     update_workflow_definition,
 )
 from gobby.mcp_proxy.tools.workflows._import import import_workflow, reload_cache
+from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 from gobby.mcp_proxy.tools.workflows._query import (
     get_workflow,
     get_workflow_status,
@@ -62,21 +67,27 @@ def create_workflows_registry(
     loader: WorkflowLoader | None = None,
     session_manager: LocalSessionManager | None = None,
     db: DatabaseProtocol | None = None,
+    # Pipeline dependencies (resolved lazily at call time)
+    executor_getter: Callable[[], Any | None] | None = None,
+    execution_manager_getter: Callable[[], Any | None] | None = None,
+    completion_registry: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create a workflow tool registry with all workflow-related tools.
+
+    This is the umbrella registry for workflows, pipelines, rules,
+    variables, and agent definitions.
 
     Args:
         loader: WorkflowLoader instance
         session_manager: LocalSessionManager instance (created from db if not provided)
         db: Database instance for creating default managers
+        executor_getter: Callable returning PipelineExecutor (or None) at call time
+        execution_manager_getter: Callable returning LocalPipelineExecutionManager
+        completion_registry: CompletionEventRegistry for pipeline auto-subscriptions
 
     Returns:
-        InternalToolRegistry with workflow tools registered
-
-    Note:
-        If db is None and session_manager is not provided,
-        tools requiring database access will return errors when called.
+        InternalToolRegistry with workflow, pipeline, rule, and agent definition tools
     """
     _db = db
     _loader = loader or WorkflowLoader(db=_db)
@@ -389,5 +400,112 @@ def create_workflows_registry(
         if _def_manager is None:
             return {"error": "Rule tools require database connection"}
         return delete_rule(_def_manager, name, force)
+
+    # ── Agent definition CRUD tools ──
+
+    @registry.tool(
+        name="list_agent_definitions",
+        description="List agent definitions. Supports filtering by enabled status and project ID.",
+    )
+    def _list_agent_definitions(
+        enabled: bool | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return list_agent_definitions(_def_manager, enabled, project_id)
+
+    @registry.tool(
+        name="get_agent_definition",
+        description="Get full details of an agent definition by name.",
+    )
+    def _get_agent_definition(name: str) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return get_agent_definition(_def_manager, name)
+
+    @registry.tool(
+        name="create_agent_definition",
+        description="Create a new agent definition. Validates with AgentDefinitionBody before inserting.",
+    )
+    def _create_agent_definition(
+        name: str,
+        definition: dict[str, Any],
+    ) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return create_agent_definition(_def_manager, name, definition)
+
+    @registry.tool(
+        name="toggle_agent_definition",
+        description="Enable or disable an agent definition by name.",
+    )
+    def _toggle_agent_definition(name: str, enabled: bool) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return toggle_agent_definition(_def_manager, name, enabled)
+
+    @registry.tool(
+        name="delete_agent_definition",
+        description="Delete an agent definition by name (soft-delete). Template agents are protected unless force=True.",
+    )
+    def _delete_agent_definition(
+        name: str,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return delete_agent_definition(_def_manager, name, force)
+
+    @registry.tool(
+        name="update_agent_rules",
+        description="Add or remove rules from an agent definition's workflows.rules list.",
+    )
+    def _update_agent_rules(
+        name: str,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return update_agent_rules(_def_manager, name, add, remove)
+
+    @registry.tool(
+        name="update_agent_variables",
+        description="Set or remove variables from an agent definition's workflows.variables dict.",
+    )
+    def _update_agent_variables(
+        name: str,
+        set_vars: dict[str, Any] | None = None,
+        remove: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return update_agent_variables(_def_manager, name, set_vars, remove)
+
+    @registry.tool(
+        name="update_agent_steps",
+        description="Replace an agent's inline step workflow steps. Pass steps list or None to clear.",
+    )
+    def _update_agent_steps(
+        name: str,
+        steps: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Agent definition tools require database connection"}
+        return update_agent_steps(_def_manager, name, steps)
+
+    # ── Pipeline tools ──
+
+    register_pipeline_tools(
+        registry,
+        loader=_loader,
+        executor_getter=executor_getter,
+        execution_manager_getter=execution_manager_getter,
+        db=_db,
+        session_manager=_session_manager,
+        completion_registry=completion_registry,
+        def_manager=_def_manager,
+    )
 
     return registry

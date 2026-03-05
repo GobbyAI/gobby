@@ -14,7 +14,7 @@ Legend:
 
 - **Local-first by default** (your code/data stays on your machine)
 - **Determinism beats vibes** (hooks + workflows + guardrails)
-- **Progressive disclosure everywhere** (tools, schemas, context)
+- **Progressive discovery everywhere** (tools, schemas, context)
 - **Interoperability > lock-in** (plugins + adapters + open interfaces)
 
 ---

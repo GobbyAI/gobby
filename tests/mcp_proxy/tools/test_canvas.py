@@ -5,8 +5,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-pytestmark = pytest.mark.unit
-
 from gobby.mcp_proxy.tools.canvas import (
     MAX_COMPONENT_COUNT,
     MAX_DATA_MODEL_SIZE,
@@ -16,6 +14,8 @@ from gobby.mcp_proxy.tools.canvas import (
     resolve_interaction,
     sweep_expired,
 )
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)

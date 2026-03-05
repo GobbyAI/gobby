@@ -1,12 +1,13 @@
 """Self-mode handler for spawn_agent.
 
-Applies agent persona on the calling session (mode=self without workflow).
-Step workflow activation via mode=self is removed — use pipelines instead.
+Applies agent persona on the calling session (mode=self).
+If the agent has inline steps, creates a WorkflowInstance for step enforcement.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,10 @@ async def _handle_self_persona(
     db: Any,
 ) -> dict[str, Any]:
     """
-    Activate persona on calling session for mode=self without a workflow.
+    Activate persona on calling session for mode=self.
+
+    If the agent has inline steps, creates a WorkflowInstance on the parent
+    session so the step enforcement engine can enforce tool restrictions.
 
     Args:
         agent_body: The resolved AgentDefinitionBody
@@ -66,6 +70,31 @@ async def _handle_self_persona(
         if agent_body.workflows and agent_body.workflows.skill_format:
             changes["_skill_format"] = agent_body.workflows.skill_format
 
+        # Create WorkflowInstance for inline step workflow
+        if agent_body.steps:
+            from gobby.workflows.definitions import WorkflowInstance
+            from gobby.workflows.state_manager import WorkflowInstanceManager
+
+            step_wf_name = f"{agent_name}-steps"
+            step_instance = WorkflowInstance(
+                id=str(uuid.uuid4()),
+                session_id=parent_session_id,
+                workflow_name=step_wf_name,
+                enabled=True,
+                priority=10,
+                current_step=agent_body.steps[0].name,
+                variables=dict(agent_body.step_variables),
+            )
+            WorkflowInstanceManager(db).save_instance(step_instance)
+            changes["_step_workflow_name"] = step_wf_name
+            logger.info(
+                "Created step workflow instance %s for session %s (agent=%s, step=%s)",
+                step_wf_name,
+                parent_session_id,
+                agent_name,
+                agent_body.steps[0].name,
+            )
+
     if db:
         from gobby.workflows.state_manager import SessionVariableManager
 
@@ -75,5 +104,6 @@ async def _handle_self_persona(
         "success": True,
         "mode": "self",
         "persona_applied": agent_name,
+        "has_steps": bool(agent_body.steps),
         "message": f"Agent persona '{agent_name}' applied to session {parent_session_id}",
     }

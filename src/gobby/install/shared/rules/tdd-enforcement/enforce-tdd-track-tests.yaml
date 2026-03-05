@@ -1,0 +1,19 @@
+tags: [tdd-enforcement, enforcement]
+
+rules:
+  enforce-tdd-track-tests:
+    description: "Track test files written for TDD observability"
+    event: after_tool
+    enabled: false
+    priority: 30
+    when: >-
+      variables.get('enforce_tdd')
+      and event.data.get('tool_name') in ('Write', 'Edit')
+      and not event.data.get('error')
+      and (tool_input.get('file_path', '').split('/')[-1].startswith('test_')
+      or '/tests/' in tool_input.get('file_path', '')
+      or tool_input.get('file_path', '').endswith('_test.py'))
+    effect:
+      type: set_variable
+      variable: tdd_tests_written
+      value: "variables.get('tdd_tests_written', []) + [tool_input.get('file_path', '')]"

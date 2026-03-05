@@ -42,7 +42,7 @@ Users invoke skills with `/gobby skillname` syntax:
 
 ## MCP Server Discovery
 
-For MCP tool access, use progressive disclosure:
+For MCP tool access, use progressive discovery:
 1. `list_mcp_servers()` — discover servers
 2. `list_tools(server_name="...")` — discover tools
 3. `get_tool_schema(server_name, tool_name)` — get parameters

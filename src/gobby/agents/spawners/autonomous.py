@@ -160,6 +160,9 @@ class AutonomousRunner:
             cwd=self.cwd,
             hooks=cast(Any, sdk_hooks) if sdk_hooks else None,
             env=env,
+            # Enable partial messages to get per-API-call usage from
+            # message_start stream events (accurate context tracking).
+            include_partial_messages=True,
         )
 
         self._client = ClaudeSDKClient(options=options)
