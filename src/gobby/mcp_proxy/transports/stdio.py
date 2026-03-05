@@ -148,7 +148,6 @@ class StdioTransportConnection(BaseTransportConnection):
             logger.error(f"Failed to connect to stdio server '{self.config.name}': {error_msg}")
 
             # Cleanup in reverse order - session first, then transport
-            # Cleanup in reverse order - session first, then transport
             session_ctx = self._session_context
             if session_entered and session_ctx is not None:
                 try:

@@ -113,8 +113,13 @@ class SessionLookupService:
                         )
                     else:
                         # Auto-register session if not found
-                        self._logger.debug(
-                            f"Session not found for external_id={external_id}, auto-registering"
+                        self._logger.warning(
+                            "Session auto-registration: external_id=%s not found in DB "
+                            "(machine_id=%s, project_id=%s, source=%s). Creating new session.",
+                            external_id,
+                            machine_id,
+                            project_id,
+                            event.source.value,
                         )
                         platform_session_id = self._session_manager.register_session(
                             external_id=external_id,

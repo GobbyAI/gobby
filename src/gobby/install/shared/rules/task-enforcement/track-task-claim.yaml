@@ -2,12 +2,10 @@ tags: [task-enforcement, enforcement, tasks]
 
 rules:
   track-task-claim:
-    description: "Set task_claimed when agent claims a task"
+    description: "Log task claim events (state managed by detect_task_claim observer)"
     event: after_tool
     enabled: false
     priority: 30
     when: "event.data.get('mcp_tool') in ['claim_task', 'create_task'] and not event.data.get('error')"
     effect:
-      type: set_variable
-      variable: task_claimed
-      value: true
+      type: observe

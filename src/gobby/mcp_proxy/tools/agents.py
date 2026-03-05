@@ -80,6 +80,7 @@ def create_agents_registry(
     db: Any | None = None,
     # For firing synthetic stop events on agent kill
     hook_manager_resolver: Any | None = None,
+    completion_registry: Any | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.
@@ -94,6 +95,7 @@ def create_agents_registry(
         clone_storage: Clone storage for spawn_agent isolation.
         clone_manager: Clone git manager for spawn_agent isolation.
         db: Database instance for agent definition lookups.
+        completion_registry: CompletionEventRegistry for auto-subscribing parent sessions.
 
     Returns:
         InternalToolRegistry with all agent tools registered.
@@ -238,6 +240,7 @@ def create_agents_registry(
         signal: str = "TERM",
         force: bool = False,
         debug: bool = False,
+        status: str | None = None,
     ) -> dict[str, Any]:
         """
         Kill a running agent process.
@@ -252,6 +255,9 @@ def create_agents_registry(
             force: Use SIGKILL immediately (equivalent to signal="KILL")
             debug: If True, kill agent process but preserve workflow state and leave
                 terminal open for inspection. Default: False (full cleanup).
+            status: Completion status for the agent run. Self-termination defaults
+                to "success", parent-initiated kill defaults to "cancelled".
+                Agents can pass "error" to indicate failure.
 
         Returns:
             Dict with success status and kill details.
@@ -316,13 +322,30 @@ def create_agents_registry(
             return result
 
         if result.get("success"):
-            # Self-termination (session_id path) → mark as success
-            # Parent-initiated kill (run_id path) → mark as cancelled
+            # Self-termination (session_id path) → default success
+            # Parent-initiated kill (run_id path) → default cancelled
+            # Caller can override with explicit status
             is_self_termination = resolved_session_id is not None
-            if is_self_termination:
+            effective_status = status or ("success" if is_self_termination else "cancelled")
+            if effective_status == "success":
                 runner.complete_run(run_id)
+            elif effective_status == "cancelled":
+                runner.cancel_run(run_id)
+            elif effective_status == "error":
+                runner.run_storage.fail(run_id, error="Agent self-reported error")
             else:
                 runner.cancel_run(run_id)
+                effective_status = "cancelled"
+
+            # Notify completion registry so pipeline wait steps unblock
+            if completion_registry and run_id:
+                try:
+                    notify_result: dict[str, Any] = {"status": effective_status, "run_id": run_id}
+                    await completion_registry.notify(run_id, notify_result)
+                except Exception:
+                    logger.debug(
+                        "Failed to notify completion registry for run %s", run_id, exc_info=True
+                    )
 
             # Clean up the tmux session (remain-on-exit keeps dead panes alive)
             if not debug and tmux_session_name:
@@ -577,210 +600,6 @@ def create_agents_registry(
         )
         return eval_result.to_dict()
 
-    @registry.tool(
-        name="wait_for_agent",
-        description=(
-            "Wait for an agent run to complete. "
-            "Blocks until the agent reaches a terminal status (success, error, timeout, cancelled), "
-            "or the wait timeout expires."
-        ),
-    )
-    async def wait_for_agent(
-        run_id: str,
-        timeout: int = 600,
-        poll_interval: int = 10,
-        kill_on_timeout: bool = False,
-    ) -> dict[str, Any]:
-        """
-        Wait for an agent run to complete.
-
-        Polls the agent run status until it is no longer pending/running, or timeout expires.
-
-        Args:
-            run_id: The agent run ID to wait for.
-            timeout: Maximum wait time in seconds (default: 600).
-            poll_interval: Time between status checks in seconds (default: 10).
-            kill_on_timeout: If True, kill the agent when timeout expires (default: False).
-
-        Returns:
-            Dict with:
-            - completed: Whether the agent reached a terminal status
-            - status: Final agent status
-            - run_id: The agent run ID
-            - timed_out: Whether the wait timed out
-            - wait_time: How long we waited
-            - killed: Whether agent was killed on timeout (only present if kill_on_timeout=True)
-        """
-        import asyncio
-        import time
-
-        if poll_interval <= 0:
-            poll_interval = 10
-
-        start_time = time.monotonic()
-
-        # Check initial state
-        run = runner.get_run(run_id)
-        if not run:
-            return {"success": False, "error": f"Agent run {run_id} not found"}
-
-        if run.status not in ("pending", "running"):
-            return {
-                "success": True,
-                "completed": run.status == "success",
-                "status": run.status,
-                "run_id": run_id,
-                "timed_out": False,
-                "wait_time": 0.0,
-            }
-
-        # Poll until complete or timeout
-        while True:
-            elapsed = time.monotonic() - start_time
-
-            if elapsed >= timeout:
-                # Re-fetch to get latest status
-                run = runner.get_run(run_id)
-                result = {
-                    "success": True,
-                    "completed": False,
-                    "status": run.status if run else "unknown",
-                    "run_id": run_id,
-                    "timed_out": True,
-                    "wait_time": elapsed,
-                }
-                if kill_on_timeout and run and run.status in ("pending", "running"):
-                    try:
-                        kill_result = await kill_agent(run_id=run_id, signal="TERM")
-                        result["killed"] = kill_result.get("success", False)
-                    except Exception as e:
-                        logger.warning(f"kill_on_timeout failed for {run_id}: {e}")
-                        result["killed"] = False
-                return result
-
-            await asyncio.sleep(poll_interval)
-
-            run = runner.get_run(run_id)
-            if not run:
-                return {
-                    "success": False,
-                    "completed": False,
-                    "status": "unknown",
-                    "run_id": run_id,
-                    "timed_out": False,
-                    "wait_time": time.monotonic() - start_time,
-                    "error": "Agent run disappeared during wait",
-                }
-
-            if run.status not in ("pending", "running"):
-                return {
-                    "success": True,
-                    "completed": run.status == "success",
-                    "status": run.status,
-                    "run_id": run_id,
-                    "timed_out": False,
-                    "wait_time": time.monotonic() - start_time,
-                }
-
-    # ── Agent definition CRUD tools ──
-
-    # Create definition manager from db if available
-    _def_manager = None
-    if db is not None:
-        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-
-        _def_manager = LocalWorkflowDefinitionManager(db)
-
-    from gobby.mcp_proxy.tools.agent_definitions import (
-        create_agent_definition,
-        delete_agent_definition,
-        get_agent_definition,
-        list_agent_definitions,
-        toggle_agent_definition,
-        update_agent_rules,
-        update_agent_variables,
-    )
-
-    @registry.tool(
-        name="list_agent_definitions",
-        description="List agent definitions. Supports filtering by enabled status and project ID.",
-    )
-    def _list_agent_definitions(
-        enabled: bool | None = None,
-        project_id: str | None = None,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Agent definition tools require database connection"}
-        return list_agent_definitions(_def_manager, enabled, project_id)
-
-    @registry.tool(
-        name="get_agent_definition",
-        description="Get full details of an agent definition by name.",
-    )
-    def _get_agent_definition(name: str) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Agent definition tools require database connection"}
-        return get_agent_definition(_def_manager, name)
-
-    @registry.tool(
-        name="create_agent_definition",
-        description="Create a new agent definition. Validates with AgentDefinitionBody before inserting.",
-    )
-    def _create_agent_definition(
-        name: str,
-        definition: dict[str, Any],
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Agent definition tools require database connection"}
-        return create_agent_definition(_def_manager, name, definition)
-
-    @registry.tool(
-        name="toggle_agent_definition",
-        description="Enable or disable an agent definition by name.",
-    )
-    def _toggle_agent_definition(name: str, enabled: bool) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Agent definition tools require database connection"}
-        return toggle_agent_definition(_def_manager, name, enabled)
-
-    @registry.tool(
-        name="delete_agent_definition",
-        description="Delete an agent definition by name (soft-delete). Template agents are protected unless force=True.",
-    )
-    def _delete_agent_definition(
-        name: str,
-        force: bool = False,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Agent definition tools require database connection"}
-        return delete_agent_definition(_def_manager, name, force)
-
-    @registry.tool(
-        name="update_agent_rules",
-        description="Add or remove rules from an agent definition's workflows.rules list.",
-    )
-    def _update_agent_rules(
-        name: str,
-        add: list[str] | None = None,
-        remove: list[str] | None = None,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Agent definition tools require database connection"}
-        return update_agent_rules(_def_manager, name, add, remove)
-
-    @registry.tool(
-        name="update_agent_variables",
-        description="Set or remove variables from an agent definition's workflows.variables dict.",
-    )
-    def _update_agent_variables(
-        name: str,
-        set_vars: dict[str, Any] | None = None,
-        remove: list[str] | None = None,
-    ) -> dict[str, Any]:
-        if _def_manager is None:
-            return {"error": "Agent definition tools require database connection"}
-        return update_agent_variables(_def_manager, name, set_vars, remove)
-
     # Register spawn_agent tool from spawn_agent module
     from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -793,6 +612,7 @@ def create_agents_registry(
         clone_manager=clone_manager,
         session_manager=session_manager,
         db=db,
+        completion_registry=completion_registry,
     )
 
     # Merge spawn_agent tools into agents registry

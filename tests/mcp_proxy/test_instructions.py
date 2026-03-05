@@ -37,7 +37,7 @@ class TestBuildGobbyInstructions:
 
         assert "<tool_discovery>" in result
         assert "</tool_discovery>" in result
-        # Should mention progressive disclosure pattern
+        # Should mention progressive discovery pattern
         assert "list_tools" in result
         assert "get_tool_schema" in result
         assert "call_tool" in result
@@ -54,8 +54,8 @@ class TestBuildGobbyInstructions:
         assert "task" in result.lower()  # task before editing
         assert "session_id" in result  # session_id required
 
-    def test_emphasizes_progressive_disclosure(self) -> None:
-        """Instructions should emphasize progressive disclosure pattern."""
+    def test_emphasizes_progressive_discovery(self) -> None:
+        """Instructions should emphasize progressive discovery pattern."""
         from gobby.mcp_proxy.instructions import build_gobby_instructions
 
         result = build_gobby_instructions()
@@ -63,14 +63,14 @@ class TestBuildGobbyInstructions:
         # Should discourage loading all schemas upfront
         assert "NEVER" in result
         # Should mention the pattern
-        assert "progressive" in result.lower() or "disclosure" in result.lower()
+        assert "progressive" in result.lower() or "discovery" in result.lower()
 
     def test_loads_from_prompt_file(self) -> None:
         """Instructions should be loaded from the bundled prompt file."""
         from gobby.mcp_proxy.instructions import build_gobby_instructions
         from gobby.prompts.sync import get_bundled_prompts_path
 
-        prompt_file = get_bundled_prompts_path() / "mcp" / "progressive-disclosure.md"
+        prompt_file = get_bundled_prompts_path() / "mcp" / "progressive-discovery.md"
         assert prompt_file.exists(), f"Prompt file missing: {prompt_file}"
 
         result = build_gobby_instructions()

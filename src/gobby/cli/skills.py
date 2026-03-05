@@ -218,7 +218,7 @@ def install(ctx: click.Context, source: str, project: bool) -> None:
     """Install a skill from a source.
 
     SOURCE can be:
-    - A hub reference (e.g., clawdhub:commit-message, skillhub:code-review)
+    - A hub reference (e.g., clawdhub:commit-message, skillsmp:code-review)
     - A local directory path (e.g., ./my-skill or /path/to/skill)
     - A path to a SKILL.md file (e.g., ./SKILL.md)
     - A GitHub URL (owner/repo, github:owner/repo, https://github.com/owner/repo)
@@ -459,7 +459,7 @@ def meta_get(ctx: click.Context, name: str, key: str) -> None:
     if value is None:
         click.echo(f"Key not found: {key}")
         sys.exit(1)
-    elif isinstance(value, (dict, list)):
+    elif isinstance(value, dict | list):
         click.echo(json.dumps(value, indent=2))
     else:
         click.echo(str(value))
@@ -796,8 +796,13 @@ def hub_list(ctx: click.Context, json_output: bool) -> None:
 
 @hub.command("add")
 @click.argument("name")
-@click.option("--type", "hub_type", required=True, help="Hub type (clawdhub, skillhub, github)")
-@click.option("--url", "base_url", default=None, help="Base URL for skillhub type")
+@click.option(
+    "--type",
+    "hub_type",
+    required=True,
+    help="Hub type (clawdhub, skillsmp, github, claude-plugins)",
+)
+@click.option("--url", "base_url", default=None, help="Base URL for skillsmp/claude-plugins type")
 @click.option("--repo", default=None, help="GitHub repo (owner/repo) for github type")
 @click.option("--branch", default=None, help="Branch for github type (default: main)")
 @click.option(
@@ -819,16 +824,17 @@ def hub_add(
 
     Hub types:
     - clawdhub: ClawdHub CLI-based hub
-    - skillhub: REST API-based skill hub (requires --url)
+    - skillsmp: SkillsMP marketplace (requires --url, optional --auth-key)
     - github: GitHub repository collection (requires --repo)
+    - claude-plugins: Claude Plugins directory (requires --url)
 
     Examples:
-        gobby skills hub add my-skillhub --type skillhub --url https://skillhub.example.com
+        gobby skills hub add my-skillsmp --type skillsmp --url https://skillsmp.com/api/v1
         gobby skills hub add company-skills --type github --repo myorg/skills
     """
 
     # Validate hub type
-    valid_types = ["clawdhub", "skillhub", "github"]
+    valid_types = ["clawdhub", "skillsmp", "github", "claude-plugins"]
     if hub_type not in valid_types:
         click.echo(
             f"Error: Invalid hub type '{hub_type}'. Must be one of: {', '.join(valid_types)}",
@@ -837,8 +843,12 @@ def hub_add(
         sys.exit(1)
 
     # Validate required options for each type
-    if hub_type == "skillhub" and not base_url:
-        click.echo("Error: --url is required for skillhub type", err=True)
+    if hub_type == "skillsmp" and not base_url:
+        click.echo("Error: --url is required for skillsmp type", err=True)
+        sys.exit(1)
+
+    if hub_type == "claude-plugins" and not base_url:
+        click.echo("Error: --url is required for claude-plugins type", err=True)
         sys.exit(1)
 
     if hub_type == "github" and not repo:

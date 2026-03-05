@@ -23,6 +23,7 @@ class VerificationCommands:
     unit_tests: str | None = None
     type_check: str | None = None
     lint: str | None = None
+    format: str | None = None
     integration: str | None = None
     custom: dict[str, str] = field(default_factory=dict)
 
@@ -35,6 +36,8 @@ class VerificationCommands:
             result["type_check"] = self.type_check
         if self.lint:
             result["lint"] = self.lint
+        if self.format:
+            result["format"] = self.format
         if self.integration:
             result["integration"] = self.integration
         if self.custom:
@@ -54,6 +57,29 @@ class InitResult:
     verification: VerificationCommands | None = None
 
 
+_FRONTEND_SUBDIRS = ["web", "frontend", "client", "app", "ui", "packages/web", "packages/frontend"]
+
+
+def _find_frontend_dirs(cwd: Path) -> list[tuple[Path, str]]:
+    """Find directories containing package.json (root + common frontend subdirs).
+
+    Returns list of (absolute_path, relative_name) tuples. "." for root.
+    """
+    results: list[tuple[Path, str]] = []
+
+    # Check root first
+    if (cwd / "package.json").exists():
+        results.append((cwd, "."))
+
+    # Check common frontend subdirectories
+    for subdir in _FRONTEND_SUBDIRS:
+        candidate = cwd / subdir
+        if (candidate / "package.json").exists():
+            results.append((candidate, subdir))
+
+    return results
+
+
 def detect_verification_commands(cwd: Path) -> VerificationCommands:
     """
     Auto-detect verification commands based on project files.
@@ -68,11 +94,13 @@ def detect_verification_commands(cwd: Path) -> VerificationCommands:
         VerificationCommands with detected commands.
     """
     verification = VerificationCommands()
+    detected_any = False
 
     # Check for Python project (pyproject.toml)
     pyproject_path = cwd / "pyproject.toml"
     if pyproject_path.exists():
         logger.debug("Detected Python project (pyproject.toml)")
+        detected_any = True
 
         # Check for tests directory
         tests_dir = cwd / "tests"
@@ -84,44 +112,78 @@ def detect_verification_commands(cwd: Path) -> VerificationCommands:
         if src_dir.exists() and src_dir.is_dir():
             verification.type_check = "uv run mypy src/"
             verification.lint = "uv run ruff check src/"
+            verification.format = "uv run ruff format --check src/"
         else:
             # Fall back to current directory
             verification.type_check = "uv run mypy ."
             verification.lint = "uv run ruff check ."
+            verification.format = "uv run ruff format --check ."
 
-        return verification
-
-    # Check for Node.js project (package.json)
-    package_json_path = cwd / "package.json"
-    if package_json_path.exists():
-        logger.debug("Detected Node.js project (package.json)")
+    # Check for Node.js project (package.json) — root and common subdirectories
+    frontend_dirs = _find_frontend_dirs(cwd)
+    for frontend_dir, subdir_name in frontend_dirs:
+        logger.debug(f"Detected Node.js project ({subdir_name}/package.json)")
+        detected_any = True
 
         try:
-            with open(package_json_path) as f:
+            with open(frontend_dir / "package.json") as f:
                 package_data = json.load(f)
 
             scripts = package_data.get("scripts", {})
+            # Commands need cd prefix if in a subdirectory
+            prefix = f"cd {subdir_name} && " if subdir_name != "." else ""
 
-            # Check for test script
-            if "test" in scripts:
-                verification.unit_tests = "npm test"
-
-            # Check for lint script
-            if "lint" in scripts:
-                verification.lint = "npm run lint"
-
-            # Check for type-check script (common names)
-            for script_name in ["type-check", "typecheck", "types", "tsc"]:
-                if script_name in scripts:
-                    verification.type_check = f"npm run {script_name}"
-                    break
+            if verification.unit_tests:
+                # Another language already claimed primary slots — use custom
+                if "test" in scripts:
+                    verification.custom["frontend_tests"] = f"{prefix}npm test"
+                if "lint" in scripts:
+                    verification.custom["frontend_lint"] = f"{prefix}npm run lint"
+                for script_name in ["type-check", "typecheck", "types", "tsc"]:
+                    if script_name in scripts:
+                        verification.custom["ts_check"] = f"{prefix}npm run {script_name}"
+                        break
+            else:
+                # Node.js is the primary language
+                if "test" in scripts:
+                    verification.unit_tests = f"{prefix}npm test"
+                if "lint" in scripts:
+                    verification.lint = f"{prefix}npm run lint"
+                for script_name in ["type-check", "typecheck", "types", "tsc"]:
+                    if script_name in scripts:
+                        verification.type_check = f"{prefix}npm run {script_name}"
+                        break
 
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Failed to parse package.json: {e}")
+            logger.warning(f"Failed to parse {subdir_name}/package.json: {e}")
 
-        return verification
+    # Check for Rust project (Cargo.toml)
+    cargo_path = cwd / "Cargo.toml"
+    if cargo_path.exists():
+        logger.debug("Detected Rust project (Cargo.toml)")
+        detected_any = True
+        if not verification.unit_tests:
+            verification.unit_tests = "cargo test"
+            verification.lint = "cargo clippy"
+        else:
+            verification.custom["cargo_test"] = "cargo test"
+            verification.custom["clippy"] = "cargo clippy"
 
-    logger.debug("No recognized project type detected")
+    # Check for Go project (go.mod)
+    go_mod_path = cwd / "go.mod"
+    if go_mod_path.exists():
+        logger.debug("Detected Go project (go.mod)")
+        detected_any = True
+        if not verification.unit_tests:
+            verification.unit_tests = "go test ./..."
+            verification.lint = "go vet ./..."
+        else:
+            verification.custom["go_test"] = "go test ./..."
+            verification.custom["go_vet"] = "go vet ./..."
+
+    if not detected_any:
+        logger.debug("No recognized project type detected")
+
     return verification
 
 
@@ -163,12 +225,20 @@ def initialize_project(
     project_context = get_project_context(cwd)
     if project_context and project_context.get("id"):
         logger.debug(f"Project already initialized: {project_context.get('name')}")
+
+        # Re-detect and update verification commands on re-init
+        verification = detect_verification_commands(cwd)
+        if verification.to_dict():
+            _update_project_json_verification(cwd, verification)
+            logger.info("Updated verification commands in project.json")
+
         return InitResult(
             project_id=str(project_context["id"]),
             project_name=project_context.get("name", ""),
             project_path=project_context.get("project_path", str(cwd)),
             created_at=project_context.get("created_at", ""),
             already_existed=True,
+            verification=verification if verification.to_dict() else None,
         )
 
     # Auto-detect name from directory if not provided
@@ -229,6 +299,41 @@ def initialize_project(
         already_existed=False,
         verification=verification if verification.to_dict() else None,
     )
+
+
+def _update_project_json_verification(
+    cwd: Path,
+    verification: VerificationCommands,
+) -> None:
+    """Update verification commands in an existing project.json, preserving other fields."""
+    project_file = cwd / ".gobby" / "project.json"
+    if not project_file.exists():
+        return
+
+    try:
+        with open(project_file) as f:
+            project_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to read project.json for update: {e}")
+        return
+
+    verification_dict = verification.to_dict()
+
+    # Merge: detected commands override, but preserve manually-added custom entries
+    existing_verification = project_data.get("verification", {})
+    existing_custom = existing_verification.get("custom", {})
+
+    # Merge custom entries: new detection wins, but keep manual entries not in detection
+    merged_custom = {**existing_custom, **verification_dict.get("custom", {})}
+
+    project_data["verification"] = {k: v for k, v in verification_dict.items() if k != "custom"}
+    if merged_custom:
+        project_data["verification"]["custom"] = merged_custom
+
+    with open(project_file, "w") as f:
+        json.dump(project_data, f, indent=2)
+
+    logger.debug(f"Updated verification in {project_file}")
 
 
 def _write_project_json(

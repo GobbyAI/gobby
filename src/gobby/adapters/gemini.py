@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import BaseAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -355,6 +356,12 @@ class GeminiAdapter(BaseAdapter):
         # Handle BeforeToolSelection-specific output (toolConfig modification)
         if hook_type == "BeforeToolSelection" and response.modify_args:
             hook_specific["toolConfig"] = response.modify_args
+
+        # Truncate additionalContext to SDK limit before emitting
+        if "additionalContext" in hook_specific:
+            hook_specific["additionalContext"] = truncate_additional_context(
+                hook_specific["additionalContext"]
+            )
 
         # Only add hookSpecificOutput if there's content
         if hook_specific:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,7 @@ from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.config.app import DaemonConfig
+    from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.hook_manager import HookManager
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -65,6 +67,7 @@ def setup_internal_registries(
     config_store: ConfigStore | None = None,
     config_setter: Callable[[DaemonConfig], None] | None = None,
     memory_sync_manager: Any | None = None,
+    completion_registry: CompletionEventRegistry | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -164,12 +167,15 @@ def setup_internal_registries(
         manager.add_registry(memory_registry)
         logger.debug("Memory registry initialized")
 
-    # Initialize workflows registry (always available)
+    # Initialize workflows registry (always available — umbrella for pipelines + agent defs)
     from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
     workflows_registry = create_workflows_registry(
         session_manager=local_session_manager,
         db=getattr(local_session_manager, "db", None) if local_session_manager else None,
+        executor_getter=lambda: pipeline_executor,
+        execution_manager_getter=lambda: pipeline_execution_manager,
+        completion_registry=completion_registry,
     )
     manager.add_registry(workflows_registry)
     logger.debug("Workflows registry initialized")
@@ -222,6 +228,7 @@ def setup_internal_registries(
             clone_manager=clone_git_manager,
             db=db,
             hook_manager_resolver=hook_manager_resolver,
+            completion_registry=completion_registry,
         )
 
         # Add inter-agent messaging tools if dependencies are available
@@ -339,18 +346,26 @@ def setup_internal_registries(
             ClawdHubProvider,
             GitHubCollectionProvider,
             HubManager,
-            SkillHubProvider,
+            SkillsMPProvider,
         )
 
         # Get skills config (or use defaults)
         skills_config = _config.skills if _config and hasattr(_config, "skills") else SkillsConfig()
 
+        # Resolve hub API keys from env vars
+        api_keys: dict[str, str] = {}
+        for _hub_name, hub_config in skills_config.hubs.items():
+            if hub_config.auth_key_name:
+                value = os.environ.get(hub_config.auth_key_name)
+                if value:
+                    api_keys[hub_config.auth_key_name] = value
+
         # Create hub manager with configured hubs
-        hub_manager = HubManager(configs=skills_config.hubs)
+        hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
 
         # Register provider factories
         hub_manager.register_provider_factory("clawdhub", ClawdHubProvider)
-        hub_manager.register_provider_factory("skillhub", SkillHubProvider)
+        hub_manager.register_provider_factory("skillsmp", SkillsMPProvider)
         hub_manager.register_provider_factory("github-collection", GitHubCollectionProvider)
         hub_manager.register_provider_factory("claude-plugins", ClaudePluginsProvider)
         hub_manager._skill_description_config = (
@@ -367,19 +382,6 @@ def setup_internal_registries(
     else:
         logger.debug("Skills registry not initialized: db is None")
 
-    # Initialize pipelines registry (always registered; executor resolved lazily at tool call time)
-    from gobby.mcp_proxy.tools.pipelines import create_pipelines_registry
-
-    pipelines_registry = create_pipelines_registry(
-        loader=workflow_loader,
-        executor_getter=lambda: pipeline_executor,
-        execution_manager_getter=lambda: pipeline_execution_manager,
-        db=db,
-        session_manager=local_session_manager,
-    )
-    manager.add_registry(pipelines_registry)
-    logger.debug("Pipelines registry initialized")
-
     # Initialize cron registry if database is available
     if db is not None:
         try:
@@ -392,6 +394,21 @@ def setup_internal_registries(
             logger.debug("Cron registry initialized")
         except (ImportError, RuntimeError, OSError) as e:
             logger.debug(f"Cron registry not initialized: {e}")
+
+    # Initialize testing registry if database is available
+    if db is not None:
+        try:
+            from gobby.mcp_proxy.tools.testing import create_testing_registry
+
+            testing_registry = create_testing_registry(
+                db=db,
+                llm_service=llm_service,
+                config=_config.test_summarizer if _config else None,
+            )
+            manager.add_registry(testing_registry)
+            logger.debug("Testing registry initialized")
+        except (ImportError, RuntimeError, OSError) as e:
+            logger.debug(f"Testing registry not initialized: {e}")
 
     logger.info(f"Internal registries initialized: {len(manager)} registries")
     return manager

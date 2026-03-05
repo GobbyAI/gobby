@@ -383,8 +383,8 @@ class TestGetStepsByExecution:
 class TestFailStaleRunningExecutions:
     """Tests for fail_stale_running_executions method."""
 
-    def test_marks_running_executions_as_failed(self, manager) -> None:
-        """Running executions are marked as failed."""
+    def test_marks_running_executions_as_interrupted(self, manager) -> None:
+        """Running executions are marked as interrupted (non-terminal, can be resumed)."""
         execution = manager.create_execution(pipeline_name="stale-pipeline")
         manager.update_execution_status(execution_id=execution.id, status=ExecutionStatus.RUNNING)
 
@@ -393,8 +393,7 @@ class TestFailStaleRunningExecutions:
         assert count == 1
         updated = manager.get_execution(execution.id)
         assert updated is not None
-        assert updated.status == ExecutionStatus.FAILED
-        assert updated.completed_at is not None
+        assert updated.status == ExecutionStatus.INTERRUPTED
 
     def test_leaves_waiting_approval_alone(self, manager) -> None:
         """Waiting-approval executions are not affected."""
@@ -446,8 +445,8 @@ class TestFailStaleRunningExecutions:
         assert count == 1
         # Resumable should still be RUNNING
         assert manager.get_execution(resumable.id).status == ExecutionStatus.RUNNING
-        # Non-resumable should be FAILED
-        assert manager.get_execution(non_resumable.id).status == ExecutionStatus.FAILED
+        # Non-resumable should be INTERRUPTED
+        assert manager.get_execution(non_resumable.id).status == ExecutionStatus.INTERRUPTED
 
     def test_exclude_ids_skips_steps_of_excluded_executions(self, manager) -> None:
         """Steps belonging to excluded executions are not failed."""
@@ -468,7 +467,7 @@ class TestFailStaleRunningExecutions:
 
         count = manager.fail_stale_running_executions(exclude_ids=set())
         assert count == 1
-        assert manager.get_execution(execution.id).status == ExecutionStatus.FAILED
+        assert manager.get_execution(execution.id).status == ExecutionStatus.INTERRUPTED
 
 
 class TestApprovalTimeout:

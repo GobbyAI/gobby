@@ -20,11 +20,9 @@ from claude_agent_sdk.types import (
     UserPromptSubmitHookSpecificOutput,
 )
 
-logger = logging.getLogger(__name__)
+from gobby.llm.sdk_utils import truncate_additional_context as _truncate
 
-# Claude Code / Agent SDK hard-truncates additionalContext at 10K chars.
-# We cap slightly below to avoid the ugly "... [output truncated]" suffix.
-_ADDITIONAL_CONTEXT_LIMIT = 9_950
+logger = logging.getLogger(__name__)
 
 # Tools that are blocked in plan mode (write operations)
 _PLAN_MODE_BLOCKED_TOOLS: frozenset[str] = frozenset({"Edit", "Write", "NotebookEdit"})
@@ -111,15 +109,6 @@ def _find_mcp_config() -> str | None:
     return None
 
 
-def _parse_server_name(full_tool_name: str) -> str:
-    """Extract server name from mcp__{server}__{tool} format."""
-    if full_tool_name.startswith("mcp__"):
-        parts = full_tool_name.split("__")
-        if len(parts) >= 2:
-            return parts[1]
-    return "builtin"
-
-
 def _response_to_prompt_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
     """Convert workflow HookResponse dict to UserPromptSubmit SDK output."""
     if not resp:
@@ -133,7 +122,7 @@ def _response_to_prompt_output(resp: dict[str, Any] | None) -> SyncHookJSONOutpu
     if context:
         output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
             hookEventName="UserPromptSubmit",
-            additionalContext=context,
+            additionalContext=_truncate(context),
         )
     return output
 
@@ -157,7 +146,7 @@ def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOut
         output["hookSpecificOutput"] = PreToolUseHookSpecificOutput(
             hookEventName="PreToolUse",
         )
-        output["hookSpecificOutput"]["additionalContext"] = resp["context"]  # type: ignore[typeddict-unknown-key]
+        output["hookSpecificOutput"]["additionalContext"] = _truncate(resp["context"])  # type: ignore[typeddict-unknown-key]
     return output
 
 
@@ -170,7 +159,7 @@ def _response_to_post_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOu
     if context:
         output["hookSpecificOutput"] = PostToolUseHookSpecificOutput(
             hookEventName="PostToolUse",
-            additionalContext=context,
+            additionalContext=_truncate(context),
         )
     return output
 
@@ -190,7 +179,7 @@ def _response_to_stop_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
             Any,
             {  # No SDK TypedDict for Stop
                 "hookEventName": "Stop",
-                "additionalContext": context,
+                "additionalContext": _truncate(context),
             },
         )
     return output
@@ -231,7 +220,7 @@ def _response_to_compact_output(resp: dict[str, Any] | None) -> SyncHookJSONOutp
             Any,
             {  # No SDK TypedDict for PreCompact
                 "hookEventName": "PreCompact",
-                "additionalContext": context,
+                "additionalContext": _truncate(context),
             },
         )
     return output

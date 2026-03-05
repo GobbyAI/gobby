@@ -7,6 +7,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { YamlEditorModal } from './WorkflowsPage'
 import { AgentEditForm } from '../agents/AgentEditForm'
 import type { AgentFormData } from '../agents/AgentEditForm'
+import type { WorkflowStep } from '../agents/AgentStepsEditor'
 
 // =============================================================================
 // Types
@@ -36,9 +37,11 @@ interface AgentDefInfo {
       variables?: Record<string, unknown>
       [key: string]: unknown
     } | null
-    extends: string | null
     lifecycle_variables: Record<string, unknown>
     default_variables: Record<string, unknown>
+    steps?: WorkflowStep[] | null
+    step_variables?: Record<string, unknown> | null
+    exit_condition?: string | null
   }
   source: string
   source_path: string | null
@@ -92,7 +95,7 @@ const ISOLATION_COLORS: Record<string, string> = {
 }
 
 const DEFAULT_FORM: AgentFormData = {
-  name: '', extends: '', description: '', role: '', goal: '', personality: '', instructions: '',
+  name: '', description: '', role: '', goal: '', personality: '', instructions: '',
   provider: 'inherit', model: '', mode: 'inherit', isolation: 'inherit',
   base_branch: 'inherit', timeout: 0, max_turns: 0, pipeline: '',
 }
@@ -114,7 +117,6 @@ const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
 
 function agentDefToYaml(d: AgentDefInfo['definition']): string {
   const obj: Record<string, unknown> = { name: d.name }
-  if (d.extends) obj.extends = d.extends
   if (d.description) obj.description = d.description
   if (d.role) obj.role = d.role
   if (d.goal) obj.goal = d.goal
@@ -187,6 +189,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
   const [editRuleSelectors, setEditRuleSelectors] = useState<{ include: string[]; exclude: string[] } | null>(null)
   const [editVariables, setEditVariables] = useState<Record<string, unknown>>({})
   const [editSkills, setEditSkills] = useState<string[]>([])
+  const [editSteps, setEditSteps] = useState<WorkflowStep[]>([])
 
   // Sidebar view state (form vs YAML)
   const [sidebarView, setSidebarView] = useState<'form' | 'yaml'>('form')
@@ -235,6 +238,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       setEditRuleSelectors(null)
       setEditVariables({})
       setEditSkills([])
+      setEditSteps([])
       setSelectedAgent(null)
       setSidebarView('form')
       setSidebarYamlContent(yaml.dump({
@@ -368,7 +372,6 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       if (createForm.personality) body.personality = createForm.personality
       if (createForm.instructions) body.instructions = createForm.instructions
       if (createForm.model) body.model = createForm.model
-      if (createForm.extends) body.extends = createForm.extends
       // Nest rules, rule_selectors, variables, pipeline under workflows
       const workflows: Record<string, unknown> = {}
       if (editRules.length > 0) workflows.rules = editRules
@@ -379,6 +382,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         workflows.skill_selectors = { include: editSkills }
       }
       if (Object.keys(workflows).length > 0) body.workflows = workflows
+      if (editSteps.length > 0) body.steps = editSteps
 
       const res = await fetch(`${getBaseUrl()}/api/agents/definitions`, {
         method: 'POST',
@@ -403,7 +407,6 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     const d = item.definition
     setCreateForm({
       name: d.name,
-      extends: d.extends || '',
       description: d.description || '',
       role: d.role || '',
       goal: d.goal || '',
@@ -419,6 +422,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       pipeline: (d.workflows?.pipeline as string) || '',
     })
     setEditingId(item.db_id)
+    setEditSteps(((d as Record<string, unknown>).steps as WorkflowStep[]) || [])
     setEditRules((d.workflows?.rules as string[]) || [])
     const rs = d.workflows?.rule_selectors as { include: string[]; exclude: string[] } | undefined
     setEditRuleSelectors(rs || null)
@@ -443,7 +447,6 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     try {
       const body: Record<string, unknown> = {
         name: createForm.name,
-        extends: createForm.extends || null,
         description: createForm.description || null,
         role: createForm.role || null,
         goal: createForm.goal || null,
@@ -467,6 +470,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         workflows.skill_selectors = { include: editSkills }
       }
       if (Object.keys(workflows).length > 0) body.workflows = workflows
+      if (editSteps.length > 0) body.steps = editSteps
 
       const res = await fetch(`${getBaseUrl()}/api/agents/definitions/${editingId}`, {
         method: 'PUT',
@@ -628,7 +632,6 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       const body: Record<string, unknown> = {
         name: (parsed.name as string) || yamlAgent.definition.name,
         description: parsed.description ?? null,
-        extends: parsed.extends ?? null,
         sources: parsed.sources ?? null,
         role: parsed.role ?? null,
         goal: parsed.goal ?? null,
@@ -678,7 +681,6 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       const body: Record<string, unknown> = {
         name: (parsed.name as string) || createForm.name,
         description: parsed.description ?? null,
-        extends: parsed.extends ?? null,
         sources: parsed.sources ?? null,
         role: parsed.role ?? null,
         goal: parsed.goal ?? null,
@@ -1053,7 +1055,8 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         pipelines={pipelineList}
         editSkills={editSkills}
         onSkillsChange={setEditSkills}
-        agentNames={definitions.filter(d => !d.deleted_at && d.source !== 'template' && d.enabled !== false).map(d => d.definition.name)}
+        steps={editSteps}
+        onStepsChange={setEditSteps}
       />
     </div>
   )

@@ -103,11 +103,11 @@ class ClaudeLLMProvider(LLMProvider):
 
         return find_cli_path()
 
-    def _verify_cli_path(self) -> str | None:
+    async def _verify_cli_path(self) -> str | None:
         """Verify CLI path is still valid. Delegates to claude_cli.verify_cli_path()."""
         from gobby.llm.claude_cli import verify_cli_path
 
-        cli_path = verify_cli_path(self._claude_cli_path)
+        cli_path = await verify_cli_path(self._claude_cli_path)
         self._claude_cli_path = cli_path
         return cli_path
 
@@ -177,6 +177,32 @@ class ClaudeLLMProvider(LLMProvider):
             self.logger.warning("Jinja2 not available, using str.format fallback")
             return prompt_template.format(**formatted_context)
 
+    @staticmethod
+    def _is_transient_error(e: Exception) -> bool:
+        """Classify whether an error is transient (worth retrying).
+
+        Permanent errors (auth failures, invalid requests) are not retried.
+        Transient errors (timeouts, rate limits, server errors) are retried.
+        """
+        msg = str(e).lower()
+        # Permanent error patterns — fail fast
+        permanent_patterns = [
+            "401",
+            "403",
+            "invalid_api_key",
+            "authentication",
+            "unauthorized",
+            "invalid request",
+            "invalid_request",
+            "permission denied",
+            "not_found",
+            "404",
+        ]
+        for pattern in permanent_patterns:
+            if pattern in msg:
+                return False
+        return True
+
     async def _retry_async(
         self,
         operation: Any,
@@ -185,28 +211,38 @@ class ClaudeLLMProvider(LLMProvider):
         on_retry: Any | None = None,
     ) -> Any:
         """
-        Execute an async operation with retry logic.
+        Execute an async operation with retry logic and error classification.
+
+        Permanent errors (auth, invalid request) fail immediately.
+        Transient errors use exponential backoff with jitter.
 
         Args:
             operation: Callable that returns an awaitable (coroutine factory).
             max_retries: Maximum number of attempts (default: 3).
-            delay: Delay in seconds between retries (default: 1.0).
+            delay: Base delay in seconds between retries (default: 1.0).
             on_retry: Optional callback(attempt: int, error: Exception) called on retry.
 
         Returns:
             Result of the operation if successful.
 
         Raises:
-            Exception: The last exception if all retries fail.
+            Exception: The last exception if all retries fail, or immediately
+                      for permanent errors.
         """
+        import random
+
         for attempt in range(max_retries):
             try:
                 return await operation()
             except Exception as e:
+                if not self._is_transient_error(e):
+                    raise
                 if attempt < max_retries - 1:
                     if on_retry:
                         on_retry(attempt, e)
-                    await asyncio.sleep(delay)
+                    # Exponential backoff with jitter
+                    backoff = delay * (2**attempt) + random.uniform(0, delay * 0.5)  # nosec B311
+                    await asyncio.sleep(backoff)
                 else:
                     raise
 
@@ -219,7 +255,7 @@ class ClaudeLLMProvider(LLMProvider):
         Always tries SDK first (works with any auth_mode if CLI is available),
         falls back to LiteLLM only if CLI is unavailable.
         """
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if cli_path:
             return await self._generate_summary_sdk(context, prompt_template)
         elif self._litellm:
@@ -231,7 +267,7 @@ class ClaudeLLMProvider(LLMProvider):
         self, context: dict[str, Any], prompt_template: str | None = None
     ) -> str:
         """Generate session summary using Claude Agent SDK (subscription mode)."""
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if not cli_path:
             return "Session summary unavailable (Claude CLI not found)"
 
@@ -242,7 +278,8 @@ class ClaudeLLMProvider(LLMProvider):
             system_prompt="You are a session summary generator. Create comprehensive, actionable summaries.",
             max_turns=1,
             model=self.config.session_summary.model,
-            allowed_tools=[],
+            tools=[],  # Passes --tools "" to CLI, disabling all built-in tools
+            allowed_tools=[],  # Intent: no tools. Note: SDK ignores due to falsy [] check
             mcp_servers={},
             permission_mode="default",
             cli_path=cli_path,
@@ -259,7 +296,14 @@ class ClaudeLLMProvider(LLMProvider):
             return summary_text
 
         try:
-            return await _run_query()
+            summary_text = await _run_query()
+            if not summary_text:
+                sid = context.get("session_id", "unknown")
+                self.logger.warning(
+                    "Claude SDK query returned empty response for summary generation (session %s)",
+                    sid,
+                )
+            return summary_text
         except Exception as e:
             self.logger.error(f"Failed to generate summary with Claude: {e}")
             return f"Session summary generation failed: {e}"
@@ -303,7 +347,7 @@ class ClaudeLLMProvider(LLMProvider):
 
         Always tries SDK first, falls back to LiteLLM only if CLI is unavailable.
         """
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if cli_path:
             return await self._generate_text_sdk(prompt, system_prompt, model, max_tokens)
         elif self._litellm:
@@ -319,7 +363,7 @@ class ClaudeLLMProvider(LLMProvider):
         max_tokens: int | None = None,
     ) -> str:
         """Generate text using Claude Agent SDK (subscription mode)."""
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if not cli_path:
             raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
@@ -430,7 +474,7 @@ class ClaudeLLMProvider(LLMProvider):
             RuntimeError: If no LLM backend is available
             ValueError: If response is empty or not valid JSON
         """
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if cli_path:
             return await self._generate_json_sdk(prompt, system_prompt, model)
         elif self._litellm:
@@ -557,7 +601,7 @@ class ClaudeLLMProvider(LLMProvider):
                 tool_calls=[],
             )
 
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if not cli_path:
             return MCPToolResult(
                 text="Generation unavailable (Claude CLI not found)",
@@ -608,7 +652,7 @@ class ClaudeLLMProvider(LLMProvider):
         tool_calls: list[ToolCall] = []
         pending_tool_calls: dict[str, ToolCall] = {}  # Map tool_use_id -> ToolCall
 
-        from gobby.llm.claude_streaming import parse_server_name as _parse_server_name
+        from gobby.llm.sdk_utils import parse_server_name as _parse_server_name
 
         # Run async query
         async def _run_query() -> str:
@@ -703,7 +747,7 @@ class ClaudeLLMProvider(LLMProvider):
             yield DoneEvent(tool_calls_count=0)
             return
 
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if not cli_path:
             yield TextChunk(content="Generation unavailable (Claude CLI not found)")
             yield DoneEvent(tool_calls_count=0)
@@ -782,7 +826,7 @@ class ClaudeLLMProvider(LLMProvider):
         context: str | None = None,
     ) -> str:
         """Describe image using Claude Agent SDK (subscription mode)."""
-        cli_path = self._verify_cli_path()
+        cli_path = await self._verify_cli_path()
         if not cli_path:
             return "Image description unavailable (Claude CLI not found)"
 

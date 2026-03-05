@@ -1,7 +1,9 @@
-"""ClawdHub provider implementation.
+"""ClawHub provider implementation.
 
 This module provides the ClawdHubProvider class which wraps the official
-`clawdhub` CLI tool to provide skill search, listing, and download functionality.
+`clawhub` CLI tool to provide skill search, listing, and download functionality.
+
+CLI docs: https://github.com/openclaw/clawhub/blob/main/docs/cli.md
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from gobby.skills.hubs.base import DownloadResult, HubProvider, HubSkillDetails, HubSkillInfo
@@ -17,31 +20,17 @@ logger = logging.getLogger(__name__)
 
 
 class ClawdHubProvider(HubProvider):
-    """Provider for ClawdHub skill registry using the CLI tool.
+    """Provider for ClawHub skill registry using the CLI tool.
 
-    This provider wraps the official `clawdhub` CLI tool (installed via
-    `npm i -g clawdhub`) to provide access to the ClawdHub skill registry.
+    This provider wraps the official `clawhub` CLI (installed via
+    `npm i -g clawhub`) to provide access to the ClawHub skill registry.
 
     The CLI provides commands for:
-    - search: Search for skills by query
-    - list: List available skills
+    - search: Vector search for skills (text output only)
+    - explore: Browse latest skills (supports --json)
+    - inspect: Get detailed skill metadata (supports --json)
     - install: Download/install a skill
-    - info: Get detailed skill information
-
-    Example usage:
-        ```python
-        provider = ClawdHubProvider(
-            hub_name="clawdhub",
-            base_url="https://clawdhub.com",
-        )
-
-        # Check if CLI is available
-        info = await provider.discover()
-        if info["cli_available"]:
-            results = await provider.search("commit message")
-            for skill in results:
-                print(f"{skill.slug}: {skill.description}")
-        ```
+    - list: List locally installed skills
     """
 
     def __init__(
@@ -50,68 +39,68 @@ class ClawdHubProvider(HubProvider):
         base_url: str,
         auth_token: str | None = None,
     ) -> None:
-        """Initialize the ClawdHub provider.
-
-        Args:
-            hub_name: The configured name for this hub instance
-            base_url: Base URL for ClawdHub (used for reference)
-            auth_token: Optional authentication token for private skills
-        """
         super().__init__(hub_name=hub_name, base_url=base_url, auth_token=auth_token)
         self._cli_available: bool | None = None
+        self._cli_binary: str | None = None
 
     @property
     def provider_type(self) -> str:
-        """Return the provider type identifier."""
         return "clawdhub"
 
     async def _check_cli_available(self) -> bool:
-        """Check if the clawdhub CLI is available.
+        """Check if the clawhub CLI is available.
 
-        Returns:
-            True if CLI is installed and accessible, False otherwise
+        Uses `--cli-version` flag per the clawhub CLI interface.
         """
         try:
             process = await asyncio.create_subprocess_exec(
-                "clawdhub",
-                "--version",
+                "clawhub",
+                "--cli-version",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await process.communicate()
+            stdout, stderr = await process.communicate()
 
             if process.returncode == 0:
-                version = stdout.decode().strip()
-                logger.debug(f"ClawdHub CLI version: {version}")
+                version = stdout.decode().strip() or stderr.decode().strip()
+                logger.debug(f"ClawHub CLI version: {version}")
+                self._cli_binary = "clawhub"
                 return True
             return False
         except FileNotFoundError:
-            logger.warning("ClawdHub CLI not found. Install with: npm i -g clawdhub")
+            logger.warning("ClawHub CLI not found. Install with: npm i -g clawhub")
             return False
         except Exception as e:
-            logger.error(f"Error checking ClawdHub CLI: {e}")
+            logger.error(f"Error checking ClawHub CLI: {e}")
             return False
 
     async def _run_cli_command(
         self,
         command: str,
         args: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Run a clawdhub CLI command and return parsed JSON output.
+        json_output: bool = False,
+    ) -> str:
+        """Run a CLI command and return raw output.
 
         Args:
-            command: The CLI command (search, list, install, info, etc.)
+            command: The CLI command (search, explore, inspect, install, etc.)
             args: Additional arguments for the command
+            json_output: Whether to add --json flag (only explore/inspect support it)
 
         Returns:
-            Parsed JSON output from the CLI
+            Raw stdout output from the CLI
 
         Raises:
             RuntimeError: If CLI is not available or command fails
         """
-        cmd_args = ["clawdhub", command, "--json"]
+        if not self._cli_binary:
+            raise RuntimeError("ClawHub CLI not found. Install with: npm i -g clawhub")
+
+        cmd_args = [self._cli_binary, command]
         if args:
             cmd_args.extend(args)
+        if json_output:
+            cmd_args.append("--json")
 
         # Add auth token if available
         if self.auth_token:
@@ -127,27 +116,87 @@ class ClawdHubProvider(HubProvider):
 
             if process.returncode != 0:
                 error_msg = stderr.decode().strip() if stderr else "Unknown error"
-                logger.error(f"ClawdHub CLI error: {error_msg}")
-                raise RuntimeError(f"ClawdHub CLI command failed: {error_msg}")
+                logger.error(f"ClawHub CLI error: {error_msg}")
+                raise RuntimeError(f"ClawHub CLI command failed: {error_msg}")
 
-            output = stdout.decode().strip()
-            if not output:
-                return {}
-
-            parsed: dict[str, Any] = json.loads(output)
-            return parsed
+            return stdout.decode().strip()
         except FileNotFoundError as e:
-            raise RuntimeError("ClawdHub CLI not found. Install with: npm i -g clawdhub") from e
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse CLI output: {e}")
-            raise RuntimeError(f"Invalid JSON from ClawdHub CLI: {e}") from e
+            raise RuntimeError("ClawHub CLI not found. Install with: npm i -g clawhub") from e
 
-    async def discover(self) -> dict[str, Any]:
-        """Discover hub capabilities and check CLI availability.
+    async def _run_cli_json(
+        self,
+        command: str,
+        args: list[str] | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        """Run a CLI command that supports --json and return parsed output.
+
+        Args:
+            command: The CLI command (explore, inspect)
+            args: Additional arguments
 
         Returns:
-            Dictionary with hub info and CLI availability status
+            Parsed JSON output
+
+        Raises:
+            RuntimeError: If CLI fails or output isn't valid JSON
         """
+        output = await self._run_cli_command(command, args, json_output=True)
+        if not output:
+            return {}
+
+        try:
+            parsed: dict[str, Any] | list[Any] = json.loads(output)
+            return parsed
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse CLI JSON output: {e}")
+            raise RuntimeError(f"Invalid JSON from ClawHub CLI: {e}") from e
+
+    @staticmethod
+    def _parse_search_text(output: str) -> list[dict[str, str]]:
+        """Parse text output from `clawhub search`.
+
+        Search output format is typically:
+            slug  vX.Y.Z  summary text here
+
+        Args:
+            output: Raw text output from search command
+
+        Returns:
+            List of dicts with slug, version, description
+        """
+        results: list[dict[str, str]] = []
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Skip spinner/status lines (contain ANSI codes or common prefixes)
+            if line.startswith(("-", "✖", "✔", "\x1b")):
+                continue
+            # Try to parse "slug  vX.Y.Z  description" format
+            match = re.match(r"^(\S+)\s+v(\S+)\s+(.*)", line)
+            if match:
+                results.append(
+                    {
+                        "slug": match.group(1),
+                        "version": match.group(2),
+                        "description": match.group(3).strip(),
+                    }
+                )
+            else:
+                # Fallback: treat whole line as slug
+                parts = line.split(None, 1)
+                if parts:
+                    results.append(
+                        {
+                            "slug": parts[0],
+                            "version": "",
+                            "description": parts[1] if len(parts) > 1 else "",
+                        }
+                    )
+        return results
+
+    async def discover(self) -> dict[str, Any]:
+        """Discover hub capabilities and check CLI availability."""
         cli_available = await self._check_cli_available()
         self._cli_available = cli_available
 
@@ -155,6 +204,7 @@ class ClawdHubProvider(HubProvider):
             "hub_name": self.hub_name,
             "provider_type": self.provider_type,
             "cli_available": cli_available,
+            "cli_binary": self._cli_binary,
             "base_url": self.base_url,
         }
 
@@ -165,24 +215,25 @@ class ClawdHubProvider(HubProvider):
     ) -> list[HubSkillInfo]:
         """Search for skills matching a query.
 
-        Args:
-            query: Search query string
-            limit: Maximum number of results
-
-        Returns:
-            List of matching skills with basic info
+        Note: The search command does not support --json output,
+        so we parse the text output.
         """
-        result = await self._run_cli_command("search", [query, "--limit", str(limit)])
+        if self._cli_available is None:
+            self._cli_available = await self._check_cli_available()
+        if not self._cli_available:
+            raise RuntimeError("ClawHub CLI not installed. Install with: npm i -g clawhub")
 
-        skills = result.get("skills", [])
+        args = [query, "--limit", str(limit)]
+        output = await self._run_cli_command("search", args)
+        skills = self._parse_search_text(output)
+
         return [
             HubSkillInfo(
-                slug=skill.get("slug", skill.get("name", "")),
-                display_name=skill.get("name", skill.get("slug", "")),
+                slug=skill.get("slug", ""),
+                display_name=skill.get("slug", ""),
                 description=skill.get("description", ""),
                 hub_name=self.hub_name,
-                version=skill.get("version"),
-                score=skill.get("score"),
+                version=skill.get("version") or None,
             )
             for skill in skills
         ]
@@ -192,27 +243,30 @@ class ClawdHubProvider(HubProvider):
         limit: int = 50,
         offset: int = 0,
     ) -> list[HubSkillInfo]:
-        """List available skills from the hub.
+        """Browse available skills from the registry.
 
-        Args:
-            limit: Maximum number of results
-            offset: Number of results to skip
-
-        Returns:
-            List of skills with basic info
+        Uses `explore --json` for remote listing (not `list` which is local-only).
         """
+        if self._cli_available is None:
+            self._cli_available = await self._check_cli_available()
+        if not self._cli_available:
+            raise RuntimeError("ClawHub CLI not installed. Install with: npm i -g clawhub")
+
         args = ["--limit", str(limit)]
-        if offset > 0:
-            args.extend(["--offset", str(offset)])
+        result = await self._run_cli_json("explore", args)
 
-        result = await self._run_cli_command("list", args)
+        # Handle both list and dict responses
+        skills: list[Any] = []
+        if isinstance(result, list):
+            skills = result
+        elif isinstance(result, dict):
+            skills = result.get("skills", [])
 
-        skills = result.get("skills", [])
         return [
             HubSkillInfo(
                 slug=skill.get("slug", skill.get("name", "")),
                 display_name=skill.get("name", skill.get("slug", "")),
-                description=skill.get("description", ""),
+                description=skill.get("description", skill.get("summary", "")),
                 hub_name=self.hub_name,
                 version=skill.get("version"),
             )
@@ -225,16 +279,12 @@ class ClawdHubProvider(HubProvider):
     ) -> HubSkillDetails | None:
         """Get detailed information about a specific skill.
 
-        Args:
-            slug: The skill's unique identifier
-
-        Returns:
-            Detailed skill info, or None if not found
+        Uses `inspect --json` which returns skill metadata and version info.
         """
         try:
-            result = await self._run_cli_command("info", [slug])
+            result = await self._run_cli_json("inspect", [slug])
 
-            if not result:
+            if not result or not isinstance(result, dict):
                 return None
 
             return HubSkillDetails(
@@ -255,31 +305,37 @@ class ClawdHubProvider(HubProvider):
         version: str | None = None,
         target_dir: str | None = None,
     ) -> DownloadResult:
-        """Download and extract a skill from the hub.
+        """Download and install a skill from the hub.
 
-        Args:
-            slug: The skill's unique identifier
-            version: Specific version to download (None for latest)
-            target_dir: Directory to extract to
-
-        Returns:
-            DownloadResult with success status, path, version, or error
+        Uses `clawhub install <slug>` which handles download, extraction,
+        and lockfile updates.
         """
+        if self._cli_available is None:
+            self._cli_available = await self._check_cli_available()
+        if not self._cli_available:
+            return DownloadResult(
+                success=False,
+                slug=slug,
+                error="ClawHub CLI not installed. Install with: npm i -g clawhub",
+            )
+
         args = [slug]
 
         if version:
             args.extend(["--version", version])
 
         if target_dir:
-            args.extend(["--output", target_dir])
+            args.extend(["--dir", target_dir])
+
+        # Use --force to overwrite existing without prompts
+        args.append("--force")
 
         try:
-            result = await self._run_cli_command("install", args)
+            await self._run_cli_command("install", args)
             return DownloadResult(
-                success=result.get("success", True),
+                success=True,
                 slug=slug,
-                path=result.get("path", target_dir),
-                version=result.get("version", version),
+                version=version,
             )
         except RuntimeError as e:
             return DownloadResult(

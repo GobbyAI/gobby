@@ -36,7 +36,7 @@ session_variables:
   # List of server:tool combos that have been unlocked via get_tool_schema
   unlocked_tools: []
 
-  # Progressive disclosure gates - track which discovery steps have occurred
+  # Progressive discovery gates - track which discovery steps have occurred
   servers_listed: false
   listed_servers: []
 
@@ -268,7 +268,7 @@ triggers:
           reason: |
             Call list_tools(server_name="{{ tool_input.get('server_name', '') }}") first, then retry get_tool_schema.
 
-        # Block call_tool if schema wasn't fetched first (progressive disclosure)
+        # Block call_tool if schema wasn't fetched first (progressive discovery)
         # Skip for discovery tools (list_tools, get_tool_schema, etc.)
         # Uses 'tools' (not mcp_tools) since we're intercepting the actual tool name
         # NOTE: This rule MUST come before mcp_tools rules so schema check fires first
@@ -352,7 +352,7 @@ triggers:
     # Track successful get_tool_schema calls to unlock tools for call_tool
     - action: track_schema_lookup
 
-    # Track list_mcp_servers and list_tools for progressive disclosure gates
+    # Track list_mcp_servers and list_tools for progressive discovery gates
     - action: track_discovery_step
 
     # Track significant work for memory review nudge on stop

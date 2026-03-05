@@ -46,14 +46,22 @@ from gobby.llm.claude_models import (
     ToolResultEvent,
     resolve_context_window,
 )
+from gobby.llm.sdk_utils import (
+    ADDITIONAL_CONTEXT_LIMIT as _ADDITIONAL_CONTEXT_LIMIT,
+)
+from gobby.llm.sdk_utils import (
+    format_exception_group,
+    sanitize_error,
+)
+from gobby.llm.sdk_utils import (
+    parse_server_name as _parse_server_name,
+)
 from gobby.servers.chat_session_helpers import (
-    _ADDITIONAL_CONTEXT_LIMIT,
     PendingApproval,
     _find_cli_path,
     _find_mcp_config,
     _find_project_root,
     _load_chat_system_prompt,
-    _parse_server_name,
     _response_to_compact_output,
     _response_to_post_tool_output,
     _response_to_pre_tool_output,
@@ -63,14 +71,6 @@ from gobby.servers.chat_session_helpers import (
 from gobby.servers.chat_session_permissions import ChatSessionPermissionsMixin
 
 logger = logging.getLogger(__name__)
-
-
-def _sanitize_error(e: Exception) -> str:
-    """Return a user-facing error message, hiding internal library details."""
-    msg = str(e)
-    if "litellm" in msg.lower() or "model isn't mapped" in msg or "custom_llm_provider" in msg:
-        return "An internal error occurred. Please try again."
-    return msg
 
 
 @dataclass
@@ -615,14 +615,13 @@ class ChatSession(ChatSessionPermissionsMixin):
                                     needs_spacing_before_text = True
 
             except ExceptionGroup as eg:
-                errors = [_sanitize_error(exc) for exc in eg.exceptions]
-                yield TextChunk(content=f"Generation failed: {'; '.join(errors)}")
+                yield TextChunk(content=f"Generation failed: {format_exception_group(eg)}")
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
             except Exception as e:
                 logger.error(f"ChatSession {self.conversation_id} error: {e}", exc_info=True)
-                yield TextChunk(content=f"Generation failed: {_sanitize_error(e)}")
+                yield TextChunk(content=f"Generation failed: {sanitize_error(e)}")
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)

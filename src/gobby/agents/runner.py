@@ -26,6 +26,7 @@ from gobby.storage.agents import LocalAgentRunManager
 __all__ = ["AgentRunner"]
 
 if TYPE_CHECKING:
+    from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.sessions import LocalSessionManager
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -62,6 +63,7 @@ class AgentRunner:
         executors: dict[str, AgentExecutor],
         max_agent_depth: int = 1,
         workflow_loader: WorkflowLoader | None = None,
+        completion_registry: CompletionEventRegistry | None = None,
     ):
         """
         Initialize AgentRunner.
@@ -72,6 +74,7 @@ class AgentRunner:
             executors: Map of provider name to executor instance.
             max_agent_depth: Maximum nesting depth for agents.
             workflow_loader: Optional WorkflowLoader for loading workflow definitions.
+            completion_registry: Optional CompletionEventRegistry for notifying on run completion.
         """
         self.db = db
         self._session_storage = session_storage
@@ -89,6 +92,7 @@ class AgentRunner:
             self._workflow_loader = _WL()
         # Agent definitions are now loaded by the spawn_agent factory directly
 
+        self._completion_registry = completion_registry
         self.logger = logger
 
         # Workflow handler for hook evaluation on spawned agent tool calls
@@ -231,7 +235,7 @@ class AgentRunner:
                         turns_used=0,
                     )
                 # Ensure the loaded workflow is actually a PipelineDefinition or a valid WorkflowDefinition
-                elif not isinstance(workflow_definition, (PipelineDefinition, WorkflowDefinition)):
+                elif not isinstance(workflow_definition, PipelineDefinition | WorkflowDefinition):
                     return AgentResult(
                         output="",
                         status="error",
@@ -518,6 +522,9 @@ class AgentRunner:
             # Remove from in-memory tracking
             self._tracker.untrack(agent_run.id)
 
+            # Notify completion registry
+            await self._notify_completion(agent_run.id, result.status, result.output, result.error)
+
             # Set run_id and child_session_id on the result so callers don't need to call list_runs()
             result.run_id = agent_run.id
             result.child_session_id = child_session.id
@@ -537,11 +544,42 @@ class AgentRunner:
             self._session_storage.update_status(child_session.id, "failed")
             # Remove from in-memory tracking
             self._tracker.untrack(agent_run.id)
+
+            # Notify completion registry
+            await self._notify_completion(agent_run.id, "error", None, str(e))
+
             return AgentResult(
                 output="",
                 status="error",
                 error=str(e),
                 turns_used=0,
+            )
+
+    async def _notify_completion(
+        self,
+        run_id: str,
+        status: str,
+        output: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Notify the completion registry that an agent run finished.
+
+        Fail-open: errors are logged but never propagate to the caller.
+        """
+        if not self._completion_registry:
+            return
+        try:
+            result: dict[str, Any] = {"status": status, "run_id": run_id}
+            if output:
+                result["output"] = output
+            if error:
+                result["error"] = error
+            await self._completion_registry.notify(run_id, result)
+        except Exception:
+            self.logger.warning(
+                "Failed to notify completion registry for run %s",
+                run_id,
+                exc_info=True,
             )
 
     async def run(

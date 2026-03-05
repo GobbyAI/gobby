@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.mcp_proxy.tools.agent_definitions import (
+from gobby.mcp_proxy.tools.workflows._agents import (
     create_agent_definition,
     delete_agent_definition,
     get_agent_definition,

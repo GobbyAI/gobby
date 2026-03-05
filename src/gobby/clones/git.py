@@ -512,12 +512,13 @@ class CloneGitManager:
         branch_name: str,
         base_branch: str = "main",
         shallow: bool = True,
+        use_local: bool = False,
     ) -> GitOperationResult:
         """
         Create a clone for isolated work.
 
         This is the high-level API used by CloneIsolationHandler.
-        It gets the remote URL from the current repository and creates
+        It gets the remote URL (or uses the local repo path) and creates
         either a shallow or full clone at the specified path.
 
         Args:
@@ -525,33 +526,45 @@ class CloneGitManager:
             branch_name: Branch to create/checkout in the clone
             base_branch: Base branch to clone from (default: main)
             shallow: Whether to create a shallow clone (default: True)
+            use_local: If True, clone from local repo path instead of remote URL.
+                       Forces full clone (shallow from local paths can be unreliable).
 
         Returns:
             GitOperationResult with success status and message
         """
-        # Get remote URL from current repo
-        remote_url = self.get_remote_url()
-        if not remote_url:
-            return GitOperationResult(
-                success=False,
-                message="Could not get remote URL from repository",
-                error="no_remote_url",
-            )
-
-        # Create clone (shallow or full based on parameter)
-        if shallow:
-            result = self.shallow_clone(
-                remote_url=remote_url,
+        if use_local:
+            # Clone from local repo path — always full clone
+            source = str(self.repo_path)
+            logger.info(f"Cloning from local repo: {source}")
+            result = self.full_clone(
+                remote_url=source,
                 clone_path=clone_path,
                 branch=base_branch,
-                depth=1,
             )
         else:
-            result = self.full_clone(
-                remote_url=remote_url,
-                clone_path=clone_path,
-                branch=base_branch,
-            )
+            # Get remote URL from current repo
+            remote_url = self.get_remote_url()
+            if not remote_url:
+                return GitOperationResult(
+                    success=False,
+                    message="Could not get remote URL from repository",
+                    error="no_remote_url",
+                )
+
+            # Create clone (shallow or full based on parameter)
+            if shallow:
+                result = self.shallow_clone(
+                    remote_url=remote_url,
+                    clone_path=clone_path,
+                    branch=base_branch,
+                    depth=1,
+                )
+            else:
+                result = self.full_clone(
+                    remote_url=remote_url,
+                    clone_path=clone_path,
+                    branch=base_branch,
+                )
 
         if not result.success:
             return result

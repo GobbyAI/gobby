@@ -118,22 +118,17 @@ async def test_verify_cli_path_retry(claude_config):
     side_effects = [None, None, "/found/now"]
 
     with patch("gobby.llm.claude_cli.shutil.which", side_effect=side_effects) as mock_which:
-        with patch("gobby.llm.claude_cli.time.sleep") as mock_sleep:
+        with patch("gobby.llm.claude_cli.asyncio.sleep", return_value=None) as mock_sleep:
             with patch("os.path.exists", return_value=True):
                 provider = ClaudeLLMProvider(claude_config)
-                # Manually trigger verify logic
-                # Initial find failed (in __init__ which calls _find_cli_path)
-                # provider._claude_cli_path is None or whatever __init__ set it to.
-                # Let's force it to be set but then "disappear"
 
                 provider._claude_cli_path = "/old/path"
-                # Patch exists to return False for /old/path
 
                 def exists_side_effect(path):
                     return path == "/found/now"
 
                 with patch("os.path.exists", side_effect=exists_side_effect):
-                    path = provider._verify_cli_path()
+                    path = await provider._verify_cli_path()
                     assert path == "/found/now"
                     assert mock_which.call_count >= 1
                     assert mock_sleep.call_count >= 1

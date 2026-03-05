@@ -287,13 +287,13 @@ class TestInstallSkillFromHub:
         manager = MagicMock()
 
         # Configure list_hubs and has_hub
-        manager.list_hubs.return_value = ["clawdhub", "skillhub"]
-        manager.has_hub.side_effect = lambda name: name in ["clawdhub", "skillhub"]
+        manager.list_hubs.return_value = ["clawdhub", "skillsmp"]
+        manager.has_hub.side_effect = lambda name: name in ["clawdhub", "skillsmp"]
 
         # Configure get_config
         configs = {
             "clawdhub": HubConfig(type="clawdhub"),
-            "skillhub": HubConfig(type="skillhub", base_url="https://skillhub.dev"),
+            "skillsmp": HubConfig(type="skillsmp", base_url="https://skillsmp.com/api/v1"),
         }
         manager.get_config.side_effect = lambda name: configs.get(name)
 

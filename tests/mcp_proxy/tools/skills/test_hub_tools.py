@@ -28,18 +28,18 @@ def mock_hub_manager():
     manager = MagicMock()
 
     # Configure list_hubs to return test hub names
-    manager.list_hubs.return_value = ["clawdhub", "skillhub", "my-collection"]
+    manager.list_hubs.return_value = ["clawdhub", "skillsmp", "my-collection"]
 
     # Configure has_hub
     def has_hub(name: str) -> bool:
-        return name in ["clawdhub", "skillhub", "my-collection"]
+        return name in ["clawdhub", "skillsmp", "my-collection"]
 
     manager.has_hub.side_effect = has_hub
 
     # Configure get_config to return test configs
     configs = {
         "clawdhub": HubConfig(type="clawdhub"),
-        "skillhub": HubConfig(type="skillhub", base_url="https://skillhub.dev"),
+        "skillsmp": HubConfig(type="skillsmp", base_url="https://skillsmp.com/api/v1"),
         "my-collection": HubConfig(type="github-collection"),
     }
 
@@ -86,10 +86,10 @@ class TestListHubsTool:
         assert clawdhub is not None
         assert clawdhub["type"] == "clawdhub"
 
-        # Find the skillhub entry
-        skillhub = next((h for h in hubs if h["name"] == "skillhub"), None)
-        assert skillhub is not None
-        assert skillhub["type"] == "skillhub"
+        # Find the skillsmp entry
+        skillsmp = next((h for h in hubs if h["name"] == "skillsmp"), None)
+        assert skillsmp is not None
+        assert skillsmp["type"] == "skillsmp"
 
     @pytest.mark.asyncio
     async def test_list_hubs_without_hub_manager(self, db):
@@ -140,10 +140,10 @@ class TestSearchHubTool:
                 "slug": "git-helper",
                 "display_name": "Git Helper",
                 "description": "Git workflow assistant",
-                "hub_name": "skillhub",
+                "hub_name": "skillsmp",
             },
         ]
-        mock_hub_manager.search_all = AsyncMock(return_value=mock_results)
+        mock_hub_manager.search_all = AsyncMock(return_value=(mock_results, {}))
 
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("search_hub")
@@ -169,7 +169,7 @@ class TestSearchHubTool:
                 "hub_name": "clawdhub",
             },
         ]
-        mock_hub_manager.search_all = AsyncMock(return_value=mock_results)
+        mock_hub_manager.search_all = AsyncMock(return_value=(mock_results, {}))
 
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("search_hub")
@@ -198,7 +198,7 @@ class TestSearchHubTool:
                 "hub_name": "clawdhub",
             },
         ]
-        mock_hub_manager.search_all = AsyncMock(return_value=mock_results)
+        mock_hub_manager.search_all = AsyncMock(return_value=(mock_results, {}))
 
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("search_hub")
@@ -215,7 +215,7 @@ class TestSearchHubTool:
         """Test that search_hub respects limit parameter."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
-        mock_hub_manager.search_all = AsyncMock(return_value=[])
+        mock_hub_manager.search_all = AsyncMock(return_value=([], {}))
 
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("search_hub")

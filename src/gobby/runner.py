@@ -6,7 +6,7 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import uvicorn
 
@@ -167,13 +167,22 @@ class GobbyRunner:
                 ClawdHubProvider,
                 GitHubCollectionProvider,
                 HubManager,
-                SkillHubProvider,
+                SkillsMPProvider,
             )
 
             skills_config = self.config.skills if hasattr(self.config, "skills") else SkillsConfig()
-            self.hub_manager = HubManager(configs=skills_config.hubs)
+
+            # Resolve hub API keys from env vars
+            api_keys: dict[str, str] = {}
+            for _hub_name, hub_config in skills_config.hubs.items():
+                if hub_config.auth_key_name:
+                    value = os.environ.get(hub_config.auth_key_name)
+                    if value:
+                        api_keys[hub_config.auth_key_name] = value
+
+            self.hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
             self.hub_manager.register_provider_factory("clawdhub", ClawdHubProvider)
-            self.hub_manager.register_provider_factory("skillhub", SkillHubProvider)
+            self.hub_manager.register_provider_factory("skillsmp", SkillsMPProvider)
             self.hub_manager.register_provider_factory(
                 "github-collection", GitHubCollectionProvider
             )
@@ -360,6 +369,33 @@ class GobbyRunner:
         except Exception as e:
             logger.warning(f"Failed to initialize workflow loader: {e}")
 
+        # Initialize completion event registry with wake dispatcher
+        from gobby.events.completion_registry import CompletionEventRegistry
+        from gobby.events.wake import WakeDispatcher
+        from gobby.storage.agents import LocalAgentRunManager
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+
+        ism_manager = InterSessionMessageManager(cast(LocalDatabase, self.database))
+        agent_run_manager = LocalAgentRunManager(self.database)
+
+        # tmux sender: wraps the global TmuxSessionManager singleton
+        async def _tmux_send(tmux_session_name: str, message: str) -> None:
+            from gobby.agents.tmux import get_tmux_session_manager
+
+            mgr = get_tmux_session_manager()
+            await mgr.send_keys(tmux_session_name, message + "\n")
+
+        self.wake_dispatcher = WakeDispatcher(
+            session_manager=self.session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=_tmux_send,
+            agent_run_manager=agent_run_manager,
+        )
+
+        self.completion_registry = CompletionEventRegistry(
+            wake_callback=self.wake_dispatcher.wake,
+        )
+
         # Create pipeline executor at startup if we have project context
         if self.workflow_loader is not None and self.project_id:
             try:
@@ -377,6 +413,7 @@ class GobbyRunner:
                     loader=self.workflow_loader,
                     template_engine=TemplateEngine(),
                     session_manager=self.session_manager,
+                    completion_registry=self.completion_registry,
                 )
                 logger.info("Pipeline executor initialized at startup")
             except Exception as e:
@@ -401,6 +438,7 @@ class GobbyRunner:
                 session_storage=self.session_manager,
                 executors=executors,
                 max_agent_depth=5,
+                completion_registry=self.completion_registry,
             )
             logger.debug(f"AgentRunner initialized with executors: {list(executors.keys())}")
         except Exception as e:
@@ -480,6 +518,7 @@ class GobbyRunner:
             pipeline_executor=self.pipeline_executor,
             workflow_loader=self.workflow_loader,
             pipeline_execution_manager=self.pipeline_execution_manager,
+            completion_registry=self.completion_registry,
             agent_lifecycle_monitor=self.agent_lifecycle_monitor,
             cron_storage=self.cron_storage,
             cron_scheduler=self.cron_scheduler,
@@ -680,7 +719,7 @@ class GobbyRunner:
             # Resume interrupted pipelines and fail non-resumable stale executions
             if self.pipeline_executor and self.pipeline_execution_manager and self.workflow_loader:
                 try:
-                    from gobby.mcp_proxy.tools.pipelines._execution import (
+                    from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
                         resume_interrupted_pipelines,
                     )
 
@@ -700,6 +739,47 @@ class GobbyRunner:
                     )
                     if stale_count > 0:
                         logger.info(f"Failed {stale_count} non-resumable stale pipeline executions")
+
+                    # Wake subscribers of interrupted (non-resumed) pipelines
+                    if stale_count > 0 and self.completion_registry:
+                        try:
+                            from gobby.workflows.pipeline_state import ExecutionStatus as _ES
+
+                            interrupted = self.pipeline_execution_manager.list_executions(
+                                status=_ES.INTERRUPTED,
+                            )
+                            for exe in interrupted:
+                                subs = self.pipeline_execution_manager.get_completion_subscribers(
+                                    exe.id
+                                )
+                                if subs:
+                                    self.completion_registry.register(exe.id, subscribers=subs)
+                                    await self.completion_registry.notify(
+                                        exe.id,
+                                        result={
+                                            "status": "interrupted",
+                                            "pipeline_name": exe.pipeline_name,
+                                            "error": "Daemon restarted while execution was in progress",
+                                        },
+                                        message=(
+                                            f'[Completion Notification] Pipeline "{exe.pipeline_name}" '
+                                            f"({exe.id}) was interrupted.\n"
+                                            f"Status: interrupted (daemon restarted)\n"
+                                            f"You may retry with run_pipeline."
+                                        ),
+                                    )
+                                    self.pipeline_execution_manager.remove_completion_subscribers(
+                                        exe.id
+                                    )
+                                    self.completion_registry.cleanup(exe.id)
+                            logger.info(
+                                "Notified subscribers of %d interrupted pipeline(s)",
+                                len(interrupted),
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to wake subscribers of interrupted pipelines: %s", e
+                            )
                 except Exception as e:
                     logger.warning(f"Pipeline recovery after restart failed: {e}")
 
@@ -795,7 +875,9 @@ class GobbyRunner:
 
             # Cancel background pipeline tasks
             try:
-                from gobby.mcp_proxy.tools.pipelines._execution import cleanup_background_tasks
+                from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
+                    cleanup_background_tasks,
+                )
 
                 await asyncio.wait_for(cleanup_background_tasks(), timeout=5.0)
             except TimeoutError:

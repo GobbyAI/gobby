@@ -131,6 +131,10 @@ class DaemonProxy:
             arg_timeout = float((arguments or {}).get("timeout", 300.0))
             # Add 30s buffer for HTTP overhead
             timeout = arg_timeout + 30.0
+        # run_check: subprocess + optional LLM summarization can easily exceed 30s
+        elif tool_name == "run_check":
+            arg_timeout = float((arguments or {}).get("timeout", 300))
+            timeout = arg_timeout + 60.0  # Buffer for LLM summarization
 
         return await self._request(
             "POST",

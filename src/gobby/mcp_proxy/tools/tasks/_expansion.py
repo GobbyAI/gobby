@@ -8,6 +8,7 @@ Provides tools for the /gobby-expand skill workflow:
 
 import json
 import logging
+import re
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -283,6 +284,126 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         return {"pending": False}
 
+    async def validate_expansion_spec(
+        task_id: str,
+        project: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate a saved expansion spec for structural correctness and plan coverage.
+
+        Checks:
+        1. Non-empty subtasks list
+        2. Required fields present (title, description, category)
+        3. Valid dependency indices (no out-of-bounds, no self-references)
+        4. No circular dependencies
+        5. If parent task description has ### N.N plan sections, verifies coverage
+
+        Args:
+            task_id: Task ID with saved expansion spec
+            project: Project name or UUID for task resolution (optional)
+
+        Returns:
+            {"valid": bool, "errors": list[str], "subtask_count": int}
+        """
+        try:
+            project_id = ctx.resolve_project_filter(project)
+        except ValueError as e:
+            return {"error": str(e)}
+
+        try:
+            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id, project_id)
+        except (TaskNotFoundError, ValueError) as e:
+            return {"error": f"Task not found: {e}"}
+
+        task = ctx.task_manager.get_task(resolved_id)
+        if not task:
+            return {"error": f"Task {task_id} not found"}
+
+        if not task.expansion_context:
+            return {"error": "No expansion spec saved on task"}
+
+        try:
+            spec = json.loads(task.expansion_context)
+        except json.JSONDecodeError as e:
+            return {"valid": False, "errors": [f"Invalid JSON in expansion_context: {e}"]}
+
+        errors: list[str] = []
+        subtasks = spec.get("subtasks", [])
+
+        # 1. Non-empty subtasks
+        if not subtasks:
+            return {"valid": False, "errors": ["Spec contains no subtasks"], "subtask_count": 0}
+
+        n = len(subtasks)
+
+        for i, st in enumerate(subtasks):
+            # 2. Required fields
+            if not st.get("title", "").strip():
+                errors.append(f"Subtask {i}: missing or empty 'title'")
+            if not st.get("description", "").strip():
+                errors.append(f"Subtask {i}: missing or empty 'description'")
+            if not st.get("category", "").strip():
+                errors.append(f"Subtask {i}: missing or empty 'category'")
+
+            # 3. Valid dependency indices
+            for dep_idx in st.get("depends_on", []):
+                if not isinstance(dep_idx, int):
+                    errors.append(f"Subtask {i}: dependency '{dep_idx}' is not an integer")
+                elif dep_idx == i:
+                    errors.append(f"Subtask {i}: self-reference in depends_on")
+                elif dep_idx < 0 or dep_idx >= n:
+                    errors.append(
+                        f"Subtask {i}: depends_on index {dep_idx} out of bounds (0-{n - 1})"
+                    )
+
+        # 4. Cycle detection (only if no structural dependency errors)
+        dep_errors = [e for e in errors if "depends_on" in e or "self-reference" in e]
+        if not dep_errors:
+            WHITE, GRAY, BLACK = 0, 1, 2
+            color = [WHITE] * n
+            adj: dict[int, list[int]] = {i: [] for i in range(n)}
+            for i, st in enumerate(subtasks):
+                for dep_idx in st.get("depends_on", []):
+                    if isinstance(dep_idx, int) and 0 <= dep_idx < n:
+                        adj[i].append(dep_idx)
+
+            def _has_cycle_from(node: int) -> bool:
+                color[node] = GRAY
+                for neighbor in adj[node]:
+                    if color[neighbor] == GRAY:
+                        return True
+                    if color[neighbor] == WHITE and _has_cycle_from(neighbor):
+                        return True
+                color[node] = BLACK
+                return False
+
+            for i in range(n):
+                if color[i] == WHITE and _has_cycle_from(i):
+                    errors.append("Circular dependency detected in subtask depends_on")
+                    break
+
+        # 5. Plan section coverage
+        if task.description:
+            plan_sections = set(re.findall(r"^###\s+(\d+\.\d+)\s", task.description, re.MULTILINE))
+            if plan_sections:
+                covered: set[str] = set()
+                for st in subtasks:
+                    title = st.get("title", "")
+                    desc = st.get("description", "")
+                    text = f"{title}\n{desc}"
+                    for section in plan_sections:
+                        if section in text:
+                            covered.add(section)
+
+                missing = plan_sections - covered
+                if missing:
+                    errors.append(f"Plan sections not covered by any subtask: {sorted(missing)}")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "subtask_count": n,
+        }
+
     # Register tools
     registry.register(
         name="save_expansion_spec",
@@ -313,6 +434,11 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
                                     "validation": {"type": "string"},
                                     "description": {"type": "string"},
                                     "priority": {"type": "integer"},
+                                    "affected_files": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "description": "Files this subtask will touch (relative to repo root)",
+                                    },
                                 },
                                 "required": ["title"],
                             },
@@ -372,6 +498,26 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["task_id"],
         },
         func=get_expansion_spec,
+    )
+
+    registry.register(
+        name="validate_expansion_spec",
+        description="Validate a saved expansion spec. Checks structure, dependencies, and plan coverage.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID with saved expansion spec",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name or UUID for task resolution",
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=validate_expansion_spec,
     )
 
     return registry

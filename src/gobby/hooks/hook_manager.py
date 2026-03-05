@@ -457,17 +457,22 @@ class HookManager:
             # they're explicit side effects that should fire regardless of decision
             mcp_calls = (workflow_response.metadata or {}).get("mcp_calls", [])
             self.logger.info(
-                "Rule evaluation for %s: decision=%s, mcp_calls=%d",
+                "Rule evaluation for %s: decision=%s, mcp_calls=%d, session=%s",
                 event.event_type,
                 workflow_response.decision,
                 len(mcp_calls),
+                event.metadata.get("_platform_session_id", "unknown"),
             )
 
             if mcp_calls:
                 self._dispatch_mcp_calls(mcp_calls, event)
 
             if workflow_response.decision != "allow":
-                self.logger.info("Workflow blocked/modified event: %s", workflow_response.decision)
+                self.logger.info(
+                    "Workflow blocked/modified event: %s, session=%s",
+                    workflow_response.decision,
+                    event.metadata.get("_platform_session_id", "unknown"),
+                )
                 return None, workflow_response
 
             # Capture context to merge later

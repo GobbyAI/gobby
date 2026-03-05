@@ -555,7 +555,8 @@ class TestClaudeLLMProviderInit:
 class TestVerifyCliPath:
     """Tests for _verify_cli_path method with retry logic."""
 
-    def test_verify_cli_path_cached_path_valid(self, claude_config: DaemonConfig) -> None:
+    @pytest.mark.asyncio
+    async def test_verify_cli_path_cached_path_valid(self, claude_config: DaemonConfig) -> None:
         """Test _verify_cli_path returns cached path when it's valid."""
         with patch("gobby.llm.claude_cli.shutil.which", return_value="/usr/bin/claude"):
             with patch("os.path.exists", return_value=True):
@@ -563,10 +564,11 @@ class TestVerifyCliPath:
                     from gobby.llm.claude import ClaudeLLMProvider
 
                     provider = ClaudeLLMProvider(claude_config)
-                    result = provider._verify_cli_path()
+                    result = await provider._verify_cli_path()
                     assert result == "/usr/bin/claude"
 
-    def test_verify_cli_path_retry_on_missing(self, claude_config: DaemonConfig) -> None:
+    @pytest.mark.asyncio
+    async def test_verify_cli_path_retry_on_missing(self, claude_config: DaemonConfig) -> None:
         """Test _verify_cli_path retries when cached path disappears."""
         exists_call_count = 0
 
@@ -584,22 +586,20 @@ class TestVerifyCliPath:
             mock_which.side_effect = ["/usr/bin/claude", "/new/path/claude"]
             with patch("os.path.exists", side_effect=mock_exists):
                 with patch("os.access", return_value=True):
-                    with patch("gobby.llm.claude_cli.time.sleep"):
+                    with patch("gobby.llm.claude_cli.asyncio.sleep", return_value=None):
                         from gobby.llm.claude import ClaudeLLMProvider
 
                         provider = ClaudeLLMProvider(claude_config)
-                        # Provider init already sets _claude_cli_path via _find_cli_path
-                        # which calls os.path.exists once (returns False in our mock)
-                        # So we need to manually reset it for the test
                         provider._claude_cli_path = "/usr/bin/claude"
 
                         # Reset call count after init
                         exists_call_count = 0
 
-                        result = provider._verify_cli_path()
+                        result = await provider._verify_cli_path()
                         assert result == "/new/path/claude"
 
-    def test_verify_cli_path_retry_exhausted(self, claude_config: DaemonConfig) -> None:
+    @pytest.mark.asyncio
+    async def test_verify_cli_path_retry_exhausted(self, claude_config: DaemonConfig) -> None:
         """Test _verify_cli_path returns None after retries exhausted."""
         with patch("gobby.llm.claude_cli.shutil.which") as mock_which:
             mock_which.side_effect = [
@@ -610,14 +610,13 @@ class TestVerifyCliPath:
             ]
             with patch("os.path.exists", return_value=False):
                 with patch("os.access", return_value=True):
-                    with patch("gobby.llm.claude_cli.time.sleep"):
+                    with patch("gobby.llm.claude_cli.asyncio.sleep", return_value=None):
                         from gobby.llm.claude import ClaudeLLMProvider
 
                         provider = ClaudeLLMProvider(claude_config)
-                        # Manually set cached path to trigger retry logic
                         provider._claude_cli_path = "/usr/bin/claude"
 
-                        result = provider._verify_cli_path()
+                        result = await provider._verify_cli_path()
                         assert result is None
 
 

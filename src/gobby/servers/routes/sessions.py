@@ -330,6 +330,83 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Error listing sessions: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
+    @router.post("/bulk-move")
+    async def bulk_move_sessions(request: Request) -> dict[str, Any]:
+        """
+        Move sessions from one project to another in bulk.
+
+        Accepts from_project_id, to_project_id, and optional source filter.
+
+        Returns:
+            Count of moved sessions
+        """
+        metrics.inc_counter("http_requests_total")
+
+        try:
+            if server.session_manager is None:
+                raise HTTPException(status_code=503, detail="Session manager not available")
+
+            body = await request.json()
+            from_project_id = body.get("from_project_id")
+            to_project_id = body.get("to_project_id")
+            source_filter = body.get("source")
+            limit = body.get("limit", 100)
+
+            if not from_project_id or not to_project_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Required fields: from_project_id, to_project_id",
+                )
+
+            # Validate target project exists
+            db = server.session_manager.db
+            target = db.fetchone("SELECT id FROM projects WHERE id = ?", (to_project_id,))
+            if not target:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Target project {to_project_id} not found",
+                )
+
+            sessions = server.session_manager.list(
+                project_id=from_project_id,
+                source=source_filter,
+                limit=limit,
+            )
+
+            session_ids = [s.id for s in sessions]
+            moved = 0
+
+            if session_ids:
+                with db.transaction() as conn:
+                    placeholders = ",".join("?" for _ in session_ids)
+                    conn.execute(
+                        f"UPDATE sessions SET project_id = ? WHERE id IN ({placeholders})",  # noqa: S608
+                        (to_project_id, *session_ids),
+                    )
+                    moved = len(session_ids)
+
+            logger.info(f"Bulk-moved {moved} sessions from {from_project_id} to {to_project_id}")
+
+            # Notify connected clients
+            for sid in session_ids:
+                await _broadcast_session("session_updated", sid)
+
+            return {
+                "status": "success",
+                "moved": moved,
+                "total_matching": len(sessions),
+                "from_project_id": from_project_id,
+                "to_project_id": to_project_id,
+            }
+
+        except HTTPException:
+            metrics.inc_counter("http_requests_errors_total")
+            raise
+        except Exception as e:
+            metrics.inc_counter("http_requests_errors_total")
+            logger.error(f"Bulk move sessions error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
     @router.get("/{session_id}")
     async def sessions_get(session_id: str) -> dict[str, Any]:
         """

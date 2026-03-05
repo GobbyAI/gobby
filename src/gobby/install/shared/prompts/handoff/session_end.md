@@ -8,6 +8,10 @@ required_variables:
 optional_variables:
   - structured_context
   - git_diff_summary
+  - claimed_tasks
+  - session_memories
+  - first_digest_turn
+  - recent_digest_turns
 ---
 You are generating a session summary for a future AI agent to resume work. Be precise.
 Reference specific file names, function names, error messages, and commit SHAs.
@@ -29,6 +33,22 @@ These are extracted from tool calls and git -- trust these over the transcript.
 
 ### Actual Code Changes:
 {{ git_diff_summary }}
+
+### Active Tasks (from DB)
+
+{{ claimed_tasks }}
+
+### Memories Stored This Session
+
+{{ session_memories }}
+
+### Session Origin (from Digest)
+
+{{ first_digest_turn }}
+
+### Most Recent Activity (from Digest)
+
+{{ recent_digest_turns }}
 
 ## Supplementary: Transcript
 

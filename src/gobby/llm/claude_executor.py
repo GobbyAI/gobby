@@ -159,40 +159,33 @@ class ClaudeExecutor(AgentExecutor):
 
         tool_calls: list[ToolCallRecord] = []
 
-        # Create in-process tool functions that call our handler
-        # The SDK expects sync functions, so we'll use a wrapper
+        # Create in-process tool functions that call our handler.
+        # The SDK invokes tool functions synchronously from a thread that
+        # may or may not have a running event loop.  Using
+        # run_coroutine_threadsafe() deadlocks when the SDK calls from the
+        # same thread that owns the loop.  Instead we dispatch to a worker
+        # thread with its own event loop via ThreadPoolExecutor.
+        _tool_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
         def make_tool_func(tool_schema: ToolSchema) -> Callable[..., str]:
-            """Create a tool function that calls our async handler."""
+            """Create a sync tool function that safely runs our async handler."""
+
+            def _run_in_thread(kwargs: dict[str, Any]) -> ToolResult:
+                """Execute the async handler in a fresh event loop."""
+                coro = cast(
+                    Coroutine[Any, Any, ToolResult],
+                    tool_handler(tool_schema.name, kwargs),
+                )
+                return asyncio.run(coro)
 
             def tool_func(**kwargs: Any) -> str:
-                # Run the async handler - need to handle already-running loop
+                future = _tool_pool.submit(_run_in_thread, kwargs)
                 try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-
-                if loop is not None:
-                    # We're in an async context, use run_coroutine_threadsafe
-                    coro = cast(
-                        Coroutine[Any, Any, ToolResult],
-                        tool_handler(tool_schema.name, kwargs),
-                    )
-                    future: concurrent.futures.Future[ToolResult] = (
-                        asyncio.run_coroutine_threadsafe(coro, loop)
-                    )
-                    try:
-                        result = future.result(timeout=30)
-                    except concurrent.futures.TimeoutError:
-                        return json.dumps({"error": "Tool execution timed out"})
-                    except Exception as e:
-                        return json.dumps({"error": str(e)})
-                else:
-                    # No running loop, use asyncio.run
-                    coro = cast(
-                        Coroutine[Any, Any, ToolResult],
-                        tool_handler(tool_schema.name, kwargs),
-                    )
-                    result = asyncio.run(coro)
+                    result = future.result(timeout=30)
+                except concurrent.futures.TimeoutError:
+                    return json.dumps({"error": "Tool execution timed out"})
+                except Exception as e:
+                    return json.dumps({"error": str(e)})
 
                 # Record the call
                 record = ToolCallRecord(
@@ -323,3 +316,5 @@ class ClaudeExecutor(AgentExecutor):
                 error=f"Execution timed out after {timeout}s",
                 turns_used=turns_counter[0],
             )
+        finally:
+            _tool_pool.shutdown(wait=False)

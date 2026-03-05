@@ -8,7 +8,7 @@ Gobby is a local-first daemon that unifies AI coding assistants (Codex, Claude C
 
 - **Session management** that survives restarts and context compactions
 - **Task system** with dependency graphs, TDD expansion, and validation gates
-- **MCP proxy** with progressive disclosure (tools stay lightweight until needed)
+- **MCP proxy** with progressive discovery (tools stay lightweight until needed)
 - **Workflow engine** that enforces steps, tool restrictions, and transitions
 - **Worktree orchestration** for parallel development
 - **Memory system** for persistent facts across sessions

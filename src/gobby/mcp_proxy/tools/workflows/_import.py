@@ -100,15 +100,15 @@ def reload_cache(
     db: Any | None = None,
 ) -> dict[str, Any]:
     """
-    Clear the workflow loader cache and optionally re-sync bundled workflows to the DB.
+    Clear the workflow loader cache and optionally re-sync bundled definitions to the DB.
 
     This forces the daemon to re-read workflow YAML files from disk
     on the next access. When *db* is provided, also re-syncs bundled
-    workflow definitions from disk YAML into the database.
+    workflows, rules, agents, and variables from disk YAML into the database.
 
     Args:
         loader: WorkflowLoader instance whose cache to clear.
-        db: Optional database instance. If provided, bundled workflows
+        db: Optional database instance. If provided, bundled definitions
             are re-synced to the DB after clearing the cache.
 
     Returns:
@@ -120,17 +120,28 @@ def reload_cache(
     result: dict[str, Any] = {"success": True, "message": "Workflow cache cleared"}
 
     if db is not None:
-        try:
-            from gobby.workflows.sync import sync_bundled_workflows
+        sync_targets: list[tuple[str, str, str]] = [
+            ("workflows", "gobby.workflows.sync", "sync_bundled_workflows"),
+            ("rules", "gobby.workflows.sync", "sync_bundled_rules"),
+            ("variables", "gobby.workflows.sync", "sync_bundled_variables"),
+            ("agents", "gobby.agents.sync", "sync_bundled_agents"),
+        ]
+        total_synced = 0
+        for content_type, module_path, func_name in sync_targets:
+            try:
+                module = __import__(module_path, fromlist=[func_name])
+                sync_fn = getattr(module, func_name)
+                sync_result = sync_fn(db)
+                synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
+                result[f"{content_type}_synced"] = synced
+                total_synced += synced
+                if synced > 0:
+                    logger.info(f"Re-synced {synced} bundled {content_type} to DB")
+            except Exception as e:
+                logger.warning(f"Failed to re-sync bundled {content_type}: {e}")
+                result[f"{content_type}_sync_error"] = str(e)
 
-            sync_result = sync_bundled_workflows(db)
-            synced = sync_result.get("synced", 0) + sync_result.get("updated", 0)
-            result["workflows_synced"] = synced
-            if synced > 0:
-                result["message"] += f", {synced} workflows re-synced to DB"
-                logger.info(f"Re-synced {synced} bundled workflows to DB")
-        except Exception as e:
-            logger.warning(f"Failed to re-sync bundled workflows: {e}")
-            result["sync_error"] = str(e)
+        if total_synced > 0:
+            result["message"] += f", {total_synced} definitions re-synced to DB"
 
     return result

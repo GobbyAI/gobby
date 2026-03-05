@@ -1,7 +1,7 @@
 name: qa-reviewer
 description: |
   QA reviewer agent: reviews code, fixes issues, approves or rejects tasks.
-  Behavior enforced by qa-workflow step workflow.
+  Behavior enforced by inline step workflow.
 
 version: "2.0"
 enabled: false
@@ -26,15 +26,50 @@ instructions: |
   - Do NOT call git push — the merge agent handles pushing.
   - Do NOT stop or exit without calling kill_agent.
   - Always use `uv run` for Python commands.
-  - Use progressive disclosure: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+  - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 
-workflows:
-  rules:
-    - qa-workflow
+step_variables:
+  review_complete: false
 
-rule_definitions:
-  no_push:
-    tools: [Bash]
-    command_pattern: "git\\s+push"
-    reason: "Push is blocked. The merge agent handles pushing."
-    action: block
+steps:
+  - name: review
+    description: "Review code, run tests, fix minor issues"
+    status_message: |
+      Review the code changes for the assigned task.
+      1. Check diff: git diff, git log
+      2. Run tests: uv run pytest <test_file> -v
+      3. Fix minor issues if needed, commit fixes
+      4. APPROVE: call mark_task_review_approved
+      5. REJECT (significant issues): call reopen_task with detailed reason
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: mark_task_review_approved
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: reopen_task
+        action: set_variable
+        variable: review_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.review_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call kill_agent to terminate."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:kill_agent"
+
+exit_condition: "current_step == 'terminate'"

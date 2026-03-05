@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-pytestmark = pytest.mark.unit
-
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.sessions.transcripts.hook_assembler import HookTranscriptAssembler
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture

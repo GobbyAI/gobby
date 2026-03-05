@@ -5,7 +5,7 @@ Provides a registry system for internal tools that can be accessed via the
 downstream proxy pattern (call_tool, list_tools, get_tool_schema) without
 being registered directly on the FastMCP server.
 
-This enables progressive disclosure for internal tools and reduces the
+This enables progressive discovery for internal tools and reduces the
 number of tools exposed on the main MCP server.
 """
 
@@ -115,7 +115,7 @@ class InternalToolRegistry:
 
         Args:
             name: Tool name
-            description: Tool description (for progressive disclosure)
+            description: Tool description (for progressive discovery)
             input_schema: JSON Schema for the tool's input parameters
             func: The callable that implements the tool (sync or async)
         """
@@ -280,7 +280,7 @@ class InternalToolRegistry:
         List all tools with lightweight metadata.
 
         Returns:
-            List of {name, brief} dicts for progressive disclosure
+            List of {name, brief} dicts for progressive discovery
         """
         return [
             {

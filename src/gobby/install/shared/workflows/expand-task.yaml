@@ -1,0 +1,88 @@
+name: expand-task
+type: pipeline
+version: "1.0"
+description: |
+  Deterministic expansion sub-pipeline. Hard boundary between research (creative)
+  and task creation (mechanical).
+
+  Flow: spawn researcher → wait → validate spec → execute expansion →
+        wire affected files → analyze dependencies
+
+  Reusable: orchestrator invokes it, /gobby expand wraps it, other pipelines
+  compose with it.
+
+inputs:
+  task_id: null
+  session_id: null
+  agent: "expander"
+  provider: "claude"
+  model: null
+  wait_timeout: 600
+
+outputs:
+  created: "${{ steps.execute.output.created }}"
+  count: "${{ steps.execute.output.count }}"
+  validation: "${{ steps.validate.output }}"
+
+steps:
+  # --- 1. Spawn the researcher agent ---
+  - id: spawn_researcher
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        prompt: "Research and produce an expansion spec for task ${{ inputs.task_id }}"
+        agent: "${{ inputs.agent }}"
+        task_id: "${{ inputs.task_id }}"
+        provider: "${{ inputs.provider }}"
+        model: "${{ inputs.model }}"
+        parent_session_id: "${{ session_id }}"
+        mode: terminal
+
+  # --- 2. Wait for researcher to complete ---
+  - id: wait_researcher
+    wait:
+      completion_id: "${{ steps.spawn_researcher.output.run_id }}"
+      timeout: "${{ inputs.wait_timeout }}"
+
+  # --- 3. Validate the saved spec ---
+  - id: validate
+    mcp:
+      server: gobby-tasks
+      tool: validate_expansion_spec
+      arguments:
+        task_id: "${{ inputs.task_id }}"
+
+  # --- 4. Gate: fail if spec is invalid ---
+  - id: check_valid
+    condition: "${{ not steps.validate.output.valid }}"
+    exec: >
+      echo "Expansion spec validation failed:" >&2;
+      echo "${{ steps.validate.output.errors }}" >&2;
+      exit 1
+
+  # --- 5. Execute the expansion atomically ---
+  - id: execute
+    mcp:
+      server: gobby-tasks
+      tool: execute_expansion
+      arguments:
+        parent_task_id: "${{ inputs.task_id }}"
+        session_id: "${{ inputs.session_id or session_id }}"
+
+  # --- 6. Wire affected files from spec to child tasks ---
+  - id: wire_files
+    mcp:
+      server: gobby-tasks
+      tool: wire_affected_files_from_spec
+      arguments:
+        parent_task_id: "${{ inputs.task_id }}"
+
+  # --- 7. Analyze dependencies for file overlaps ---
+  - id: analyze_deps
+    condition: "${{ steps.execute.output.count > 1 }}"
+    mcp:
+      server: gobby-tasks
+      tool: find_file_overlaps
+      arguments:
+        task_ids: "${{ steps.execute.output.created }}"

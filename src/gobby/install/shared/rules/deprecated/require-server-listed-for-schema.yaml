@@ -1,4 +1,4 @@
-tags: [progressive-disclosure, enforcement, mcp]
+tags: [progressive-discovery, enforcement, mcp]
 
 rules:
   require-server-listed-for-schema:

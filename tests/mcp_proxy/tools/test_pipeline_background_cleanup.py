@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from gobby.mcp_proxy.tools.pipelines._execution import (
+from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _background_tasks,
     cleanup_background_tasks,
 )

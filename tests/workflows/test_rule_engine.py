@@ -1386,3 +1386,77 @@ class TestOverrideCollectsMcpCalls:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
+
+
+class TestMcpCallTemplateRendering:
+    """Tests for Jinja2 template rendering in mcp_call effect arguments."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_call_template_rendering(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Template expressions in mcp_call arguments should be rendered."""
+
+        _insert_rule(
+            manager,
+            "pipeline-auto-run",
+            RuleDefinitionBody(
+                event=RuleEvent.SESSION_START,
+                when="variables.get('_assigned_pipeline')",
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-workflows",
+                        tool="run_pipeline",
+                        arguments={"name": "{{ _assigned_pipeline }}"},
+                        background=True,
+                    ),
+                ],
+            ),
+        )
+
+        event = _make_event(HookEventType.SESSION_START)
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"_assigned_pipeline": "my-deploy-pipeline"}
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "allow"
+        mcp_calls = response.metadata.get("mcp_calls", [])
+        assert len(mcp_calls) == 1
+        call = mcp_calls[0]
+        assert call["server"] == "gobby-workflows"
+        assert call["tool"] == "run_pipeline"
+        assert call["arguments"]["name"] == "my-deploy-pipeline"
+        assert call["background"] is True
+
+    @pytest.mark.asyncio
+    async def test_mcp_call_static_args_passthrough(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Non-template arguments should pass through unchanged."""
+
+        _insert_rule(
+            manager,
+            "static-mcp-call",
+            RuleDefinitionBody(
+                event=RuleEvent.SESSION_START,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-tasks",
+                        tool="list_tasks",
+                        arguments={"status": "open", "limit": 10},
+                    ),
+                ],
+            ),
+        )
+
+        event = _make_event(HookEventType.SESSION_START)
+        engine = RuleEngine(db)
+        response = await engine.evaluate(event, session_id="sess-1", variables={})
+
+        mcp_calls = response.metadata.get("mcp_calls", [])
+        assert len(mcp_calls) == 1
+        call = mcp_calls[0]
+        assert call["arguments"]["status"] == "open"
+        assert call["arguments"]["limit"] == 10

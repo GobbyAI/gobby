@@ -62,6 +62,9 @@ class ServiceContainer:
     workflow_loader: Any | None = None  # WorkflowLoader
     pipeline_execution_manager: Any | None = None  # LocalPipelineExecutionManager
 
+    # Completion Events
+    completion_registry: Any | None = None  # CompletionEventRegistry
+
     # Agent Lifecycle
     agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor
 
@@ -166,6 +169,7 @@ class ServiceContainer:
                 loader=self.workflow_loader,
                 template_engine=TemplateEngine(),
                 session_manager=self.session_manager,
+                completion_registry=self.completion_registry,
             )
 
             # Wire event broadcasting via WebSocket

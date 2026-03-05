@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import BaseAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -273,7 +274,9 @@ class CopilotAdapter(BaseAdapter):
         if additional_context_parts and hook_event_name in valid_hook_event_names:
             result["hookSpecificOutput"] = {
                 "hookEventName": hook_event_name,
-                "additionalContext": "\n\n".join(additional_context_parts),
+                "additionalContext": truncate_additional_context(
+                    "\n\n".join(additional_context_parts)
+                ),
             }
 
         return result

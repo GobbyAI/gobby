@@ -161,7 +161,7 @@ async def test_execute_updates_run_status(
     run = cron_storage.create_run(job.id)
     assert run.status == "pending"
 
-    result = await executor.execute(job, run)
+    await executor.execute(job, run)
     # Fetch fresh from DB
     final = cron_storage.get_run(run.id)
     assert final is not None

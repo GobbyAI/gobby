@@ -34,9 +34,6 @@ logger = logging.getLogger(__name__)
 
 _original_parse_message = _message_parser.parse_message
 
-# Last rate limit event — stored for potential future use by callers
-_last_rate_limit: dict[str, Any] | None = None
-
 
 def _tolerant_parse_message(data: dict[str, Any]) -> object | None:
     """parse_message wrapper that returns None for unknown message types.
@@ -44,8 +41,6 @@ def _tolerant_parse_message(data: dict[str, Any]) -> object | None:
     Also stashes ``modelUsage`` from the raw JSON onto ``ResultMessage``
     instances so callers can access ``contextWindow`` without litellm.
     """
-    global _last_rate_limit
-
     try:
         parsed = _original_parse_message(data)
     except MessageParseError:
@@ -53,7 +48,6 @@ def _tolerant_parse_message(data: dict[str, Any]) -> object | None:
 
         # Parse rate_limit_event for structured logging
         if msg_type == "rate_limit_event" and isinstance(data, dict):
-            _last_rate_limit = data
             retry_after = (
                 data.get("retry_after") if "retry_after" in data else data.get("retryAfter")
             )

@@ -9,6 +9,8 @@ import pytest
 from gobby.utils.project_init import (
     InitResult,
     VerificationCommands,
+    _find_frontend_dirs,
+    _update_project_json_verification,
     _write_project_json,
     detect_verification_commands,
     initialize_project,
@@ -26,6 +28,7 @@ class TestVerificationCommands:
         assert vc.unit_tests is None
         assert vc.type_check is None
         assert vc.lint is None
+        assert vc.format is None
         assert vc.integration is None
         assert vc.custom == {}
 
@@ -51,6 +54,12 @@ class TestVerificationCommands:
         vc = VerificationCommands(lint="ruff check .")
         result = vc.to_dict()
         assert result == {"lint": "ruff check ."}
+
+    def test_to_dict_with_format(self) -> None:
+        """Test to_dict includes format when set."""
+        vc = VerificationCommands(format="ruff format --check .")
+        result = vc.to_dict()
+        assert result == {"format": "ruff format --check ."}
 
     def test_to_dict_with_integration(self) -> None:
         """Test to_dict includes integration when set."""
@@ -400,6 +409,201 @@ class TestDetectVerificationCommands:
         # Should use fallback commands since src is a file
         assert result.type_check == "uv run mypy ."
         assert result.lint == "uv run ruff check ."
+
+
+class TestFindFrontendDirs:
+    """Tests for _find_frontend_dirs helper."""
+
+    def test_no_package_json(self, tmp_path: Path) -> None:
+        """No package.json anywhere."""
+        assert _find_frontend_dirs(tmp_path) == []
+
+    def test_root_package_json(self, tmp_path: Path) -> None:
+        """package.json at root only."""
+        (tmp_path / "package.json").write_text("{}")
+        result = _find_frontend_dirs(tmp_path)
+        assert len(result) == 1
+        assert result[0][1] == "."
+
+    def test_web_subdir(self, tmp_path: Path) -> None:
+        """package.json in web/ subdirectory."""
+        web = tmp_path / "web"
+        web.mkdir()
+        (web / "package.json").write_text("{}")
+        result = _find_frontend_dirs(tmp_path)
+        assert len(result) == 1
+        assert result[0][1] == "web"
+
+    def test_frontend_subdir(self, tmp_path: Path) -> None:
+        """package.json in frontend/ subdirectory."""
+        fe = tmp_path / "frontend"
+        fe.mkdir()
+        (fe / "package.json").write_text("{}")
+        result = _find_frontend_dirs(tmp_path)
+        assert len(result) == 1
+        assert result[0][1] == "frontend"
+
+    def test_root_and_web(self, tmp_path: Path) -> None:
+        """Both root and web/ have package.json."""
+        (tmp_path / "package.json").write_text("{}")
+        web = tmp_path / "web"
+        web.mkdir()
+        (web / "package.json").write_text("{}")
+        result = _find_frontend_dirs(tmp_path)
+        assert len(result) == 2
+        assert result[0][1] == "."
+        assert result[1][1] == "web"
+
+
+class TestDetectVerificationMultiLanguage:
+    """Tests for multi-language detection (Python + frontend subdirectory)."""
+
+    def test_python_with_web_frontend(self, tmp_path: Path) -> None:
+        """Python project with web/ frontend detects both."""
+        # Python
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src").mkdir()
+
+        # Frontend in web/
+        web = tmp_path / "web"
+        web.mkdir()
+        (web / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "test": "vitest run",
+                        "type-check": "tsc --noEmit",
+                        "lint": "eslint .",
+                    }
+                }
+            )
+        )
+
+        result = detect_verification_commands(tmp_path)
+
+        # Python claims primary slots
+        assert result.unit_tests == "uv run pytest tests/ -v"
+        assert result.type_check == "uv run mypy src/"
+        assert result.lint == "uv run ruff check src/"
+        assert result.format == "uv run ruff format --check src/"
+
+        # Frontend goes to custom with cd prefix
+        assert result.custom["frontend_tests"] == "cd web && npm test"
+        assert result.custom["ts_check"] == "cd web && npm run type-check"
+        assert result.custom["frontend_lint"] == "cd web && npm run lint"
+
+    def test_python_detects_format(self, tmp_path: Path) -> None:
+        """Python project with src/ detects ruff format."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
+        (tmp_path / "src").mkdir()
+
+        result = detect_verification_commands(tmp_path)
+        assert result.format == "uv run ruff format --check src/"
+
+    def test_python_no_src_detects_format_fallback(self, tmp_path: Path) -> None:
+        """Python project without src/ uses fallback format command."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
+
+        result = detect_verification_commands(tmp_path)
+        assert result.format == "uv run ruff format --check ."
+
+    def test_standalone_web_frontend(self, tmp_path: Path) -> None:
+        """Only web/ frontend, no Python — frontend gets primary slots."""
+        web = tmp_path / "web"
+        web.mkdir()
+        (web / "package.json").write_text(
+            json.dumps(
+                {"scripts": {"test": "vitest", "lint": "eslint .", "type-check": "tsc --noEmit"}}
+            )
+        )
+
+        result = detect_verification_commands(tmp_path)
+
+        # No Python, so frontend gets primary slots with cd prefix
+        assert result.unit_tests == "cd web && npm test"
+        assert result.lint == "cd web && npm run lint"
+        assert result.type_check == "cd web && npm run type-check"
+
+    def test_root_nodejs_no_subdir(self, tmp_path: Path) -> None:
+        """Root package.json without subdirectory uses no cd prefix."""
+        (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}))
+
+        result = detect_verification_commands(tmp_path)
+        assert result.unit_tests == "npm test"
+
+
+class TestUpdateProjectJsonVerification:
+    """Tests for _update_project_json_verification."""
+
+    def test_updates_verification_in_existing_project(self, tmp_path: Path) -> None:
+        """Re-init updates verification commands in project.json."""
+        gobby_dir = tmp_path / ".gobby"
+        gobby_dir.mkdir()
+        project_file = gobby_dir / "project.json"
+        project_file.write_text(
+            json.dumps(
+                {
+                    "id": "proj-123",
+                    "name": "test",
+                    "created_at": "2024-01-01",
+                    "verification": {"unit_tests": "old command"},
+                    "hooks": {"pre-commit": {"run": ["lint"]}},
+                }
+            )
+        )
+
+        verification = VerificationCommands(
+            unit_tests="uv run pytest tests/ -v",
+            lint="uv run ruff check src/",
+            format="uv run ruff format --check src/",
+        )
+        _update_project_json_verification(tmp_path, verification)
+
+        content = json.loads(project_file.read_text())
+        assert content["verification"]["unit_tests"] == "uv run pytest tests/ -v"
+        assert content["verification"]["lint"] == "uv run ruff check src/"
+        assert content["verification"]["format"] == "uv run ruff format --check src/"
+        # Hooks preserved
+        assert content["hooks"]["pre-commit"]["run"] == ["lint"]
+        # Other fields preserved
+        assert content["id"] == "proj-123"
+
+    def test_preserves_manual_custom_entries(self, tmp_path: Path) -> None:
+        """Manual custom entries not in detection are preserved."""
+        gobby_dir = tmp_path / ".gobby"
+        gobby_dir.mkdir()
+        project_file = gobby_dir / "project.json"
+        project_file.write_text(
+            json.dumps(
+                {
+                    "id": "proj-123",
+                    "name": "test",
+                    "created_at": "2024-01-01",
+                    "verification": {
+                        "unit_tests": "old",
+                        "custom": {"manual_check": "make verify"},
+                    },
+                }
+            )
+        )
+
+        verification = VerificationCommands(
+            unit_tests="pytest",
+            custom={"frontend_tests": "cd web && npm test"},
+        )
+        _update_project_json_verification(tmp_path, verification)
+
+        content = json.loads(project_file.read_text())
+        custom = content["verification"]["custom"]
+        assert custom["manual_check"] == "make verify"
+        assert custom["frontend_tests"] == "cd web && npm test"
+
+    def test_noop_when_no_project_json(self, tmp_path: Path) -> None:
+        """Does nothing if project.json doesn't exist."""
+        verification = VerificationCommands(unit_tests="pytest")
+        # Should not raise
+        _update_project_json_verification(tmp_path, verification)
 
 
 class TestWriteProjectJson:

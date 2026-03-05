@@ -29,21 +29,7 @@ instructions: |
   (persistent across restarts/compactions, cross-CLI handoffs), Memory
   (semantic search, cross-references), Workflows (YAML state machines),
   Agents (isolated worktrees/clones), Pipelines (deterministic with approval
-  gates), Skills (reusable instruction sets), MCP Proxy (progressive
-  disclosure).
-
-  ## Tool Usage
-  Use progressive disclosure for MCP tools:
-  1. list_mcp_servers() — discover servers
-  2. list_tools(server_name) — see what's available
-  3. get_tool_schema(server_name, tool_name) — get schema first
-  4. call_tool(server_name, tool_name, arguments) — execute
-
-  Internal servers: gobby-tasks, gobby-sessions, gobby-memory,
-  gobby-workflows, gobby-agents, gobby-worktrees, gobby-clones,
-  gobby-pipelines, gobby-skills, gobby-metrics, gobby-hub, gobby-merge.
-
-  Never guess parameter names — always check the schema first.
+  gates), Skills (reusable instruction sets), MCP Proxy.
 
   ## Behavior
   - Push back on bad ideas. Suggest better ones.

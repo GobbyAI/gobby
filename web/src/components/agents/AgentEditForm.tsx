@@ -4,10 +4,11 @@ import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
 import { AgentRulesEditor } from './AgentRulesEditor'
 import { AgentVariablesEditor } from './AgentVariablesEditor'
 import { AgentSkillsEditor } from './AgentSkillsEditor'
+import { AgentStepsEditor } from './AgentStepsEditor'
+import type { WorkflowStep } from './AgentStepsEditor'
 
 export interface AgentFormData {
   name: string
-  extends: string
   description: string
   role: string
   goal: string
@@ -50,6 +51,9 @@ export interface AgentItemForPanel {
     } | null
     lifecycle_variables: Record<string, unknown>
     default_variables: Record<string, unknown>
+    steps?: WorkflowStep[] | null
+    step_variables?: Record<string, unknown> | null
+    exit_condition?: string | null
   }
   source: string
   source_path: string | null
@@ -90,7 +94,8 @@ interface AgentEditFormProps {
   pipelines?: { id: string; name: string }[]
   editSkills?: string[]
   onSkillsChange?: (skills: string[]) => void
-  agentNames?: string[]
+  steps?: WorkflowStep[]
+  onStepsChange?: (steps: WorkflowStep[]) => void
 }
 
 function FormInput({ label, value, onChange, placeholder, required }: {
@@ -153,7 +158,7 @@ export function AgentEditForm({
   yamlContent, onYamlChange, onYamlSave,
   pipelines,
   editSkills, onSkillsChange,
-  agentNames,
+  steps, onStepsChange,
 }: AgentEditFormProps) {
   const [customModelInput, setCustomModelInput] = useState(false)
   const [customBranchInput, setCustomBranchInput] = useState(false)
@@ -178,8 +183,6 @@ export function AgentEditForm({
     : []
 
   const title = readOnly ? (rd?.name || 'Agent') : (isEditing ? 'Edit Agent' : 'Create Agent')
-
-  const availableParents = (agentNames || []).filter(n => n !== form.name)
 
   const headerContent = (
     <>
@@ -365,6 +368,23 @@ export function AgentEditForm({
             </div>
           )}
 
+          {rd.steps && rd.steps.length > 0 && (
+            <div className="agent-edit-section">
+              <h4 className="agent-edit-section-title">Steps ({rd.steps.length})</h4>
+              <div className="step-readonly-list">
+                {rd.steps.map((s, i) => (
+                  <div key={i} className="step-readonly-item">
+                    <span className="step-name-badge">{s.name}</span>
+                    <span className="step-readonly-summary">
+                      {s.description || ''}
+                      {s.transitions && s.transitions.length > 0 ? ` \u2192 ${s.transitions.map(t => t.to).join(', ')}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {rd.sandbox && (
             <div className="agent-edit-section">
               <h4 className="agent-edit-section-title">Sandbox</h4>
@@ -391,15 +411,9 @@ export function AgentEditForm({
         </>
       ) : (
         <>
-          {/* Name & Extends */}
+          {/* Name */}
           <div className="agent-edit-section">
             <FormInput label="Name" value={form.name} onChange={v => set('name', v)} placeholder="my-agent" required />
-            <MetaRow label="Extends">
-              <select className="agent-edit-input" value={form.extends} onChange={e => set('extends', e.target.value)}>
-                <option value="">(none)</option>
-                {availableParents.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </MetaRow>
           </div>
 
           {/* Editable meta */}
@@ -588,6 +602,17 @@ export function AgentEditForm({
                 definitionId={editingId}
                 variables={variables}
                 onVariablesChange={onVariablesChange}
+              />
+            </div>
+          )}
+
+          {/* Steps */}
+          {onStepsChange && steps !== undefined && (
+            <div className="agent-edit-section">
+              <h4 className="agent-edit-section-title">Steps</h4>
+              <AgentStepsEditor
+                steps={steps}
+                onChange={onStepsChange}
               />
             </div>
           )}

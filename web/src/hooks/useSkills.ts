@@ -377,6 +377,8 @@ export function useSkills() {
   }, [])
 
   // Search hub
+  const [hubErrors, setHubErrors] = useState<Record<string, string>>({})
+
   const searchHub = useCallback(async (query: string, hubName?: string) => {
     try {
       const baseUrl = getBaseUrl()
@@ -387,6 +389,7 @@ export function useSkills() {
       if (response.ok) {
         const data = await response.json()
         setHubResults(data.results || [])
+        setHubErrors(data.hub_errors || {})
       }
     } catch (e) {
       console.error('Failed to search hub:', e)
@@ -552,6 +555,7 @@ export function useSkills() {
     refreshSkills,
     hubs,
     hubResults,
+    hubErrors,
     fetchHubs,
     searchHub,
     installFromHub,

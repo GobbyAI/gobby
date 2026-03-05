@@ -34,7 +34,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 134
+BASELINE_VERSION = 138
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v134) have been removed.
@@ -194,7 +194,8 @@ CREATE TABLE agent_runs (
     completed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    sdk_session_id TEXT
+    sdk_session_id TEXT,
+    continuation_prompt TEXT
 );
 CREATE INDEX idx_agent_runs_parent_session ON agent_runs(parent_session_id);
 CREATE INDEX idx_agent_runs_child_session ON agent_runs(child_session_id);
@@ -709,7 +710,8 @@ CREATE TABLE pipeline_executions (
     completed_at TEXT,
     resume_token TEXT UNIQUE,
     session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-    parent_execution_id TEXT REFERENCES pipeline_executions(id) ON DELETE CASCADE
+    parent_execution_id TEXT REFERENCES pipeline_executions(id) ON DELETE CASCADE,
+    continuation_prompt TEXT
 );
 CREATE INDEX idx_pipeline_executions_project ON pipeline_executions(project_id);
 CREATE INDEX idx_pipeline_executions_status ON pipeline_executions(status);
@@ -847,6 +849,42 @@ CREATE TABLE model_costs (
     source TEXT NOT NULL DEFAULT 'litellm',
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE task_affected_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    annotation_source TEXT NOT NULL DEFAULT 'expansion',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(task_id, file_path)
+);
+CREATE INDEX idx_taf_task_id ON task_affected_files(task_id);
+CREATE INDEX idx_taf_file_path ON task_affected_files(file_path);
+
+CREATE TABLE completion_subscribers (
+    completion_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    subscribed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (completion_id, session_id)
+);
+CREATE INDEX idx_completion_subscribers_completion ON completion_subscribers(completion_id);
+
+CREATE TABLE test_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    project_id TEXT,
+    category TEXT NOT NULL,
+    command TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    exit_code INTEGER,
+    summary TEXT,
+    output_file TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_test_runs_session ON test_runs(session_id);
+CREATE INDEX idx_test_runs_status ON test_runs(status);
 """
 
 # Migrations beyond v133.
@@ -863,6 +901,57 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     source TEXT NOT NULL DEFAULT 'litellm',
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 )""",
+    ),
+    (
+        135,
+        "Add task_affected_files table for file-based dependency analysis",
+        """CREATE TABLE task_affected_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    annotation_source TEXT NOT NULL DEFAULT 'expansion',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(task_id, file_path)
+);
+CREATE INDEX idx_taf_task_id ON task_affected_files(task_id);
+CREATE INDEX idx_taf_file_path ON task_affected_files(file_path)""",
+    ),
+    (
+        136,
+        "Add completion_subscribers table for push-based async notifications",
+        """CREATE TABLE completion_subscribers (
+    completion_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    subscribed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (completion_id, session_id)
+);
+CREATE INDEX idx_completion_subscribers_completion ON completion_subscribers(completion_id)""",
+    ),
+    (
+        137,
+        "Add continuation_prompt to pipeline_executions and agent_runs",
+        """ALTER TABLE pipeline_executions ADD COLUMN continuation_prompt TEXT;
+ALTER TABLE agent_runs ADD COLUMN continuation_prompt TEXT""",
+    ),
+    (
+        138,
+        "Add test_runs table for gobby-tests MCP server",
+        """CREATE TABLE test_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    project_id TEXT,
+    category TEXT NOT NULL,
+    command TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    exit_code INTEGER,
+    summary TEXT,
+    output_file TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_test_runs_session ON test_runs(session_id);
+CREATE INDEX idx_test_runs_status ON test_runs(status)""",
     ),
 ]
 

@@ -1,0 +1,31 @@
+tags: [progressive-discovery, enforcement, mcp]
+
+rules:
+  preseed-progressive-discovery:
+    description: "Pre-seed discovery state for internal servers on session start"
+    event: session_start
+    enabled: false
+    priority: 81
+    effects:
+      - type: set_variable
+        variable: servers_listed
+        value: true
+      - type: set_variable
+        variable: listed_servers
+        value:
+          - gobby-tasks
+          - gobby-sessions
+          - gobby-memory
+          - gobby-workflows
+          - gobby-canvas
+          - gobby-metrics
+          - gobby-agents
+          - gobby-worktrees
+          - gobby-clones
+          - gobby-merge
+          - gobby-hub
+          - gobby-config
+          - gobby-voice
+          - gobby-skills
+          - gobby-cron
+          - gobby-tests

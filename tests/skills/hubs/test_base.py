@@ -169,7 +169,7 @@ class TestHubSkillInfo:
             slug="code-review",
             display_name="Code Review",
             description="Review code for best practices",
-            hub_name="skillhub",
+            hub_name="skillsmp",
             version="2.0.0",
             score=0.95,
         )

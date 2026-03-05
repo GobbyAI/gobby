@@ -149,11 +149,12 @@ class GitHubCollectionProvider(HubProvider):
                 contents: list[dict[str, Any]] = response.json()
 
             # Filter for directories only (skills are directories)
+            # Support nested layouts: if a top-level dir has no SKILL.md,
+            # recurse one level to find subdirs that are actual skills.
             skills = []
             for item in contents:
                 if item.get("type") == "dir":
                     name = item.get("name", "")
-                    # Skip hidden directories
                     if name.startswith("."):
                         continue
                     skills.append(
@@ -161,8 +162,26 @@ class GitHubCollectionProvider(HubProvider):
                             "slug": name,
                             "name": name,
                             "description": "",
+                            "_url": item.get("url", ""),
                         }
                     )
+
+            # Check for nested structure: probe first dir for SKILL.md
+            if skills and skills[0].get("_url"):
+                has_skill_md = await self._dir_has_skill_md(skills[0]["slug"], headers, params)
+                if not has_skill_md:
+                    # Nested: each top-level dir is a category, recurse
+                    nested_skills = []
+                    for category_item in skills:
+                        sub_items = await self._fetch_subdir_skills(
+                            category_item["slug"], headers, params
+                        )
+                        nested_skills.extend(sub_items)
+                    skills = nested_skills
+
+            # Strip internal _url key
+            for s in skills:
+                s.pop("_url", None)
 
             return skills
 
@@ -171,6 +190,65 @@ class GitHubCollectionProvider(HubProvider):
             return []
         except httpx.RequestError as e:
             logger.error(f"GitHub API request failed: {e}")
+            return []
+
+    async def _dir_has_skill_md(
+        self,
+        dir_name: str,
+        headers: dict[str, str],
+        params: dict[str, str],
+    ) -> bool:
+        """Check if a directory contains SKILL.md."""
+        if not self._repo or "/" not in self._repo:
+            return False
+
+        owner, repo = self._repo.split("/", 1)
+        skill_path = f"{self._path.strip('/')}/{dir_name}" if self._path else dir_name
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{skill_path}/SKILL.md"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.head(url, headers=headers, params=params, timeout=10.0)
+                return response.status_code == 200
+        except httpx.RequestError:
+            return False
+
+    async def _fetch_subdir_skills(
+        self,
+        category_name: str,
+        headers: dict[str, str],
+        params: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Fetch skill directories from a category subdirectory."""
+        if not self._repo or "/" not in self._repo:
+            return []
+
+        owner, repo = self._repo.split("/", 1)
+        sub_path = f"{self._path.strip('/')}/{category_name}" if self._path else category_name
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{sub_path}"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, params=params, timeout=30.0)
+                response.raise_for_status()
+                contents: list[dict[str, Any]] = response.json()
+
+            skills = []
+            for item in contents:
+                if item.get("type") == "dir":
+                    name = item.get("name", "")
+                    if name.startswith("."):
+                        continue
+                    skills.append(
+                        {
+                            "slug": f"{category_name}/{name}",
+                            "name": name,
+                            "description": "",
+                        }
+                    )
+            return skills
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
+            logger.debug(f"Failed to fetch subdirectory {category_name}: {e}")
             return []
 
     async def _fetch_skill_content(self, slug: str) -> str | None:

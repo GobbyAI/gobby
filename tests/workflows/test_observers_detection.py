@@ -7,6 +7,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.workflows.observers import (
+    detect_commit_link,
     detect_mcp_call,
     detect_plan_mode_from_context,
     detect_task_claim,
@@ -585,3 +586,123 @@ class TestDetectMcpCall:
 
         detect_mcp_call(event, variables, SESSION_ID)
         assert "mcp_calls" not in variables
+
+
+# =============================================================================
+# Tests for detect_commit_link
+# =============================================================================
+
+
+class TestDetectCommitLink:
+    def test_link_commit_sets_task_has_commits(self, variables, make_after_tool_event) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "link_commit",
+                "arguments": {"task_id": "#123", "commit_sha": "abc123"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+
+    def test_close_task_with_commit_sha_sets_task_has_commits(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#123", "commit_sha": "abc123"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+
+    def test_close_task_without_commit_sha_does_not_set(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#123"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_auto_link_commits_sets_task_has_commits(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "auto_link_commits",
+                "arguments": {},
+            },
+            tool_output={"success": True, "result": {"linked": 3}},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True
+
+    def test_ignores_non_commit_tools(self, variables, make_after_tool_event) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {"title": "test"},
+            },
+            tool_output={"success": True, "result": {"id": "task-123"}},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_ignores_error_response(self, variables, make_after_tool_event) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "link_commit",
+                "arguments": {"task_id": "#123", "commit_sha": "abc123"},
+            },
+            tool_output={"error": "Task not found"},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
+
+    def test_skips_when_already_set(self, variables, make_after_tool_event) -> None:
+        variables["task_has_commits"] = True
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "link_commit",
+                "arguments": {"task_id": "#456", "commit_sha": "def456"},
+            },
+            tool_output={"success": True, "result": {}},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert variables["task_has_commits"] is True

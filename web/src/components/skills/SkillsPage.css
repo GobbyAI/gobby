@@ -969,6 +969,24 @@
   opacity: 0.85;
 }
 
+.skill-hub-errors {
+  padding: 8px 12px;
+}
+
+.skill-hub-error {
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: rgba(217, 158, 46, 0.12);
+  border: 1px solid rgba(217, 158, 46, 0.3);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: calc(var(--font-size-base) * 0.85);
+}
+
+.skill-hub-error strong {
+  color: rgb(217, 158, 46);
+}
+
 .skill-hub-empty {
   padding: 2rem;
   text-align: center;

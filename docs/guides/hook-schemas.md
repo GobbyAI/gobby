@@ -15,7 +15,7 @@ Gobby uses a unified internal event model (`HookEvent`) that normalizes hooks fr
 | Windsurf | kebab-case (`session-start`) | `session_id` | HTTP hooks |
 | Copilot | kebab-case (`session-start`) | `session_id` | HTTP hooks |
 
-> **Note:** Skill injection during session start is now handled by the workflow engine's `inject_context` action with `source: skills`, not by hooks directly. This applies to all CLIs. See [Workflows Guide](workflows.md#inject_context-sources) for details.
+> **Note:** Skill injection during session start is now handled by the workflow engine's `inject_context` action with `source: skills`, not by hooks directly. This applies to all CLIs. See [Rules Guide](rules.md#inject_context) for details.
 
 ## Event Types
 

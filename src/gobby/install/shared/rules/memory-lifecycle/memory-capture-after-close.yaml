@@ -13,3 +13,6 @@ rules:
         Consider saving any valuable memories from this task before stopping.
         Use `create_memory` (via gobby-memory MCP) for insights worth preserving.
         If nothing new was learned, no action needed.
+
+        Do NOT create memories for bugs, errors, or issues you encounter.
+        Create tasks instead so they get fixed.

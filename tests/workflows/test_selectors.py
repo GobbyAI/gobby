@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from gobby.workflows.selectors import (
-    parse_selector,
     _match_rule,
-    resolve_rules_for_agent,
     _match_skill,
+    parse_selector,
+    resolve_rules_for_agent,
     resolve_skills_for_agent,
     resolve_variables_for_agent,
 )
-
-import pytest
 
 pytestmark = pytest.mark.unit
 

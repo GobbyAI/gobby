@@ -1,0 +1,34 @@
+tags: [tdd-enforcement, enforcement]
+
+rules:
+  enforce-tdd-block:
+    description: "One-shot TDD nudge: block first Write to new code files until test is written"
+    event: before_tool
+    enabled: false
+    priority: 32
+    when: >-
+      variables.get('enforce_tdd')
+      and event.data.get('tool_name') == 'Write'
+      and tool_input.get('file_path', '').endswith('.py')
+      and not tool_input.get('file_path', '').endswith('__init__.py')
+      and not tool_input.get('file_path', '').endswith('conftest.py')
+      and '/tests/' not in tool_input.get('file_path', '')
+      and not tool_input.get('file_path', '').split('/')[-1].startswith('test_')
+      and not tool_input.get('file_path', '').endswith('_test.py')
+      and tool_input.get('file_path', '') not in variables.get('tdd_nudged_files', [])
+    effects:
+      - type: set_variable
+        variable: tdd_nudged_files
+        value: "variables.get('tdd_nudged_files', []) + [tool_input.get('file_path', '')]"
+      - type: mcp_call
+        when: "variables.get('task_claimed')"
+        server: gobby-tasks
+        tool: update_task
+        arguments:
+          task_id: "{{ variables.get('claimed_tasks', {}).values() | list | first | default('') }}"
+          validation_criteria: "TDD: Test files required for: {{ variables.get('tdd_nudged_files', []) | join(', ') }}"
+      - type: block
+        tools: [Write]
+        reason: |
+          TDD enforcement: Write a test first before creating {{ tool_input.get('file_path', '').split('/')[-1] }}.
+          Create a test file (in tests/ directory or with test_ prefix) that covers the expected behavior, then retry creating this file.

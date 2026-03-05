@@ -1,0 +1,16 @@
+tags: [gobby, worker-safety]
+
+rules:
+  no-external-github-issues:
+    description: "Block gh issue create on external repos (when --repo/-R flag is used). Create a gobby-task instead."
+    event: before_tool
+    enabled: false
+    priority: 50
+    effect:
+      type: block
+      tools: [Bash]
+      command_pattern: "gh\\s+issue\\s+create\\b.*(?:--repo\\b|-R\\b)|gh\\s+(?:--repo\\s+\\S+|-R\\s+\\S+)\\s+issue\\s+create\\b"
+      reason: |
+        Creating issues on external GitHub repos is not allowed without explicit user approval.
+        Create a gobby-task instead to track the work, and let the user handle the GitHub interaction:
+          call_tool("gobby-tasks", "create_task", {"title": "...", "task_type": "bug", ...})

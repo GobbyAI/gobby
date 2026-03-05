@@ -977,17 +977,29 @@ class TestProxyNamespaceResolution:
 
         assert result["success"] is False
         assert "not a real server" in result["error"]
-        assert "list_mcp_servers()" in result["error"]
 
-    async def test_call_tool_gobby_resolves_to_real_server(
-        self, mock_mcp_manager, mock_internal_manager
-    ) -> None:
-        """Test call_tool('gobby', 'create_task', ...) auto-resolves to gobby-tasks."""
-        mock_internal_manager.find_tool_server.return_value = "gobby-tasks"
-        mock_internal_manager.is_internal.side_effect = lambda name: name.startswith("gobby-")
+
+class TestCallToolStringArgumentCoercion:
+    """Tests for string-to-dict argument coercion in call_tool."""
+
+    @pytest.fixture
+    def mock_mcp_manager(self):
+        manager = MagicMock()
+        manager.project_id = "test-project"
+        manager._configs = {}
+        return manager
+
+    @pytest.fixture
+    def mock_internal_manager(self):
+        manager = MagicMock()
+        manager.is_internal.return_value = True
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_string_arguments_coerced_to_dict(self, mock_mcp_manager, mock_internal_manager):
+        """Test that JSON string arguments are parsed to dict."""
         mock_registry = MagicMock()
-        mock_registry.call = AsyncMock(return_value={"id": "task-123"})
-        mock_registry.get_schema.return_value = None  # Skip validation
+        mock_registry.call = AsyncMock(return_value={"status": "ok"})
         mock_internal_manager.get_registry.return_value = mock_registry
 
         proxy = ToolProxyService(
@@ -996,17 +1008,22 @@ class TestProxyNamespaceResolution:
             validate_arguments=False,
         )
 
-        result = await proxy.call_tool("gobby", "create_task", {"title": "Test"})
+        result = await proxy.call_tool("gobby-tasks", "create_task", '{"title": "Test task"}')
 
-        assert result["id"] == "task-123"
-        mock_internal_manager.find_tool_server.assert_called_once_with("create_task")
-        mock_registry.call.assert_called_once_with("create_task", {"title": "Test"}, context=None)
+        assert result["status"] == "ok"
+        mock_registry.call.assert_called_once()
+        call_args = mock_registry.call.call_args
+        # registry.call(tool_name, arguments, context=...)
+        assert call_args[0][1] == {"title": "Test task"}
 
-    async def test_call_tool_gobby_tool_not_found(
+    @pytest.mark.asyncio
+    async def test_string_arguments_with_special_chars(
         self, mock_mcp_manager, mock_internal_manager
-    ) -> None:
-        """Test call_tool('gobby', 'nonexistent', ...) returns helpful error."""
-        mock_internal_manager.find_tool_server.return_value = None
+    ):
+        """Test string arguments with newlines and unicode are handled."""
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"status": "ok"})
+        mock_internal_manager.get_registry.return_value = mock_registry
 
         proxy = ToolProxyService(
             mcp_manager=mock_mcp_manager,
@@ -1014,18 +1031,43 @@ class TestProxyNamespaceResolution:
             validate_arguments=False,
         )
 
-        result = await proxy.call_tool("gobby", "nonexistent_tool", {})
+        json_str = '{"title": "Fix\\nbug", "desc": "Héllo wörld"}'
+        result = await proxy.call_tool("gobby-tasks", "create_task", json_str)
+
+        assert result["status"] == "ok"
+        call_args = mock_registry.call.call_args
+        # registry.call(tool_name, arguments, context=...)
+        parsed = call_args[0][1]
+        assert parsed["title"] == "Fix\nbug"
+        assert "Héllo" in parsed["desc"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_string_arguments_returns_error(
+        self, mock_mcp_manager, mock_internal_manager
+    ):
+        """Test that non-JSON string arguments return validation error."""
+        proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+        )
+
+        result = await proxy.call_tool("gobby-tasks", "create_task", "not valid json {")
 
         assert result["success"] is False
-        assert "not a real server" in result["error"]
-        assert "list_mcp_servers()" in result["error"]
-        assert result["error_code"] == "SERVER_NOT_FOUND"
+        assert "Invalid arguments" in result["error"]
 
-    async def test_is_proxy_namespace(self, mock_mcp_manager) -> None:
-        """Test _is_proxy_namespace correctly identifies the proxy namespace."""
-        proxy = ToolProxyService(mcp_manager=mock_mcp_manager)
+    @pytest.mark.asyncio
+    async def test_json_array_arguments_rejected(self, mock_mcp_manager, mock_internal_manager):
+        """Test that JSON array arguments (non-dict) are rejected."""
+        proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+        )
 
-        assert proxy._is_proxy_namespace("gobby") is True
-        assert proxy._is_proxy_namespace("gobby-tasks") is False
-        assert proxy._is_proxy_namespace("other-server") is False
-        assert proxy._is_proxy_namespace("") is False
+        result = await proxy.call_tool("gobby-tasks", "create_task", "[1, 2, 3]")
+
+        assert result["success"] is False
+        assert "expected dict" in result["error"]
+        assert "list" in result["error"]

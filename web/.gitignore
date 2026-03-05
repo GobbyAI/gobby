@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .vite/
+coverage/
 *.local
 
 # VAD assets (copied from node_modules by postinstall)

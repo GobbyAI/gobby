@@ -142,6 +142,7 @@ class TestReopenTask:
     @pytest.mark.asyncio
     async def test_reopen_success(self, mock_task_manager, mock_sync_manager):
         """Reopen resolves task and calls reopen."""
+        mock_task_manager.get_task.return_value = _make_task(status="in_progress")
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
@@ -151,8 +152,51 @@ class TestReopenTask:
         assert "error" not in result
 
     @pytest.mark.asyncio
+    async def test_reopen_clears_claimed_tasks_variable(self, mock_task_manager, mock_sync_manager):
+        """Reopen removes task from claimed_tasks session variable for prior assignee."""
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        session_id = "session-abc"
+        mock_task_manager.get_task.return_value = _make_task(
+            status="in_progress", assignee=session_id
+        )
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as MockSTM,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSM,
+            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+        ):
+            mock_sm = MagicMock()
+            mock_sm.resolve_session_reference.return_value = "resolved-session"
+            MockSM.return_value = mock_sm
+
+            mock_stm = MagicMock()
+            MockSTM.return_value = mock_stm
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            # Mock session_var_manager on the context
+            mock_svm = MagicMock()
+            mock_svm.get_variables.return_value = {
+                "task_claimed": True,
+                "claimed_tasks": {task_id: "#42"},
+            }
+            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+
+            # Patch session_var_manager on the registry context
+            with patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionVariableManager",
+                return_value=mock_svm,
+            ):
+                registry = create_task_registry(mock_task_manager, mock_sync_manager)
+                result = await registry.call("reopen_task", {"task_id": task_id})
+
+            assert "error" not in result
+            mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+
+    @pytest.mark.asyncio
     async def test_reopen_value_error(self, mock_task_manager, mock_sync_manager):
         """Returns error when reopen raises ValueError."""
+        mock_task_manager.get_task.return_value = _make_task(status="in_progress")
         mock_task_manager.reopen_task.side_effect = ValueError("cannot reopen")
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 

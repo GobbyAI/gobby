@@ -1384,4 +1384,4 @@ If a prefix matches multiple items, all matches are displayed for disambiguation
 - [tasks.md](tasks.md) - Task system guide
 - [sessions.md](sessions.md) - Session management guide
 - [memory.md](memory.md) - Memory system guide
-- [workflows.md](workflows.md) - Workflow engine guide
+- [rules.md](rules.md) - Rule engine guide

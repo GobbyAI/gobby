@@ -13,14 +13,28 @@ from typing import Any
 
 
 class ExecutionStatus(Enum):
-    """Status values for pipeline executions."""
+    """Status of a pipeline execution."""
 
     PENDING = "pending"
+    """Initial state. Execution created but not yet started."""
+
     RUNNING = "running"
+    """Pipeline is actively executing steps."""
+
     WAITING_APPROVAL = "waiting_approval"
+    """Paused at an approval gate. Resumes on approve/reject."""
+
     COMPLETED = "completed"
+    """All steps finished successfully. Terminal state."""
+
     FAILED = "failed"
+    """A step raised an unrecoverable error. Terminal state."""
+
     CANCELLED = "cancelled"
+    """Execution was stopped by a deliberate decision. Terminal state."""
+
+    INTERRUPTED = "interrupted"
+    """Was running when daemon stopped. Non-terminal — can be resumed or retried."""
 
 
 class StepStatus(Enum):
@@ -54,6 +68,7 @@ class PipelineExecution:
     resume_token: str | None = None  # Token for resuming after approval
     session_id: str | None = None  # Session that triggered execution
     parent_execution_id: str | None = None  # For nested pipeline invocations
+    continuation_prompt: str | None = None  # Instructions for wake notification
 
     @classmethod
     def from_row(cls, row: Any) -> PipelineExecution:
@@ -71,6 +86,9 @@ class PipelineExecution:
             resume_token=row["resume_token"],
             session_id=row["session_id"],
             parent_execution_id=row["parent_execution_id"],
+            continuation_prompt=row["continuation_prompt"]
+            if "continuation_prompt" in row.keys()
+            else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,6 +106,7 @@ class PipelineExecution:
             "resume_token": self.resume_token,
             "session_id": self.session_id,
             "parent_execution_id": self.parent_execution_id,
+            "continuation_prompt": self.continuation_prompt,
         }
 
 

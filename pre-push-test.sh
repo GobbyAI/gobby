@@ -55,6 +55,16 @@ else
 fi
 echo ""
 
+# Vitest - frontend tests with coverage
+echo ">>> Running vitest..."
+if (cd web && npx vitest run --coverage) 2>&1 | tee "$REPORTS_DIR/vitest-$TIMESTAMP.txt"; then
+    echo "✓ Vitest passed"
+else
+    echo "✗ Vitest failed"
+    FAILED=1
+fi
+echo ""
+
 # Bandit - security linting
 echo ">>> Running bandit..."
 if uv run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$REPORTS_DIR/bandit-$TIMESTAMP.txt"; then

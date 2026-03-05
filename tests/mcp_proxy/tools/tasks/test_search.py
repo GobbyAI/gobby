@@ -252,8 +252,6 @@ class TestSearchTasksStatusFilter:
         # The function should split comma-separated status
         result = func(query="test", status="open,in_progress")
 
-        # Verify the task_manager was called with a list
-        call_kwargs = task_manager.search_tasks
         # We need to check the actual behavior - all seeded tasks are 'open'
         # so filtering by open,in_progress should return them
         assert isinstance(result, dict)

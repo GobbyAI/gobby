@@ -31,14 +31,14 @@ pytestmark = pytest.mark.unit
 
 def _make_config(**overrides: Any) -> MCPServerConfig:
     """Create a real MCPServerConfig for stdio transport."""
-    defaults = dict(
-        name="test-stdio",
-        project_id="proj-002",
-        transport="stdio",
-        command="node",
-        args=["server.js", "--port", "3000"],
-        env=None,
-    )
+    defaults = {
+        "name": "test-stdio",
+        "project_id": "proj-002",
+        "transport": "stdio",
+        "command": "node",
+        "args": ["server.js", "--port", "3000"],
+        "env": None,
+    }
     defaults.update(overrides)
     return MCPServerConfig(**defaults)
 

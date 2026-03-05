@@ -169,6 +169,22 @@ class TaskTreeBuilder:
 
             self._created_tasks.append(task.id)
 
+            # Store affected files if provided
+            affected_files = node.get("affected_files", [])
+            if affected_files:
+                from gobby.storage.task_affected_files import TaskAffectedFileManager
+
+                af_manager = TaskAffectedFileManager(self.task_manager.db)
+                af_manager.set_files(task.id, affected_files, source="expansion")
+
+            # Store parallel_group as a label with parallel: prefix
+            parallel_group = node.get("parallel_group")
+            if parallel_group:
+                try:
+                    self.task_manager.add_label(task.id, f"parallel:{parallel_group}")
+                except Exception as e:
+                    self._errors.append(f"Failed to add parallel label to task {task.id}: {e}")
+
             # Check for duplicate titles (warn but continue for partial functionality)
             if title in self._title_to_id:
                 existing_id = self._title_to_id[title]

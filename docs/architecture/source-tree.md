@@ -153,7 +153,7 @@ gobby/                                  # Project root
 │   ├── mcp_proxy/                      # MCP proxy layer (~79 modules)
 │   │   ├── server.py                   # FastMCP server implementation
 │   │   ├── manager.py                  # MCPClientManager (connection pooling)
-│   │   ├── instructions.py             # MCP server instructions (progressive disclosure)
+│   │   ├── instructions.py             # MCP server instructions (progressive discovery)
 │   │   ├── registries.py               # Tool registries
 │   │   ├── lazy.py                     # Lazy loading
 │   │   ├── models.py                   # MCP models

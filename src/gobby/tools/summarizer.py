@@ -87,6 +87,7 @@ async def _summarize_description_with_claude(description: str) -> str:
             system_prompt=system_prompt,
             max_turns=1,
             model=config.model,
+            tools=[],  # Passes --tools "" to CLI, disabling all built-in tools
             allowed_tools=[],
             mcp_servers={},
             permission_mode="default",
@@ -194,6 +195,7 @@ async def generate_server_description(
             system_prompt=system_prompt,
             max_turns=1,
             model=config.model,
+            tools=[],  # Passes --tools "" to CLI, disabling all built-in tools
             allowed_tools=[],
             mcp_servers={},
             permission_mode="default",

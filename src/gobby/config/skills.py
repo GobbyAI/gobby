@@ -16,9 +16,9 @@ class HubConfig(BaseModel):
     Configuration for a skill hub or collection.
     """
 
-    type: Literal["clawdhub", "skillhub", "github-collection", "claude-plugins"] = Field(
+    type: Literal["clawdhub", "skillsmp", "github-collection", "claude-plugins"] = Field(
         ...,
-        description="Type of the hub: 'clawdhub', 'skillhub', 'github-collection', or 'claude-plugins'",
+        description="Type of the hub: 'clawdhub', 'skillsmp', 'github-collection', or 'claude-plugins'",
     )
 
     base_url: str | None = Field(
@@ -84,9 +84,10 @@ class SkillsConfig(BaseModel):
             "clawdhub": HubConfig(
                 type="clawdhub",
             ),
-            "skillhub": HubConfig(
-                type="skillhub",
-                base_url="https://www.skillhub.club/api/v1",
+            "skillsmp": HubConfig(
+                type="skillsmp",
+                base_url="https://skillsmp.com/api/v1",
+                auth_key_name="SKILLSMP_API_KEY",
             ),
         },
         description="Configured skill hubs keyed by hub name",

@@ -34,14 +34,14 @@ export interface ColonCommandParsed {
 type ColonParent = 'skills' | 'gobby' | 'mcp'
 const COLON_PARENTS = new Set<string>(['skills', 'gobby', 'mcp'])
 
-interface ToolEntry {
+export interface ToolEntry {
   name: string
   brief: string
   serverName: string
   transport: string
 }
 
-function buildToolIndex(
+export function buildToolIndex(
   servers: McpServer[],
   toolsByServer: Record<string, McpTool[]>,
 ): ToolEntry[] {

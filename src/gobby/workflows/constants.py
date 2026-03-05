@@ -6,7 +6,7 @@ such as the rule engine, evaluator, pipeline executor, and enforcement layer.
 """
 
 # Read-only MCP discovery tools that are always allowed regardless of workflow step restrictions.
-# These "meta" tools enable progressive disclosure and are required for agents to discover
+# These "meta" tools enable progressive discovery and are required for agents to discover
 # what tools are available. They don't execute actions, only return information.
 # NOTE: call_tool is intentionally NOT exempt - it executes actual tools and should be restricted.
 EXEMPT_TOOLS = frozenset(

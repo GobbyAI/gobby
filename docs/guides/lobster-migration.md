@@ -496,5 +496,5 @@ gobby pipelines status <execution_id> --json
 ## See Also
 
 - [Pipelines Guide](./pipelines.md) - Full pipeline reference
-- [Workflows Guide](./workflows.md) - Step and lifecycle workflows
+- [Workflows Overview](./workflows-overview.md) - How rules, agents, and pipelines fit together
 - [CLI Commands](./cli-commands.md) - Full CLI reference

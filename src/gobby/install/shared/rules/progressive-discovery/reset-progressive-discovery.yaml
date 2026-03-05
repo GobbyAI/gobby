@@ -1,0 +1,19 @@
+tags: [progressive-discovery, enforcement, mcp]
+
+rules:
+  reset-progressive-discovery:
+    description: "Clear all progressive discovery state on context loss"
+    event: session_start
+    enabled: false
+    priority: 80
+    when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
+    effects:
+      - type: set_variable
+        variable: unlocked_tools
+        value: []
+      - type: set_variable
+        variable: servers_listed
+        value: false
+      - type: set_variable
+        variable: listed_servers
+        value: []

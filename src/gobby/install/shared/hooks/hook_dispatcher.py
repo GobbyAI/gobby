@@ -64,7 +64,7 @@ class CLIConfig:
 CLI_CONFIGS: dict[str, CLIConfig] = {
     "claude": CLIConfig(
         source="claude",
-        critical_hooks=frozenset({"session-start", "session-end", "pre-compact"}),
+        critical_hooks=frozenset({"session-start", "session-end", "pre-compact", "stop"}),
         session_start_hooks=frozenset({"session-start"}),
         json_error_exit_code=2,
         logger_name="gobby.hooks.dispatcher",

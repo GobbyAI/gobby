@@ -10,7 +10,7 @@ rules:
       type: block
       tools: [TaskCreate, TaskUpdate, TaskGet, TaskList, TodoWrite]
       reason: |
-        CC native task tools are disabled. Use gobby-tasks MCP tools instead. Follow progressive disclosure then:
+        CC native task tools are disabled. Use gobby-tasks MCP tools instead. Follow progressive discovery then:
         - create_task(title, description, session_id, claim=True)
         - claim_task(task_id, session_id)
         - list_ready_tasks()

@@ -33,25 +33,9 @@ from gobby.llm.claude_models import (
     ToolResultEvent,
     resolve_context_window,
 )
+from gobby.llm.sdk_utils import format_exception_group, parse_server_name, sanitize_error
 
 logger = logging.getLogger(__name__)
-
-
-def parse_server_name(full_tool_name: str) -> str:
-    """Extract server name from mcp__{server}__{tool} format."""
-    if full_tool_name.startswith("mcp__"):
-        parts = full_tool_name.split("__")
-        if len(parts) >= 2:
-            return parts[1]
-    return "builtin"
-
-
-def _sanitize_error(e: Exception) -> str:
-    """Return a user-facing error message, hiding internal library details."""
-    msg = str(e)
-    if "litellm" in msg.lower() or "model isn't mapped" in msg or "custom_llm_provider" in msg:
-        return "An internal error occurred. Please try again."
-    return msg
 
 
 async def stream_with_mcp_tools(
@@ -225,10 +209,9 @@ async def stream_with_mcp_tools(
                             needs_spacing_before_text = True
 
     except ExceptionGroup as eg:
-        errors = [_sanitize_error(exc) for exc in eg.exceptions]
-        yield TextChunk(content=f"Generation failed: {'; '.join(errors)}")
+        yield TextChunk(content=f"Generation failed: {format_exception_group(eg)}")
         yield DoneEvent(tool_calls_count=tool_calls_count)
     except Exception as e:
         logger.error(f"Failed to stream with MCP tools: {e}", exc_info=True)
-        yield TextChunk(content=f"Generation failed: {_sanitize_error(e)}")
+        yield TextChunk(content=f"Generation failed: {sanitize_error(e)}")
         yield DoneEvent(tool_calls_count=tool_calls_count)

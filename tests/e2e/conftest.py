@@ -184,7 +184,7 @@ def wait_for_daemon_health(port: int, timeout: float = 30.0) -> bool:
             response = httpx.get(f"http://localhost:{port}/api/admin/status", timeout=2.0)
             if response.status_code == 200:
                 return True
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout):
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.ReadError):
             time.sleep(0.5)
     return False
 

@@ -66,13 +66,9 @@ steps:
 
   - id: wait_developer
     condition: "${{ steps.spawn_developer.output.run_id if steps.spawn_developer.output else '' }}"
-    mcp:
-      server: gobby-agents
-      tool: wait_for_agent
-      arguments:
-        run_id: "${{ steps.spawn_developer.output.run_id }}"
-        timeout: "${{ inputs.wait_timeout }}"
-        kill_on_timeout: true
+    wait:
+      completion_id: "${{ steps.spawn_developer.output.run_id }}"
+      timeout: "${{ inputs.wait_timeout }}"
 
   - id: spawn_qa
     condition: "${{ steps.wait_developer.output.completed if steps.wait_developer.output and steps.wait_developer.output.completed else '' }}"
@@ -92,13 +88,9 @@ steps:
 
   - id: wait_qa
     condition: "${{ steps.spawn_qa.output.run_id if steps.spawn_qa.output else '' }}"
-    mcp:
-      server: gobby-agents
-      tool: wait_for_agent
-      arguments:
-        run_id: "${{ steps.spawn_qa.output.run_id }}"
-        timeout: "${{ inputs.wait_timeout }}"
-        kill_on_timeout: true
+    wait:
+      completion_id: "${{ steps.spawn_qa.output.run_id }}"
+      timeout: "${{ inputs.wait_timeout }}"
 
   - id: spawn_merge
     condition: "${{ steps.wait_qa.output.completed if steps.wait_qa.output and steps.wait_qa.output.completed else '' }}"
@@ -117,13 +109,9 @@ steps:
 
   - id: wait_merge
     condition: "${{ steps.spawn_merge.output.run_id if steps.spawn_merge.output else '' }}"
-    mcp:
-      server: gobby-agents
-      tool: wait_for_agent
-      arguments:
-        run_id: "${{ steps.spawn_merge.output.run_id }}"
-        timeout: 300
-        kill_on_timeout: true
+    wait:
+      completion_id: "${{ steps.spawn_merge.output.run_id }}"
+      timeout: 300
 
   - id: fetch_after_merge
     condition: "${{ steps.wait_merge.output.completed if steps.wait_merge.output and steps.wait_merge.output.completed else '' }}"

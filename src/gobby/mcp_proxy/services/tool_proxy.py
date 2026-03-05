@@ -1,5 +1,6 @@
 """Tool proxy service."""
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -175,7 +176,7 @@ class ToolProxyService:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        List tools for a specific server with progressive disclosure format.
+        List tools for a specific server with progressive discovery format.
 
         When session_id is provided and a workflow is active, tools are filtered
         based on the current phase's allowed_tools and blocked_tools settings.
@@ -287,6 +288,21 @@ class ToolProxyService:
 
         """
         arguments = arguments or {}
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                return {
+                    "success": False,
+                    "error": "Invalid arguments: expected dict, got string that isn't valid JSON",
+                    "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
+                }
+        if not isinstance(arguments, dict):
+            return {
+                "success": False,
+                "error": f"Invalid arguments: expected dict, got {type(arguments).__name__}",
+                "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
+            }
 
         # Check tool filter before execution
         if self._tool_filter and session_id:

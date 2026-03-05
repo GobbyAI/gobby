@@ -297,7 +297,7 @@ class Task:
         Returns only essential fields needed for task discovery.
         Use get_task() with to_dict() for full task details.
 
-        This follows the progressive disclosure pattern used for MCP tools:
+        This follows the progressive discovery pattern used for MCP tools:
         - list_tasks() returns brief format (20 fields)
         - get_task() returns full format (33 fields)
         """

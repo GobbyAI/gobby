@@ -344,8 +344,17 @@ class LocalWorkflowDefinitionManager:
 
         name = data["name"]
         description = data.get("description", "")
+        _VALID_WORKFLOW_TYPES = {"rule", "variable", "agent", "pipeline"}
+        _LEGACY_TYPE_MAP = {"step": "pipeline", "workflow": "pipeline", "": "pipeline"}
         yaml_type = data.get("type", "")
-        workflow_type = "pipeline" if yaml_type == "pipeline" else "workflow"
+        if yaml_type in _VALID_WORKFLOW_TYPES:
+            workflow_type = yaml_type
+        elif yaml_type in _LEGACY_TYPE_MAP:
+            workflow_type = _LEGACY_TYPE_MAP[yaml_type]
+        else:
+            raise ValueError(
+                f"Invalid type '{yaml_type}'. Valid types: {', '.join(sorted(_VALID_WORKFLOW_TYPES))}"
+            )
         version = str(data.get("version", "1.0"))
         enabled = bool(data.get("enabled", False))
         priority = data.get("priority", 100)

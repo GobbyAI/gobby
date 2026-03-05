@@ -427,7 +427,7 @@ gobby tasks reindex --all-projects
 | `list_ready_tasks` | Tasks with no unresolved blockers |
 | `list_blocked_tasks` | Tasks waiting on others |
 
-### Progressive Disclosure
+### Progressive Discovery
 
 List operations return **brief format** (8 fields) to minimize token usage:
 
