@@ -64,7 +64,7 @@ class AgentContext:
         task_type: str | None = None
         task_category: str | None = None
         if task:
-            task_type = task.get("task_type") or task.get("type")
+            task_type = task.get("task_type")
             task_category = task.get("category")
 
         # Derive agent_type from depth + workflow name

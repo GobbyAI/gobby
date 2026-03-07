@@ -39,6 +39,7 @@ def detect_task_claim(
     session_id: str,
     session_task_manager: "SessionTaskManager | None" = None,
     task_manager: "LocalTaskManager | None" = None,
+    project_id: str | None = None,
 ) -> None:
     """Detect gobby-tasks calls that claim or release a task for this session.
 
@@ -86,7 +87,7 @@ def detect_task_claim(
             from gobby.storage.tasks import TaskNotFoundError
 
             try:
-                closed_task = task_manager.get_task(raw_close_id)
+                closed_task = task_manager.get_task(raw_close_id, project_id=project_id)
                 if closed_task:
                     closed_task_id = closed_task.id
             except (ValueError, KeyError, TaskNotFoundError) as e:

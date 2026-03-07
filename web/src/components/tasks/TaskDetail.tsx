@@ -140,7 +140,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
               <div className="task-detail-badges">
                 <StatusBadge status={task.status} />
                 <PriorityBadge priority={task.priority} />
-                <TypeBadge type={task.type} />
+                <TypeBadge type={task.task_type} />
               </div>
             </div>
 

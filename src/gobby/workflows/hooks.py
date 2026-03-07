@@ -97,6 +97,7 @@ class WorkflowHookHandler:
                 session_id,
                 session_task_manager=self._session_task_manager,
                 task_manager=self._task_manager,
+                project_id=event.project_id,
             )
             detect_commit_link(event, variables, session_id)
             detect_mcp_call(event, variables, session_id)

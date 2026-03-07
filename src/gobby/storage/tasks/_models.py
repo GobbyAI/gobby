@@ -245,7 +245,7 @@ class Task:
             "title": self.title,
             "status": self.status,
             "priority": self.priority,
-            "type": self.task_type,  # Use 'type' for API compatibility
+            "task_type": self.task_type,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "description": self.description,
@@ -306,7 +306,7 @@ class Task:
             "title": self.title,
             "status": self.status,
             "priority": self.priority,
-            "type": self.task_type,
+            "task_type": self.task_type,
             "parent_task_id": self.parent_task_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

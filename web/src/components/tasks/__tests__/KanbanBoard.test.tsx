@@ -48,7 +48,7 @@ const makeTask = (overrides: Partial<GobbyTask> & { id: string; title: string })
   ref: `#${overrides.id.replace('task-', '')}`,
   status: 'open',
   priority: 2,
-  type: 'task',
+  task_type: 'task',
   parent_task_id: null,
   created_at: '2026-03-01T00:00:00Z',
   updated_at: '2026-03-01T12:00:00Z',

@@ -90,7 +90,7 @@ function buildBars(tasks: GobbyTask[]): TaskBar[] {
     const endDate_ = startOfDay(new Date(rawEnd))
     // If task has no duration (start == end), show at least 1 day
     const endDate = endDate_ > startDate ? endDate_ : addDays(startDate, 1)
-    const isMilestone = task.type === 'epic'
+    const isMilestone = task.task_type === 'epic'
 
     return { task, startDate, endDate, row: i, isMilestone }
   })

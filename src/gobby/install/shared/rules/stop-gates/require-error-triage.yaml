@@ -16,9 +16,14 @@ rules:
         value: "{{ variables.get('error_triage_blocks', 0) + 1 }}"
       - type: block
         reason: |
-          Before stopping, run lint and tests on files you touched.
+          Confirm that you ran lint and tests on files you touched this session.
 
-          If you discover errors or test failures:
+          If you already verified and everything passed clean, confirm now:
+          set_variable(name="pre_existing_errors_triaged", value=true)
+
+          If you haven't verified yet, run lint and tests first.
+
+          If you discovered errors or test failures:
           1. Check: is the failing code related to YOUR changes?
              - Run `git diff --name-only` to see uncommitted changes.
              - If the failure is in code YOU changed: fix it, commit, then stop.
@@ -27,8 +32,5 @@ rules:
              - If another agent has uncommitted changes in the failing file:
                create a bug task and move on.
           2. Every error you discover must be either fixed or tasked before stopping.
-
-          After verification passes clean, confirm:
-          set_variable(name="pre_existing_errors_triaged", value=true)
 
           (Attempt {{ variables.get('error_triage_blocks', 0) }}/3 — after 3 attempts, this gate opens)

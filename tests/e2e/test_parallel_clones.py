@@ -109,8 +109,6 @@ class TestParallelOrchestratorWorkflow:
 
         expected_tools = [
             "get_workflow_status",
-            "set_variable",
-            "get_variable",
         ]
 
         for tool in expected_tools:

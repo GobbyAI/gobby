@@ -10,6 +10,16 @@ description: |
   Supports both epics (tasks with children) and standalone tasks (single task
   through dev → QA → merge cycle).
 
+  Do NOT use wait_for_completion on this pipeline — use run_pipeline with
+  continuation_prompt instead. Each pass completes quickly; continuations
+  handle the event-driven re-invocation.
+
+outputs:
+  iteration: "${{ result.output.iteration }}"
+  orchestration_complete: "${{ result.output.orchestration_complete }}"
+  session_task: "${{ result.output.session_task }}"
+  is_standalone: "${{ result.output.is_standalone }}"
+
 inputs:
   session_task: null
   developer_agent: "developer"

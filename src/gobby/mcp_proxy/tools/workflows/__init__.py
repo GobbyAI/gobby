@@ -43,9 +43,7 @@ from gobby.mcp_proxy.tools.workflows._rules import (
     toggle_rule,
 )
 from gobby.mcp_proxy.tools.workflows._variables import (
-    get_variable,
     set_session_variable,
-    set_variable,
 )
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.sessions import LocalSessionManager
@@ -140,50 +138,6 @@ def create_workflows_registry(
         return get_workflow_status(
             _session_manager,
             session_id,
-            instance_manager=_instance_manager,
-            session_var_manager=_session_var_manager,
-        )
-
-    @registry.tool(
-        name="set_variable",
-        description="Set a variable scoped to a workflow instance or session. Use workflow param for workflow-scoped. Accepts #N, N, UUID, or prefix for session_id.",
-    )
-    def _set_variable(
-        name: str,
-        value: str | int | float | bool | None,
-        session_id: str | None = None,
-        workflow: str | None = None,
-    ) -> dict[str, Any]:
-        if _session_manager is None or _db is None:
-            return {"error": "Workflow tools require database connection"}
-        return set_variable(
-            _session_manager,
-            _db,
-            name,
-            value,
-            session_id,
-            workflow=workflow,
-            instance_manager=_instance_manager,
-            session_var_manager=_session_var_manager,
-        )
-
-    @registry.tool(
-        name="get_variable",
-        description="Get variable(s) scoped to a workflow instance or session. Use workflow param for workflow-scoped. Accepts #N, N, UUID, or prefix for session_id.",
-    )
-    def _get_variable(
-        name: str | None = None,
-        session_id: str | None = None,
-        workflow: str | None = None,
-    ) -> dict[str, Any]:
-        if _session_manager is None or _db is None:
-            return {"error": "Workflow tools require database connection"}
-        return get_variable(
-            _session_manager,
-            _db,
-            name,
-            session_id,
-            workflow=workflow,
             instance_manager=_instance_manager,
             session_var_manager=_session_var_manager,
         )

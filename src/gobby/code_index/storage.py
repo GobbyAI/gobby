@@ -72,6 +72,7 @@ class CodeIndexStorage:
                     signature=excluded.signature,
                     docstring=excluded.docstring,
                     parent_symbol_id=excluded.parent_symbol_id,
+                    language=excluded.language,
                     content_hash=excluded.content_hash,
                     updated_at=excluded.updated_at
                 """,
@@ -206,6 +207,9 @@ class CodeIndexStorage:
     def get_stale_files(self, project_id: str, current_hashes: dict[str, str]) -> list[str]:
         """Find files whose stored hash differs from current hash.
 
+        Uses a temp table to compare hashes in SQL, avoiding loading all
+        IndexedFile objects into Python memory.
+
         Args:
             project_id: Project to check.
             current_hashes: Map of file_path -> current content hash.
@@ -213,16 +217,34 @@ class CodeIndexStorage:
         Returns:
             List of file paths that need re-indexing.
         """
-        stored = self.list_files(project_id)
-        stale: list[str] = []
-        stored_map = {f.file_path: f.content_hash for f in stored}
+        if not current_hashes:
+            return []
 
-        for path, current_hash in current_hashes.items():
-            stored_hash = stored_map.get(path)
-            if stored_hash is None or stored_hash != current_hash:
-                stale.append(path)
+        with self.db.transaction() as conn:
+            conn.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS _current_hashes "
+                "(file_path TEXT PRIMARY KEY, content_hash TEXT)"
+            )
+            conn.execute("DELETE FROM _current_hashes")
+            conn.executemany(
+                "INSERT INTO _current_hashes (file_path, content_hash) VALUES (?, ?)",
+                list(current_hashes.items()),
+            )
 
-        return stale
+            # Files that are new (not in indexed) or have changed hashes
+            rows = conn.execute(
+                """
+                SELECT ch.file_path FROM _current_hashes ch
+                LEFT JOIN code_indexed_files cf
+                    ON cf.project_id = ? AND cf.file_path = ch.file_path
+                WHERE cf.file_path IS NULL OR cf.content_hash != ch.content_hash
+                """,
+                (project_id,),
+            ).fetchall()
+
+            conn.execute("DROP TABLE IF EXISTS _current_hashes")
+
+        return [row[0] for row in rows]
 
     def delete_file(self, project_id: str, file_path: str) -> None:
         """Delete a file record (symbols deleted separately)."""

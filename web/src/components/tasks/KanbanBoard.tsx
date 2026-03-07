@@ -157,7 +157,7 @@ function KanbanCard({ task, index, columnKey, onSelect, onUpdateStatus }: Kanban
   const priorityColor = (PRIORITY_STYLES[task.priority] || PRIORITY_STYLES[2]).color
   const isBlocked = BLOCKED_STATUSES.has(task.status)
   const nextStatus = NEXT_STATUS[task.status]
-  const riskLevel = classifyTaskRisk(task.title, task.type)
+  const riskLevel = classifyTaskRisk(task.title, task.task_type)
 
   // Draggable
   useEffect(() => {
@@ -228,7 +228,7 @@ function KanbanCard({ task, index, columnKey, onSelect, onUpdateStatus }: Kanban
       </div>
       <div className="kanban-card-title">{task.title}</div>
       <div className="kanban-card-footer">
-        <TypeBadge type={task.type} />
+        <TypeBadge type={task.task_type} />
         <AssigneeBadge assignee={task.assignee} agentName={task.agent_name} />
         <RiskBadge level={riskLevel} compact />
         {onUpdateStatus && !isBlocked && (

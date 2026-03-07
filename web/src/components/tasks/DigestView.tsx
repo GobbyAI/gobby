@@ -171,7 +171,7 @@ export function DigestView({ tasks, onSelectTask }: DigestViewProps) {
                       <span className="digest-item-title">{task.title}</span>
                       <span className="digest-item-meta">
                         <PriorityBadge priority={task.priority} />
-                        <TypeBadge type={task.type} />
+                        <TypeBadge type={task.task_type} />
                         <span className="digest-item-time">{relativeTime(task.updated_at)}</span>
                       </span>
                     </button>

@@ -55,7 +55,7 @@ Walk through each section interactively, reporting results as you go.
 
 ### Section 3: Orchestrator Run
 
-1. Start the orchestrator pipeline (returns after first pass)
+1. Start the orchestrator pipeline with `continuation_prompt` (do NOT use `wait_for_completion` — the orchestrator is event-driven and each pass completes quickly)
 2. Monitor progress — each pass is a separate pipeline execution triggered by agent completions. Check:
    - Worktree creation
    - Developer dispatch
@@ -73,7 +73,7 @@ Walk through each section interactively, reporting results as you go.
    ✓ Merge: epic branch merged to target
    ```
 
-**Monitoring:** Each orchestrator pass is a separate execution. Check `orchestration_complete` in execution results to know when the overall work is finished. Use `gobby pipelines history orchestrator` to see the chain of passes, or check task states directly with `gobby tasks list --parent <epic_id>`.
+**Monitoring:** Each orchestrator pass is a separate execution. The `continuation_prompt` fires when each pass completes — check `orchestration_complete` in the result to know when the overall work is finished. Do NOT block with `wait_for_completion`; let the continuation notify you. Use `gobby pipelines history orchestrator` to see the chain of passes, or check task states directly with `gobby tasks list --parent <epic_id>`.
 
 ### Section 3.7: Standalone Task Test (Optional)
 

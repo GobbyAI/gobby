@@ -9,7 +9,7 @@ rules:
     when: >
       event.data.get('tool_name') == 'Bash'
       and any(p in str(event.data.get('tool_input', {}).get('command', ''))
-              for p in ['git ', 'pytest', 'vitest', 'jest ', 'mocha ',
+              for p in ['pytest', 'vitest', 'jest ', 'mocha ',
                         'cargo test', 'cargo build',
                         'npm test', 'npm install', 'npm list', 'npx ',
                         'pnpm ', 'bun ', 'yarn ',

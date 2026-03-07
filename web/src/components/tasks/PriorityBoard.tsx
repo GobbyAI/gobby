@@ -82,7 +82,7 @@ function PriorityCard({
       </div>
       <div className="priority-card-title">{task.title}</div>
       <div className="priority-card-footer">
-        <TypeBadge type={task.type} />
+        <TypeBadge type={task.task_type} />
         <span className="priority-card-status">{task.status.replace(/_/g, ' ')}</span>
         {onUpdateStatus && task.status === 'open' && (
           <button

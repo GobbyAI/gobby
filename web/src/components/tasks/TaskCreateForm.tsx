@@ -108,7 +108,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   if (!isOpen) return null
 
   // Parent task options: epics and tasks that can be parents
-  const parentOptions = tasks.filter(t => t.type === 'epic' || t.type === 'task')
+  const parentOptions = tasks.filter(t => t.task_type === 'epic' || t.task_type === 'task')
 
   return (
     <>

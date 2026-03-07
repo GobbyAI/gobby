@@ -420,6 +420,48 @@ class GobbyDaemonTools:
             logger.error(f"Semantic search failed: {e}")
             return {"success": False, "error": str(e), "query": query}
 
+    # --- Session Variables ---
+
+    async def set_variable(
+        self,
+        name: str,
+        value: str | int | float | bool | None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Set a session variable. Used by enforcement gates and agent coordination."""
+        if not self._session_manager or not self._session_manager.db:
+            return {"ok": False, "error": "Session manager not available"}
+
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
+
+        return _set_var(
+            self._session_manager,
+            self._session_manager.db,
+            name,
+            value,
+            session_id,
+            workflow=None,
+        )
+
+    async def get_variable(
+        self,
+        name: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Get session variable(s). Returns one if name given, all if omitted."""
+        if not self._session_manager or not self._session_manager.db:
+            return {"ok": False, "error": "Session manager not available"}
+
+        from gobby.mcp_proxy.tools.workflows._variables import get_variable as _get_var
+
+        return _get_var(
+            self._session_manager,
+            self._session_manager.db,
+            name,
+            session_id,
+            workflow=None,
+        )
+
     # Hook Extension tools migrated to gobby-plugins internal registry
     # (see src/gobby/mcp_proxy/tools/plugins/)
 
@@ -452,6 +494,10 @@ def create_mcp_server(tools_handler: GobbyDaemonTools) -> FastMCP:
 
     # Semantic Search
     mcp.add_tool(tools_handler.search_tools)
+
+    # Session Variables
+    mcp.add_tool(tools_handler.set_variable)
+    mcp.add_tool(tools_handler.get_variable)
 
     # Hook Extension tools are now in gobby-plugins internal registry
 

@@ -29,7 +29,7 @@ function deriveAuditEntries(tasks: GobbyTask[]): AuditEntry[] {
   const entries: AuditEntry[] = []
 
   for (const task of tasks) {
-    const risk = classifyTaskRisk(task.title, task.type)
+    const risk = classifyTaskRisk(task.title, task.task_type)
 
     // Task created
     entries.push({

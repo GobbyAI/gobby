@@ -44,6 +44,11 @@ RIGHT — Just-in-time discovery:
   call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "session_id": "#123"})
 </common_mistakes>
 
+<variables>
+`set_variable` and `get_variable` are top-level tools — no progressive discovery needed.
+Call directly: set_variable(name="flag", value=true, session_id="#123")
+</variables>
+
 <rules>
 - Create/claim a task before using Edit, Write, or NotebookEdit tools
 - Pass session_id to create_task (required), claim_task (required), and close_task (optional, for tracking)
