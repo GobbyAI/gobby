@@ -3,6 +3,7 @@ name: code-index
 description: Instructions for using gobby-code symbol-level search and retrieval. Auto-injected when project has a code index.
 category: core
 alwaysApply: true
+injectionFormat: full
 metadata:
   gobby:
     audience: all

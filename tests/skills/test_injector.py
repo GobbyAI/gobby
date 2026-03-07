@@ -135,18 +135,18 @@ class TestAgentContextFromSession:
         assert ctx.task_type == "bug"
         assert ctx.task_category == "code"
 
-    def test_task_type_fallback_to_type_key(self) -> None:
+    def test_task_type_from_task_type_key(self) -> None:
         session = MagicMock(agent_depth=0, source=None)
-        task = {"type": "feature"}
+        task = {"task_type": "feature"}
         ctx = AgentContext.from_session(session, task=task)
         assert ctx.task_type == "feature"
 
-    def test_task_type_prefers_task_type_over_type(self) -> None:
-        """task_type key takes priority over type key."""
+    def test_task_type_none_when_missing(self) -> None:
+        """task_type is None when not present in task dict."""
         session = MagicMock(agent_depth=0, source=None)
-        task = {"task_type": "bug", "type": "feature"}
+        task = {"title": "some task"}
         ctx = AgentContext.from_session(session, task=task)
-        assert ctx.task_type == "bug"
+        assert ctx.task_type is None
 
     def test_none_depth_treated_as_zero(self) -> None:
         session = MagicMock(agent_depth=None, source=None)

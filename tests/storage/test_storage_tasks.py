@@ -1039,7 +1039,7 @@ class TestLocalTaskManager:
         assert brief["title"] == "Full Task"
         assert brief["status"] == "open"
         assert brief["priority"] == 1
-        assert brief["type"] == "bug"
+        assert brief["task_type"] == "bug"
         assert brief["parent_task_id"] is None
         assert "created_at" in brief
         assert "updated_at" in brief
@@ -1270,7 +1270,7 @@ class TestCreateTaskWithDecomposition:
         assert "task" in result
         assert result["task"]["title"] == "Full Task"
         assert result["task"]["priority"] == 1
-        assert result["task"]["type"] == "feature"
+        assert result["task"]["task_type"] == "feature"
         assert result["task"]["category"] == "unit"
 
 

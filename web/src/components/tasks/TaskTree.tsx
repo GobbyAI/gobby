@@ -101,7 +101,7 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
         <span className="tree-node-title">
           <HighlightText text={task.title} search={searchTerm} />
         </span>
-        <TypeBadge type={task.type} />
+        <TypeBadge type={task.task_type} />
         <PriorityBadge priority={task.priority} />
         <TaskStatusStrip task={task} compact />
 

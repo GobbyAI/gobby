@@ -245,6 +245,32 @@ class TestSetVariableEffect:
 
         assert variables["custom_counter"] == 3
 
+    @pytest.mark.asyncio
+    async def test_set_variable_jinja2_template(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """set_variable with Jinja2 template should render and coerce to native type."""
+
+        _insert_rule(
+            manager,
+            "increment-via-jinja",
+            RuleDefinitionBody(
+                event=RuleEvent.STOP,
+                effect=RuleEffect(
+                    type="set_variable",
+                    variable="error_triage_blocks",
+                    value="{{ variables.get('error_triage_blocks', 0) + 1 }}",
+                ),
+            ),
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"error_triage_blocks": 2}
+        event = _make_event(HookEventType.STOP)
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["error_triage_blocks"] == 3
+
 
 class TestInjectContextEffect:
     @pytest.mark.asyncio

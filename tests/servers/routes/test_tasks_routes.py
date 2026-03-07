@@ -176,7 +176,7 @@ class TestCreateTask:
         data = response.json()
         assert data["title"] == "Full task"
         assert data["priority"] == 0
-        assert data["type"] == "bug"
+        assert data["task_type"] == "bug"
         assert "critical" in data["labels"]
         assert data["category"] == "testing"
 

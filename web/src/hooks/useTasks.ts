@@ -11,7 +11,7 @@ export interface GobbyTask {
   title: string
   status: string
   priority: number
-  type: string
+  task_type: string
   parent_task_id: string | null
   created_at: string
   updated_at: string

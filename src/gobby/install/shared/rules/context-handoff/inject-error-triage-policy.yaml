@@ -18,5 +18,4 @@ rules:
         MUST create a gobby task for each distinct issue before stopping.
 
         After triaging all issues (or confirming none were found), call
-        set_variable on gobby-workflows:
         set_variable(name="pre_existing_errors_triaged", value=true, session_id="<session_id>")

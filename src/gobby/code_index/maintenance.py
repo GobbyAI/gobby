@@ -38,7 +38,7 @@ async def code_index_maintenance_loop(
         try:
             await _run_maintenance(indexer)
         except Exception as e:
-            logger.error(f"Code index maintenance error: {e}")
+            logger.error(f"Code index maintenance error: {e}", exc_info=True)
 
         # Wait for interval or shutdown
         if shutdown_flag is not None:

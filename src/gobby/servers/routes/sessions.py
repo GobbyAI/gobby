@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from gobby.servers.models import SessionRegisterRequest
+from gobby.storage.session_transcripts import LocalSessionTranscriptManager
 from gobby.utils.metrics import get_metrics_collector
 
 if TYPE_CHECKING:
@@ -247,6 +248,15 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
     """
     router = APIRouter(prefix="/api/sessions", tags=["sessions"])
     metrics = get_metrics_collector()
+    transcript_manager: LocalSessionTranscriptManager | None = None
+
+    def _get_transcript_manager() -> LocalSessionTranscriptManager:
+        nonlocal transcript_manager
+        if transcript_manager is None:
+            if server.session_manager is None:
+                raise HTTPException(status_code=503, detail="Session manager not available")
+            transcript_manager = LocalSessionTranscriptManager(server.session_manager.db)
+        return transcript_manager
 
     async def _broadcast_session(event: str, session_id: str, **kwargs: Any) -> None:
         """Broadcast a session event via WebSocket if available."""
@@ -1171,10 +1181,7 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
         """Check if a transcript blob exists and get size stats."""
         metrics.inc_counter("http_requests_total")
         try:
-            from gobby.storage.session_transcripts import LocalSessionTranscriptManager
-
-            tm = LocalSessionTranscriptManager(server.session_manager.db)
-            stats = tm.get_stats(session_id)
+            stats = _get_transcript_manager().get_stats(session_id)
             if not stats:
                 return {"exists": False, "session_id": session_id}
             stats["session_id"] = session_id
@@ -1191,10 +1198,7 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
         try:
             from fastapi.responses import Response
 
-            from gobby.storage.session_transcripts import LocalSessionTranscriptManager
-
-            tm = LocalSessionTranscriptManager(server.session_manager.db)
-            raw = tm.get_transcript(session_id)
+            raw = _get_transcript_manager().get_transcript(session_id)
             if raw is None:
                 raise HTTPException(status_code=404, detail="No transcript blob stored")
             return Response(
@@ -1215,10 +1219,7 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
         """Restore a transcript blob to disk for CLI resume."""
         metrics.inc_counter("http_requests_total")
         try:
-            from gobby.storage.session_transcripts import LocalSessionTranscriptManager
-
-            tm = LocalSessionTranscriptManager(server.session_manager.db)
-            path = tm.restore_to_disk(session_id)
+            path = _get_transcript_manager().restore_to_disk(session_id)
             if path is None:
                 raise HTTPException(
                     status_code=404,

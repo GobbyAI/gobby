@@ -690,6 +690,14 @@ class RuleEngine:
 
         value = effect.value
 
+        # Render Jinja2 templates first, before expression evaluation
+        if isinstance(value, str) and "{{" in value:
+            ctx = eval_context
+            allowed_funcs = self._build_allowed_funcs(ctx)
+            rendered = self._render_template(value, ctx, allowed_funcs)
+            variables[effect.variable] = self._coerce_rendered_value(rendered)
+            return
+
         # If value is a string that looks like an expression, evaluate it
         if isinstance(value, str) and self._is_expression(value):
             try:
@@ -724,6 +732,22 @@ class RuleEngine:
             "len(",
         )
         return any(indicator in value for indicator in expression_indicators)
+
+    @staticmethod
+    def _coerce_rendered_value(value: str) -> Any:
+        """Coerce a rendered template string to int, float, or bool."""
+        s = value.strip()
+        if s.lower() in ("true", "false"):
+            return s.lower() == "true"
+        try:
+            return int(s)
+        except ValueError:
+            pass
+        try:
+            return float(s)
+        except ValueError:
+            pass
+        return value
 
     # --- Step workflow enforcement ---
 

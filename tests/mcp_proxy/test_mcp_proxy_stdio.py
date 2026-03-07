@@ -394,7 +394,7 @@ class TestEnsureDaemonRunning:
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
             with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
-                health_checks = [False, True]
+                health_checks = [False, False, False, True]
                 with patch(
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
@@ -406,10 +406,11 @@ class TestEnsureDaemonRunning:
                         return_value={"success": True},
                     ) as mock_restart:
                         with patch("gobby.mcp_proxy.stdio.get_daemon_pid", return_value=12345):
-                            from gobby.mcp_proxy.stdio import ensure_daemon_running
+                            with patch("gobby.mcp_proxy.stdio.asyncio.sleep", new_callable=AsyncMock):
+                                from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                            await ensure_daemon_running()
-                            mock_restart.assert_called_once()
+                                await ensure_daemon_running()
+                                mock_restart.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_starts_daemon_if_not_running(self):

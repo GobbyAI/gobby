@@ -146,7 +146,7 @@ function compareTasks(a: GobbyTask, b: GobbyTask, col: SortColumn, dir: SortDire
       cmp = a.title.localeCompare(b.title)
       break
     case 'type':
-      cmp = a.type.localeCompare(b.type)
+      cmp = a.task_type.localeCompare(b.task_type)
       break
     case 'priority':
       cmp = a.priority - b.priority
@@ -204,7 +204,7 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
       </td>
       <td className="tasks-cell tasks-cell--title">{task.title}</td>
       <td className="tasks-cell tasks-cell--type">
-        <TypeBadge type={task.type} />
+        <TypeBadge type={task.task_type} />
       </td>
       <td className="tasks-cell tasks-cell--priority">
         <PriorityBadge priority={task.priority} />
@@ -335,7 +335,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     // Pre-fill parent from selected task (if it's an epic/task)
     if (selectedTaskId) {
       const selected = tasks.find(t => t.id === selectedTaskId)
-      if (selected && (selected.type === 'epic' || selected.type === 'task')) {
+      if (selected && (selected.task_type === 'epic' || selected.task_type === 'task')) {
         defaults.parentTaskId = selectedTaskId
       }
     }
@@ -346,7 +346,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     setCloneDefaults({
       title: `[Clone] ${task.title}`,
       description: task.description || undefined,
-      taskType: task.type,
+      taskType: task.task_type,
       priority: task.priority,
       validationCriteria: task.validation_criteria || undefined,
       labels: task.labels || undefined,

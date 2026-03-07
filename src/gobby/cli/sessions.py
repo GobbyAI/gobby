@@ -683,38 +683,38 @@ def restore_transcript(
     """
     from gobby.storage.session_transcripts import LocalSessionTranscriptManager
 
-    db = LocalDatabase()
-    tm = LocalSessionTranscriptManager(db)
-
     if not session_ref and not restore_all:
         raise click.UsageError("Provide a session reference or use --all")
 
-    results: list[dict[str, Any]] = []
+    with LocalDatabase() as db:
+        tm = LocalSessionTranscriptManager(db)
 
-    if restore_all:
-        # Find all sessions that have blobs stored
-        rows = db.fetchall(
-            """SELECT st.session_id, s.jsonl_path
-               FROM session_transcripts st
-               JOIN sessions s ON s.id = st.session_id""",
-            (),
-        )
-        for row in rows:
-            sid = row["session_id"]
-            path = tm.restore_to_disk(sid)
-            if path:
-                results.append({"session_id": sid, "path": path, "status": "restored"})
-            else:
-                results.append({"session_id": sid, "status": "skipped", "reason": "no path"})
-    else:
-        assert session_ref is not None
-        resolved_id = resolve_session_id(session_ref)
-        path = tm.restore_to_disk(resolved_id, target_path)
-        if path:
-            results.append({"session_id": resolved_id, "path": path, "status": "restored"})
+        results: list[dict[str, Any]] = []
+
+        if restore_all:
+            # Find all sessions that have blobs stored
+            rows = db.fetchall(
+                """SELECT st.session_id, s.jsonl_path
+                   FROM session_transcripts st
+                   JOIN sessions s ON s.id = st.session_id""",
+                (),
+            )
+            for row in rows:
+                sid = row["session_id"]
+                path = tm.restore_to_disk(sid)
+                if path:
+                    results.append({"session_id": sid, "path": path, "status": "restored"})
+                else:
+                    results.append({"session_id": sid, "status": "skipped", "reason": "no path"})
         else:
-            click.echo("No transcript blob stored for this session.", err=True)
-            raise SystemExit(1)
+            assert session_ref is not None
+            resolved_id = resolve_session_id(session_ref)
+            path = tm.restore_to_disk(resolved_id, target_path)
+            if path:
+                results.append({"session_id": resolved_id, "path": path, "status": "restored"})
+            else:
+                click.echo("No transcript blob stored for this session.", err=True)
+                raise SystemExit(1)
 
     if json_format:
         click.echo(json.dumps(results, indent=2, default=str))

@@ -72,7 +72,7 @@ The code index works with SQLite alone and adds capabilities as optional backend
 
 ## Tool Reference
 
-The `gobby-code` MCP server provides 12 tools across 4 sub-registries.
+The `gobby-code` MCP server provides 13 tools across 4 sub-registries.
 
 ### Indexing
 

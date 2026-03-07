@@ -193,7 +193,7 @@ def get_dirty_files(project_path: str | None = None) -> set[str]:
         Set of dirty file paths (relative to repo root)
     """
     if project_path is None:
-        logger.warning(
+        logger.debug(
             "get_dirty_files: project_path is None, git status will use daemon's cwd "
             "which may not be the project directory"
         )
