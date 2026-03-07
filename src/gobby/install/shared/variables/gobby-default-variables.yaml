@@ -69,7 +69,6 @@ variables:
       - gobby-voice
       - gobby-skills
       - gobby-cron
-      - gobby-tests
     description: "Pre-seed listed_servers with internal server names"
   unlocked_tools:
     value: []

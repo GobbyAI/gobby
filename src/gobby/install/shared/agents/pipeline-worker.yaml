@@ -24,7 +24,8 @@ instructions: |
 workflows:
   rule_selectors:
     include:
-      - "tag:gobby"
+      - "tag:default"
+      - "tag:worker-safety"
       - "tag:pipeline-enforcement"
   variables: {}
 

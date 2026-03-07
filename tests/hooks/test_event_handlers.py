@@ -522,6 +522,37 @@ class TestSessionStartNewSession:
             "parent-sess-123"
         )
 
+    def test_startup_session_does_not_adopt_stale_parent(self, mock_dependencies: dict) -> None:
+        """Test that fresh startup sessions never search for handoff parents."""
+        mock_parent = MagicMock()
+        mock_parent.id = "stale-parent-123"
+
+        mock_dependencies["session_storage"].get.return_value = None
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-789"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-456",
+            data={"source": "startup", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        # find_parent should NOT be called for startup sessions
+        mock_dependencies["session_storage"].find_parent.assert_not_called()
+        # Parent should not be linked
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        call_kwargs = mock_dependencies["session_manager"].register_session.call_args
+        assert call_kwargs.kwargs.get("parent_session_id") is None or (
+            call_kwargs[1].get("parent_session_id") is None
+            if call_kwargs[1]
+            else True
+        )
+
     def test_new_session_parent_lookup_error(self, mock_dependencies: dict) -> None:
         """Test error looking up parent session is handled gracefully."""
         mock_dependencies["session_storage"].get.return_value = None

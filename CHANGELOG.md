@@ -8,6 +8,158 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.26]
+
+### Features
+
+#### Native AST Code Indexing
+- Added native AST-based code indexing via gobby-code server (#9813)
+- Made gobby index standalone (no daemon required) (#9828)
+- Made `gobby index` the default subcommand (#9829)
+- Added post-commit git hook for incremental code indexing (#9833)
+- Triggered initial code indexing on `gobby init` (#9835)
+- Wired session-start auto-indexing via HTTP endpoint (#9834)
+- Added staleness detection to search_symbols (#9832)
+- Set code_index_available session variable on session start (#9838)
+- Made agents aware of gobby-code (#9856)
+
+#### Session Transcript Blob Storage
+- Added session transcript blob storage and restore (#9845)
+
+#### Orchestrator Enhancements
+- Added orchestrator single-task support with event-driven loop (#9818)
+
+#### Output Compression
+- Added compression banner to compressed tool output (#9814)
+- Expanded compress-bash-output patterns (vitest, jest, npx, pnpm, bun, uv, turbo, nx, webpack, vite)
+
+### Fixes
+- Hardened stdio proxy health check: 3x retries with 5s timeout before restarting daemon
+- Increased default daemon health check timeout from 2s to 5s
+- Restored heavy-handed progressive discovery enforcement (#9841)
+- Reverted progressive discovery rules from inject_context to block (#9824)
+- Added shlex_quote Jinja2 filter to prevent shell injection in rule templates (#9826)
+- Skipped commit/validation requirements for epics with all children closed (#9846)
+- Expired handoff_ready sessions correctly (#9847)
+- Guarded against empty compression results and empty subprocess output (#9844)
+- Fixed C# and Dart language support in code_index (#9843)
+- Implemented 24 accepted CodeRabbit suggestions (#9839)
+- Capitalized Gobby in compression banners and prevented stale session handoff (#9817)
+- Suppressed vitest canvas and forwardRef console warnings (#9854)
+- Corrected tool availability claims in default-web-chat prompt (#9766)
+
+### Refactoring
+- Renamed CLI group from code-index to index (#9823)
+- Moved index_folder from MCP tool to CLI command (#9821)
+- Removed success keys from skills, agents, and hub return dicts (#9765, #9764, #9763)
+- Replaced manual WS with useWebSocketEvent in usePipelineExecutions (#9825)
+
+### Docs
+- Added code-index and tool-compression guides (#9848)
+- Added gobby index CLI examples to code-index guide (#9849)
+
+---
+
+## [0.2.25]
+
+### Features
+
+#### Web UI Test Infrastructure
+- Added web UI test infrastructure with initial test coverage (#9697–#9702)
+- Added localStorage mock and test utility sample tests (#9698, #9701)
+- Added CodeBlock and KanbanBoard tests, reaching 352 total (#9214)
+- Full web UI test suite — 13 test files, 326 tests, CI/CD integration (#9214)
+
+#### Progressive Discovery Overhaul
+- Moved progressive discovery from enforcement to transparency (#9740)
+
+#### Workflows & Pipelines
+- Added wait_for_completion MCP tool to gobby-workflows (#9722)
+- Added gobby-tests MCP server with token-efficient output (#9734)
+- Added register_pipeline_continuation for agent dispatch → pipeline resume (#9658)
+- Added pipeline eval tool for structured data extraction (#9662)
+- Added fail_pipeline guard step tool (#9661)
+- Added pipeline resume from failure point (#9660)
+
+#### Agent System
+- Added tmux agent completion detection via completion_registry (#9723)
+- Added pipeline-worker agent definition with scoped rules (#9659)
+
+#### Memory & Context
+- Added pre-compact context preservation rule (#9632)
+- Added session-end context preservation rule (#9631)
+- Added memory sync to JSONL for git-native portability (#9643)
+- Consolidated memory dedup and auto-delete with semantic similarity (#9642, #9674)
+- Added memory capture nudge on user prompt (#9637)
+- Added memory suggest after task close (#9636)
+- Added memory review stop gate (#9676)
+- Added digest-on-plan-turn-end rule (#9682)
+
+#### Rule Engine
+- Added agent_scope to rules for per-agent targeting (#9656)
+- Added rewrite_input effect type for rule-based command rewriting (#9648)
+- Added output compression rules (compress-bash-output, compress-mcp-output) (#9649)
+- Added rule tagging and selector system for agent-scoped rule loading (#9650)
+- Wired rule tags/selectors into agent definitions (#9651)
+- Added reload_cache to sync bundled rules, agents, and variables (#9741)
+
+### Fixes
+- Fixed restart races with orphaned watchdog causing false 'already running' (#9739)
+- Fixed run_check paths parameter replacing instead of appending (#9743)
+- Wired dynamic timeout for run_check and added stale run cleanup (#9742)
+- Reconciled claimed_tasks on STOP to prevent false positives (#9726, #9732)
+- Detected frontend in subdirectories and updated verification on re-init (#9736)
+- Fixed error triage stop gate hard-reset bug with 3x circuit breaker (#9713)
+- Cleared claimed_tasks on reopen_task (#9711)
+- Fixed Hub search silent failures, bad defaults, missing deps (#9718)
+- Rendered wait step template expressions in StepRenderer (#9720)
+- Added diagnostic logging and hardening for session variable persistence (#9719)
+- Clarified error-triage rule for pre-existing failures (#9730)
+- Rewrote ClawHub provider for clawhub CLI v0.7 (#9728)
+- Fixed single worktree per epic with use_local clone support (#9571)
+- Handled connection resets in e2e health check (#9605)
+
+### Refactoring
+- Consolidated MCP proxy servers — workflows as umbrella (#9730)
+- Reorganized rule YAML into group directories (#9652–#9655)
+- Split tool registration by domain into modular files (#9667–#9672)
+
+---
+
+## [0.2.24]
+
+### Features
+- Replaced static cost table with LiteLLM-backed DB cache (#9595)
+- Added native SDK executors for Gemini and OpenAI autonomous mode (#9446)
+- Added MCP integration to rule editor mcp_call effect (#9330)
+- Supported multiple claimed tasks per session (#9537)
+- Added shutdown source identification to daemon signal handler
+- Added LLM-powered compact handoff summaries with DB enrichment (#9545)
+- Consolidated session summary generation into single code path (#9541)
+- Defaulted neo4j_url and neo4j_auth to match docker-compose (#9583)
+
+### Fixes
+- Applied CodeRabbit triage fixes across backend, frontend, and tests (#9568, #9570, #9579, #9585, #9589, #9594)
+- Resolved mypy type errors in cli/sessions.py (#9593)
+- Scoped pip-audit pre-push hook to main/dev branches only (#9581)
+- Used skill_manager directly for skills count in health endpoint (#9582)
+- Killed stray watchdog processes on gobby start (#9561)
+- Logged signal name, PID, PPID, and stack trace on daemon shutdown (#9562)
+- Added close_task and validation tools to 300s timeout list (#9560)
+- Added idempotency guard to viewSession and call sites (#9548)
+- Wrote session summary files to project .gobby/session_summaries/ (#9543)
+- Passed use_local to WorktreeGitManager in create_worktree MCP tool (#9538)
+- Removed full pytest from pre-push, fixed stale test expectations
+
+### Chores
+- Dead code cleanup from Gemini code health analysis (#9592)
+- Leveled migrations.py to v133 baseline (#9591)
+- Regenerated source-tree.md from actual filesystem (#9590)
+- Updated ROADMAP.md, README.md, and created AUTH.md (#9588)
+- Integrated orchestrator-v3 and v3-p2 into final plan (#9569)
+
+---
+
 ## [0.2.23]
 
 ### Major Features

@@ -93,6 +93,19 @@ fi
     "pre-push": """
 # Gobby verification runner for pre-push
 # Runs configured verification commands (type_check, unit_tests, security, etc.)
+
+# Skip verification for branch deletions (no code being pushed)
+DELETE_ONLY=true
+while read local_ref local_sha remote_ref remote_sha; do
+    if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+        DELETE_ONLY=false
+        break
+    fi
+done
+if [ "$DELETE_ONLY" = true ]; then
+    exit 0
+fi
+
 if command -v gobby >/dev/null 2>&1; then
     gobby hooks run pre-push 2>/dev/null
     GOBBY_EXIT=$?
@@ -126,6 +139,30 @@ fi
 if [ "$3" = "1" ]; then
     if command -v gobby >/dev/null 2>&1; then
         gobby tasks sync --import --quiet 2>/dev/null || true
+    fi
+fi
+""",
+    "post-commit": """
+# Gobby task sync + incremental code indexing after commit
+if command -v gobby >/dev/null 2>&1; then
+    gobby tasks sync --export --quiet 2>/dev/null || true
+
+    # Incremental code index: send changed files to daemon
+    CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+    if [ -n "$CHANGED_FILES" ]; then
+        PROJECT_ID=""
+        if [ -f .gobby/project.json ]; then
+            PROJECT_ID=$(python3 -c "import json; print(json.load(open('.gobby/project.json')).get('project_id',''))" 2>/dev/null || echo "")
+        fi
+        if [ -n "$PROJECT_ID" ]; then
+            FILES_JSON=$(echo "$CHANGED_FILES" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip().split('\\n')))" 2>/dev/null)
+            if [ -n "$FILES_JSON" ]; then
+                curl -s -X POST "http://localhost:60887/api/code-index/incremental" \
+                    -H "Content-Type: application/json" \
+                    -d "{\\\"project_id\\\": \\\"$PROJECT_ID\\\", \\\"files\\\": $FILES_JSON}" \
+                    >/dev/null 2>&1 || true
+            fi
+        fi
     fi
 fi
 """,

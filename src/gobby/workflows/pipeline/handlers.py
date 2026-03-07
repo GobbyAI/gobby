@@ -46,12 +46,19 @@ async def execute_mcp_step(
         return {"result": output}
 
     # Check for MCP-level failure (dict responses from internal tools)
-    if isinstance(result, dict) and result.get("success") is False:
+    # Supports both old pattern (success=False) and new pattern (error key only)
+    if isinstance(result, dict) and (
+        result.get("success") is False or ("error" in result and result.get("success") is not True)
+    ):
         error_msg = result.get("error", "Unknown MCP tool error")
         raise RuntimeError(
             f"MCP step {rendered_step.id} failed: "
             f"{mcp_config.server}:{mcp_config.tool} returned error: {error_msg}"
         )
+
+    # Strip redundant success field so step outputs are clean data dicts
+    if isinstance(result, dict) and "success" in result:
+        result = {k: v for k, v in result.items() if k != "success"}
 
     return result
 

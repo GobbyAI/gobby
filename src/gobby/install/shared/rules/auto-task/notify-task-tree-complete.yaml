@@ -1,4 +1,4 @@
-tags: [auto-task, task, autonomous, lifecycle]
+tags: [auto-task, task, autonomous, lifecycle, gobby, default]
 
 rules:
   notify-task-tree-complete:

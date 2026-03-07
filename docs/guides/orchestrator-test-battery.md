@@ -71,11 +71,14 @@ call_tool("gobby-tasks", "create_task", {
 ### 2.1 Run Expansion
 
 ```python
-call_tool("gobby-pipelines", "run_pipeline", {
+result = call_tool("gobby-workflows", "run_pipeline", {
     "name": "expand-task",
-    "inputs": {"task_id": "<epic_id>", "session_id": "<session_id>"},
-    "wait": True,
-    "wait_timeout": 600
+    "inputs": {"task_id": "<epic_id>", "session_id": "<session_id>"}
+})
+# Block until expansion completes
+call_tool("gobby-workflows", "wait_for_completion", {
+    "execution_id": result["execution_id"],
+    "timeout": 600
 })
 ```
 
@@ -123,26 +126,27 @@ call_tool("gobby-tasks", "get_affected_files", {"task_id": "<subtask_id>"})
 ### 3.1 Start Orchestrator
 
 ```python
-call_tool("gobby-pipelines", "run_pipeline", {
+call_tool("gobby-workflows", "run_pipeline", {
     "name": "orchestrator",
     "inputs": {
         "session_task": "<epic_id>",
         "merge_target": "<current_branch>",
         "max_concurrent": 2,
-        "poll_interval": 10,
         "max_iterations": 50
     },
-    "wait": False
+    "continuation_prompt": "Orchestrator completed. Check task states and report results."
 })
 ```
 
+The pipeline returns after its first pass. Subsequent passes are event-driven — each agent completion triggers a fresh pass via continuation callbacks. Check `orchestration_complete` in the execution result to know when the overall work is finished.
+
 **Pass criteria:**
 - [ ] Pipeline starts (returns `execution_id`)
-- [ ] Status transitions to "running"
+- [ ] First pass completes with `orchestration_complete: false`
 
 ### 3.2 Verify Worktree Creation
 
-After first iteration:
+After first pass:
 
 ```bash
 gobby worktrees list
@@ -193,6 +197,38 @@ When all tasks are approved:
 - [ ] Epic branch merged to target branch
 - [ ] All approved tasks closed after merge
 
+### 3.7 Standalone Task Test
+
+Run the orchestrator with a single non-epic task to verify standalone support:
+
+```python
+# Create a standalone task
+task = call_tool("gobby-tasks", "create_task", {
+    "title": "Standalone test task",
+    "task_type": "task",
+    "category": "code",
+    "validation_criteria": "Creates a test file",
+    "session_id": "<session_id>"
+})
+
+# Run orchestrator on standalone task
+call_tool("gobby-workflows", "run_pipeline", {
+    "name": "orchestrator",
+    "inputs": {
+        "session_task": task["ref"],
+        "merge_target": "<current_branch>",
+        "max_iterations": 20
+    }
+})
+```
+
+**Pass criteria:**
+- [ ] Orchestrator detects standalone mode (`is_standalone: true` in result)
+- [ ] Developer dispatched for the task itself (not children)
+- [ ] QA dispatched when task reaches `needs_review`
+- [ ] Merge dispatched when task reaches `review_approved`
+- [ ] Final pass returns `orchestration_complete: true`
+
 ---
 
 ## Section 4: Cleanup
@@ -209,7 +245,7 @@ call_tool("gobby-tasks", "list_tasks", {
 **Pass criteria:**
 - [ ] All subtasks closed
 - [ ] Epic marked as complete
-- [ ] Pipeline execution status: "completed"
+- [ ] Final execution result has `orchestration_complete: true`
 
 ### 4.2 Clean Up Test Artifacts
 
@@ -258,9 +294,9 @@ Record any issues found during the test battery:
 |---------|-------|------|------|------|
 | 1. Setup | 2 | | | |
 | 2. Expansion | 4 | | | |
-| 3. Orchestrator Run | 6 | | | |
+| 3. Orchestrator Run | 7 | | | |
 | 4. Cleanup | 2 | | | |
-| **Total** | **14** | | | |
+| **Total** | **15** | | | |
 
 ### Overall Result
 

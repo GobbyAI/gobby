@@ -221,7 +221,14 @@ when: "not mcp_failed('gobby-tasks', 'validate_task')"
 # Progressive discovery
 when: "is_server_listed(tool_input)"
 when: "is_tool_unlocked(tool_input)"
+
+# Aggregation with generators
+when: "any(p in event.data.get('tool_input', {}).get('command', '') for p in ['git ', 'pytest'])"
+when: "all(v > 0 for v in variables.get('scores', []))"
 ```
+
+The evaluator supports: `len`, `bool`, `str`, `int`, `list`, `dict`, `any`, `all`,
+plus generator expressions, list comprehensions, dict literals (`{}`), and ternary expressions.
 
 ---
 

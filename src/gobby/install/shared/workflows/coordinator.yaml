@@ -25,7 +25,11 @@ inputs:
 steps:
   - id: check_limit
     condition: "${{ inputs._current_iteration >= inputs.max_iterations }}"
-    exec: "echo 'ERROR: max iterations' && exit 1"
+    mcp:
+      server: gobby-workflows
+      tool: fail_pipeline
+      arguments:
+        message: "Max iterations reached"
 
   - id: fetch_origin
     exec: "git fetch origin"

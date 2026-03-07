@@ -3,8 +3,10 @@ import * as yaml from 'js-yaml'
 import { useWorkflows } from '../../hooks/useWorkflows'
 import type { WorkflowDetail } from '../../hooks/useWorkflows'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { usePipelineExecutions } from '../../hooks/usePipelineExecutions'
 import { PipelineEditor } from './PipelineEditor'
 import type { PipelineEditorHandle } from './PipelineEditor'
+import { PipelineExecutionsView } from './PipelineExecutionsView'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
 import { SidebarPanel } from '../shared/SidebarPanel'
 
@@ -25,7 +27,16 @@ interface PipelinesTabProps {
 }
 
 export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, onCreateHandled, refreshKey = 0, projectId, hideGobby, hideInstalled, enabledFilter, tagFilter, priorityFilter, onTagsChange }: PipelinesTabProps) {
+  const [subView, setSubView] = useState<'definitions' | 'executions'>('definitions')
   const { confirm, ConfirmDialogElement } = useConfirmDialog()
+  const {
+    executions: pipelineExecutions,
+    isLoading: executionsLoading,
+    filters: executionFilters,
+    setFilters: setExecutionFilters,
+    approvePipeline,
+    rejectPipeline,
+  } = usePipelineExecutions(projectId)
   const {
     workflows,
     isLoading,
@@ -257,9 +268,54 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     fetchWorkflows({ include_deleted: true })
   }, [fetchWorkflows, sidebarView, confirm])
 
+  const activeExecutionsCount = pipelineExecutions.filter(
+    (e) => e.status === 'running' || e.status === 'waiting_approval'
+  ).length
+
+  // Thread search text as pipeline_name filter in executions view
+  useEffect(() => {
+    if (subView === 'executions' && searchText.trim()) {
+      setExecutionFilters((prev) => ({ ...prev, pipeline_name: searchText.trim() }))
+    } else if (subView === 'executions') {
+      setExecutionFilters((prev) => ({ ...prev, pipeline_name: undefined }))
+    }
+  }, [subView, searchText, setExecutionFilters])
+
   return (
     <>
       {ConfirmDialogElement}
+      {/* Sub-view toggle */}
+      <div className="pipelines-sub-tabs">
+        <button
+          type="button"
+          className={`pipelines-sub-tab ${subView === 'definitions' ? 'pipelines-sub-tab--active' : ''}`}
+          onClick={() => setSubView('definitions')}
+        >
+          Definitions
+        </button>
+        <button
+          type="button"
+          className={`pipelines-sub-tab ${subView === 'executions' ? 'pipelines-sub-tab--active' : ''}`}
+          onClick={() => setSubView('executions')}
+        >
+          Executions
+          {activeExecutionsCount > 0 && (
+            <span className="pipelines-sub-tab-badge">{activeExecutionsCount}</span>
+          )}
+        </button>
+      </div>
+
+      {subView === 'executions' ? (
+        <PipelineExecutionsView
+          executions={pipelineExecutions}
+          isLoading={executionsLoading}
+          filters={executionFilters}
+          onFiltersChange={setExecutionFilters}
+          onApprove={approvePipeline}
+          onReject={rejectPipeline}
+        />
+      ) : (
+      <>
       {/* Card grid */}
       <div className="workflows-content">
         {isLoading ? (
@@ -451,6 +507,8 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
           />
         ) : null}
       </SidebarPanel>
+      </>
+      )}
     </>
   )
 }

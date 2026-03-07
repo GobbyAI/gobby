@@ -1,4 +1,4 @@
-tags: [tool-hygiene, enforcement, python]
+tags: [tool-hygiene, enforcement, python, gobby, default]
 
 rules:
   track-pending-memory-review:

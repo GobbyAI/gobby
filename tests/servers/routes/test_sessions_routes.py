@@ -494,6 +494,7 @@ class TestListSessions:
             status="active",
             source="Claude Code",
             limit=50,
+            exclude_subagents=False,
         )
 
     def test_list_no_session_manager(self, client, mock_server) -> None:

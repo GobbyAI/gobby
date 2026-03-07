@@ -65,6 +65,16 @@ class TestWorkerSafetySync:
             if row.name in {"no-push", "no-force-push", "no-destructive-git"}:
                 assert body.get("group") == "worker-safety", f"{row.name} missing group"
 
+    def test_agent_scope_persists_through_sync(self, db, manager) -> None:
+        """agent_scope from YAML should be preserved in definition_json."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("no-push-for-workers")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.agent_scope == ["developer", "qa-reviewer"]
+
     def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)

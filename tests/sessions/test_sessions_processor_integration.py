@@ -60,10 +60,24 @@ async def processor(mock_db: LocalDatabase) -> AsyncGenerator[SessionMessageProc
             tool_name TEXT,
             tool_input TEXT,
             tool_result TEXT,
+            tool_use_id TEXT,
             timestamp TEXT NOT NULL,
             raw_json TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(session_id, message_index)
+        );
+    """
+    )
+    mock_db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_transcripts (
+            session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+            transcript_blob BLOB NOT NULL,
+            uncompressed_size INTEGER NOT NULL,
+            compressed_size INTEGER NOT NULL,
+            checksum TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """
     )

@@ -294,6 +294,7 @@ class AgentRunner:
             workflow_name=effective_workflow,
             model=config.model,
             child_session_id=child_session.id,
+            task_id=config.task,
         )
 
         # Set terminal pickup metadata on child session for terminal mode

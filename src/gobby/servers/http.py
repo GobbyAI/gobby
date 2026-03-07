@@ -154,6 +154,26 @@ class HTTPServer:
                 memory_sync_manager=services.memory_sync_manager,
                 completion_registry=services.completion_registry,
             )
+            # Wire code index registry if code_indexer is available
+            code_indexer = getattr(services, "code_indexer", None)
+            if code_indexer is not None:
+                try:
+                    from gobby.mcp_proxy.tools.code import create_code_registry
+
+                    code_registry = create_code_registry(
+                        storage=code_indexer.storage,
+                        indexer=code_indexer,
+                        searcher=code_indexer.searcher,
+                        graph=code_indexer.graph,
+                        summarizer=code_indexer.summarizer,
+                        config=code_indexer.config,
+                        project_id=services.project_id,
+                    )
+                    self._internal_manager.add_registry(code_registry)
+                    logger.debug("Code index registry initialized")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize code index registry: {e}")
+
             registry_count = len(self._internal_manager)
             logger.debug(f"Internal registries initialized: {registry_count} registries")
 
@@ -805,6 +825,7 @@ class HTTPServer:
             create_admin_router,
             create_agent_spawn_router,
             create_agents_router,
+            create_code_index_router,
             create_configuration_router,
             create_cron_router,
             create_files_router,
@@ -832,6 +853,7 @@ class HTTPServer:
         app.include_router(create_sessions_router(self))
         app.include_router(create_memory_router(self))
         app.include_router(create_tasks_router(self))
+        app.include_router(create_code_index_router(self))
         app.include_router(create_cron_router(self))
         app.include_router(create_mcp_router())
         app.include_router(create_hooks_router(self))

@@ -1,6 +1,6 @@
 # Orchestrator Pattern
 
-The orchestrator is a recursive pipeline that coordinates an entire epic: expand tasks, dispatch developers in parallel, run QA review, merge approved branches, and loop until all work is done. It's the canonical example of how pipelines, agents, and rules compose.
+The orchestrator is an event-driven pipeline that coordinates an entire epic (or standalone task): expand tasks, dispatch developers in parallel, run QA review, merge approved branches, and exit. Each agent completion triggers a fresh pass via continuation callbacks. It's the canonical example of how pipelines, agents, and rules compose.
 
 The orchestrator doesn't think — it dispatches. When it needs intelligence (coding, reviewing, merging), it spawns an agent. When it needs mechanical work (scanning tasks, creating worktrees), it calls MCP tools directly.
 
@@ -8,30 +8,31 @@ For the underlying systems, see: [Pipelines](./pipelines.md), [Agents](./agents.
 
 ---
 
-## The Loop
+## Event-Driven Passes
 
 ```mermaid
 flowchart TD
-    START([Pipeline starts]) --> GUARD{Iteration limit?}
+    START([Pipeline pass starts]) --> GUARD{Iteration limit?}
     GUARD -->|exceeded| FAIL[Exit with error]
-    GUARD -->|ok| EXPAND{Epic expanded?}
+    GUARD -->|ok| STANDALONE{Standalone task?}
 
+    STANDALONE -->|no| EXPAND{Epic expanded?}
     EXPAND -->|no| RUN_EXPAND[invoke expand-task pipeline]
     RUN_EXPAND --> SCAN
-    EXPAND -->|yes| SCAN[Scan task states]
+    EXPAND -->|yes| SCAN
 
-    SCAN --> CHECK{All tasks closed?}
-    CHECK -->|yes| DONE([Orchestration complete])
+    STANDALONE -->|yes| SCAN[Scan task states]
 
-    CHECK -->|no| MERGE_CHECK{Only approved tasks remain?}
+    SCAN --> CHECK{All done?}
+    CHECK -->|yes| DONE([orchestration_complete: true])
+
+    CHECK -->|no| MERGE_CHECK{Only approved remain?}
     MERGE_CHECK -->|yes| SPAWN_MERGE[Spawn merge agent]
-    SPAWN_MERGE --> WAIT_MERGE[Wait for merge]
-    WAIT_MERGE --> FETCH[git pull --rebase]
 
     MERGE_CHECK -->|no| DISPATCH_CHECK{Below capacity?}
     DISPATCH_CHECK -->|yes| FIND[suggest_next_tasks]
     FIND --> WORKTREE{First iteration?}
-    WORKTREE -->|yes| CREATE_WT[Create epic worktree]
+    WORKTREE -->|yes| CREATE_WT[Create worktree]
     CREATE_WT --> DISPATCH
     WORKTREE -->|no| DISPATCH[dispatch_batch developers]
 
@@ -40,63 +41,92 @@ flowchart TD
     DISPATCH --> QA_CHECK{Tasks needing review?}
     QA_CHECK -->|yes| ANNOTATE[Annotate observed files]
     ANNOTATE --> SPAWN_QA[Spawn QA reviewer]
-    QA_CHECK -->|no| POLL
+    QA_CHECK -->|no| CONTINUE
 
-    SPAWN_QA --> POLL[Wait poll_interval]
-    POLL --> RECURSE[Recurse: next iteration]
-    RECURSE --> GUARD
+    SPAWN_QA --> CONTINUE
+    SPAWN_MERGE --> CONTINUE[Register continuations]
+    CONTINUE --> EXIT([Exit pass])
 
-    FETCH --> RECURSE
+    EXIT -.->|Agent completes| START
 ```
 
-Each iteration of the loop:
+Each pass is a single-pass scan-and-dispatch:
 
 1. **Guard** — Check iteration limit (default: 200)
-2. **Expand** — If the epic hasn't been expanded yet, invoke the `expand-task` sub-pipeline
-3. **Scan** — Query task states: open, in_progress, needs_review, review_approved
-4. **Check completion** — If all tasks are closed, exit
-5. **Merge** — If only approved tasks remain, spawn merge agent and wait
-6. **Dispatch** — Find non-conflicting tasks, dispatch developers in parallel
-7. **QA** — If tasks need review, spawn QA reviewer
-8. **Recurse** — Invoke self with incremented iteration counter
+2. **Detect** — Determine if this is a standalone task or an epic with children
+3. **Expand** — If epic and not yet expanded, invoke the `expand-task` sub-pipeline
+4. **Scan** — Query task states: open, in_progress, needs_review, review_approved
+5. **Check completion** — If all work is done, return `orchestration_complete: true`
+6. **Merge** — If only approved tasks remain, spawn merge agent
+7. **Dispatch** — Find non-conflicting tasks, dispatch developers in parallel
+8. **QA** — If tasks need review, spawn QA reviewer
+9. **Register continuations** — Register callbacks so any agent completion triggers the next pass
+10. **Exit** — Return `orchestration_complete: false`, await next trigger
+
+No loops, no sleeps, no blocking waits. The pipeline exits after each pass. Agent completions fire continuation callbacks that re-invoke the pipeline with incremented state.
+
+---
+
+## Standalone Task Support
+
+The orchestrator handles both epics (tasks with children) and standalone tasks (single non-epic tasks):
+
+**For epics** (existing behavior):
+- Scans children by status → dispatches developers for open tasks → QA for needs_review → merge when all approved
+
+**For standalone tasks**:
+- Same lifecycle, but checks the task itself instead of children
+- Pass 1: task is open → dispatch developer → exit
+- Pass 2: task is needs_review → dispatch QA → exit
+- Pass 3: task is review_approved → dispatch merge → exit
+- Pass 4: task is closed → `orchestration_complete: true`
+
+Detection is automatic: if all child scans return empty, the task is standalone.
 
 ---
 
 ## Key Design Decisions
 
-### Single Worktree Per Epic
+### Single Worktree Per Orchestration
 
-The orchestrator creates **one** worktree on the first iteration and reuses it for all subsequent tasks. This means:
+The orchestrator creates **one** worktree on the first pass and reuses it for all subsequent passes. This means:
 
-- One branch per epic, not one branch per task
+- One branch per orchestration, not one branch per task
 - All developers work in the same worktree (sequentially or in parallel)
-- One merge operation at epic completion (epic branch → target), not N merges
+- One merge operation at completion, not N merges
 - Reduces disk overhead and merge conflict risk
 
-The worktree is created with an epic-level branch name: `epic-{seq_num}`.
+The worktree branch name reflects the task type: `epic-{seq_num}` for epics, `task-{seq_num}` for standalone tasks.
 
 ```yaml
 - id: create_worktree
-  condition: "${{ not inputs._worktree_id }}"  # First iteration only
+  condition: "${{ not inputs._worktree_id }}"  # First pass only
   mcp:
     server: gobby-worktrees
     tool: create_worktree
     arguments:
-      branch_name: "epic-${{ get_epic.output.result.seq_num }}"
+      branch_name: "${{ 'task-' + str(get_epic.output.seq_num) if get_epic.output.task_type != 'epic' else 'epic-' + str(get_epic.output.seq_num) }}"
       base_branch: "${{ inputs.merge_target }}"
       use_local: true
 ```
 
-The `_worktree_id` is passed through each recursive invocation, ensuring all iterations reuse the same worktree.
+The `_worktree_id` is carried through each continuation, ensuring all passes reuse the same worktree.
 
-### Fire-and-Forget Dispatch
+### Event-Driven Re-invocation
 
-Developers and QA agents are spawned **fire-and-forget** — the orchestrator doesn't wait for them. Instead, it polls: sleep for `poll_interval` seconds, then recurse. On the next iteration, the scan step discovers what changed.
+Instead of polling with `sleep`, the orchestrator uses **continuation callbacks**:
 
-This is intentional:
-- No blocking on slow agents
-- New tasks can be dispatched while others are running
-- The loop naturally adapts to completion pace
+1. Each pass dispatches agents (developers, QA, merge) as fire-and-forget
+2. A `register_pipeline_continuation` step registers callbacks for all dispatched agent run_ids
+3. The pipeline exits
+4. When any agent completes, `CompletionEventRegistry.notify()` fires the continuation callback
+5. The callback re-invokes the orchestrator pipeline with incremented `_current_iteration` and carried state
+
+This is safe for concurrent triggers — multiple agents completing near-simultaneously may trigger multiple passes, but:
+- Scans are read-only
+- `suggest_next_tasks` uses file annotations for conflict detection
+- `dispatch_batch` checks task status to avoid double-dispatch (task must be `open`)
+- A duplicate pass just finds nothing to dispatch and exits
 
 ### Parallel Dispatch with File Contention Detection
 
@@ -114,20 +144,11 @@ The `suggest_next_tasks` tool finds tasks that can run in parallel by checking `
 
 The `max_concurrent` input (default: 5) caps how many developers can run simultaneously.
 
-### Merge at Epic Completion
+### Merge at Completion
 
 Merging happens only when all remaining tasks are `review_approved` — no open, in_progress, or needs_review tasks remain. This batches all approved work into a single merge operation.
 
-```yaml
-- id: spawn_merge
-  condition: >-
-    ${{ (scan_approved.output.tasks | length > 0)
-    and (scan_open.output.tasks | length == 0)
-    and (scan_in_progress.output.tasks | length == 0)
-    and (scan_needs_review.output.tasks | length == 0) }}
-```
-
-The merge agent works in the main repo (`isolation: none`) and uses `gobby-merge:*` tools to resolve conflicts.
+For standalone tasks, merge triggers when the single task reaches `review_approved`.
 
 ---
 
@@ -139,7 +160,7 @@ The orchestrator coordinates four agent types:
 
 **Role**: Claim a task, implement it, submit for review.
 **Step workflow**: `claim` → `implement` → `terminate`
-**Isolation**: Uses the epic worktree (shared `worktree_id`)
+**Isolation**: Uses the orchestration worktree (shared `worktree_id`)
 
 The developer's `claim` step is locked down — only `claim_task` and `get_task` allowed. Once the task is claimed, it transitions to `implement` where most tools are available. After calling `mark_task_needs_review`, it transitions to `terminate`.
 
@@ -147,9 +168,9 @@ The developer's `claim` step is locked down — only `claim_task` and `get_task`
 
 **Role**: Review code changes, approve or reject.
 **Step workflow**: `review` → `terminate`
-**Isolation**: Uses the epic worktree (can see code changes)
+**Isolation**: Uses the orchestration worktree (can see code changes)
 
-Both `mark_task_review_approved` and `reopen_task` trigger the same transition — the review is complete either way. The orchestrator reads the resulting task status on the next scan.
+Both `mark_task_review_approved` and `reopen_task` trigger the same transition — the review is complete either way. The orchestrator reads the resulting task status on the next pass.
 
 ### Merge Agent
 
@@ -194,6 +215,8 @@ sequenceDiagram
 
 The hard boundary between research (creative) and execution (mechanical) is intentional. The expander agent explores the codebase and produces a structured spec. The pipeline then validates the spec's structure and dependencies before atomically creating all subtasks.
 
+Standalone tasks skip expansion entirely — the `expand_epic` step only runs when `task_type == 'epic'`.
+
 See [Task Expansion Guide](./task-expansion.md) for the full walkthrough.
 
 ---
@@ -202,7 +225,7 @@ See [Task Expansion Guide](./task-expansion.md) for the full walkthrough.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `session_task` | `null` | **Required.** Epic task ID to orchestrate |
+| `session_task` | `null` | **Required.** Task ID to orchestrate (epic or standalone) |
 | `developer_agent` | `"developer"` | Agent definition for developers |
 | `qa_agent` | `"qa-reviewer"` | Agent definition for QA |
 | `merge_agent` | `"merge"` | Agent definition for merge |
@@ -215,17 +238,27 @@ See [Task Expansion Guide](./task-expansion.md) for the full walkthrough.
 | `merge_target` | `null` | Branch to merge into (e.g., `main`) |
 | `wait_timeout` | `600` | Timeout for blocking waits (seconds) |
 | `max_concurrent` | `5` | Max parallel developers |
-| `poll_interval` | `15` | Seconds between scan iterations |
-| `max_iterations` | `200` | Safety limit on loop iterations |
+| `max_iterations` | `200` | Safety limit on total passes |
 
 ### Internal State (Pipeline-Managed)
 
 | Input | Description |
 |-------|-------------|
-| `_current_iteration` | Loop counter (starts at 0, incremented per recursion) |
-| `_worktree_id` | Worktree ID (set on first iteration, reused thereafter) |
+| `_current_iteration` | Pass counter (starts at 0, incremented per continuation) |
+| `_worktree_id` | Worktree ID (set on first pass, carried through continuations) |
 
-The `_` prefix convention marks inputs that are pipeline-managed — they're passed through recursive invocations but shouldn't be set by the caller.
+The `_` prefix convention marks inputs that are pipeline-managed — they're carried through continuations but shouldn't be set by the caller.
+
+### Execution Result
+
+Each pass returns an execution result with:
+
+| Field | Description |
+|-------|-------------|
+| `orchestration_complete` | `true` when all work is done, `false` if continuations registered |
+| `iteration` | Current pass number |
+| `session_task` | The orchestrated task ID |
+| `is_standalone` | Whether this is a standalone task or epic |
 
 ---
 
@@ -242,24 +275,29 @@ gobby pipelines run orchestrator \
 ### Via MCP
 
 ```python
-call_tool("gobby-pipelines", "run_pipeline", {
+call_tool("gobby-workflows", "run_pipeline", {
     "name": "orchestrator",
     "inputs": {
         "session_task": "#42",
         "merge_target": "main"
     },
-    "wait": False  # Long-running — don't block
+    "continuation_prompt": "Orchestrator completed. Review task states."
 })
 ```
 
 ### Monitoring
 
-```bash
-# Check execution status
-gobby pipelines status <execution_id>
+Each pass is a separate pipeline execution. The orchestrator completes when a pass returns `orchestration_complete: true`.
 
-# Watch task progress
+```bash
+# Check task progress directly
 gobby tasks list --parent #42 --json
+
+# See recent pipeline executions
+gobby pipelines history orchestrator
+
+# Check specific execution result
+gobby pipelines status <execution_id>
 ```
 
 ---
@@ -271,25 +309,26 @@ stateDiagram-v2
     [*] --> Expand: Epic not expanded
     Expand --> Scan: Subtasks created
 
-    [*] --> Scan: Epic already expanded
+    [*] --> Scan: Already expanded / standalone
 
     state Scan {
         [*] --> CheckStates
-        CheckStates --> AllClosed: No remaining tasks
+        CheckStates --> AllDone: No remaining tasks / task closed
         CheckStates --> HasApproved: Only approved remain
         CheckStates --> HasWork: Open/in_progress/needs_review
     }
 
-    AllClosed --> [*]: Complete
+    AllDone --> [*]: orchestration_complete: true
 
-    HasApproved --> Merge
-    Merge --> Scan: Re-scan after merge
+    HasApproved --> SpawnMerge
+    SpawnMerge --> RegisterContinuation
 
     HasWork --> Dispatch: Below capacity
     HasWork --> QA: Tasks need review
     Dispatch --> QA
-    QA --> Poll
-    Poll --> Scan: Next iteration
+    QA --> RegisterContinuation
+    RegisterContinuation --> Exit: Pass complete
+    Exit --> [*]: Agent completes → next pass
 ```
 
 ---
@@ -302,7 +341,7 @@ Key rules active during orchestration:
 
 | Rule Group | Effect |
 |------------|--------|
-| `worker-safety` | Blocks git push for all worker agents |
+| `worker-safety` | Blocks git push, force push, and bash sleep for all worker agents |
 | `task-enforcement` | Requires task claim before editing, commit before close |
 | `stop-gates` | Prevents premature agent exit |
 | `progressive-discovery` | Enforces MCP discovery protocol |
@@ -317,12 +356,13 @@ The developer, QA, and merge agents each have their own `rule_selectors` that co
 
 | Failure | Behavior |
 |---------|----------|
-| Agent crashes | Task stays `in_progress`. Next scan detects it. Orchestrator can re-dispatch. |
+| Agent crashes | Task stays `in_progress`. Next pass detects it. Orchestrator can re-dispatch. |
 | Agent times out | Same as crash — stays `in_progress` for re-dispatch. |
-| QA rejects task | Task reopened to `open`. Next scan picks it up for re-dispatch. |
+| QA rejects task | Task reopened to `open`. Next pass picks it up for re-dispatch. |
 | Merge conflicts | Merge agent uses `gobby-merge` tools to attempt resolution. If unresolvable, merge fails and pipeline can be retried. |
 | Expansion fails | `expand-task` pipeline fails at validation step. Orchestrator halts. |
 | Iteration limit | Safety exit after `max_iterations` (default: 200). |
+| Concurrent passes | Safe — scans are read-only, dispatch checks task status, duplicate passes find nothing to do. |
 
 ---
 
@@ -337,6 +377,7 @@ The developer, QA, and merge agents each have their own `rule_selectors` that co
 | `src/gobby/install/shared/agents/merge.yaml` | Merge agent definition |
 | `src/gobby/install/shared/agents/expander.yaml` | Expander agent definition |
 | `src/gobby/workflows/pipeline_executor.py` | Pipeline execution engine |
+| `src/gobby/events/completion_registry.py` | Completion events + continuation callbacks |
 | `src/gobby/agents/spawn.py` | Agent spawning |
 
 ## See Also

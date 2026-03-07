@@ -122,6 +122,7 @@ interface ApiMessage {
   tool_name?: string;
   tool_input?: string;
   tool_result?: string;
+  tool_use_id?: string;
   timestamp: string;
   message_index?: number;
 }
@@ -141,7 +142,8 @@ function appendTextBlock(msg: ChatMessage, text: string) {
   if (!msg.contentBlocks) msg.contentBlocks = [];
   const last = msg.contentBlocks[msg.contentBlocks.length - 1];
   if (last?.type === "text") {
-    last.content += (last.content ? "\n" : "") + text;
+    if (last.content && !last.content.endsWith("\n")) last.content += "\n";
+    last.content += text;
   } else {
     msg.contentBlocks.push({ type: "text", content: text });
   }
@@ -156,6 +158,19 @@ function appendToolBlock(msg: ChatMessage, tc: ToolCall) {
   } else {
     msg.contentBlocks.push({ type: "tool_chain", calls: [tc] });
   }
+}
+
+/** Find a tool call by its tool_use_id across contentBlocks and flat toolCalls. */
+function findToolCallById(msg: ChatMessage, toolUseId: string): ToolCall | undefined {
+  if (msg.contentBlocks) {
+    for (const block of msg.contentBlocks) {
+      if (block.type === "tool_chain") {
+        const found = block.calls.find((tc) => tc.id === toolUseId);
+        if (found) return found;
+      }
+    }
+  }
+  return msg.toolCalls?.find((tc) => tc.id === toolUseId);
 }
 
 /** Find the last pending tool call across contentBlocks and flat toolCalls. */
@@ -190,12 +205,14 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
 
     if (m.role === "user") {
       if (m.content_type === "tool_result") {
-        // Tool result in a user message — attach to the last pending tool call
+        // Tool result in a user message — prefer ID-based match, fall back to positional
         if (currentAssistant) {
-          const pending = findPendingToolCall(currentAssistant);
-          if (pending) {
-            pending.result = tryParseJSON(m.content);
-            pending.status = "completed";
+          const match = m.tool_use_id
+            ? findToolCallById(currentAssistant, m.tool_use_id)
+            : findPendingToolCall(currentAssistant);
+          if (match) {
+            match.result = tryParseJSON(m.content);
+            match.status = "completed";
           }
         }
         continue;
@@ -222,7 +239,7 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
           };
         }
         const toolCall: ToolCall = {
-          id,
+          id: m.tool_use_id || id,
           tool_name: m.tool_name || "unknown",
           server_name: "builtin",
           status: m.tool_result ? "completed" : "calling",
@@ -253,8 +270,9 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
         // Regular assistant text
         if (currentAssistant) {
           if (m.content) {
-            currentAssistant.content +=
-              (currentAssistant.content ? "\n" : "") + m.content;
+            if (currentAssistant.content && !currentAssistant.content.endsWith("\n"))
+              currentAssistant.content += "\n";
+            currentAssistant.content += m.content;
             appendTextBlock(currentAssistant, m.content);
           }
         } else {
@@ -268,12 +286,14 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
         }
       }
     } else if (m.role === "tool") {
-      // Tool result message — attach to last pending tool call
+      // Tool result message — prefer ID-based match, fall back to positional
       if (currentAssistant) {
-        const pending = findPendingToolCall(currentAssistant);
-        if (pending) {
-          pending.result = tryParseJSON(m.content);
-          pending.status = "completed";
+        const match = m.tool_use_id
+          ? findToolCallById(currentAssistant, m.tool_use_id)
+          : findPendingToolCall(currentAssistant);
+        if (match) {
+          match.result = tryParseJSON(m.content);
+          match.status = "completed";
         }
       }
     }
@@ -300,6 +320,7 @@ export function useChat() {
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
 
   // Canvas state
   const [canvasSurfaces, setCanvasSurfaces] = useState<
@@ -755,13 +776,14 @@ export function useChat() {
                 contentType === "tool_use"
               ) {
                 // Tool invocation — append to last assistant message's toolCalls + contentBlocks
+                const toolUseId = (msg.tool_use_id as string) || msgId;
                 setMessages((prev) => {
                   if (idx !== undefined && prev.some((m) => m.id === msgId))
                     return prev;
                   const lastIdx = prev.length - 1;
                   const last = lastIdx >= 0 ? prev[lastIdx] : null;
                   const toolCall: ToolCall = {
-                    id: msgId,
+                    id: toolUseId,
                     tool_name: (msg.tool_name as string) || "unknown",
                     server_name: "builtin",
                     status: "calling",
@@ -801,14 +823,16 @@ export function useChat() {
                 contentType === "tool_result" ||
                 role === "tool"
               ) {
-                // Tool result — update last pending tool call in both toolCalls and contentBlocks
+                // Tool result — prefer ID-based match, fall back to positional
+                const resultToolUseId = msg.tool_use_id as string | undefined;
                 setMessages((prev) => {
                   for (let i = prev.length - 1; i >= 0; i--) {
                     const m = prev[i];
                     if (m.role !== "assistant" || !m.toolCalls) continue;
-                    const pendingIdx = m.toolCalls.findIndex(
-                      (tc) => tc.status !== "completed",
-                    );
+                    // Prefer ID-based match when tool_use_id is available
+                    const pendingIdx = resultToolUseId
+                      ? m.toolCalls.findIndex((tc) => tc.id === resultToolUseId)
+                      : m.toolCalls.findIndex((tc) => tc.status !== "completed");
                     if (pendingIdx < 0) continue;
                     const updated = [...prev];
                     const updatedCalls = [...m.toolCalls];
@@ -1059,7 +1083,7 @@ export function useChat() {
     setMessages((prev) => [
       ...prev,
       {
-        id: error.message_id || `error-${Date.now()}`,
+        id: error.message_id || `error-${uuid()}`,
         role: "system" as const,
         content: `Error: ${error.error}`,
         timestamp: new Date(),
@@ -1210,7 +1234,7 @@ export function useChat() {
     setMessages((prev) => [
       ...prev,
       {
-        id: `model-switch-${Date.now()}`,
+        id: `model-switch-${uuid()}`,
         role: "system" as const,
         content: `Model switched from ${msg.old_model} to ${msg.new_model}`,
         timestamp: new Date(),
@@ -1286,6 +1310,7 @@ export function useChat() {
 
     // Fetch from server when dbSessionId is available
     if (dbSessionId) {
+      setIsLoadingMessages(true);
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       fetch(`${baseUrl}/api/sessions/${dbSessionId}/messages?limit=100&offset=0`)
         .then((res) => (res.ok ? res.json() : null))
@@ -1299,7 +1324,8 @@ export function useChat() {
         })
         .catch((err) =>
           console.error("Failed to fetch session messages:", err),
-        );
+        )
+        .finally(() => setIsLoadingMessages(false));
 
       // Hydrate context usage and chat mode from persisted session data
       fetch(`${baseUrl}/api/sessions/${dbSessionId}`)
@@ -1378,6 +1404,7 @@ export function useChat() {
     activeRequestIdRef.current = null;
     setIsStreaming(false);
     setIsThinking(false);
+    setIsLoadingMessages(false);
 
     // Set active agent and always send set_agent so the backend resolves
     // the agent definition (preamble, rules, skills) for the web chat session.
@@ -1404,7 +1431,7 @@ export function useChat() {
 
     setMessages([
       {
-        id: `system-resume-${Date.now()}`,
+        id: `system-resume-${uuid()}`,
         role: "system" as const,
         content: "Resuming session. Send a message to continue.",
         timestamp: new Date(),
@@ -2072,7 +2099,7 @@ export function useChat() {
     setMessages((prev) => [
       ...prev,
       {
-        id: `system-${Date.now()}`,
+        id: `system-${uuid()}`,
         role: "system" as const,
         content,
         timestamp: new Date(),
@@ -2103,6 +2130,7 @@ export function useChat() {
     isConnected,
     isStreaming,
     isThinking,
+    isLoadingMessages,
     contextUsage,
     sendMessage,
     sendMode,

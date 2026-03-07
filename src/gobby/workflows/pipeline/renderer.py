@@ -57,6 +57,9 @@ def _filter_env(
     }
 
 
+_RESERVED_CONTEXT_KEYS = frozenset({"inputs", "steps", "env", "session_id", "parent_session_id"})
+
+
 class StepRenderer:
     """Handles variable substitution and type coercion for pipeline steps."""
 
@@ -71,6 +74,31 @@ class StepRenderer:
         self.allowed_env_keys = allowed_env_keys
         self.strict_conditions = strict_conditions
 
+    def build_render_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Build a render context with flattened step outputs as top-level names.
+
+        This allows templates to reference step outputs as either
+        ``steps.scan_open.output.tasks`` or ``scan_open.output.tasks``.
+        """
+        steps = context.get("steps", {})
+        render_context: dict[str, Any] = {
+            "inputs": context.get("inputs", {}),
+            "steps": steps,
+            "env": _filter_env(os.environ, self.allowed_env_keys),
+            "session_id": context.get("session_id"),
+            "parent_session_id": context.get("parent_session_id"),
+        }
+        # Flatten step outputs as top-level names for direct template access
+        for step_id, step_data in steps.items():
+            if step_id in _RESERVED_CONTEXT_KEYS:
+                logger.warning(
+                    "Step ID '%s' collides with reserved context key, skipping top-level flatten",
+                    step_id,
+                )
+                continue
+            render_context[step_id] = step_data
+        return render_context
+
     def render_step(self, step: Any, context: dict[str, Any]) -> Any:
         """Render template variables in step fields.
 
@@ -84,14 +112,8 @@ class StepRenderer:
         if not self.template_engine:
             return step
 
-        # Build render context with filtered environment variables
-        render_context = {
-            "inputs": context.get("inputs", {}),
-            "steps": context.get("steps", {}),
-            "env": _filter_env(os.environ, self.allowed_env_keys),
-            "session_id": context.get("session_id"),
-            "parent_session_id": context.get("parent_session_id"),
-        }
+        # Build render context with filtered environment variables and flattened steps
+        render_context = self.build_render_context(context)
 
         # Create a copy of the step to avoid modifying the definition
         rendered_step = step.model_copy(deep=True)
@@ -262,17 +284,22 @@ class StepRenderer:
 
         try:
             # Evaluate the condition using safe AST-based evaluator
-            eval_context = {
+            steps = context.get("steps", {})
+            eval_context: dict[str, Any] = {
                 "inputs": context.get("inputs", {}),
-                "steps": context.get("steps", {}),
+                "steps": steps,
                 "session_id": context.get("session_id"),
                 "parent_session_id": context.get("parent_session_id"),
             }
+            # Flatten step outputs as top-level names for condition evaluation
+            for step_id, step_data in steps.items():
+                if step_id not in _RESERVED_CONTEXT_KEYS:
+                    eval_context[step_id] = step_data
             evaluator = SafeExpressionEvaluator(eval_context, _PIPELINE_EVAL_FUNCS)
             return evaluator.evaluate(condition)
         except ValueError as e:
             if self.strict_conditions:
                 raise ValueError(f"Condition evaluation failed for step {step.id}: {e}") from e
             logger.warning(f"Condition evaluation failed for step {step.id}: {e}")
-            # Default to running the step if condition evaluation fails
-            return True
+            # Fail-closed: broken conditions should not silently run steps
+            return False

@@ -229,7 +229,7 @@ steps:
 Agents can now invoke this pipeline:
 ```python
 mcp__gobby__call_tool(
-    server_name="gobby-pipelines",
+    server_name="gobby-workflows",
     tool_name="run-tests",
     arguments={"filter": "test_api"}
 )

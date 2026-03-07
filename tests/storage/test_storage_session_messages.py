@@ -58,7 +58,8 @@ async def test_store_messages_single(manager, mock_db, sample_message):
     assert params[1] == sample_message.index
     assert params[2] == sample_message.role
     assert params[3] == sample_message.content
-    assert params[8] == sample_message.timestamp.isoformat()
+    assert params[8] == sample_message.tool_use_id  # tool_use_id
+    assert params[9] == sample_message.timestamp.isoformat()
 
 
 @pytest.mark.asyncio

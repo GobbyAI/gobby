@@ -73,13 +73,17 @@ class TestSessionLifecycleManager:
         """Test expiring stale sessions."""
         # Setup mocks
         manager.session_manager.pause_inactive_active_sessions.return_value = 2
+        manager.session_manager.expire_orphaned_handoff_sessions.return_value = 1
         manager.session_manager.expire_stale_sessions.return_value = 3
 
         count = await manager._expire_stale_sessions()
 
-        assert count == 5
+        assert count == 6
         manager.session_manager.pause_inactive_active_sessions.assert_called_once_with(
             timeout_minutes=manager.config.active_session_pause_minutes
+        )
+        manager.session_manager.expire_orphaned_handoff_sessions.assert_called_once_with(
+            timeout_minutes=30
         )
         manager.session_manager.expire_stale_sessions.assert_called_once_with(
             timeout_hours=manager.config.stale_session_timeout_hours
@@ -400,6 +404,7 @@ class TestPromptFileCleanup:
         """_expire_stale_sessions calls _cleanup_prompt_files."""
         manager.session_manager = MagicMock()
         manager.session_manager.pause_inactive_active_sessions.return_value = 0
+        manager.session_manager.expire_orphaned_handoff_sessions.return_value = 0
         manager.session_manager.expire_stale_sessions.return_value = 0
 
         with patch.object(manager, "_cleanup_prompt_files") as mock_cleanup:

@@ -289,14 +289,17 @@ The skill handles:
 ### Via Pipeline Directly
 
 ```python
-call_tool("gobby-pipelines", "run_pipeline", {
+result = call_tool("gobby-workflows", "run_pipeline", {
     "name": "expand-task",
     "inputs": {
         "task_id": "#42",
         "session_id": "#350"
-    },
-    "wait": True,
-    "wait_timeout": 600
+    }
+})
+# Block until expansion finishes
+call_tool("gobby-workflows", "wait_for_completion", {
+    "execution_id": result["execution_id"],
+    "timeout": 600
 })
 ```
 
@@ -306,7 +309,7 @@ The orchestrator automatically invokes expansion on the first iteration if the e
 
 ```yaml
 - id: expand_epic
-  condition: "${{ not inputs._worktree_id and not get_epic.output.result.is_expanded }}"
+  condition: "${{ not inputs._worktree_id and not get_epic.output.is_expanded }}"
   invoke_pipeline:
     name: expand-task
     arguments:

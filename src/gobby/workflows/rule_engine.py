@@ -226,6 +226,12 @@ class RuleEngine:
         block_reason: str | None = None
 
         for _row, body in rules:
+            # Pre-filter: skip rule if tools field doesn't match current tool
+            if body.tools:
+                tool_name = event.data.get("tool_name", "")
+                if tool_name not in body.tools:
+                    continue
+
             # Build fresh eval context with current variables
             ctx = self._build_eval_context(event, variables, eval_context)
 
@@ -277,6 +283,19 @@ class RuleEngine:
         ctx_str = "\n\n".join(context_parts) if context_parts else None
         meta = {"mcp_calls": mcp_calls} if mcp_calls else {}
 
+        # Propagate rewrite_input from variables to response
+        rewrite_meta = variables.pop("_rewrite_input", None)
+        modified_input: dict[str, Any] | None = None
+        auto_approve = False
+        if rewrite_meta and isinstance(rewrite_meta, dict):
+            modified_input = rewrite_meta.get("input_updates")
+            auto_approve = rewrite_meta.get("auto_approve", False)
+
+        # Propagate compress_output directive to metadata
+        compress_meta = variables.pop("_compress_output", None)
+        if compress_meta and isinstance(compress_meta, dict):
+            meta["compression"] = compress_meta
+
         if override_decision == "block":
             return HookResponse(
                 decision="block",
@@ -285,7 +304,13 @@ class RuleEngine:
                 metadata=meta,
             )
         if override_decision == "allow":
-            return HookResponse(decision="allow", context=ctx_str, metadata=meta)
+            return HookResponse(
+                decision="allow",
+                context=ctx_str,
+                metadata=meta,
+                modified_input=modified_input,
+                auto_approve=auto_approve,
+            )
 
         if block_reason:
             return HookResponse(
@@ -295,7 +320,13 @@ class RuleEngine:
                 metadata=meta,
             )
 
-        return HookResponse(decision="allow", context=ctx_str, metadata=meta)
+        return HookResponse(
+            decision="allow",
+            context=ctx_str,
+            metadata=meta,
+            modified_input=modified_input,
+            auto_approve=auto_approve,
+        )
 
     def _load_rules(
         self, rule_event: RuleEvent
@@ -422,6 +453,35 @@ class RuleEngine:
                     "background": effect.background,
                 }
             )
+
+        elif effect.type == "rewrite_input":
+            if effect.input_updates:
+                rendered_updates = {
+                    k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
+                    for k, v in effect.input_updates.items()
+                }
+                # For MCP call_tool, nest updates inside arguments
+                # (mirrors the unwrapping in _build_eval_context)
+                event = ctx.get("event")
+                if event and event.data.get("tool_name") in ("call_tool", "mcp__gobby__call_tool"):
+                    original_args = event.data.get("tool_input", {}).get("arguments", {})
+                    if isinstance(original_args, str):
+                        try:
+                            original_args = json.loads(original_args)
+                        except (json.JSONDecodeError, TypeError):
+                            original_args = {}
+                    if not isinstance(original_args, dict):
+                        original_args = {}
+                    rendered_updates = {"arguments": {**original_args, **rendered_updates}}
+                rewrite_meta = variables.setdefault("_rewrite_input", {})
+                rewrite_meta["input_updates"] = rendered_updates
+                rewrite_meta["auto_approve"] = effect.auto_approve
+
+        elif effect.type == "compress_output":
+            variables["_compress_output"] = {
+                "strategy": effect.strategy,
+                "max_lines": effect.max_lines,
+            }
 
     def _build_eval_context(
         self,

@@ -1,4 +1,4 @@
-tags: [worker-safety]
+tags: [worker-safety, enforcement, gobby]
 
 rules:
   no-destructive-git:

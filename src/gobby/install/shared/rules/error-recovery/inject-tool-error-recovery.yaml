@@ -1,4 +1,4 @@
-tags: [error-recovery, resilience, stop-gates]
+tags: [error-recovery, resilience, stop-gates, gobby, default]
 
 rules:
   inject-tool-error-recovery:

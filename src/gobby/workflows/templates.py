@@ -1,5 +1,6 @@
 import logging
 import re
+import shlex
 from typing import Any, Protocol, runtime_checkable
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -19,6 +20,15 @@ class TemplateRenderer(Protocol):
     def render(self, template_str: str, context: dict[str, Any]) -> str: ...
 
 
+def _regex_replace(value: str, pattern: str, replacement: str) -> str:
+    """Jinja2 filter: regex substitution.
+
+    Usage in templates:
+        {{ text | regex_replace('pattern', 'replacement') }}
+    """
+    return re.sub(pattern, replacement, str(value))
+
+
 def _regex_search(value: str, pattern: str, group: int = 1) -> str:
     """Jinja2 filter: extract a regex capture group from text.
 
@@ -35,6 +45,15 @@ def _regex_search(value: str, pattern: str, group: int = 1) -> str:
         except IndexError:
             return match.group(0)
     return ""
+
+
+def _shlex_quote(value: str) -> str:
+    """Jinja2 filter: shell-escape a string using shlex.quote.
+
+    Usage in templates:
+        {{ command | shlex_quote }}
+    """
+    return shlex.quote(str(value))
 
 
 class TemplateEngine:
@@ -57,6 +76,8 @@ class TemplateEngine:
             lstrip_blocks=True,
         )
         self.env.filters["regex_search"] = _regex_search
+        self.env.filters["regex_replace"] = _regex_replace
+        self.env.filters["shlex_quote"] = _shlex_quote
 
     def render(self, template_str: str, context: dict[str, Any]) -> str:
         """

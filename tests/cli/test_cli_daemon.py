@@ -161,9 +161,14 @@ class TestStartCommand:
         """Test start when daemon is already running."""
         mock_load_config.return_value = mock_daemon_config
 
+        mock_proc = MagicMock()
+        mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
+            patch("gobby.cli.daemon._is_process_alive", return_value=True),
+            patch("gobby.cli.daemon.psutil.Process", return_value=mock_proc),
         ):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)

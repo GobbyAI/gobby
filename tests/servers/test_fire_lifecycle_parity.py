@@ -69,6 +69,14 @@ def _make_workflow_handler(decision: str = "allow", context: str | None = None) 
     return handler
 
 
+def _make_workflow_handler_with_response(**kwargs: Any) -> MagicMock:
+    """Create a workflow handler returning a HookResponse with arbitrary kwargs."""
+    handler = MagicMock()
+    response = HookResponse(**kwargs)
+    handler.evaluate.return_value = response
+    return handler
+
+
 # ---------------------------------------------------------------------------
 # D1: Blocking Webhooks
 # ---------------------------------------------------------------------------
@@ -493,6 +501,189 @@ class TestFireLifecycleFullParity:
         assert result["decision"] == "block"
         broadcaster.broadcast_event.assert_not_awaited()
         mgr.get_undelivered_messages.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Output Compression
+# ---------------------------------------------------------------------------
+
+
+class TestFireLifecycleCompression:
+    """Output compression should be applied on AFTER_TOOL when metadata has compression config."""
+
+    @pytest.mark.asyncio
+    async def test_compression_applied_on_after_tool(self, host: ChatMixinHost) -> None:
+        """When compression metadata is present and event is AFTER_TOOL, modified_output is set."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler_with_response(
+            decision="allow",
+            metadata={"compression": {"max_lines": 50}},
+        )
+
+        large_output = "line\n" * 200
+        data = {"tool_name": "bash", "tool_output": large_output}
+
+        from unittest.mock import patch
+
+        mock_result = MagicMock()
+        mock_result.strategy_name = "tail"
+        mock_result.compressed = "...compressed..."
+        mock_result.savings_pct = 80.0
+        mock_result.original_chars = len(large_output)
+        mock_result.compressed_chars = 15
+
+        with patch("gobby.compression.OutputCompressor") as MockCompressor:
+            MockCompressor.return_value.compress.return_value = mock_result
+            result = await host._fire_lifecycle("conv-1", HookEventType.AFTER_TOOL, data)
+
+        assert result is not None
+        assert result["decision"] == "allow"
+        assert result["modified_output"] == "...compressed..."
+        MockCompressor.assert_called_once_with(max_lines=50)
+
+    @pytest.mark.asyncio
+    async def test_compression_skipped_on_before_tool(self, host: ChatMixinHost) -> None:
+        """Compression should not apply on BEFORE_TOOL even if metadata is present."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler_with_response(
+            decision="allow",
+            metadata={"compression": {"max_lines": 50}},
+        )
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
+
+        assert result is not None
+        assert "modified_output" not in result
+
+    @pytest.mark.asyncio
+    async def test_compression_skipped_when_no_metadata(self, host: ChatMixinHost) -> None:
+        """Without compression metadata, no modified_output should appear."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler()
+
+        result = await host._fire_lifecycle(
+            "conv-1",
+            HookEventType.AFTER_TOOL,
+            {"tool_name": "bash", "tool_output": "some output"},
+        )
+
+        assert result is not None
+        assert "modified_output" not in result
+
+    @pytest.mark.asyncio
+    async def test_compression_error_fails_gracefully(self, host: ChatMixinHost) -> None:
+        """Compression errors should not crash lifecycle."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler_with_response(
+            decision="allow",
+            metadata={"compression": {"max_lines": 50}},
+        )
+
+        data = {"tool_name": "bash", "tool_output": "some output"}
+
+        from unittest.mock import patch
+
+        with patch("gobby.compression.OutputCompressor") as MockCompressor:
+            MockCompressor.return_value.compress.side_effect = RuntimeError("Compress boom")
+            result = await host._fire_lifecycle("conv-1", HookEventType.AFTER_TOOL, data)
+
+        assert result is not None
+        assert result["decision"] == "allow"
+        assert "modified_output" not in result
+
+
+# ---------------------------------------------------------------------------
+# Input Rewriting
+# ---------------------------------------------------------------------------
+
+
+class TestFireLifecycleRewriteInput:
+    """rewrite_input effect should propagate modified_input and auto_approve to result."""
+
+    @pytest.mark.asyncio
+    async def test_rewrite_input_propagated(self, host: ChatMixinHost) -> None:
+        """When response has modified_input, it appears in the result."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler_with_response(
+            decision="allow",
+            modified_input={"command": "gobby compress -- ls"},
+            auto_approve=True,
+        )
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
+
+        assert result is not None
+        assert result["modified_input"] == {"command": "gobby compress -- ls"}
+        assert result["auto_approve"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_rewrite_input_when_absent(self, host: ChatMixinHost) -> None:
+        """Standard response without modified_input should not have modified_input key."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler()
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
+
+        assert result is not None
+        assert "modified_input" not in result
+
+
+# ---------------------------------------------------------------------------
+# Non-blocking Webhooks
+# ---------------------------------------------------------------------------
+
+
+class TestFireLifecycleNonBlockingWebhooks:
+    """Non-blocking webhooks should be dispatched after processing."""
+
+    @pytest.mark.asyncio
+    async def test_non_blocking_webhooks_dispatched(self, host: ChatMixinHost) -> None:
+        """Non-blocking endpoints should be dispatched after processing."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler()
+
+        endpoint = MagicMock(enabled=True, can_block=False)
+        dispatcher = MagicMock()
+        dispatcher.config.enabled = True
+        dispatcher.config.endpoints = [endpoint]
+        dispatcher._matches_event.return_value = True
+        dispatcher._build_payload.return_value = {"event_type": "before_tool"}
+        dispatcher._dispatch_single = AsyncMock(return_value=MagicMock(success=True))
+        host.webhook_dispatcher = dispatcher
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
+
+        assert result is not None
+        assert result["decision"] == "allow"
+        dispatcher._dispatch_single.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_blocking_webhook_error_ignored(self, host: ChatMixinHost) -> None:
+        """Non-blocking webhook errors should not crash lifecycle."""
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = _make_workflow_handler()
+
+        endpoint = MagicMock(enabled=True, can_block=False)
+        dispatcher = MagicMock()
+        dispatcher.config.enabled = True
+        dispatcher.config.endpoints = [endpoint]
+        dispatcher._matches_event.side_effect = RuntimeError("Webhook boom")
+        host.webhook_dispatcher = dispatcher
+
+        result = await host._fire_lifecycle(
+            "conv-1", HookEventType.BEFORE_TOOL, {"tool_name": "bash"}
+        )
+
+        assert result is not None
+        assert result["decision"] == "allow"
 
     @pytest.mark.asyncio
     async def test_workflow_block_stops_everything(self, host: ChatMixinHost) -> None:

@@ -495,6 +495,40 @@ def create_workflows_registry(
             return {"error": "Agent definition tools require database connection"}
         return update_agent_steps(_def_manager, name, steps)
 
+    # ── Pipeline utility tools ──
+
+    @registry.tool(
+        name="fail_pipeline",
+        description="Fail the current pipeline step with an error message. Used as a guard step to halt execution when a condition is met.",
+    )
+    def _fail_pipeline(message: str) -> dict[str, Any]:
+        return {"success": False, "error": message}
+
+    @registry.tool(
+        name="pipeline_eval",
+        description="Evaluate and return structured data within a pipeline. Pass a dict of key-value pairs; they become the step output. Use with template expressions to compute values from prior step outputs.",
+    )
+    def _pipeline_eval(data: dict[str, Any]) -> dict[str, Any]:
+        # Coerce string booleans/numbers from template rendering
+        coerced: dict[str, Any] = {}
+        for k, v in data.items():
+            if isinstance(v, str):
+                if v.lower() == "true":
+                    coerced[k] = True
+                elif v.lower() == "false":
+                    coerced[k] = False
+                else:
+                    try:
+                        coerced[k] = int(v)
+                    except ValueError:
+                        try:
+                            coerced[k] = float(v)
+                        except ValueError:
+                            coerced[k] = v
+            else:
+                coerced[k] = v
+        return coerced
+
     # ── Pipeline tools ──
 
     register_pipeline_tools(

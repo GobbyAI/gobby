@@ -1,8 +1,8 @@
 """Tests for progressive-discovery.yaml rules.
 
-Verifies blocking rules enforce progressive discovery (list_mcp_servers →
-list_tools → get_tool_schema → call_tool), tracker rules record state,
-and reset rules clear state on context loss.
+Verifies block rules enforce progressive discovery
+(list_mcp_servers → list_tools → get_tool_schema → call_tool), tracker rules
+record state, and reset rules clear state on context loss.
 
 Includes integration tests that exercise the full RuleEngine.evaluate() flow
 to verify conditions like is_server_listed actually resolve correctly.
@@ -52,7 +52,6 @@ PROGRESSIVE_DISCLOSURE_RULES = {
     "require-servers-listed",
     "require-server-listed-for-schema",
     "require-schema-before-call",
-    "preseed-progressive-discovery",
     "track-schema-lookup",
     "track-servers-listed",
     "track-listed-servers",
@@ -110,10 +109,11 @@ class TestRequireServersListed:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effect.type == "block"
-        assert "mcp__gobby__list_tools" in body.effect.tools
+        assert body.effect.reason is not None
+        assert "list_mcp_servers" in body.effect.reason
 
     def test_when_checks_servers_listed(self, db, manager) -> None:
-        """Should check enforce_tool_schema_check and servers_listed."""
+        """Should check enforce_tool_schema_check, servers_listed, and tool name."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-servers-listed")
@@ -122,6 +122,7 @@ class TestRequireServersListed:
         assert body.when is not None
         assert "servers_listed" in body.when
         assert "enforce_tool_schema_check" in body.when
+        assert "list_tools" in body.when
 
 
 class TestRequireServerListedForSchema:
@@ -137,10 +138,11 @@ class TestRequireServerListedForSchema:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effect.type == "block"
-        assert "mcp__gobby__get_tool_schema" in body.effect.tools
+        assert body.effect.reason is not None
+        assert "list_tools" in body.effect.reason
 
     def test_when_checks_is_server_listed(self, db, manager) -> None:
-        """Should use is_server_listed helper."""
+        """Should use is_server_listed helper and check tool name."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-server-listed-for-schema")
@@ -148,13 +150,14 @@ class TestRequireServerListedForSchema:
 
         assert body.when is not None
         assert "is_server_listed" in body.when
+        assert "get_tool_schema" in body.when
 
 
 class TestRequireSchemaBeforeCall:
-    """Verify require-schema-before-call nudges (inject_context) for call_tool without schema."""
+    """Verify require-schema-before-call blocks call_tool without schema."""
 
-    def test_nudges_call_tool(self, db, manager) -> None:
-        """Should inject_context for call_tool without schema."""
+    def test_blocks_call_tool(self, db, manager) -> None:
+        """Should block call_tool without schema."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-schema-before-call")
@@ -162,9 +165,9 @@ class TestRequireSchemaBeforeCall:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
-        assert body.effect.type == "inject_context"
-        assert body.effect.template is not None
-        assert "schema" in body.effect.template.lower()
+        assert body.effect.type == "block"
+        assert body.effect.reason is not None
+        assert "schema" in body.effect.reason.lower()
 
     def test_when_checks_tool_unlocked(self, db, manager) -> None:
         """Should check is_tool_unlocked, is_discovery_tool, and call_tool."""
@@ -291,51 +294,58 @@ class TestResetRules:
         assert "compact" in body.when
 
 
-class TestPreseedProgressiveDiscovery:
-    """Verify preseed-progressive-discovery sets internal server state on session start."""
+class TestPreseedRemoved:
+    """Verify preseed-progressive-discovery has been removed."""
 
-    def test_preseed_rule_syncs(self, db, manager) -> None:
-        """Preseed rule should sync to workflow_definitions."""
+    def test_preseed_rule_does_not_exist(self, db, manager) -> None:
+        """Preseed rule should not exist in workflow_definitions."""
         _sync_bundled(db)
 
         row = manager.get_by_name("preseed-progressive-discovery")
-        assert row is not None
+        assert row is None
 
-    def test_preseed_fires_at_priority_81(self, db, manager) -> None:
-        """Preseed should fire after reset (priority 80)."""
+
+class TestRuleDefinitionBodyToolsField:
+    """Verify tools field on RuleDefinitionBody works as pre-filter."""
+
+    def test_tools_field_accepted(self) -> None:
+        """RuleDefinitionBody should accept a tools field."""
+        from gobby.workflows.definitions import RuleEffect, RuleEvent
+
+        body = RuleDefinitionBody(
+            event=RuleEvent.BEFORE_TOOL,
+            tools=["mcp__gobby__list_tools"],
+            effect=RuleEffect(type="block", reason="test"),
+        )
+        assert body.tools == ["mcp__gobby__list_tools"]
+
+    def test_tools_field_none_by_default(self) -> None:
+        """RuleDefinitionBody.tools should default to None."""
+        from gobby.workflows.definitions import RuleEffect, RuleEvent
+
+        body = RuleDefinitionBody(
+            event=RuleEvent.BEFORE_TOOL,
+            effect=RuleEffect(type="block", reason="test"),
+        )
+        assert body.tools is None
+
+    def test_tools_field_synced_from_yaml(self, db, manager) -> None:
+        """Block rules should have tools field synced from YAML to DB."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("preseed-progressive-discovery")
-        assert row.priority == 81
-
-        reset_row = manager.get_by_name("reset-progressive-discovery")
-        assert row.priority > reset_row.priority
-
-    def test_preseed_sets_correct_variables(self, db, manager) -> None:
-        """Preseed should set servers_listed=true and listed_servers with internal servers."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("preseed-progressive-discovery")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "session_start"
-
-        effects = body.resolved_effects
-        assert len(effects) == 2
-
-        vars_and_values = {e.variable: e.value for e in effects}
-        assert vars_and_values["servers_listed"] is True
-        assert isinstance(vars_and_values["listed_servers"], list)
-        assert "gobby-tasks" in vars_and_values["listed_servers"]
-        assert "gobby-memory" in vars_and_values["listed_servers"]
-        assert len(vars_and_values["listed_servers"]) == 16
-
-    def test_preseed_has_no_when_condition(self, db, manager) -> None:
-        """Preseed should fire on every session_start (no when condition)."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("preseed-progressive-discovery")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is None
+        for rule_name, expected_tool in [
+            ("require-servers-listed", "mcp__gobby__list_tools"),
+            ("require-server-listed-for-schema", "mcp__gobby__get_tool_schema"),
+            ("require-schema-before-call", "mcp__gobby__call_tool"),
+        ]:
+            row = manager.get_by_name(rule_name)
+            assert row is not None, f"{rule_name} not found"
+            # tools should NOT be in body (it's at rule level, not synced to body)
+            # Actually: tools at effect level is synced as part of effect
+            body = RuleDefinitionBody.model_validate_json(row.definition_json)
+            effect = body.resolved_effects[0]
+            assert effect.tools is not None, f"{rule_name} effect missing tools"
+            assert expected_tool in effect.tools, f"{rule_name} effect.tools missing {expected_tool}"
 
 
 class TestPriorityOrdering:
@@ -404,6 +414,7 @@ class TestRuleEngineIntegration:
         )
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "block"
+        assert result.reason  # block reason about server not listed
 
     @pytest.mark.asyncio
     async def test_get_tool_schema_allowed_after_list_tools(self, engine) -> None:
@@ -421,8 +432,8 @@ class TestRuleEngineIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_call_tool_nudged_before_schema_lookup(self, engine) -> None:
-        """call_tool should be allowed with nudge context when schema not yet looked up."""
+    async def test_call_tool_blocked_before_schema_lookup(self, engine) -> None:
+        """call_tool should be blocked when schema not yet looked up."""
         variables = {
             "enforce_tool_schema_check": True,
             "unlocked_tools": [],
@@ -437,8 +448,8 @@ class TestRuleEngineIntegration:
             },
         )
         result = await engine.evaluate(event, "test-session", variables)
-        assert result.decision == "allow"
-        assert result.context  # should have nudge text
+        assert result.decision == "block"
+        assert result.reason  # block reason about missing schema
 
     @pytest.mark.asyncio
     async def test_call_tool_allowed_after_schema_lookup(self, engine) -> None:
@@ -479,7 +490,7 @@ class TestRuleEngineIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_block_reason_renders_jinja_template(self, engine) -> None:
+    async def test_block_reason_renders_jinja(self, engine) -> None:
         """Block reason should render Jinja templates with tool_input values."""
         variables = {"enforce_tool_schema_check": True, "listed_servers": []}
         event = _make_hook_event(
@@ -489,6 +500,7 @@ class TestRuleEngineIntegration:
         )
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "block"
+        assert result.reason
         # The reason should contain the actual server name, not raw Jinja
         assert "gobby-tasks" in result.reason
         assert "{{" not in result.reason
@@ -510,15 +522,16 @@ class TestRuleEngineIntegration:
         )
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "block"
+        assert result.reason  # block reason about server not listed
 
         # Step 2: simulate list_tools tracking (Python handler sets this)
         variables["listed_servers"].append("gobby-tasks")
 
-        # Step 3: get_tool_schema now allowed
+        # Step 3: get_tool_schema now allowed (server is listed)
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "allow"
 
-        # Step 4: call_tool allowed with nudge (schema not looked up)
+        # Step 4: call_tool blocked (schema not looked up)
         call_event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__call_tool",
@@ -529,13 +542,13 @@ class TestRuleEngineIntegration:
             },
         )
         result = await engine.evaluate(call_event, "test-session", variables)
-        assert result.decision == "allow"
-        assert result.context  # nudge about missing schema
+        assert result.decision == "block"
+        assert result.reason  # block reason about missing schema
 
         # Step 5: simulate schema unlock (Python handler sets this)
         variables["unlocked_tools"].append("gobby-tasks:create_task")
 
-        # Step 6: call_tool allowed without nudge (schema was looked up)
+        # Step 6: call_tool allowed (schema was looked up)
         result = await engine.evaluate(call_event, "test-session", variables)
         assert result.decision == "allow"
 
@@ -599,7 +612,7 @@ class TestRuleEngineIntegration:
             "enforce_tool_schema_check": True,
         }
 
-        # get_tool_schema is blocked (no list_tools yet)
+        # get_tool_schema blocked (no list_tools yet)
         schema_event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__get_tool_schema",
@@ -607,6 +620,7 @@ class TestRuleEngineIntegration:
         )
         result = await engine.evaluate(schema_event, "test-session", variables)
         assert result.decision == "block"
+        assert result.reason  # block reason about server not listed
 
         # Simulate list_tools completing (after_tool fires tracking rule)
         after_list_tools = _make_hook_event(
@@ -616,11 +630,11 @@ class TestRuleEngineIntegration:
         )
         await engine.evaluate(after_list_tools, "test-session", variables)
 
-        # Now get_tool_schema is allowed
+        # Now get_tool_schema is allowed (server listed)
         result = await engine.evaluate(schema_event, "test-session", variables)
         assert result.decision == "allow"
 
-        # call_tool allowed with nudge (no schema lookup yet)
+        # call_tool blocked (no schema lookup yet)
         call_event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__call_tool",
@@ -631,8 +645,8 @@ class TestRuleEngineIntegration:
             },
         )
         result = await engine.evaluate(call_event, "test-session", variables)
-        assert result.decision == "allow"
-        assert result.context  # nudge about missing schema
+        assert result.decision == "block"
+        assert result.reason  # block reason about missing schema
 
         # Simulate get_tool_schema completing (after_tool fires tracking rule)
         after_schema = _make_hook_event(
@@ -642,48 +656,30 @@ class TestRuleEngineIntegration:
         )
         await engine.evaluate(after_schema, "test-session", variables)
 
-        # call_tool allowed without nudge (schema was looked up)
+        # call_tool allowed (schema was looked up)
         result = await engine.evaluate(call_event, "test-session", variables)
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_preseed_then_get_schema_allowed(self, engine) -> None:
-        """With pre-seeded state, get_tool_schema is allowed without list_tools."""
-        # Simulate pre-seeded variables (as the preseed rule would set them)
+    async def test_internal_server_blocked_without_list_tools(self, engine) -> None:
+        """Without preseed, internal servers are blocked like any other server."""
         variables: dict = {
             "enforce_tool_schema_check": True,
-            "servers_listed": True,
-            "listed_servers": [
-                "gobby-tasks",
-                "gobby-sessions",
-                "gobby-memory",
-                "gobby-workflows",
-                "gobby-canvas",
-                "gobby-metrics",
-                "gobby-agents",
-                "gobby-worktrees",
-                "gobby-clones",
-                "gobby-merge",
-                "gobby-hub",
-                "gobby-config",
-                "gobby-voice",
-                "gobby-skills",
-                "gobby-cron",
-                "gobby-tests",
-            ],
+            "listed_servers": [],
             "unlocked_tools": [],
         }
 
-        # get_tool_schema for an internal server should be allowed immediately
+        # get_tool_schema for an internal server should be blocked (no preseed)
         schema_event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
         )
         result = await engine.evaluate(schema_event, "test-session", variables)
-        assert result.decision == "allow"
+        assert result.decision == "block"
+        assert "gobby-tasks" in result.reason
 
-        # get_tool_schema for an external server should still be blocked
+        # get_tool_schema for an external server also blocked
         ext_event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__get_tool_schema",
@@ -691,3 +687,4 @@ class TestRuleEngineIntegration:
         )
         result = await engine.evaluate(ext_event, "test-session", variables)
         assert result.decision == "block"
+        assert "context7" in result.reason

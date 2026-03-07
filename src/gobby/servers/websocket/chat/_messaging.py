@@ -381,6 +381,7 @@ class ChatMessagingMixin:
                     tool_result=None,
                     timestamp=datetime.now(UTC),
                     raw_json={},
+                    tool_use_id=tool_call_id,
                 )
                 idx2 = session.message_index
                 session.message_index = idx2 + 1
@@ -401,6 +402,7 @@ class ChatMessagingMixin:
                     tool_result=tool_result if not is_error else None,
                     timestamp=datetime.now(UTC),
                     raw_json={},
+                    tool_use_id=tool_call_id,
                 )
                 await message_manager.store_messages(db_sid, [tool_use_msg, tool_result_msg])
             except Exception as e:

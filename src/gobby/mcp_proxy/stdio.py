@@ -35,6 +35,7 @@ LLM_TASK_TOOLS = (
     "run_fix_attempt",
 )
 
+
 __all__ = [
     "create_stdio_mcp_server",
     "check_daemon_http_health",
@@ -126,16 +127,13 @@ class DaemonProxy:
             "wait_for_task",
             "wait_for_any_task",
             "wait_for_all_tasks",
+            "wait_for_completion",
+            "wait_for_agent",
         ):
             # Extract timeout from arguments, default to 300s if not specified
             arg_timeout = float((arguments or {}).get("timeout", 300.0))
             # Add 30s buffer for HTTP overhead
             timeout = arg_timeout + 30.0
-        # run_check: subprocess + optional LLM summarization can easily exceed 30s
-        elif tool_name == "run_check":
-            arg_timeout = float((arguments or {}).get("timeout", 300))
-            timeout = arg_timeout + 60.0  # Buffer for LLM summarization
-
         return await self._request(
             "POST",
             f"/api/mcp/{server_name}/tools/{tool_name}",
@@ -537,12 +535,19 @@ async def ensure_daemon_running() -> None:
 
     # Check if running
     if is_daemon_running():
-        # Check health
-        if await check_daemon_http_health(port):
-            return
+        # 3 attempts before concluding unhealthy (5s timeout each)
+        for attempt in range(3):
+            if await check_daemon_http_health(port):
+                return
+            if attempt < 2:
+                logger.warning(
+                    "Daemon health check failed (attempt %d/3), retrying in 5s...",
+                    attempt + 1,
+                )
+                await asyncio.sleep(5)
 
-        # Unhealthy, restart
-        logger.warning("Daemon running but unhealthy, restarting...")
+        # 3 consecutive failures → restart
+        logger.warning("Daemon running but unhealthy after 3 checks, restarting...")
         pid = get_daemon_pid()
         await restart_daemon_process(pid, port, ws_port)
     else:

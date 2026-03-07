@@ -1,0 +1,21 @@
+tags: [task-enforcement, enforcement, tasks, gobby, default]
+
+rules:
+  strip-skip-validation-with-commit:
+    description: "Strip skip_validation when commits exist — validation must run on real work"
+    event: before_tool
+    enabled: false
+    priority: 33
+    when: >
+      tool_input.get('skip_validation')
+      and (variables.get('task_has_commits') or tool_input.get('commit_sha'))
+      and event.data.get('tool_name') == 'close_task'
+    effects:
+      - type: inject_context
+        template: |
+          Gobby stripped skip_validation from your close_task call. Commits are attached,
+          so validation must run. This is automatic — no action needed.
+      - type: rewrite_input
+        input_updates:
+          skip_validation: false
+        auto_approve: true

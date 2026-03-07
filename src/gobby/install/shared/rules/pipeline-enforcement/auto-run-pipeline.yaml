@@ -1,4 +1,4 @@
-tags: [pipeline-enforcement, context, agents]
+tags: [pipeline-enforcement, context, agents, gobby]
 
 rules:
   pipeline-auto-run:

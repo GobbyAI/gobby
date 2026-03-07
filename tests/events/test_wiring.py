@@ -57,6 +57,7 @@ class TestPipelineExecutorNotifiesRegistry:
             id=1, status=MagicMock(value="pending")
         )
         mock_em.update_step_execution.return_value = None
+        mock_em.get_failed_steps.return_value = []
 
         executor = PipelineExecutor(
             db=MagicMock(),
@@ -194,6 +195,7 @@ class TestPipelineExecutorNotifiesRegistry:
             id=1, status=MagicMock(value="pending")
         )
         mock_em.update_step_execution.return_value = None
+        mock_em.get_failed_steps.return_value = []
 
         # No completion_registry passed
         executor = PipelineExecutor(

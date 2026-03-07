@@ -246,6 +246,7 @@ class ChatSessionMixin:
                 )
                 session.db_session_id = db_session.id
                 session.seq_num = db_session.seq_num
+                session._session_manager_ref = session_manager
                 _is_new_registration = True
                 logger.info(
                     f"Registered web-chat session {db_session.id} "

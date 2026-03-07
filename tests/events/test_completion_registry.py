@@ -171,6 +171,129 @@ class TestCleanup:
         registry.cleanup("nonexistent")  # Should not raise
 
 
+class TestPipelineContinuation:
+    """Pipeline continuation callback tests."""
+
+    @pytest.mark.asyncio
+    async def test_register_continuation_and_fire_on_notify(self) -> None:
+        """Continuation callback fires when the completion event is notified."""
+        fired: list[dict] = []
+
+        async def rerun(config: dict) -> None:
+            fired.append(config)
+
+        registry = CompletionEventRegistry(pipeline_rerun_callback=rerun)
+        registry.register("run-abc", subscribers=[])
+        registry.register_continuation(
+            "run-abc",
+            {"pipeline_name": "orchestrator", "inputs": {"_current_iteration": 1}},
+        )
+
+        await registry.notify("run-abc", {"status": "completed"})
+
+        assert len(fired) == 1
+        assert fired[0]["pipeline_name"] == "orchestrator"
+        assert fired[0]["inputs"]["_current_iteration"] == 1
+
+    @pytest.mark.asyncio
+    async def test_continuation_consumed_after_fire(self) -> None:
+        """Continuation is consumed (popped) after firing — no double invocation."""
+        fired: list[dict] = []
+
+        async def rerun(config: dict) -> None:
+            fired.append(config)
+
+        registry = CompletionEventRegistry(pipeline_rerun_callback=rerun)
+        registry.register("run-abc", subscribers=[])
+        registry.register_continuation(
+            "run-abc", {"pipeline_name": "orchestrator", "inputs": {}}
+        )
+
+        await registry.notify("run-abc", {"status": "completed"})
+        # Re-register and notify again — should NOT fire continuation again
+        registry.register("run-abc", subscribers=[])
+        await registry.notify("run-abc", {"status": "completed"})
+
+        assert len(fired) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_continuation_without_callback(self) -> None:
+        """If no rerun callback is configured, continuation is silently consumed."""
+        registry = CompletionEventRegistry()
+        registry.register("run-abc", subscribers=[])
+        registry.register_continuation(
+            "run-abc", {"pipeline_name": "orchestrator", "inputs": {}}
+        )
+        # Should not raise
+        await registry.notify("run-abc", {"status": "completed"})
+
+    @pytest.mark.asyncio
+    async def test_continuation_error_does_not_block_notify(self) -> None:
+        """If the rerun callback fails, notify still completes."""
+        woken: list[str] = []
+
+        async def wake(session_id: str, message: str, result: dict) -> None:
+            woken.append(session_id)
+
+        async def bad_rerun(config: dict) -> None:
+            raise RuntimeError("rerun exploded")
+
+        registry = CompletionEventRegistry(
+            wake_callback=wake, pipeline_rerun_callback=bad_rerun
+        )
+        registry.register("run-abc", subscribers=["sess-1"])
+        registry.register_continuation(
+            "run-abc", {"pipeline_name": "orchestrator", "inputs": {}}
+        )
+
+        # Should not raise despite rerun failure
+        await registry.notify("run-abc", {"status": "completed"})
+        # Wake callback should still have fired
+        assert woken == ["sess-1"]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_removes_continuation(self) -> None:
+        """Cleanup removes pending continuation."""
+        fired: list[dict] = []
+
+        async def rerun(config: dict) -> None:
+            fired.append(config)
+
+        registry = CompletionEventRegistry(pipeline_rerun_callback=rerun)
+        registry.register("run-abc", subscribers=[])
+        registry.register_continuation(
+            "run-abc", {"pipeline_name": "orchestrator", "inputs": {}}
+        )
+        registry.cleanup("run-abc")
+
+        # Re-register and notify — continuation was cleaned up, should not fire
+        registry.register("run-abc", subscribers=[])
+        await registry.notify("run-abc", {"status": "completed"})
+        assert len(fired) == 0
+
+    @pytest.mark.asyncio
+    async def test_continuation_fires_after_wake_callbacks(self) -> None:
+        """Continuation fires after wake callbacks, not before."""
+        order: list[str] = []
+
+        async def wake(session_id: str, message: str, result: dict) -> None:
+            order.append("wake")
+
+        async def rerun(config: dict) -> None:
+            order.append("rerun")
+
+        registry = CompletionEventRegistry(
+            wake_callback=wake, pipeline_rerun_callback=rerun
+        )
+        registry.register("run-abc", subscribers=["sess-1"])
+        registry.register_continuation(
+            "run-abc", {"pipeline_name": "orchestrator", "inputs": {}}
+        )
+
+        await registry.notify("run-abc", {"status": "completed"})
+        assert order == ["wake", "rerun"]
+
+
 class TestContinuationPrompt:
     """Continuation prompt storage and retrieval."""
 

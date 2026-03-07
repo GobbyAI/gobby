@@ -26,6 +26,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.worktrees.git import WorktreeGitManager
 
 if TYPE_CHECKING:
+    from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.worktrees.git import WorktreeGitManager
 
@@ -250,6 +251,7 @@ def create_worktrees_registry(
     git_manager: WorktreeGitManager | None = None,
     project_id: str | None = None,
     session_manager: Any | None = None,
+    task_manager: LocalTaskManager | None = None,
 ) -> InternalToolRegistry:
     """
     Create a worktree tool registry with all worktree-related tools.
@@ -271,6 +273,14 @@ def create_worktrees_registry(
         ctx = get_project_context()
         proj_id = ctx.get("id") if ctx else project_id
         return str(session_manager.resolve_session_reference(ref, proj_id))
+
+    def _resolve_task_id(ref: str) -> str:
+        """Resolve task reference (#N, N, UUID) to UUID."""
+        if task_manager is None:
+            return ref
+        from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+
+        return resolve_task_id_for_mcp(task_manager, ref)
 
     registry = InternalToolRegistry(
         name="gobby-worktrees",
@@ -370,14 +380,28 @@ def create_worktrees_registry(
         if not result.success:
             return {"success": False, "error": result.error or "Failed to create git worktree"}
 
-        # Record in database
-        worktree = worktree_storage.create(
-            project_id=resolved_project_id,
-            branch_name=branch_name,
-            worktree_path=worktree_path,
-            base_branch=base_branch,
-            task_id=task_id,
-        )
+        # Resolve task_id (#N -> UUID) before DB insert
+        resolved_task_id = _resolve_task_id(task_id) if task_id else None
+
+        # Record in database — clean up git worktree on failure
+        try:
+            worktree = worktree_storage.create(
+                project_id=resolved_project_id,
+                branch_name=branch_name,
+                worktree_path=worktree_path,
+                base_branch=base_branch,
+                task_id=resolved_task_id,
+            )
+        except Exception as db_err:
+            try:
+                resolved_git_mgr.delete_worktree(
+                    worktree_path, force=True, delete_branch=True, branch_name=branch_name
+                )
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to clean up orphaned worktree %s: %s", worktree_path, cleanup_err
+                )
+            return {"success": False, "error": f"Failed to record worktree in database: {db_err}"}
 
         # Copy project.json and install provider hooks
         _copy_project_json_to_worktree(resolved_git_mgr.repo_path, worktree.worktree_path)
@@ -896,7 +920,8 @@ def create_worktrees_registry(
         Returns:
             Dict with worktree details or not found.
         """
-        worktree = worktree_storage.get_by_task(task_id)
+        resolved_task_id = _resolve_task_id(task_id)
+        worktree = worktree_storage.get_by_task(resolved_task_id)
         if not worktree:
             return {"success": False, "error": f"No worktree linked to task '{task_id}'"}
 
@@ -924,7 +949,8 @@ def create_worktrees_registry(
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
 
-        updated = worktree_storage.update(worktree_id, task_id=task_id)
+        resolved_task_id = _resolve_task_id(task_id)
+        updated = worktree_storage.update(worktree_id, task_id=resolved_task_id)
         if not updated:
             return {"success": False, "error": "Failed to link task to worktree"}
 

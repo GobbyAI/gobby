@@ -34,7 +34,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 138
+BASELINE_VERSION = 144
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v134) have been removed.
@@ -195,12 +195,14 @@ CREATE TABLE agent_runs (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     sdk_session_id TEXT,
-    continuation_prompt TEXT
+    continuation_prompt TEXT,
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL
 );
 CREATE INDEX idx_agent_runs_parent_session ON agent_runs(parent_session_id);
 CREATE INDEX idx_agent_runs_child_session ON agent_runs(child_session_id);
 CREATE INDEX idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX idx_agent_runs_provider ON agent_runs(provider);
+CREATE INDEX idx_agent_runs_task_id ON agent_runs(task_id);
 
 CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
@@ -264,6 +266,7 @@ CREATE TABLE session_messages (
     tool_name TEXT,
     tool_input TEXT,
     tool_result TEXT,
+    tool_use_id TEXT,
     timestamp TEXT NOT NULL,
     raw_json TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -869,22 +872,66 @@ CREATE TABLE completion_subscribers (
 );
 CREATE INDEX idx_completion_subscribers_completion ON completion_subscribers(completion_id);
 
-CREATE TABLE test_runs (
+CREATE TABLE code_indexed_projects (
     id TEXT PRIMARY KEY,
-    session_id TEXT,
-    project_id TEXT,
-    category TEXT NOT NULL,
-    command TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'running',
-    exit_code INTEGER,
-    summary TEXT,
-    output_file TEXT,
-    started_at TEXT NOT NULL,
-    completed_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    root_path TEXT NOT NULL,
+    total_files INTEGER NOT NULL DEFAULT 0,
+    total_symbols INTEGER NOT NULL DEFAULT 0,
+    last_indexed_at TEXT,
+    index_duration_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX idx_test_runs_session ON test_runs(session_id);
-CREATE INDEX idx_test_runs_status ON test_runs(status);
+
+CREATE TABLE code_indexed_files (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    language TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    symbol_count INTEGER NOT NULL DEFAULT 0,
+    byte_size INTEGER NOT NULL DEFAULT 0,
+    indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, file_path)
+);
+CREATE INDEX idx_cif_project ON code_indexed_files(project_id);
+
+CREATE TABLE code_symbols (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    qualified_name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    language TEXT NOT NULL,
+    byte_start INTEGER NOT NULL,
+    byte_end INTEGER NOT NULL,
+    line_start INTEGER NOT NULL,
+    line_end INTEGER NOT NULL,
+    signature TEXT,
+    docstring TEXT,
+    parent_symbol_id TEXT,
+    content_hash TEXT NOT NULL,
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_cs_project ON code_symbols(project_id);
+CREATE INDEX idx_cs_file ON code_symbols(project_id, file_path);
+CREATE INDEX idx_cs_name ON code_symbols(name);
+CREATE INDEX idx_cs_qualified ON code_symbols(qualified_name);
+CREATE INDEX idx_cs_kind ON code_symbols(kind);
+CREATE INDEX idx_cs_parent ON code_symbols(parent_symbol_id);
+
+CREATE TABLE session_transcripts (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    transcript_blob BLOB NOT NULL,
+    uncompressed_size INTEGER NOT NULL,
+    compressed_size INTEGER NOT NULL,
+    checksum TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Migrations beyond v133.
@@ -952,6 +999,93 @@ ALTER TABLE agent_runs ADD COLUMN continuation_prompt TEXT""",
 );
 CREATE INDEX idx_test_runs_session ON test_runs(session_id);
 CREATE INDEX idx_test_runs_status ON test_runs(status)""",
+    ),
+    (
+        139,
+        "Drop test_runs table (gobby-tests replaced by output compression)",
+        """DROP TABLE IF EXISTS test_runs""",
+    ),
+    (
+        140,
+        "Add tool_use_id column to session_messages for ID-based tool result matching",
+        """ALTER TABLE session_messages ADD COLUMN tool_use_id TEXT""",
+    ),
+    (
+        141,
+        "Add task_id to agent_runs for dedup tracking",
+        """ALTER TABLE agent_runs ADD COLUMN task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL""",
+    ),
+    (
+        142,
+        "Index agent_runs task_id",
+        """CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id)""",
+    ),
+    (
+        143,
+        "Add code index tables (code_indexed_projects, code_indexed_files, code_symbols)",
+        """CREATE TABLE IF NOT EXISTS code_indexed_projects (
+    id TEXT PRIMARY KEY,
+    root_path TEXT NOT NULL,
+    total_files INTEGER NOT NULL DEFAULT 0,
+    total_symbols INTEGER NOT NULL DEFAULT 0,
+    last_indexed_at TEXT,
+    index_duration_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS code_indexed_files (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    language TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    symbol_count INTEGER NOT NULL DEFAULT 0,
+    byte_size INTEGER NOT NULL DEFAULT 0,
+    indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, file_path)
+);
+CREATE INDEX IF NOT EXISTS idx_cif_project ON code_indexed_files(project_id);
+
+CREATE TABLE IF NOT EXISTS code_symbols (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    qualified_name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    language TEXT NOT NULL,
+    byte_start INTEGER NOT NULL,
+    byte_end INTEGER NOT NULL,
+    line_start INTEGER NOT NULL,
+    line_end INTEGER NOT NULL,
+    signature TEXT,
+    docstring TEXT,
+    parent_symbol_id TEXT,
+    content_hash TEXT NOT NULL,
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cs_project ON code_symbols(project_id);
+CREATE INDEX IF NOT EXISTS idx_cs_file ON code_symbols(project_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_cs_name ON code_symbols(name);
+CREATE INDEX IF NOT EXISTS idx_cs_qualified ON code_symbols(qualified_name);
+CREATE INDEX IF NOT EXISTS idx_cs_kind ON code_symbols(kind);
+CREATE INDEX IF NOT EXISTS idx_cs_parent ON code_symbols(parent_symbol_id)""",
+    ),
+    (
+        144,
+        "Add session_transcripts table for compressed blob storage",
+        """CREATE TABLE IF NOT EXISTS session_transcripts (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    transcript_blob BLOB NOT NULL,
+    uncompressed_size INTEGER NOT NULL,
+    compressed_size INTEGER NOT NULL,
+    checksum TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)""",
     ),
 ]
 

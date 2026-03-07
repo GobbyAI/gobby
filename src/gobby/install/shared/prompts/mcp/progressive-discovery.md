@@ -8,15 +8,11 @@ version: "1.0"
 <tool_discovery>
 Progressive discovery keeps token usage low — fetch schemas just-in-time, not upfront.
 
-Internal servers (gobby-tasks, gobby-memory, etc.) are pre-discovered at session start.
-For these, skip straight to step 3 or 4:
-3. `get_tool_schema(server_name, tool_name)` — Fetch parameter schema (recommended before first call)
+All servers follow the same discovery chain:
+1. `list_mcp_servers()` — Discover available servers (required once per session)
+2. `list_tools(server_name="...")` — See tool names per server (required once per server, per session)
+3. `get_tool_schema(server_name, tool_name)` — Fetch parameter schema (required before first call)
 4. `call_tool(server_name, tool_name, args)` — Execute the tool
-
-External MCP servers require full discovery:
-1. `list_mcp_servers()` — Discover available servers
-2. `list_tools(server_name="...")` — See tool names per server
-3-4. Same as above
 
 The proxy validates parameters on every call_tool. If params are wrong, the error includes the full schema.
 </tool_discovery>
@@ -27,6 +23,12 @@ Discover skills with progressive discovery too:
 2. `get_skill(name="...")` — Full skill content (use after list_skills or search_skills)
 3. `search_skills(query="...")` — Semantic search by topic (independent entry point, like list_skills)
 </skills>
+
+<code_search>
+If the project has a code index, `gobby-code` provides symbol-level search and retrieval.
+Key tools: `search_symbols(query)`, `get_file_outline(file_path)`, `get_symbol(symbol_id)`.
+Use these instead of reading entire files — saves 90%+ tokens on large files.
+</code_search>
 
 <caching>
 Schema fetches are cached per session. Once you call `get_tool_schema(server_name, tool_name)`,
@@ -40,10 +42,6 @@ WRONG — Loading all schemas upfront (wastes 30-40K tokens):
 RIGHT — Just-in-time discovery:
   get_tool_schema("gobby-tasks", "create_task")  # Learn required params
   call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "session_id": "#123"})
-
-ALSO OK — Direct call when you know the params:
-  call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "session_id": "#123"})
-  # If params are wrong, error includes full schema for self-correction
 </common_mistakes>
 
 <rules>

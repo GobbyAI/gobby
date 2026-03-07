@@ -18,6 +18,7 @@ import psutil
 from gobby.utils.status import fetch_rich_status, format_status_message
 
 from .utils import (
+    _is_process_alive,
     find_web_dir,
     format_uptime,
     get_gobby_home,
@@ -199,6 +200,8 @@ def start(
     killed_count = kill_all_gobby_daemons()
     if killed_count > 0:
         click.echo(f"Stopped {killed_count} existing process(es)")
+        # Clean up PID file — the process it referred to was likely among those killed
+        pid_file.unlink(missing_ok=True)
         time.sleep(2.0)  # Wait for ports to be released
     else:
         click.echo("No existing processes found")
@@ -209,17 +212,21 @@ def start(
             with open(pid_file) as f:
                 pid = int(f.read().strip())
 
-            # Check if process is actually running
-            try:
-                os.kill(pid, 0)
-                click.echo(f"Gobby daemon is already running (PID: {pid})", err=True)
-                sys.exit(1)
-            except ProcessLookupError:
-                # Stale PID file
-                click.echo(f"Removing stale PID file (PID: {pid})")
-                pid_file.unlink()
+            # Check if process is alive (handles zombies) AND is a gobby process
+            if _is_process_alive(pid):
+                try:
+                    proc = psutil.Process(pid)
+                    cmdline_str = " ".join(proc.cmdline())
+                    if "gobby" in cmdline_str.lower():
+                        click.echo(f"Gobby daemon is already running (PID: {pid})", err=True)
+                        sys.exit(1)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            # Stale PID file — process dead, zombie, or not gobby
+            click.echo(f"Removing stale PID file (PID: {pid})")
+            pid_file.unlink(missing_ok=True)
         except Exception:
-            pid_file.unlink()
+            pid_file.unlink(missing_ok=True)
 
     # Check ports
     http_port = config.daemon_port

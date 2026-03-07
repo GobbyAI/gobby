@@ -1,4 +1,4 @@
-tags: [context-handoff, context, handoff, lifecycle]
+tags: [context-handoff, context, handoff, lifecycle, gobby, default]
 
 rules:
   capture-baseline-dirty-files-on-start:

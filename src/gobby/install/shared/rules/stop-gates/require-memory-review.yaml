@@ -1,4 +1,4 @@
-tags: [stop-gates, enforcement, lifecycle, gobby]
+tags: [stop-gates, enforcement, lifecycle, gobby, default]
 
 rules:
   require-memory-review:

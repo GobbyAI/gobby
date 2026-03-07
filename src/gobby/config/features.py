@@ -12,12 +12,13 @@ Contains MCP proxy and tool feature Pydantic config models:
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 __all__ = [
     "ChatConfig",
     "ReviewConfig",
-    "TestSummarizerConfig",
     "ToolSummarizerConfig",
     "RecommendToolsConfig",
     "ImportMCPServerConfig",
@@ -27,6 +28,7 @@ __all__ = [
     "MemoryFactExtractionConfig",
     "MergeResolutionConfig",
     "MetricsConfig",
+    "OutputCompressionConfig",
     "ProjectVerificationConfig",
     "HookStageConfig",
     "HooksConfig",
@@ -386,29 +388,42 @@ class ProjectVerificationConfig(BaseModel):
         return result
 
 
-class TestSummarizerConfig(BaseModel):
-    """Test/lint/typecheck output summarization configuration."""
+class OutputCompressionConfig(BaseModel):
+    """Output compression configuration for token optimization."""
 
     enabled: bool = Field(
+        default=False,
+        description="Enable output compression (opt-in). When enabled, verbose tool "
+        "output is compressed before reaching the LLM context window.",
+    )
+    min_output_length: int = Field(
+        default=1000,
+        ge=0,
+        description="Minimum output length (chars) before compression triggers",
+    )
+    max_compressed_lines: int = Field(
+        default=100,
+        ge=0,
+        description="Target maximum lines after compression",
+    )
+    excluded_commands: list[str] = Field(
+        default_factory=list,
+        description="Regex patterns for commands that should never be compressed",
+    )
+
+    @field_validator("excluded_commands")
+    @classmethod
+    def _validate_excluded_commands(cls, v: list[str]) -> list[str]:
+        for pattern in v:
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                raise ValueError(f"Invalid regex pattern {pattern!r}: {e}") from e
+        return v
+
+    track_savings: bool = Field(
         default=True,
-        description="Enable LLM-based test output summarization on failure",
-    )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for output summarization",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for output summarization (fast/cheap recommended)",
-    )
-    max_output_lines: int = Field(
-        default=200,
-        description="Max lines of output sent to LLM for summarization",
-    )
-    timeout: int = Field(
-        default=30,
-        gt=0,
-        description="Timeout in seconds for the LLM summarization call",
+        description="Track token savings via metrics",
     )
 
 

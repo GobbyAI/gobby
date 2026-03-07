@@ -341,6 +341,69 @@ class TestSessionStartAndHelpers:
             mock_pre_created.assert_called_once()
             assert resp.decision == "allow"
 
+    def test_handle_session_start_sets_code_index_available(self) -> None:
+        """When project has indexed symbols, code_index_available is set to True."""
+        handler = _TestHandler()
+        event = _make_event(
+            event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
+        )
+        handler._session_storage.get.return_value = None
+        handler._session_storage.find_parent.return_value = None
+
+        mock_stats = MagicMock()
+        mock_stats.total_symbols = 42
+
+        with (
+            patch.object(handler, "_derive_transcript_path", return_value="/tmp/t.json"),
+            patch.object(handler, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.code_index.storage.CodeIndexStorage"
+            ) as mock_cis_cls,
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager"
+            ) as mock_sv_cls,
+        ):
+            handler._session_manager.register_session.return_value = "new-sess-1"
+            mock_cis_cls.return_value.get_project_stats.return_value = mock_stats
+            mock_sv_mgr = mock_sv_cls.return_value
+
+            handler.handle_session_start(event)
+
+            mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
+            mock_sv_mgr.set_variable.assert_any_call(
+                "new-sess-1", "code_index_available", True
+            )
+
+    def test_handle_session_start_no_index_skips_variable(self) -> None:
+        """When project has no indexed symbols, code_index_available is NOT set."""
+        handler = _TestHandler()
+        event = _make_event(
+            event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
+        )
+        handler._session_storage.get.return_value = None
+        handler._session_storage.find_parent.return_value = None
+
+        with (
+            patch.object(handler, "_derive_transcript_path", return_value="/tmp/t.json"),
+            patch.object(handler, "_activate_default_agent", return_value=None),
+            patch(
+                "gobby.code_index.storage.CodeIndexStorage"
+            ) as mock_cis_cls,
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager"
+            ) as mock_sv_cls,
+        ):
+            handler._session_manager.register_session.return_value = "new-sess-1"
+            mock_cis_cls.return_value.get_project_stats.return_value = None
+            mock_sv_mgr = mock_sv_cls.return_value
+
+            handler.handle_session_start(event)
+
+            mock_cis_cls.return_value.get_project_stats.assert_called_once_with("proj-1")
+            # set_variable should NOT be called for code_index_available
+            for call in mock_sv_mgr.set_variable.call_args_list:
+                assert call[0][1] != "code_index_available"
+
     def test_handle_pre_created_session_logic(self) -> None:
         handler = _TestHandler()
         event = _make_event(event_type=HookEventType.SESSION_START)

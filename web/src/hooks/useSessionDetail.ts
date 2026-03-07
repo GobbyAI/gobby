@@ -9,6 +9,7 @@ export interface SessionMessage {
   tool_name?: string
   tool_input?: string
   tool_result?: string
+  tool_use_id?: string
   timestamp: string
   message_index?: number
 }

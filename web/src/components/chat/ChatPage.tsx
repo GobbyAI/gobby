@@ -196,6 +196,7 @@ export function ChatPage({
                 messages={chat.messages}
                 isStreaming={chat.isStreaming}
                 isThinking={chat.isThinking}
+                isLoadingMessages={chat.isLoadingMessages}
                 onRespondToQuestion={chat.onRespondToQuestion}
                 onRespondToApproval={chat.onRespondToApproval}
                 planPendingApproval={!isPanelOpen && chat.planPendingApproval}

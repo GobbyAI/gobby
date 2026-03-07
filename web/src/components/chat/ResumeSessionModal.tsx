@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Dialog, DialogContent } from "./ui/Dialog";
 import type { GobbySession } from "../../hooks/useSessions";
 import { formatRelativeTime } from "../../utils/formatTime";
@@ -41,15 +41,55 @@ export function ResumeSessionModal({
   onResume,
 }: ResumeSessionModalProps) {
   const [search, setSearch] = useState("");
+  const [showSubagents, setShowSubagents] = useState(false);
+  const [resumableSessions, setResumableSessions] = useState<GobbySession[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch resumable sessions when modal opens
+  const fetchResumable = useCallback(async () => {
+    if (!isOpen) return;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: "200",
+        include_resumability: "true",
+      });
+      if (!showSubagents) params.set("exclude_subagents", "true");
+
+      const response = await fetch(`/api/sessions?${params}`);
+      if (response.ok) {
+        const data = await response.json();
+        setResumableSessions(Array.isArray(data.sessions) ? data.sessions : []);
+      } else {
+        console.error("Failed to fetch resumable sessions:", response.status, response.statusText);
+        setResumableSessions(sessions);
+      }
+    } catch (e) {
+      console.error("Failed to fetch resumable sessions:", e);
+      // Fall back to passed-in sessions
+      setResumableSessions(sessions);
+    } finally {
+      setLoading(false);
+    }
+  }, [isOpen, showSubagents, sessions]);
 
   // Reset search when modal opens
   useEffect(() => {
-    if (isOpen) setSearch("");
+    if (isOpen) {
+      setSearch("");
+    }
   }, [isOpen]);
 
-  // Filter and sort sessions — show recent sessions with messages
+  // Fetch resumable sessions when modal opens or subagent toggle changes
+  useEffect(() => {
+    if (isOpen) {
+      fetchResumable();
+    }
+  }, [isOpen, fetchResumable]);
+
+  // Filter and sort sessions
   const filteredSessions = useMemo(() => {
-    const withMessages = sessions.filter((s) => s.message_count > 0);
+    const withMessages = resumableSessions.filter((s) => s.message_count > 0);
     const sorted = withMessages.sort(
       (a, b) =>
         new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
@@ -62,7 +102,7 @@ export function ResumeSessionModal({
         s.source.toLowerCase().includes(q) ||
         (s.ref && s.ref.toLowerCase().includes(q)),
     );
-  }, [sessions, search]);
+  }, [resumableSessions, search]);
 
   if (!isOpen) return null;
 
@@ -76,28 +116,54 @@ export function ResumeSessionModal({
           <p style={{ margin: "4px 0 12px", fontSize: "13px", color: "var(--text-muted, #888)" }}>
             Pick a session to resume in web chat with full conversation context.
           </p>
-          <input
-            type="text"
-            placeholder="Search sessions..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoFocus
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              border: "1px solid var(--border-color, #444)",
-              borderRadius: "6px",
-              background: "var(--input-bg, #1a1a1a)",
-              color: "var(--text-color, #e0e0e0)",
-              fontSize: "14px",
-              outline: "none",
-            }}
-          />
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <input
+              type="text"
+              placeholder="Search sessions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+              style={{
+                flex: 1,
+                padding: "8px 12px",
+                border: "1px solid var(--border-color, #444)",
+                borderRadius: "6px",
+                background: "var(--input-bg, #1a1a1a)",
+                color: "var(--text-color, #e0e0e0)",
+                fontSize: "14px",
+                outline: "none",
+              }}
+            />
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                fontSize: "12px",
+                color: "var(--text-muted, #888)",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                userSelect: "none",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={showSubagents}
+                onChange={(e) => setShowSubagents(e.target.checked)}
+                style={{ accentColor: "#c084fc" }}
+              />
+              Subagents
+            </label>
+          </div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
-          {filteredSessions.length === 0 ? (
+          {loading ? (
             <p style={{ textAlign: "center", color: "var(--text-muted, #888)", padding: "24px 0", fontSize: "14px" }}>
-              {search ? "No matching sessions" : "No sessions available"}
+              Loading...
+            </p>
+          ) : filteredSessions.length === 0 ? (
+            <p style={{ textAlign: "center", color: "var(--text-muted, #888)", padding: "24px 0", fontSize: "14px" }}>
+              {search ? "No matching sessions" : "No resumable sessions"}
             </p>
           ) : (
             filteredSessions.map((session) => (
@@ -147,6 +213,11 @@ export function ResumeSessionModal({
                     {" · "}
                     {formatRelativeTime(session.updated_at)}
                     {session.message_count > 0 && ` · ${session.message_count} msgs`}
+                    {(session.agent_depth ?? 0) > 0 && (
+                      <span style={{ color: "#f59e0b", marginLeft: "4px" }}>
+                        depth {session.agent_depth}
+                      </span>
+                    )}
                   </div>
                 </div>
               </button>

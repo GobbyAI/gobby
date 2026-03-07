@@ -67,9 +67,17 @@ class RuleEvent(str, Enum):
 
 
 class RuleEffect(BaseModel):
-    """What happens when a rule fires. Five primitive effect types."""
+    """What happens when a rule fires."""
 
-    type: Literal["block", "set_variable", "inject_context", "mcp_call", "observe"]
+    type: Literal[
+        "block",
+        "set_variable",
+        "inject_context",
+        "mcp_call",
+        "observe",
+        "rewrite_input",
+        "compress_output",
+    ]
 
     # Per-effect condition (gates this individual effect within a multi-effect rule)
     when: str | None = None
@@ -98,6 +106,14 @@ class RuleEffect(BaseModel):
     category: str | None = None
     message: str | None = None
 
+    # rewrite_input — modify tool input before execution (PreToolUse)
+    input_updates: dict[str, Any] | None = None
+    auto_approve: bool = False
+
+    # compress_output — compress tool output after execution (PostToolUse)
+    strategy: str | None = None
+    max_lines: int | None = None
+
     def model_post_init(self, __context: Any) -> None:
         """Warn when fields irrelevant to the effect type are set."""
         import warnings
@@ -108,9 +124,11 @@ class RuleEffect(BaseModel):
             "inject_context": {"template"},
             "mcp_call": {"server", "tool", "arguments", "background"},
             "observe": {"category", "message"},
+            "rewrite_input": {"input_updates", "auto_approve"},
+            "compress_output": {"strategy", "max_lines"},
         }
         # Fields with non-None defaults that shouldn't trigger warnings
-        _default_skip = {"background", "when"}
+        _default_skip = {"background", "when", "auto_approve"}
         relevant = _fields_by_type.get(self.type, set())
         for field_name, field_set in _fields_by_type.items():
             if field_name == self.type:
@@ -132,6 +150,7 @@ class RuleDefinitionBody(BaseModel):
     event: RuleEvent
     when: str | None = None
     match: dict[str, Any] | None = None
+    tools: list[str] | None = None  # Pre-filter: skip rule if tool doesn't match
     effect: RuleEffect | None = None
     effects: list[RuleEffect] | None = None
     group: str | None = None

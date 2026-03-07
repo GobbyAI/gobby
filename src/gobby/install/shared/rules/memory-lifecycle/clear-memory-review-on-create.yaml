@@ -1,4 +1,4 @@
-tags: [memory-lifecycle, enforcement]
+tags: [memory-lifecycle, enforcement, gobby, default]
 
 rules:
   clear-memory-review-on-create:

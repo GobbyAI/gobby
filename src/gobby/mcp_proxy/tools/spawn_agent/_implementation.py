@@ -280,6 +280,15 @@ async def spawn_agent_impl(
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
 
+    # 4b. Dedup check — skip if an agent is already running for this task
+    if resolved_task_id and runner.run_storage:
+        if runner.run_storage.has_active_run_for_task(resolved_task_id):
+            return {
+                "success": False,
+                "skipped": True,
+                "error": f"Agent already dispatched for task {task_id}",
+            }
+
     # 5. Handle worktree_id/clone_id reuse: skip isolation creation when existing resource provided
     isolation_ctx = None
     if worktree_id and worktree_storage:
@@ -421,6 +430,7 @@ async def spawn_agent_impl(
         worktree_id=isolation_ctx.worktree_id,
         clone_id=isolation_ctx.clone_id,
         branch_name=isolation_ctx.branch_name,
+        task_id=resolved_task_id,
         session_manager=runner.child_session_manager,
         machine_id=get_machine_id() or "unknown",
         model=effective_model,

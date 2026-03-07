@@ -6,7 +6,7 @@ This directory contains 14 bundled rule groups. These are **templates** — they
 
 | Group | Dir | Rules | Purpose |
 |-------|-----|-------|---------|
-| `worker-safety` | `worker-safety/` | 6 | Block git push (global + worker-scoped), force push, destructive git, agent spawn from merge, external GitHub issues |
+| `worker-safety` | `worker-safety/` | 7 | Block git push (global + worker-scoped), force push, destructive git, bash sleep, agent spawn from merge, external GitHub issues |
 | `tool-hygiene` | `tool-hygiene/` | 2 | Require `uv` for Python, track pending memory review |
 | `progressive-discovery` | `progressive-discovery/` | 7 | Enforce MCP discovery order: list_servers → list_tools → get_schema → call_tool |
 | `task-enforcement` | `task-enforcement/` | 6 | Block native task tools, require task before edit, track claims, require commits before close, block validation skip |
@@ -44,11 +44,22 @@ Multiple rules can live in one YAML file, or each rule can have its own file. Th
 
 ## Tags
 
-Tags are used by agent `rule_selectors` to control which rules are active:
+Tags serve two purposes:
+
+| Tag | Meaning |
+|-----|---------|
+| `gobby` | **Provenance** — rule ships with gobby. All non-deprecated rules get this tag. |
+| `default` | **Audience** — rule applies to the interactive session (default/default-web-chat agents). |
+| Group tags | **Identity** — rule belongs to a functional group. Workers cherry-pick these. |
+
+The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load all interactive-session rules. Worker agents (e.g., `pipeline-worker.yaml`) select specific group tags instead.
+
+Rules in `worker-safety` and `pipeline-enforcement` have `gobby` but NOT `default` — they are only loaded by agents that explicitly select their group tags.
+
+### Group Tags
 
 | Tag | Groups |
 |-----|--------|
-| `gobby` | All non-deprecated groups (the standard selector) |
 | `enforcement` | worker-safety, task-enforcement, stop-gates, tdd-enforcement |
 | `safety` | worker-safety |
 | `discovery` | progressive-discovery |
@@ -56,8 +67,6 @@ Tags are used by agent `rule_selectors` to control which rules are active:
 | `context` | context-handoff |
 | `messaging` | messaging |
 | `pipeline` | pipeline-enforcement |
-
-The default agent (`default.yaml`) uses `rule_selectors: {include: ["tag:gobby"]}` to load all standard rules.
 
 ## Guides
 

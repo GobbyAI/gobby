@@ -1,4 +1,4 @@
-tags: [tdd-enforcement, enforcement]
+tags: [tdd-enforcement, enforcement, gobby, default]
 
 rules:
   enforce-tdd-track-tests:

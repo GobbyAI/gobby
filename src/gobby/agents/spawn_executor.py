@@ -53,6 +53,7 @@ class SpawnRequest:
     worktree_id: str | None = None
     clone_id: str | None = None
     branch_name: str | None = None  # Git branch for worktree/clone isolation
+    task_id: str | None = None  # Task being worked on (for dedup tracking)
     agent_depth: int = 0
     max_agent_depth: int = 5
     session_manager: Any | None = None  # Required for Gemini/Codex preflight
@@ -154,6 +155,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         max_agent_depth=request.max_agent_depth,
         git_branch=request.branch_name,
         agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -259,6 +261,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         max_agent_depth=request.max_agent_depth,
         git_branch=request.branch_name,
         agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -441,6 +444,7 @@ async def _spawn_autonomous(request: SpawnRequest) -> SpawnResult:
         max_agent_depth=request.max_agent_depth,
         git_branch=request.branch_name,
         agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
     )
 
     gobby_session_id = spawn_context.session_id

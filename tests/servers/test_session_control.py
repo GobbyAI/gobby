@@ -162,6 +162,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
+        source_session.jsonl_path = None
         source_session.terminal_context = {"tmux_pane": "%5", "parent_pid": "999"}
 
         session_manager = MagicMock()
@@ -175,6 +176,7 @@ class TestContinueInChatTerminalKill:
         host = self._make_host()
         host.session_manager = session_manager
         host.agent_run_manager = None
+        host._check_resume_blocked = AsyncMock(return_value=None)
 
         # Mock the agent registry to return nothing
         mock_registry = MagicMock()
@@ -225,6 +227,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
+        source_session.jsonl_path = None
         source_session.terminal_context = {"tmux_pane": "%5"}
 
         session_manager = MagicMock()
@@ -236,6 +239,7 @@ class TestContinueInChatTerminalKill:
         host = self._make_host()
         host.session_manager = session_manager
         host.agent_run_manager = None
+        host._check_resume_blocked = AsyncMock(return_value=None)
 
         running_agent = MagicMock()
         running_agent.run_id = "agent-1"

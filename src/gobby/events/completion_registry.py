@@ -3,6 +3,7 @@
 In-memory event bus that:
 1. Lets pipeline executor block on completion events (wait step type)
 2. Triggers wake callbacks to notify subscribing sessions when operations complete
+3. Fires pipeline continuation callbacks for event-driven re-invocation
 """
 
 from __future__ import annotations
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Type for the wake callback: (session_id, message, result) -> None
 WakeCallback = Callable[[str, str, dict[str, Any]], Coroutine[Any, Any, None]]
 
+# Type for pipeline rerun callback: (continuation_config) -> None
+PipelineRerunCallback = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
+
 
 class CompletionEventRegistry:
     """In-memory registry for completion events with subscriber notifications.
@@ -24,14 +28,21 @@ class CompletionEventRegistry:
     Used by:
     - PipelineExecutor: `wait` step type blocks via registry.wait()
     - Daemon: registry.notify() fires wake callbacks for subscribed sessions
+    - Orchestrator: pipeline continuations trigger re-invocation on agent completion
     """
 
-    def __init__(self, wake_callback: WakeCallback | None = None) -> None:
+    def __init__(
+        self,
+        wake_callback: WakeCallback | None = None,
+        pipeline_rerun_callback: PipelineRerunCallback | None = None,
+    ) -> None:
         self._events: dict[str, asyncio.Event] = {}
         self._results: dict[str, dict[str, Any]] = {}
         self._subscribers: dict[str, list[str]] = {}
         self._continuation_prompts: dict[str, str] = {}
+        self._pipeline_continuations: dict[str, dict[str, Any]] = {}
         self._wake_callback = wake_callback
+        self._pipeline_rerun_callback = pipeline_rerun_callback
 
     def register(
         self,
@@ -56,6 +67,27 @@ class CompletionEventRegistry:
     def is_registered(self, completion_id: str) -> bool:
         """Check if a completion event is registered."""
         return completion_id in self._events
+
+    def register_continuation(
+        self,
+        completion_id: str,
+        continuation_config: dict[str, Any],
+    ) -> None:
+        """Register a pipeline continuation for a completion event.
+
+        When the completion event fires, the pipeline_rerun_callback will be
+        invoked with the continuation_config, triggering a new pipeline pass.
+
+        Args:
+            completion_id: The completion event ID (typically a run_id)
+            continuation_config: Dict with pipeline_name, inputs, session_id, project_id
+        """
+        self._pipeline_continuations[completion_id] = continuation_config
+        logger.debug(
+            "Registered pipeline continuation for %s: pipeline=%s",
+            completion_id,
+            continuation_config.get("pipeline_name", "?"),
+        )
 
     async def notify(
         self,
@@ -90,6 +122,15 @@ class CompletionEventRegistry:
                         completion_id,
                         exc_info=True,
                     )
+
+        # Fire pipeline continuation if registered
+        continuation = self._pipeline_continuations.get(completion_id)
+        if continuation and self._pipeline_rerun_callback:
+            try:
+                await self._pipeline_rerun_callback(continuation)
+                self._pipeline_continuations.pop(completion_id, None)
+            except Exception:
+                logger.error("Pipeline continuation failed for %s", completion_id, exc_info=True)
 
     async def wait(self, completion_id: str, timeout: float | None = None) -> dict[str, Any]:
         """Block until a completion event fires.
@@ -146,3 +187,4 @@ class CompletionEventRegistry:
         self._results.pop(completion_id, None)
         self._subscribers.pop(completion_id, None)
         self._continuation_prompts.pop(completion_id, None)
+        self._pipeline_continuations.pop(completion_id, None)

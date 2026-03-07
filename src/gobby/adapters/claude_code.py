@@ -284,6 +284,18 @@ class ClaudeCodeAdapter(BaseAdapter):
                 ),
             }
 
+        # PreToolUse: rewrite tool input via updatedInput
+        if response.modified_input and hook_event_name == "PreToolUse":
+            hook_output = result.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
+            hook_output["updatedInput"] = response.modified_input
+            if response.auto_approve:
+                hook_output["permissionDecision"] = "allow"
+
+        # PostToolUse: replace MCP tool output via updatedMCPToolOutput
+        if response.modified_output is not None and hook_event_name == "PostToolUse":
+            hook_output = result.setdefault("hookSpecificOutput", {"hookEventName": "PostToolUse"})
+            hook_output["updatedMCPToolOutput"] = response.modified_output
+
         return result
 
     def handle_native(
