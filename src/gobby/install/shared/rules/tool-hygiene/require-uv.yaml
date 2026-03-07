@@ -1,15 +1,25 @@
-tags: [tool-hygiene, enforcement, python]
+tags: [tool-hygiene, enforcement, python, gobby, default]
 
 rules:
   require-uv:
-    description: "Block naked python/pip - require uv run/uv pip"
+    description: "Rewrite bare python/pip to use uv"
     event: before_tool
     enabled: false
     priority: 50
-    when: "variables.get('require_uv')"
-    effect:
-      type: block
-      tools: [Bash]
-      command_pattern: "(?:^|[;&|])\\s*(?:sudo\\s+)?(?:python(?:3(?:\\.\\d+)?)?|pip3?)\\b"
-      command_not_pattern: "(?:^|[;&|])\\s*(?:sudo\\s+)?uv\\s+"
-      reason: "Use `uv run` or `uv pip` instead of running python/pip directly."
+    when: >
+      variables.get('require_uv')
+      and event.data.get('tool_name') == 'Bash'
+    effects:
+      - type: inject_context
+        when: "any(w in ('python', 'python3', 'pip', 'pip3') or w.startswith('python3.') for w in str(tool_input.get('command', '')).split())"
+        template: |
+          Gobby rewrote your command to use `uv`. Bare python/pip is not allowed in this project.
+          Use `uv run python` or `uv pip` directly next time.
+      - type: rewrite_input
+        when: "any(w in ('python', 'python3', 'pip', 'pip3') or w.startswith('python3.') for w in str(tool_input.get('command', '')).split())"
+        input_updates:
+          command: >
+            {{ event.data.tool_input.command
+               | regex_replace('(^|(?<=[;&|]))(\s*)(?:sudo\s+)?pip3?\b', '\1\2uv pip')
+               | regex_replace('(^|(?<=[;&|]))(\s*)(?:sudo\s+)?python(?:3(?:\.\d+)?)?\b', '\1\2uv run python') }}
+        auto_approve: true

@@ -80,6 +80,7 @@ def mock_db():
             tool_name TEXT,
             tool_input TEXT,
             tool_result TEXT,
+            tool_use_id TEXT,
             timestamp TEXT NOT NULL,
             raw_json TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),

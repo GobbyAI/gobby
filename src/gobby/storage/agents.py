@@ -38,6 +38,7 @@ class AgentRun:
     completed_at: str | None = None
     sdk_session_id: str | None = None
     continuation_prompt: str | None = None
+    task_id: str | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> AgentRun:
@@ -63,6 +64,7 @@ class AgentRun:
             continuation_prompt=row["continuation_prompt"]
             if "continuation_prompt" in row.keys()
             else None,
+            task_id=row["task_id"] if "task_id" in row.keys() else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,6 +88,7 @@ class AgentRun:
             "updated_at": self.updated_at,
             "sdk_session_id": self.sdk_session_id,
             "continuation_prompt": self.continuation_prompt,
+            "task_id": self.task_id,
         }
 
 
@@ -105,6 +108,7 @@ class LocalAgentRunManager:
         model: str | None = None,
         child_session_id: str | None = None,
         run_id: str | None = None,
+        task_id: str | None = None,
     ) -> AgentRun:
         """
         Create a new agent run.
@@ -117,6 +121,7 @@ class LocalAgentRunManager:
             model: Optional model override.
             child_session_id: Optional child session for the agent.
             run_id: Optional pre-generated run ID. If not provided, one is generated.
+            task_id: Optional task ID this agent is working on.
 
         Returns:
             Created AgentRun.
@@ -129,9 +134,9 @@ class LocalAgentRunManager:
             """
             INSERT OR REPLACE INTO agent_runs (
                 id, parent_session_id, child_session_id, workflow_name,
-                provider, model, status, prompt, created_at, updated_at
+                provider, model, status, prompt, task_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -141,6 +146,7 @@ class LocalAgentRunManager:
                 provider,
                 model,
                 prompt,
+                task_id,
                 now,
                 now,
             ),
@@ -156,6 +162,14 @@ class LocalAgentRunManager:
         """Get agent run by ID."""
         row = self.db.fetchone("SELECT * FROM agent_runs WHERE id = ?", (run_id,))
         return AgentRun.from_row(row) if row else None
+
+    def has_active_run_for_task(self, task_id: str) -> bool:
+        """Check if there's already a pending/running agent run for a task."""
+        row = self.db.fetchone(
+            "SELECT id FROM agent_runs WHERE task_id = ? AND status IN ('pending', 'running')",
+            (task_id,),
+        )
+        return row is not None
 
     def start(self, run_id: str) -> AgentRun | None:
         """Mark agent run as started."""

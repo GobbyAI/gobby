@@ -233,6 +233,10 @@ class SessionLifecycleConfig(BaseModel):
         default=10,
         description="Maximum sessions to process per batch",
     )
+    transcript_archive_dir: str = Field(
+        default="~/.gobby/session_transcripts",
+        description="Directory for gzip-compressed transcript backups",
+    )
 
     @field_validator(
         "active_session_pause_minutes",

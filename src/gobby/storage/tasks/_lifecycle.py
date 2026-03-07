@@ -358,5 +358,12 @@ def delete_task(
     # when the task is deleted - no explicit action needed
 
     with db.transaction() as conn:
+        # Defensive: clear FK references that manual cascade may have missed.
+        # tasks.parent_task_id lacks ON DELETE CASCADE, so orphan children
+        # would cause an FK constraint failure without this cleanup.
+        conn.execute(
+            "DELETE FROM task_dependencies WHERE task_id = ? OR depends_on = ?", (task_id, task_id)
+        )
+        conn.execute("UPDATE tasks SET parent_task_id = NULL WHERE parent_task_id = ?", (task_id,))
         conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     return True

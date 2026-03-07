@@ -1,0 +1,16 @@
+tags: [code-index, gobby, default]
+
+rules:
+  code-index-compress-reads:
+    description: "Replace large Read outputs with symbol outlines"
+    event: after_tool
+    enabled: false
+    priority: 40
+    when: >
+      event.data.get('tool_name') == 'Read'
+      and len(event.data.get('tool_output', '')) > 20000
+    conditions:
+      - "variables.get('code_index_available', False)"
+    effects:
+      - type: compress_output
+        compressor: code_index

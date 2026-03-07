@@ -1,4 +1,4 @@
-tags: [memory-lifecycle, memory, lifecycle, digest]
+tags: [memory-lifecycle, memory, lifecycle, digest, gobby, default]
 
 rules:
   digest-on-plan-turn-end:

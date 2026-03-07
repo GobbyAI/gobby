@@ -73,14 +73,15 @@ class TestToolHygieneSync:
         for row in rules:
             if row.name in {"require-uv", "track-pending-memory-review"}:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
-                assert body.effect.type in {"block", "set_variable"}
+                effect_types = {e.type for e in body.resolved_effects}
+                assert effect_types <= {"block", "set_variable", "rewrite_input", "inject_context"}
 
 
 class TestRequireUvRule:
-    """Verify require-uv rule blocks naked python/pip."""
+    """Verify require-uv rule rewrites naked python/pip to use uv."""
 
-    def test_blocks_bash_tool(self, db, manager) -> None:
-        """require-uv should target the Bash tool."""
+    def test_uses_rewrite_input(self, db, manager) -> None:
+        """require-uv should use rewrite_input + inject_context effects."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv", include_templates=True)
@@ -88,29 +89,21 @@ class TestRequireUvRule:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
-        assert body.effect.type == "block"
-        assert body.effect.tools == ["Bash"]
+        effect_types = {e.type for e in body.resolved_effects}
+        assert "rewrite_input" in effect_types
+        assert "inject_context" in effect_types
 
-    def test_has_command_pattern_for_python_pip(self, db, manager) -> None:
-        """require-uv should have a command pattern matching python/pip."""
+    def test_rewrite_has_regex_replace(self, db, manager) -> None:
+        """rewrite_input should use regex_replace to transform commands."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv", include_templates=True)
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        assert body.effect.command_pattern is not None
-        assert "python" in body.effect.command_pattern
-        assert "pip" in body.effect.command_pattern
-
-    def test_has_command_not_pattern_for_uv(self, db, manager) -> None:
-        """require-uv should have a not-pattern allowing uv commands."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("require-uv", include_templates=True)
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.effect.command_not_pattern is not None
-        assert "uv" in body.effect.command_not_pattern
+        rewrite_effects = [e for e in body.resolved_effects if e.type == "rewrite_input"]
+        assert len(rewrite_effects) == 1
+        assert "command" in rewrite_effects[0].input_updates
+        assert "regex_replace" in rewrite_effects[0].input_updates["command"]
 
     def test_has_when_condition(self, db, manager) -> None:
         """require-uv should only fire when require_uv variable is set."""

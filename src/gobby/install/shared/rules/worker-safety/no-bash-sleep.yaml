@@ -1,0 +1,13 @@
+tags: [worker-safety, gobby]
+
+rules:
+  no-bash-sleep:
+    description: "Block bash sleep commands. Use event-driven patterns instead."
+    event: before_tool
+    enabled: false
+    when: "variables.get('is_spawned_agent')"
+    effect:
+      type: block
+      tools: [Bash]
+      command_pattern: "\\bsleep\\s+"
+      reason: "Blocking sleep is not allowed. Use wait steps or completion events."

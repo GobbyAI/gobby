@@ -70,7 +70,7 @@ Pipeline: orchestrator
   │     └── step: terminate              # tool-locked: only kill_agent
   ├── spawn agent: qa-reviewer           # review + approve/reject
   ├── spawn agent: merge                 # merge approved branches
-  └── recurse: next iteration            # loop until all tasks closed
+  └── register continuations, exit        # re-invoked on agent completion
 ```
 
 Each layer does what it's good at:

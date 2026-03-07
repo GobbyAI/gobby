@@ -15,11 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from gobby.config.sessions import SessionLifecycleConfig
+from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.session_messages import LocalSessionMessageManager
+from gobby.storage.session_transcripts import LocalSessionTranscriptManager
 from gobby.storage.sessions import LocalSessionManager
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,7 @@ class SessionLifecycleManager:
         self.config = config
         self.session_manager = LocalSessionManager(db)
         self.message_manager = LocalSessionMessageManager(db)
+        self.transcript_manager = LocalSessionTranscriptManager(db)
         self.memory_manager = memory_manager
         self.llm_service = llm_service
         self.memory_sync_manager = memory_sync_manager
@@ -139,6 +142,11 @@ class SessionLifecycleManager:
             timeout_minutes=self.config.active_session_pause_minutes
         )
 
+        # Expire orphaned handoff_ready sessions (legitimate handoffs complete
+        # within seconds, so 30 min is generous). This catches sessions that
+        # never got picked up by a child session.
+        orphaned = self.session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30)
+
         # Then expire sessions that have been paused/active for too long
         expired = self.session_manager.expire_stale_sessions(
             timeout_hours=self.config.stale_session_timeout_hours
@@ -147,7 +155,7 @@ class SessionLifecycleManager:
         # Clean up stale prompt files (run in thread to avoid blocking)
         await asyncio.to_thread(self._cleanup_prompt_files)
 
-        return paused + expired
+        return paused + orphaned + expired
 
     def _cleanup_prompt_files(self, max_age_seconds: int = 3600) -> int:
         """Delete prompt files older than max_age_seconds.
@@ -196,13 +204,37 @@ class SessionLifecycleManager:
         if not sessions:
             return 0
 
+        archive_dir = getattr(self.config, "transcript_archive_dir", None)
+
         processed = 0
         for session in sessions:
             try:
+                # Snapshot raw transcript blob before processing
+                if session.jsonl_path and os.path.exists(session.jsonl_path):
+                    try:
+                        with open(session.jsonl_path, "rb") as f:
+                            raw = f.read()
+                        if raw:
+                            self.transcript_manager.store_transcript(session.id, raw)
+                    except Exception as e:
+                        logger.warning(f"Transcript blob snapshot failed for {session.id}: {e}")
+
                 await self._process_session_transcript(session.id, session.jsonl_path)
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.debug(f"Processed transcript for session {session.id}")
+
+                # Best-effort backup of the transcript archive
+                if session.jsonl_path and session.external_id:
+                    try:
+                        await asyncio.to_thread(
+                            backup_transcript,
+                            session.external_id,
+                            session.jsonl_path,
+                            archive_dir,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Transcript backup failed for {session.id}: {e}")
             except Exception as e:
                 logger.error(f"Failed to process transcript for {session.id}: {e}")
 

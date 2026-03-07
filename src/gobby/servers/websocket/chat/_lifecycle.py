@@ -180,6 +180,36 @@ class ChatLifecycleMixin:
                 "system_message": response.system_message,
             }
 
+            # --- Output compression (parity with hook_manager.py:392-416) ---
+            compression_cfg = (response.metadata or {}).get("compression")
+            if compression_cfg and event_type == HookEventType.AFTER_TOOL:
+                try:
+                    tool_output = (data or {}).get("tool_output", "")
+                    if isinstance(tool_output, str) and tool_output:
+                        from gobby.compression import OutputCompressor
+
+                        command_hint = (data or {}).get("tool_name", "")
+                        compressor = OutputCompressor(
+                            max_lines=compression_cfg.get("max_lines") or 100,
+                        )
+                        comp_result = compressor.compress(command_hint, tool_output)
+                        if comp_result.strategy_name not in ("passthrough", "excluded"):
+                            result["modified_output"] = comp_result.compressed
+                            logger.info(
+                                "Compressed MCP output: strategy=%s savings=%.0f%% (%d->%d chars)",
+                                comp_result.strategy_name,
+                                comp_result.savings_pct,
+                                comp_result.original_chars,
+                                comp_result.compressed_chars,
+                            )
+                except Exception as exc:
+                    logger.warning("Output compression failed: %s", exc)
+
+            # --- Input rewriting (parity with hook_manager.py:387-390) ---
+            if response.modified_input:
+                result["modified_input"] = response.modified_input
+                result["auto_approve"] = response.auto_approve
+
             # Session context enrichment (parity with CLI adapter)
             if session and getattr(session, "seq_num", None):
                 session_ref = f"#{session.seq_num}"
@@ -205,6 +235,9 @@ class ChatLifecycleMixin:
                     await hook_broadcaster.broadcast_event(event, response)
                 except Exception as exc:
                     logger.debug("_fire_lifecycle: broadcast failed: %s", exc)
+
+            # --- Non-blocking webhook dispatch (parity with hook_manager.py:442-446) ---
+            await self._dispatch_non_blocking_webhooks(event)
 
             return result
         except Exception as e:
@@ -313,3 +346,30 @@ class ChatLifecycleMixin:
                 exc_info=True,
             )
         return None
+
+    async def _dispatch_non_blocking_webhooks(self, event: HookEvent) -> None:
+        """Dispatch non-blocking webhooks (fire-and-forget).
+
+        Mirrors HookManager._dispatch_webhooks_async for CLI parity.
+        Filters to non-blocking endpoints (opposite of _evaluate_blocking_webhooks).
+        """
+        webhook_dispatcher = getattr(self, "webhook_dispatcher", None)
+        if not webhook_dispatcher or not webhook_dispatcher.config.enabled:
+            return
+
+        try:
+            matching_endpoints = [
+                ep
+                for ep in webhook_dispatcher.config.endpoints
+                if ep.enabled
+                and webhook_dispatcher._matches_event(ep, event.event_type.value)
+                and not ep.can_block
+            ]
+            if not matching_endpoints:
+                return
+
+            payload = webhook_dispatcher._build_payload(event)
+            tasks = [webhook_dispatcher._dispatch_single(ep, payload) for ep in matching_endpoints]
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as exc:
+            logger.warning("Non-blocking webhook dispatch failed: %s", exc)

@@ -1,4 +1,4 @@
-tags: [plan-mode, state-tracking]
+tags: [plan-mode, state-tracking, gobby, default]
 
 rules:
   handle-plan-mode-exit:

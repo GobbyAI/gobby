@@ -56,10 +56,11 @@ steps:
   # --- 4. Gate: fail if spec is invalid ---
   - id: check_valid
     condition: "${{ not steps.validate.output.valid }}"
-    exec: >
-      echo "Expansion spec validation failed:" >&2;
-      echo "${{ steps.validate.output.errors }}" >&2;
-      exit 1
+    mcp:
+      server: gobby-workflows
+      tool: fail_pipeline
+      arguments:
+        message: "Expansion spec validation failed: ${{ steps.validate.output.errors }}"
 
   # --- 5. Execute the expansion atomically ---
   - id: execute

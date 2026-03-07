@@ -54,14 +54,15 @@ class LocalSessionMessageManager:
                 query = """
                 INSERT INTO session_messages (
                     session_id, message_index, role, content, content_type,
-                    tool_name, tool_input, tool_result, timestamp, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tool_name, tool_input, tool_result, tool_use_id, timestamp, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id, message_index) DO UPDATE SET
                     content=excluded.content,
                     content_type=excluded.content_type,
                     tool_name=excluded.tool_name,
                     tool_input=excluded.tool_input,
                     tool_result=excluded.tool_result,
+                    tool_use_id=excluded.tool_use_id,
                     timestamp=excluded.timestamp,
                     raw_json=excluded.raw_json
                 """
@@ -77,6 +78,7 @@ class LocalSessionMessageManager:
                         msg.tool_name,
                         tool_input,
                         tool_result,
+                        msg.tool_use_id,
                         msg.timestamp.isoformat(),
                         raw_json,
                     ),

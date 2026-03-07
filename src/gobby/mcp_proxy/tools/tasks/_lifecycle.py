@@ -96,14 +96,32 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         repo_path = ctx.get_project_repo_path(task.project_id)
         cwd = repo_path or "."
 
-        # Check for linked commits (unless task type doesn't require commits)
-        commit_result = validate_commit_requirements(task, reason, repo_path)
-        if not commit_result.can_close:
-            return {
-                "success": False,
-                "error": commit_result.error_type,
-                "message": commit_result.message,
-            }
+        # Check if this is a parent task with all children closed
+        # Parent tasks (epics) are organizational containers — no own commits needed
+        children_for_parent_check = ctx.task_manager.list_tasks(parent_task_id=resolved_id, limit=1)
+        is_parent_all_closed = False
+        if children_for_parent_check:
+            parent_result = validate_parent_task(ctx, resolved_id)
+            if not parent_result.can_close:
+                response: dict[str, Any] = {
+                    "success": False,
+                    "error": parent_result.error_type,
+                    "message": parent_result.message,
+                }
+                if parent_result.extra:
+                    response.update(parent_result.extra)
+                return response
+            is_parent_all_closed = True
+
+        # Check for linked commits (unless parent with all children closed)
+        if not is_parent_all_closed:
+            commit_result = validate_commit_requirements(task, reason, repo_path)
+            if not commit_result.can_close:
+                return {
+                    "success": False,
+                    "error": commit_result.error_type,
+                    "message": commit_result.message,
+                }
 
         # Auto-skip validation for certain close reasons
         should_skip = skip_validation or reason.lower() in SKIP_REASONS
@@ -119,7 +137,8 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         # Enforce commits if session had edits
         # Only skip for explicit skip_validation, NOT for close reasons like out_of_repo
         # (if the session edited in-repo files, those need commits regardless of reason)
-        if resolved_session_id and not skip_validation:
+        # Also skip for parent tasks with all children closed (no direct edits expected)
+        if not is_parent_all_closed and resolved_session_id and not skip_validation:
             try:
                 from gobby.storage.sessions import LocalSessionManager
 
@@ -146,18 +165,18 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 # Don't block close on internal error
                 logger.debug("Best-effort session edit check failed: %s", e)
 
-        if not should_skip:
+        if not should_skip and not is_parent_all_closed:
             # Check if task has children (is a parent task)
             parent_result = validate_parent_task(ctx, resolved_id)
             if not parent_result.can_close:
-                response: dict[str, Any] = {
+                err_response: dict[str, Any] = {
                     "success": False,
                     "error": parent_result.error_type,
                     "message": parent_result.message,
                 }
                 if parent_result.extra:
-                    response.update(parent_result.extra)
-                return response
+                    err_response.update(parent_result.extra)
+                return err_response
 
             # Check for leaf task with validation criteria
             children = ctx.task_manager.list_tasks(parent_task_id=resolved_id, limit=1)

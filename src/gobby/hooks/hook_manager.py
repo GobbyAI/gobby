@@ -383,6 +383,40 @@ class HookManager:
                 return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
         # --- Common post-processing ---
+
+        # Propagate rewrite_input from rule evaluation to response (PreToolUse)
+        if "_modified_input" in event.metadata:
+            response.modified_input = event.metadata.pop("_modified_input")
+            response.auto_approve = event.metadata.pop("_auto_approve", False)
+
+        # Apply output compression from rule evaluation (PostToolUse)
+        if "_compression" in event.metadata:
+            compression_cfg = event.metadata.pop("_compression")
+            try:
+                tool_output = event.data.get("tool_output", "")
+                if isinstance(tool_output, str) and tool_output:
+                    from gobby.compression import OutputCompressor
+
+                    command_hint = event.data.get("tool_name", "")
+                    compressor = OutputCompressor(
+                        max_lines=compression_cfg.get("max_lines") or 100,
+                    )
+                    result = compressor.compress(command_hint, tool_output)
+                    if result.strategy_name not in ("passthrough", "excluded"):
+                        response.modified_output = (
+                            f"[Output compressed by Gobby — {result.strategy_name}, "
+                            f"{result.savings_pct:.0f}% reduction]\n{result.compressed}"
+                        )
+                        self.logger.info(
+                            "Compressed MCP output: strategy=%s savings=%.0f%% (%d->%d chars)",
+                            result.strategy_name,
+                            result.savings_pct,
+                            result.original_chars,
+                            result.compressed_chars,
+                        )
+            except Exception as e:
+                self.logger.warning(f"Output compression failed: {e}")
+
         try:
             self._enricher.enrich(event, response, workflow_context=workflow_context)
         except Exception as e:
@@ -474,6 +508,15 @@ class HookManager:
                     event.metadata.get("_platform_session_id", "unknown"),
                 )
                 return None, workflow_response
+
+            # Stash rewrite_input / compress_output data on event.metadata
+            # so the main handle() method can propagate them to the final response
+            if workflow_response.modified_input:
+                event.metadata["_modified_input"] = workflow_response.modified_input
+                event.metadata["_auto_approve"] = workflow_response.auto_approve
+            compression = (workflow_response.metadata or {}).get("compression")
+            if compression:
+                event.metadata["_compression"] = compression
 
             # Capture context to merge later
             workflow_context = workflow_response.context if workflow_response.context else None

@@ -308,7 +308,7 @@ pipeline-auto-run:
   when: "variables.get('_assigned_pipeline')"
   effect:
     type: mcp_call
-    server: gobby-pipelines
+    server: gobby-workflows
     tool: run_pipeline
     arguments:
       name: "{{ _assigned_pipeline }}"
@@ -394,7 +394,7 @@ pipeline-auto-run:
         ## Pipeline Execution Mode
         You are a pipeline execution agent. Your pipeline ({{ _assigned_pipeline }}) is starting automatically.
     - type: mcp_call
-      server: gobby-pipelines
+      server: gobby-workflows
       tool: run_pipeline
       arguments:
         name: "{{ _assigned_pipeline }}"
@@ -496,6 +496,16 @@ when: "variables.get('enforce_tdd') if variables.get('tdd_enabled') else False"
 
 # Arithmetic
 when: "variables.get('stop_attempts', 0) + 1 > variables.get('max_stop_attempts', 3)"
+
+# Comprehensions and aggregation
+when: "any(p in event.data.get('tool_input', {}).get('command', '') for p in ['git ', 'pytest', 'ruff '])"
+when: "all(v > 0 for v in variables.get('scores', []))"
+
+# List comprehensions
+when: "len([f for f in variables.get('files', []) if f.endswith('.py')]) > 0"
+
+# Dict literals
+when: "event.data.get('tool_input', {}).get('command', '') != ''"
 ```
 
 ### Built-in Helper Functions
@@ -505,6 +515,7 @@ These functions are available in `when` conditions via `build_condition_helpers`
 | Function | Description |
 |----------|-------------|
 | `len()`, `bool()`, `str()`, `int()`, `list()`, `dict()` | Standard Python builtins |
+| `any()`, `all()` | Aggregate checks (work with generator expressions) |
 | `isinstance()` | Type checking |
 | `task_tree_complete(task_id)` | Check if a task and all subtasks are complete |
 | `task_needs_user_review(task_id)` | Check if task is awaiting human review |
@@ -528,6 +539,16 @@ The evaluator allows these methods on specific types:
 | `dict` | `get`, `keys`, `values`, `items` |
 | `str` | `strip`, `lstrip`, `rstrip`, `startswith`, `endswith`, `lower`, `upper`, `split` |
 | `list` | `count`, `index` |
+
+### Supported Expressions
+
+The safe evaluator also supports:
+
+- **List/tuple/dict literals**: `[]`, `()`, `{}`
+- **Generator expressions**: `x for x in items if cond`
+- **List comprehensions**: `[x for x in items if cond]`
+- **Ternary expressions**: `x if cond else y`
+- **Arithmetic**: `+`, `-`, `*`, `//`, `%`
 
 ---
 
@@ -644,7 +665,7 @@ Gobby ships with 14 rule groups (plus deprecated). All bundled rules have `enabl
 
 | Group | Rules | Purpose |
 |-------|-------|---------|
-| `worker-safety` | 6 | Block git push (all agents + worker-specific), force push, destructive git, agent spawn from merge agents, external GitHub issues |
+| `worker-safety` | 7 | Block git push (all agents + worker-specific), force push, destructive git, bash sleep, agent spawn from merge agents, external GitHub issues |
 | `tool-hygiene` | 2 | Require `uv` for Python, track pending memory review |
 | `progressive-discovery` | 7 | Enforce MCP discovery order: list_servers → list_tools → get_schema → call_tool |
 | `task-enforcement` | 6 | Block native task tools, require task before edit, track claims, require commits before close, block validation skip with commit |

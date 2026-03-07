@@ -1,5 +1,5 @@
 name: default
-description: Baseline agent — loads all gobby-tagged rules, all skills available, inherits provider from CLI
+description: Baseline agent — loads all default-tagged rules, all skills available, inherits provider from CLI
 mode: self
 provider: inherit
 timeout: 0
@@ -41,7 +41,7 @@ instructions: |
 workflows:
   rule_selectors:
     include:
-      - "tag:gobby"
+      - "tag:default"
   # skill_selectors intentionally omitted (null) — all enabled skills available.
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
   # Rules are enforcement (explicit), skills/variables are permissive by default.

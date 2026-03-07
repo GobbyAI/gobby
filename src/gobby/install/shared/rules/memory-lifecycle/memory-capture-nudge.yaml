@@ -1,4 +1,4 @@
-tags: [memory-lifecycle, memory, lifecycle]
+tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 
 rules:
   memory-capture-nudge:

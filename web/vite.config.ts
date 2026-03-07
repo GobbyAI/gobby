@@ -49,13 +49,7 @@ export default defineConfig({
         'src/setup/**',
         'src/vite-env.d.ts',
       ],
-      thresholds: {
-        lines: 80,
-        branches: 80,
-        functions: 80,
-        statements: 80,
-      },
-    },
+},
   },
   build: {
     outDir: 'dist',

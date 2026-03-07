@@ -9,6 +9,8 @@ from gobby.config.app import load_config
 from .agents import agents
 from .auth import auth
 from .clones import clones
+from .code_index import code_index
+from .compress import compress
 from .cron import cron
 from .daemon import restart, start, status, stop
 from .export_import import export_cmd, import_cmd
@@ -79,5 +81,7 @@ cli.add_command(webhooks)
 cli.add_command(ui)
 cli.add_command(sync)
 cli.add_command(auth)
+cli.add_command(compress)
 cli.add_command(export_cmd)
 cli.add_command(import_cmd)
+cli.add_command(code_index)

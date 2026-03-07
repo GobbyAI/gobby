@@ -1,7 +1,7 @@
 ---
 name: test-battery
 description: "Use when user asks to 'run test battery', 'orchestrator test', 'e2e test', 'test the orchestrator'. Interactive skill that walks through the orchestrator test battery step by step."
-version: "1.0.0"
+version: "1.1.0"
 category: testing
 triggers: test battery, orchestrator test, run test battery, e2e test
 metadata:
@@ -55,8 +55,8 @@ Walk through each section interactively, reporting results as you go.
 
 ### Section 3: Orchestrator Run
 
-1. Start the orchestrator pipeline (non-blocking)
-2. Monitor progress by periodically checking:
+1. Start the orchestrator pipeline (returns after first pass)
+2. Monitor progress — each pass is a separate pipeline execution triggered by agent completions. Check:
    - Worktree creation
    - Developer dispatch
    - Step workflow transitions
@@ -73,7 +73,22 @@ Walk through each section interactively, reporting results as you go.
    ✓ Merge: epic branch merged to target
    ```
 
-**Important:** This section takes time. Use `get_pipeline_status` to poll progress. Don't rush — let agents complete their work.
+**Monitoring:** Each orchestrator pass is a separate execution. Check `orchestration_complete` in execution results to know when the overall work is finished. Use `gobby pipelines history orchestrator` to see the chain of passes, or check task states directly with `gobby tasks list --parent <epic_id>`.
+
+### Section 3.7: Standalone Task Test (Optional)
+
+1. Create a single non-epic task
+2. Run the orchestrator on it
+3. Verify it completes dev → QA → merge → close across event-driven passes
+4. Report:
+   ```
+   Section 3.7: Standalone Task Test
+   ✓ Standalone detected (is_standalone: true)
+   ✓ Developer dispatched for task itself
+   ✓ QA dispatched on needs_review
+   ✓ Merge dispatched on review_approved
+   ✓ orchestration_complete: true
+   ```
 
 ### Section 4: Cleanup
 
@@ -111,10 +126,10 @@ Compile the full results:
 
 Section 1: Setup         [2/2 PASS]
 Section 2: Expansion     [4/4 PASS]
-Section 3: Orchestrator  [5/6 PASS, 1 FAIL]
+Section 3: Orchestrator  [6/7 PASS, 1 FAIL]
 Section 4: Cleanup       [2/2 PASS]
 
-Total: 13/14 PASS
+Total: 14/15 PASS
 
 Issues Found: 2
   #<N> Bug: QA agent couldn't see worktree files
@@ -126,7 +141,8 @@ Overall: PASS WITH ISSUES
 
 ## Tips
 
-- Use `gobby pipelines status <id>` to check pipeline progress
+- Use `gobby pipelines history orchestrator` to see the chain of event-driven passes
+- Use `gobby pipelines status <id>` to check a specific pass and its `orchestration_complete` result
 - Use `gobby agents ps` to see running agents
 - Use `gobby tasks list --parent <epic_id>` to check task states
 - If an agent gets stuck, use `gobby agents kill <run_id>`

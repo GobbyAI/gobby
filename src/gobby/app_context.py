@@ -76,6 +76,9 @@ class ServiceContainer:
     skill_manager: Any | None = None  # LocalSkillManager
     hub_manager: Any | None = None  # HubManager
 
+    # Code Index
+    code_indexer: Any | None = None  # CodeIndexer
+
     # Config
     config_store: Any | None = None  # ConfigStore
 

@@ -1,4 +1,4 @@
-tags: [task-enforcement, enforcement, tasks]
+tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
   block-ask-during-stop-compliance:

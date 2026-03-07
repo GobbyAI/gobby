@@ -264,6 +264,14 @@ export function computeLineDiff(oldStr: string, newStr: string): { type: 'keep' 
   const n = oldLines.length
   const m = newLines.length
 
+  // Bail out for large diffs — O(n*m) DP table would freeze the browser
+  if (n + m > 500) {
+    return [
+      ...oldLines.map(line => ({ type: 'remove' as const, line })),
+      ...newLines.map(line => ({ type: 'add' as const, line })),
+    ]
+  }
+
   // Build LCS table
   const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0))
   for (let i = 1; i <= n; i++) {

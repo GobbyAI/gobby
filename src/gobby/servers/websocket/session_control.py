@@ -13,6 +13,7 @@ import logging
 import os
 import signal
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -23,6 +24,7 @@ from gobby.servers.websocket.models import (
     CLEANUP_INTERVAL_SECONDS,
     IDLE_TIMEOUT_SECONDS,
 )
+from gobby.sessions.transcript_archive import restore_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +267,17 @@ class SessionControlMixin:
             except Exception as e:
                 logger.warning(f"Failed to look up source session {source_session_id}: {e}")
 
+        # --- Resume guard: reject if source session is actively in use ---
+        if source_session:
+            blocked_reason = await self._check_resume_blocked(source_session)
+            if blocked_reason:
+                await self._send_error(
+                    websocket,
+                    f"Cannot resume session: {blocked_reason}",
+                    code="RESUME_BLOCKED",
+                )
+                return
+
         # --- Resolve SDK session ID for native resume ---
         sdk_resume_id: str | None = None
 
@@ -322,6 +335,24 @@ class SessionControlMixin:
                                 )
                             except Exception as e:
                                 logger.warning(f"Failed to expire source session: {e}")
+
+        # --- Restore transcript from backup if original is missing ---
+        if sdk_resume_id and source_session:
+            jsonl_path = source_session.jsonl_path
+            if jsonl_path and source_session.external_id:
+                original_exists = await asyncio.to_thread(lambda: Path(jsonl_path).is_file())
+                if not original_exists:
+                    restored = await asyncio.to_thread(
+                        restore_transcript,
+                        source_session.external_id,
+                        jsonl_path,
+                    )
+                    if not restored:
+                        logger.warning(
+                            "Transcript restore failed for %s; falling back to history injection",
+                            source_session_id[:8],
+                        )
+                        sdk_resume_id = None
 
         # Create chat session with optional SDK resume
         try:
@@ -384,6 +415,58 @@ class SessionControlMixin:
             f"Session continued ({resume_mode}): {source_session_id[:8]} -> "
             f"{conversation_id[:8]} (db={session.db_session_id})"
         )
+
+    async def _check_resume_blocked(self, source_session: Any) -> str | None:
+        """Check if a source session is blocked from being resumed.
+
+        Returns a human-readable reason string if blocked, None if resumable.
+        """
+        session_id = source_session.id
+
+        # 1. Active agent (in-memory registry)
+        try:
+            from gobby.agents.registry import get_running_agent_registry
+
+            registry = get_running_agent_registry()
+            running = registry.get_by_session(session_id)
+            if running:
+                return f"session has an active agent ({running.mode})"
+        except Exception as e:
+            logger.debug("Resume block check failed for %s: %s", session_id, e)
+
+        # 2. Active agent (DB fallback — pending/running agent_runs)
+        session_manager = getattr(self, "session_manager", None)
+        if session_manager:
+            try:
+                row = session_manager.db.fetchone(
+                    "SELECT id FROM agent_runs "
+                    "WHERE parent_session_id = ? AND status IN ('pending', 'running') "
+                    "LIMIT 1",
+                    (session_id,),
+                )
+                if row:
+                    return "session has a pending or running agent"
+            except Exception as e:
+                logger.debug("Resume block check failed for %s: %s", session_id, e)
+
+            # 3. Active pipeline
+            try:
+                row = session_manager.db.fetchone(
+                    "SELECT id FROM pipeline_executions "
+                    "WHERE session_id = ? AND status IN ('pending', 'running', 'waiting_approval') "
+                    "LIMIT 1",
+                    (session_id,),
+                )
+                if row:
+                    return "session has an active pipeline"
+            except Exception as e:
+                logger.debug("Resume block check failed for %s: %s", session_id, e)
+
+        # 4. Active web chat session (in-memory)
+        if session_id in {getattr(s, "db_session_id", None) for s in self._chat_sessions.values()}:
+            return "session is active in another web chat"
+
+        return None
 
     async def _handle_set_mode(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle set_mode message to change chat mode for a conversation.
@@ -711,15 +794,14 @@ class SessionControlMixin:
             await session.stop()
             self._chat_sessions.pop(conversation_id, None)
 
-        # Soft-delete: mark as handoff_ready (preserves messages for handoff context;
+        # Soft-delete: mark as expired (preserves messages;
         # hard delete fails due to FK constraints from agent_runs, tasks, etc.)
+        # Use 'expired' not 'handoff_ready' — no child session will pick these up.
         if db_session_id:
             session_manager = getattr(self, "session_manager", None)
             try:
                 if session_manager:
-                    await asyncio.to_thread(
-                        session_manager.update, db_session_id, status="handoff_ready"
-                    )
+                    await asyncio.to_thread(session_manager.update, db_session_id, status="expired")
             except Exception as e:
                 logger.warning(f"Failed to soft-delete session from DB: {e}")
 

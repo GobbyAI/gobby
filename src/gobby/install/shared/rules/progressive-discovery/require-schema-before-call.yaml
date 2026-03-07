@@ -1,14 +1,17 @@
-tags: [progressive-discovery, enforcement, mcp]
+tags: [progressive-discovery, enforcement, mcp, gobby, default]
 
 rules:
   require-schema-before-call:
-    description: "Nudge to fetch schema before call_tool (proxy validates params on error)"
+    description: "Block call_tool before get_tool_schema"
     event: before_tool
     enabled: false
     priority: 22
-    when: "event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool') and not is_discovery_tool(tool_input.get('tool_name')) and not is_tool_unlocked(tool_input)"
+    when: "event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool') and variables.get('enforce_tool_schema_check') and not is_discovery_tool(tool_input.get('tool_name')) and not is_tool_unlocked(tool_input)"
     effect:
-      type: inject_context
-      template: |
-        Note: Schema for {{ tool_input.get('server_name', '') }}/{{ tool_input.get('tool_name', '') }} was not fetched.
-        If parameters are wrong, the error will include the full schema for self-correction.
+      type: block
+      tools: ["mcp__gobby__call_tool"]
+      reason: |
+        Schema for {{ tool_input.get('server_name', '') }}/{{ tool_input.get('tool_name', '') }} was not fetched.
+        Call get_tool_schema("{{ tool_input.get('server_name', '') }}", "{{ tool_input.get('tool_name', '') }}") first.
+
+        Steps: list_mcp_servers() -> list_tools() -> get_tool_schema() -> call_tool()

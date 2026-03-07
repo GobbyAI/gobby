@@ -796,6 +796,7 @@ class TestHookTemplates:
             "pre-merge-commit",
             "post-merge",
             "post-checkout",
+            "post-commit",
         }
         assert set(HOOK_TEMPLATES.keys()) == expected_hooks
 

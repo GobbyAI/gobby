@@ -1,4 +1,4 @@
-tags: [worker-safety, enforcement, agents]
+tags: [worker-safety, enforcement, agents, gobby]
 
 rules:
   no-push-for-workers:

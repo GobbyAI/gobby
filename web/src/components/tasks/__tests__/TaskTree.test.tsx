@@ -1,3 +1,4 @@
+import React from 'react'
 import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import type { GobbyTask } from '../../../hooks/useTasks'
@@ -13,7 +14,7 @@ beforeAll(() => {
 
 // Mock react-arborist since it's heavy and requires DOM measurements
 vi.mock('react-arborist', () => ({
-  Tree: ({ data }: { data: unknown[] }) => (
+  Tree: React.forwardRef(({ data }: { data: unknown[] }, _ref) => (
     <div data-testid="tree">
       {data.map((node: any) => (
         <div key={node.id} data-testid={`tree-node-${node.id}`}>
@@ -21,7 +22,7 @@ vi.mock('react-arborist', () => ({
         </div>
       ))}
     </div>
-  ),
+  )),
 }))
 
 vi.mock('../TaskBadges', () => ({

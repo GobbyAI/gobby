@@ -102,6 +102,7 @@ def prepare_terminal_spawn(
     prompt: str | None = None,
     max_agent_depth: int = 5,
     agent_run_id: str | None = None,
+    task_id: str | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -123,6 +124,7 @@ def prepare_terminal_spawn(
         git_branch: Optional git branch
         prompt: Optional initial prompt
         max_agent_depth: Maximum agent depth
+        task_id: Optional task ID to link to the agent
 
     Returns:
         PreparedSpawn with all necessary spawn configuration
@@ -176,6 +178,7 @@ def prepare_terminal_spawn(
         workflow_name=workflow_name,
         child_session_id=child_session.id,
         run_id=agent_run_id,
+        task_id=task_id,
     )
 
     # Persist agent_run_id to session record for hook-based lifecycle tracking

@@ -136,6 +136,9 @@ def setup_internal_registries(
     # Register if either message_manager or local_session_manager is available
     if message_manager is not None or local_session_manager is not None:
         from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+        from gobby.storage.session_transcripts import LocalSessionTranscriptManager
+
+        _transcript_manager = LocalSessionTranscriptManager(db) if db else None
 
         session_messages_registry = create_session_messages_registry(
             message_manager=message_manager,
@@ -145,6 +148,7 @@ def setup_internal_registries(
             db=db,
             worktree_manager=worktree_storage,
             inter_session_message_manager=inter_session_message_manager,
+            transcript_manager=_transcript_manager,
         )
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")
@@ -262,6 +266,7 @@ def setup_internal_registries(
             worktree_storage=worktree_storage,
             git_manager=git_manager,
             project_id=project_id,
+            task_manager=task_manager,
         )
         manager.add_registry(worktrees_registry)
         logger.debug("Worktrees registry initialized")
@@ -394,21 +399,6 @@ def setup_internal_registries(
             logger.debug("Cron registry initialized")
         except (ImportError, RuntimeError, OSError) as e:
             logger.debug(f"Cron registry not initialized: {e}")
-
-    # Initialize testing registry if database is available
-    if db is not None:
-        try:
-            from gobby.mcp_proxy.tools.testing import create_testing_registry
-
-            testing_registry = create_testing_registry(
-                db=db,
-                llm_service=llm_service,
-                config=_config.test_summarizer if _config else None,
-            )
-            manager.add_registry(testing_registry)
-            logger.debug("Testing registry initialized")
-        except (ImportError, RuntimeError, OSError) as e:
-            logger.debug(f"Testing registry not initialized: {e}")
 
     logger.info(f"Internal registries initialized: {len(manager)} registries")
     return manager

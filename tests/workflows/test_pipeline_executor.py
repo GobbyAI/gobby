@@ -38,6 +38,7 @@ def mock_execution_manager():
     mock_step.status = StepStatus.PENDING
     manager.create_step_execution.return_value = mock_step
     manager.update_step_execution.return_value = mock_step
+    manager.get_failed_steps.return_value = []
     return manager
 
 
@@ -90,7 +91,7 @@ def pipeline_with_prompt():
     return PipelineDefinition(
         name="prompt-pipeline",
         steps=[
-            PipelineStep(id="analyze", exec="./analyze.sh"),
+            PipelineStep(id="analyze", exec="echo analyzing"),
             PipelineStep(id="report", prompt="Generate report from $analyze.output"),
         ],
     )
@@ -106,7 +107,7 @@ def pipeline_with_inputs():
             "mode": {"type": "string", "default": "fast"},
         },
         steps=[
-            PipelineStep(id="process", exec="./process.sh $inputs.target"),
+            PipelineStep(id="process", exec="echo processing"),
         ],
     )
 
@@ -1804,14 +1805,14 @@ class TestNestedPipelineDepthLimit:
             )
 
     @pytest.mark.asyncio
-    async def test_nested_pipeline_cycle_detection(
+    async def test_cross_pipeline_cycle_detection(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
-        """A pipeline already in the call stack raises RuntimeError."""
+        """A cross-pipeline cycle (A->B->A) raises RuntimeError."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         pipeline = PipelineDefinition(
-            name="cycle-pipeline",
+            name="pipeline-a",
             steps=[PipelineStep(id="s1", exec="echo hi")],
         )
         executor = PipelineExecutor(
@@ -1824,8 +1825,35 @@ class TestNestedPipelineDepthLimit:
                 pipeline=pipeline,
                 inputs={},
                 project_id="proj-123",
-                _pipeline_stack=frozenset({"cycle-pipeline"}),
+                _pipeline_stack=frozenset({"pipeline-a", "pipeline-b"}),
             )
+
+    @pytest.mark.asyncio
+    async def test_self_recursion_allowed(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Self-recursion (A->A) is allowed, bounded by depth limit."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        pipeline = PipelineDefinition(
+            name="orchestrator",
+            steps=[PipelineStep(id="s1", exec="echo hi")],
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+        )
+        # Self-recursion should NOT raise cycle error
+        try:
+            await executor.execute(
+                pipeline=pipeline,
+                inputs={},
+                project_id="proj-123",
+                _pipeline_stack=frozenset({"orchestrator"}),
+            )
+        except RuntimeError as e:
+            assert "cycle detected" not in str(e).lower()
 
     @pytest.mark.asyncio
     async def test_nested_pipeline_within_limit(

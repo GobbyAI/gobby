@@ -1,4 +1,4 @@
-tags: [memory-lifecycle, memory, lifecycle]
+tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 
 rules:
   reset-memory-tracking-on-start:

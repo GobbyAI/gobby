@@ -421,6 +421,22 @@ def sync_bundled_rules(db: DatabaseProtocol, rules_path: Path | None = None) -> 
 
     _ensure_gobby_tag_on_installed(manager, "rule")
 
+    # Propagate tags from templates to installed copies where they've drifted
+    # (fixes bug #9657: create_rule doesn't propagate definition_json tags to row-level tags)
+    db.execute(
+        "UPDATE workflow_definitions SET tags = ("
+        "  SELECT t.tags FROM workflow_definitions t"
+        "  WHERE t.name = workflow_definitions.name"
+        "    AND t.source = 'template' AND t.deleted_at IS NULL"
+        ") WHERE source = 'installed' AND deleted_at IS NULL"
+        "  AND workflow_type = 'rule'"
+        "  AND tags != ("
+        "    SELECT t.tags FROM workflow_definitions t"
+        "    WHERE t.name = workflow_definitions.name"
+        "      AND t.source = 'template' AND t.deleted_at IS NULL"
+        "  )",
+    )
+
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
         "Rule definition sync complete",
@@ -453,8 +469,9 @@ def _propagate_to_installed(
     manager: LocalWorkflowDefinitionManager,
     rule_name: str,
     definition_json: str,
+    tags: list[str] | None = None,
 ) -> None:
-    """Propagate definition_json changes from a template to its installed copy.
+    """Propagate definition_json and tags from a template to its installed copy.
 
     Preserves the installed copy's enabled state.
     """
@@ -467,14 +484,16 @@ def _propagate_to_installed(
         from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 
         installed = WorkflowDefinitionRow.from_row(installed_row)
+        updates: dict[str, Any] = {}
         if installed.definition_json != definition_json:
-            manager.update(
-                installed.id,
-                definition_json=definition_json,
-            )
+            updates["definition_json"] = definition_json
+        if tags is not None and set(tags or []) != set(installed.tags or []):
+            updates["tags"] = tags
+        if updates:
+            manager.update(installed.id, **updates)
             logger.info(
-                "Propagated definition change to installed copy",
-                extra={"rule": rule_name},
+                "Propagated changes to installed copy",
+                extra={"rule": rule_name, "fields": list(updates.keys())},
             )
 
 
@@ -508,6 +527,10 @@ def _sync_single_rule(
     group = rule_data.get("group", file_group)
     if group:
         body_dict["group"] = group
+    if rule_data.get("agent_scope"):
+        body_dict["agent_scope"] = rule_data["agent_scope"]
+    if rule_data.get("tools"):
+        body_dict["tools"] = rule_data["tools"]
 
     # Validate with Pydantic
     try:
@@ -551,7 +574,9 @@ def _sync_single_rule(
             return
 
         if existing.source == "template":
-            if existing.definition_json == definition_json:
+            def_changed = existing.definition_json != definition_json
+            tags_changed = set(file_tags or []) != set(existing.tags or [])
+            if not def_changed and not tags_changed:
                 result["skipped"] += 1
             else:
                 # Preserve user's enabled toggle on updates
@@ -568,8 +593,8 @@ def _sync_single_rule(
                     tags=file_tags,
                     source="template",
                 )
-                # Propagate definition changes to installed copy (preserve enabled)
-                _propagate_to_installed(manager, rule_name, definition_json)
+                # Propagate changes to installed copy (preserve enabled)
+                _propagate_to_installed(manager, rule_name, definition_json, tags=file_tags)
                 result["updated"] += 1
         else:
             # Non-template copy shadows the template row — get_by_name prefers
@@ -603,26 +628,31 @@ def _sync_single_rule(
                         extra={"rule": rule_name},
                     )
                     result["updated"] += 1
-                elif template.definition_json != definition_json:
-                    manager.update(
-                        template.id,
-                        name=rule_name,
-                        definition_json=definition_json,
-                        workflow_type="rule",
-                        project_id=None,
-                        description=description,
-                        enabled=template.enabled,
-                        priority=priority,
-                        sources=file_sources,
-                        tags=file_tags,
-                        source="template",
-                    )
-                    # Propagate to the installed copy that shadows this template
-                    if existing.source == "installed":
-                        _propagate_to_installed(manager, rule_name, definition_json)
-                    result["updated"] += 1
                 else:
-                    result["skipped"] += 1
+                    def_changed = template.definition_json != definition_json
+                    tags_changed = set(file_tags or []) != set(template.tags or [])
+                    if def_changed or tags_changed:
+                        manager.update(
+                            template.id,
+                            name=rule_name,
+                            definition_json=definition_json,
+                            workflow_type="rule",
+                            project_id=None,
+                            description=description,
+                            enabled=template.enabled,
+                            priority=priority,
+                            sources=file_sources,
+                            tags=file_tags,
+                            source="template",
+                        )
+                        # Propagate to the installed copy that shadows this template
+                        if existing.source == "installed":
+                            _propagate_to_installed(
+                                manager, rule_name, definition_json, tags=file_tags
+                            )
+                        result["updated"] += 1
+                    else:
+                        result["skipped"] += 1
             else:
                 # No template row exists — create one
                 manager.create(

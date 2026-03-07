@@ -25,6 +25,9 @@ vi.mock('../McpHealthCard', () => ({
 vi.mock('../MemorySkillsCard', () => ({
   MemorySkillsCard: () => <div data-testid="memory-card">Memory</div>,
 }))
+vi.mock('../PipelinesCard', () => ({
+  PipelinesCard: () => <div data-testid="pipelines-card">Pipelines</div>,
+}))
 
 import { DashboardPage } from '../DashboardPage'
 import { useDashboard } from '../../../hooks/useDashboard'
@@ -42,6 +45,7 @@ const SAMPLE_DATA: AdminStatus = {
   tasks: { open: 3, in_progress: 1, closed: 10, ready: 0, blocked: 0 },
   memory: { count: 42 },
   skills: { total: 15 },
+  pipelines: { running: 0, waiting_approval: 0, completed: 3, failed: 1, total: 4 },
 }
 
 const mockRefresh = vi.fn()

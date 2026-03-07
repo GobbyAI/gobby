@@ -100,6 +100,7 @@ export interface ChatState {
   worktreePath: string | null;
   isStreaming: boolean;
   isThinking: boolean;
+  isLoadingMessages?: boolean;
   isConnected: boolean;
   contextUsage?: ContextUsage;
   onSend: (content: string, files?: QueuedFile[]) => void;

@@ -257,7 +257,11 @@ class SessionEventHandlerMixin(EventHandlersBase):
         workflow_name = input_data.get("workflow_name")
         agent_depth = input_data.get("agent_depth")
 
-        if not parent_session_id and self._session_storage:
+        if (
+            not parent_session_id
+            and self._session_storage
+            and session_source in ("clear", "compact")
+        ):
             try:
                 parent = self._session_storage.find_parent(
                     machine_id=machine_id,
@@ -341,7 +345,45 @@ class SessionEventHandlerMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning(f"Failed to mark parent session as expired: {e}")
 
-        # Step 2c: Pipeline workflows are executed by the agent via run_pipeline MCP tool.
+        # Step 2c: Set code_index_available if project has an index
+        if session_id and project_id and self._session_storage:
+            try:
+                from gobby.code_index.storage import CodeIndexStorage
+                from gobby.workflows.state_manager import SessionVariableManager
+
+                cis = CodeIndexStorage(self._session_storage.db)
+                stats = cis.get_project_stats(project_id)
+                if stats and stats.total_symbols > 0:
+                    sv_mgr = SessionVariableManager(self._session_storage.db)
+                    sv_mgr.set_variable(session_id, "code_index_available", True)
+            except Exception as e:
+                self.logger.debug(f"Could not check code index availability: {e}")
+
+        # Kick off session-start auto-indexing (fire-and-forget)
+        if session_id and project_id and cwd:
+
+            def _trigger_session_index() -> None:
+                try:
+                    import httpx
+
+                    from gobby.config.bootstrap import load_bootstrap
+
+                    port = load_bootstrap().daemon_port
+                    httpx.post(
+                        f"http://localhost:{port}/api/code-index/session-start",
+                        json={
+                            "project_id": project_id,
+                            "root_path": cwd,
+                            "session_id": session_id,
+                        },
+                        timeout=300,
+                    )
+                except Exception as e:
+                    self.logger.debug(f"Session-start index request failed: {e}")
+
+            threading.Thread(target=_trigger_session_index, daemon=True).start()
+
+        # Step 2d: Pipeline workflows are executed by the agent via run_pipeline MCP tool.
         # Agent rules enforce pipeline execution by blocking all tools except
         # progressive discovery and run_pipeline.
         if workflow_name and session_id:
@@ -350,7 +392,7 @@ class SessionEventHandlerMixin(EventHandlersBase):
                 extra={"workflow_name": workflow_name, "session_id": session_id},
             )
 
-        # Step 2d: Deep load default agent (rules, skills, variables) for new session
+        # Step 2e: Deep load default agent (rules, skills, variables) for new session
         agent_result: AgentActivationResult | None = None
         if session_id:
             try:

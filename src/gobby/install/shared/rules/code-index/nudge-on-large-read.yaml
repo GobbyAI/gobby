@@ -1,0 +1,21 @@
+tags: [code-index, gobby, default]
+
+rules:
+  code-index-nudge-on-read:
+    description: "After reading a large indexed file, nudge agent toward gobby-code"
+    event: after_tool
+    enabled: false
+    priority: 50
+    when: >
+      event.data.get('tool_name') == 'Read'
+      and len(event.data.get('tool_output', '')) > 10000
+    conditions:
+      - "variables.get('code_index_available', False)"
+    effects:
+      - type: inject_context
+        template: |
+          Tip: This file is indexed in gobby-code. For targeted retrieval:
+          - `get_file_outline("{{ event.data.get('tool_input', {}).get('file_path', '') }}")` — symbol map
+          - `search_symbols("query")` — find specific symbols
+          - `get_symbol(id)` — retrieve just the symbol you need
+          This saves 90%+ tokens vs reading the full file.

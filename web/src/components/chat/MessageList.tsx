@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { ChatMessage } from '../../types/chat'
 import { ScrollArea } from './ui/ScrollArea'
 import { MessageItem } from './MessageItem'
+import { MessageErrorBoundary } from './MessageErrorBoundary'
 import { PlanApprovalBar } from './PlanApprovalBar'
 import type { A2UISurfaceState, UserAction } from '../canvas'
 
@@ -9,6 +10,7 @@ interface MessageListProps {
   messages: ChatMessage[]
   isStreaming: boolean
   isThinking: boolean
+  isLoadingMessages?: boolean
   onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => void
   onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => void
   planPendingApproval?: boolean
@@ -18,7 +20,7 @@ interface MessageListProps {
   onCanvasInteraction?: (canvasId: string, action: UserAction) => void
 }
 
-export function MessageList({ messages, isStreaming, isThinking, onRespondToQuestion, onRespondToApproval, planPendingApproval, onApprovePlan, onRequestPlanChanges, canvasSurfaces, onCanvasInteraction }: MessageListProps) {
+export function MessageList({ messages, isStreaming, isThinking, isLoadingMessages, onRespondToQuestion, onRespondToApproval, planPendingApproval, onApprovePlan, onRequestPlanChanges, canvasSurfaces, onCanvasInteraction }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const userScrolledUpRef = useRef(false)
 
@@ -60,23 +62,30 @@ export function MessageList({ messages, isStreaming, isThinking, onRespondToQues
       {messages.length === 0 && !isThinking ? (
         <div className="flex items-center justify-center h-full">
           <div className="text-center text-muted-foreground">
-            <div className="text-lg mb-1">Chat</div>
-            <p className="text-sm">Start a conversation with Gobby</p>
+            {isLoadingMessages ? (
+              <p className="text-sm animate-pulse">Loading messages...</p>
+            ) : (
+              <>
+                <div className="text-lg mb-1">Chat</div>
+                <p className="text-sm">Start a conversation with Gobby</p>
+              </>
+            )}
           </div>
         </div>
       ) : (
         <>
           {messages.map((message, i) => (
-            <MessageItem
-              key={message.id}
-              message={message}
-              isStreaming={isStreaming && i === messages.length - 1}
-              isThinking={isThinking && i === messages.length - 1}
-              onRespondToQuestion={onRespondToQuestion}
-              onRespondToApproval={onRespondToApproval}
-              canvasSurfaces={canvasSurfaces}
-              onCanvasInteraction={onCanvasInteraction}
-            />
+            <MessageErrorBoundary key={message.id} messageId={message.id}>
+              <MessageItem
+                message={message}
+                isStreaming={isStreaming && i === messages.length - 1}
+                isThinking={isThinking && i === messages.length - 1}
+                onRespondToQuestion={onRespondToQuestion}
+                onRespondToApproval={onRespondToApproval}
+                canvasSurfaces={canvasSurfaces}
+                onCanvasInteraction={onCanvasInteraction}
+              />
+            </MessageErrorBoundary>
           ))}
           {isThinking && (messages.length === 0 || messages[messages.length - 1].role === 'user') && (
             <ThinkingIndicator />

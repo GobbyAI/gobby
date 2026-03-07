@@ -1,4 +1,4 @@
-tags: [worker-safety]
+tags: [worker-safety, gobby]
 
 rules:
   no-force-push:

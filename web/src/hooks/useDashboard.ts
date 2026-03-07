@@ -23,6 +23,7 @@ export interface AdminStatus {
   tasks: { open: number; in_progress: number; closed: number; ready: number; blocked: number }
   memory: { count: number }
   skills: { total: number }
+  pipelines: { running: number; waiting_approval: number; completed: number; failed: number; total: number }
 }
 
 export function useDashboard() {

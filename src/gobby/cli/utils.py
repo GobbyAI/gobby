@@ -404,10 +404,15 @@ def kill_all_gobby_daemons() -> int:
                 except psutil.TimeoutExpired:
                     # Force kill if graceful shutdown fails
                     click.echo(f"Process {proc.pid} didn't stop gracefully, force killing...")
-                    proc.kill()
-                    proc.wait(timeout=2)
-                    click.echo(f"Force killed PID {proc.pid}")
-                    killed_count += 1
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=2)
+                        click.echo(f"Force killed PID {proc.pid}")
+                    except psutil.TimeoutExpired:
+                        click.echo(f"Warning: PID {proc.pid} did not exit after SIGKILL", err=True)
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass  # Process died between kill and wait
+                    killed_count += 1  # Count as killed — we sent SIGKILL
 
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             # Process already gone or we can't access it

@@ -487,6 +487,7 @@ class TestSpawnAgentTaskResolution:
         runner = MagicMock()
         runner.can_spawn.return_value = (True, "Can spawn", 0)
         runner._child_session_manager = MagicMock()
+        runner.run_storage.has_active_run_for_task.return_value = False
         return runner
 
     @pytest.fixture

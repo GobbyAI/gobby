@@ -4,21 +4,21 @@ This file provides guidance for developing the Gobby codebase.
 
 ## Guiding Principles
 
-These are enforced by hooks and workflows.
+These are enforced by hooks, rules and workflows.
 
-1. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
-2. **No monoliths.** Keep files under 1,000 lines. Decompose if larger.
-3. **Task before first write.** Create/claim a task before using Edit, Write, or NotebookEdit tools.
-4. **Claim before you work.** You must claim a task to work it.
-5. **No commits without validation.** If work is done, validation must run.
-6. **No closing without commits.** If your session has diffs, commit before closing.
-7. **No stopping until done.** Task must be closed before stopping. If you claim a task, you close a task.
-8. **Embrace your autonomy.** Only mark tasks with the needs_review if you genuinely need the user to review your work. Do not use it as a workaround to not committing/closing. Escalate to the user if you are genuinely stuck or need guidance.
-9. **Triage errors and issues you find.** Create bug tasks for unrelated errors or issues you discover WHEN YOU ENCOUNTER THEM, then continue with your current task. Every error is your error, even if you didn't cause it.
-10. **Use gobby-memory often.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
-11. **No sycophantic behavior.** Do not agree with the user just for the sake of agreement. If you disagree with the user, voice your concerns and provide alternative solutions.
-12. **We don't leave options in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
-13. **Rule templates are not rules.** Templates must be installed in the rules engine and enabled in order to function. Templates are disabled by default. This is intentional. Before telling the user the template is disabled, check if the installed version is enabled.
+1. **ALWAYS use progressive tool discovery.** Do not try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
+2. **NEVER create or leave monoliths.** Keep files under 1,000 lines. Decompose if larger.
+3. **ALWAYS create or claim a task before editing a file.**
+4. **Validation runs when closing with a commit.** `skip_validation` is silently stripped when commits are attached.
+5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
+6. **NEVER stop while you have a claimed task in progress.** Task must be closed before stopping. If you claim a task, you close a task.
+7. **NEVER mark a task as needs_review if you don't genuinely need the user to review your work.** Do not use it as a workaround to not committing/closing. Escalate to the user if you are genuinely stuck or need guidance.
+8. **ALWAYS triage errors and issues you find.** Create bug tasks for unrelated errors or issues you discover WHEN YOU ENCOUNTER THEM, then continue with your current task. Every error is your error, even if you didn't cause it.
+9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
+10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, voice your concerns and provide alternative solutions.
+11. **NEVER leave options in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
+12. **ALWAYS remember: Rule templates are not rules.** Templates must be installed in the rules engine and enabled in order to function. Templates are disabled by default. This is intentional. Before telling the user the template is disabled, check if the installed version is enabled.
+13. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
 
 ## Progressive Tool Discovery Enforced by Hooks
 

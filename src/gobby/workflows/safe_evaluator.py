@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 import logging
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 __all__ = ["LazyBool", "SafeExpressionEvaluator", "build_condition_helpers"]
@@ -250,6 +250,14 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         """Handle list literals (e.g., ['a', 'b', 'c'])."""
         return [self.visit(elt) for elt in node.elts]
 
+    def visit_Dict(self, node: ast.Dict) -> dict[Any, Any]:
+        """Handle dict literals (e.g., {'key': 'value'} or {})."""
+        return {
+            self.visit(k): self.visit(v)
+            for k, v in zip(node.keys, node.values, strict=True)
+            if k is not None
+        }
+
     def visit_Tuple(self, node: ast.Tuple) -> tuple[Any, ...]:
         """Handle tuple literals (e.g., ('a', 'b', 'c'))."""
         return tuple(self.visit(elt) for elt in node.elts)
@@ -260,6 +268,41 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
         if test:
             return self.visit(node.body)
         return self.visit(node.orelse)
+
+    def _eval_comprehension(
+        self, elt: ast.expr, generators: list[ast.comprehension]
+    ) -> Iterator[Any]:
+        """Evaluate comprehension generators, yielding evaluated elt for each iteration."""
+        if not generators:
+            yield self.visit(elt)
+            return
+
+        gen = generators[0]
+        if not isinstance(gen.target, ast.Name):
+            raise ValueError(f"Unsupported comprehension target: {type(gen.target).__name__}")
+        target_name = gen.target.id
+        iterable = self.visit(gen.iter)
+
+        sentinel = object()
+        old_value = self.context.get(target_name, sentinel)
+        try:
+            for item in iterable:
+                self.context[target_name] = item
+                if all(self.visit(if_clause) for if_clause in gen.ifs):
+                    yield from self._eval_comprehension(elt, generators[1:])
+        finally:
+            if old_value is sentinel:
+                self.context.pop(target_name, None)
+            else:
+                self.context[target_name] = old_value
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> Iterator[Any]:
+        """Handle generator expressions (e.g., x for x in items if cond)."""
+        return self._eval_comprehension(node.elt, node.generators)
+
+    def visit_ListComp(self, node: ast.ListComp) -> list[Any]:
+        """Handle list comprehensions (e.g., [x*2 for x in items])."""
+        return list(self._eval_comprehension(node.elt, node.generators))
 
     def generic_visit(self, node: ast.AST) -> Any:
         """Reject any unsupported AST nodes."""
@@ -305,6 +348,8 @@ def build_condition_helpers(
         "int": int,
         "list": list,
         "dict": dict,
+        "any": any,
+        "all": all,
     }
 
     # --- Task helpers ---

@@ -142,6 +142,17 @@ def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOut
         output["hookSpecificOutput"] = specific
         if resp.get("reason"):
             output["reason"] = resp["reason"]
+    elif resp.get("modified_input"):
+        # Rewrite tool input (rewrite_input effect)
+        specific_rewrite = PreToolUseHookSpecificOutput(
+            hookEventName="PreToolUse",
+        )
+        specific_rewrite["updatedInput"] = resp["modified_input"]
+        if resp.get("auto_approve"):
+            specific_rewrite["permissionDecision"] = "allow"
+        if resp.get("context"):
+            specific_rewrite["additionalContext"] = _truncate(resp["context"])
+        output["hookSpecificOutput"] = specific_rewrite
     elif resp.get("context"):
         output["hookSpecificOutput"] = PreToolUseHookSpecificOutput(
             hookEventName="PreToolUse",
@@ -155,6 +166,20 @@ def _response_to_post_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOu
     if not resp:
         return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
+
+    # Compressed MCP output (compress_output effect)
+    modified_output = resp.get("modified_output")
+    if modified_output is not None:
+        hook_specific = PostToolUseHookSpecificOutput(
+            hookEventName="PostToolUse",
+        )
+        hook_specific["updatedMCPToolOutput"] = modified_output
+        context = resp.get("context")
+        if context:
+            hook_specific["additionalContext"] = _truncate(context)
+        output["hookSpecificOutput"] = hook_specific
+        return output
+
     context = resp.get("context")
     if context:
         output["hookSpecificOutput"] = PostToolUseHookSpecificOutput(

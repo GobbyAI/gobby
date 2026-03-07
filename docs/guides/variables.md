@@ -117,7 +117,7 @@ effect:
 
 The engine detects expressions by looking for these indicators in string values:
 - `variables.`, `event.`, `tool_input.`
-- `.get(`, `len(`, `str(`, `int(`, `bool(`
+- `.get(`, `len(`, `str(`, `int(`, `bool(`, `any(`, `all(`
 - ` + `, ` - `, ` and `, ` or `, ` not `
 
 If none of these appear, the value is treated as a literal.

@@ -1,0 +1,13 @@
+tags: [output-compression, token-optimization, gobby, default]
+
+rules:
+  compress-mcp-output:
+    description: "Compress verbose MCP tool output after execution"
+    event: after_tool
+    enabled: false
+    priority: 50
+    when: >
+      event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+      and len(str(event.data.get('tool_output', ''))) > 2000
+    effect:
+      type: compress_output

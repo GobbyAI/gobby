@@ -67,6 +67,7 @@ class PipelineExecutionManager(Protocol):
         approved_by: str | None = None,
         approval_timeout_seconds: int | None = None,
     ) -> StepExecution | None: ...
+    def reset_steps_from(self, execution_id: str, from_step_id: str) -> int: ...
     def create_execution(
         self, pipeline_name: str, inputs_json: str, session_id: str | None = None
     ) -> PipelineExecution: ...
@@ -225,6 +226,148 @@ async def run_pipeline(
         "status": "running",
         "execution_id": execution_id,
         "message": (f"Pipeline '{name}' started. You will be notified when it completes."),
+    }
+
+
+async def resume_pipeline(
+    loader: PipelineLoader | None,
+    executor: Any | None,
+    execution_manager: PipelineExecutionManager | None,
+    execution_id: str,
+    project_id: str,
+    session_id: str | None = None,
+    from_step: str | None = None,
+) -> dict[str, Any]:
+    """
+    Resume a failed pipeline execution by resetting steps from the failure point.
+
+    Determines the resume point (explicit from_step, or auto-detected first
+    failed/errored step), resets that step and all subsequent steps to PENDING,
+    then re-executes via the executor's resume path.
+
+    Args:
+        loader: WorkflowLoader instance
+        executor: PipelineExecutor instance
+        execution_manager: LocalPipelineExecutionManager instance
+        execution_id: ID of the failed execution to resume
+        project_id: Project context for the execution
+        session_id: Optional session that triggered the resume
+        from_step: Optional step ID to resume from (resets this and all later steps)
+
+    Returns:
+        Dict with execution_id and status
+    """
+    if not executor:
+        return {"success": False, "error": "No executor configured"}
+
+    if not execution_manager:
+        return {"success": False, "error": "No execution manager configured"}
+
+    if not loader:
+        return {"success": False, "error": "No loader configured"}
+
+    # Look up the execution
+    execution = execution_manager.get_execution(execution_id)
+    if not execution:
+        return {"success": False, "error": f"Execution '{execution_id}' not found"}
+
+    if execution.status != ExecutionStatus.FAILED:
+        return {
+            "success": False,
+            "error": f"Only failed pipelines can be resumed (current status: {execution.status.value})",
+        }
+
+    # Load the pipeline definition
+    try:
+        pipeline = await loader.load_pipeline(execution.pipeline_name)
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid pipeline '{execution.pipeline_name}': {e}"}
+
+    if not pipeline:
+        return {
+            "success": False,
+            "error": f"Pipeline '{execution.pipeline_name}' not found",
+        }
+
+    # Determine resume point and reset steps
+    steps = execution_manager.get_steps_for_execution(execution_id)
+    if from_step:
+        # User specified — validate it exists
+        step_ids = [s.step_id for s in steps]
+        if from_step not in step_ids:
+            return {
+                "success": False,
+                "error": f"Step '{from_step}' not found. Available: {step_ids}",
+            }
+        resume_step_id = from_step
+    else:
+        # Auto-detect: first FAILED step, or first step with error data
+        resume_step_id = None
+        for step in steps:
+            if step.status == StepStatus.FAILED:
+                resume_step_id = step.step_id
+                break
+            if step.error and step.status in (StepStatus.COMPLETED, StepStatus.SKIPPED):
+                logger.warning(
+                    "Step %s has status %s but carries error: %s",
+                    step.step_id,
+                    step.status.value,
+                    step.error[:200],
+                )
+                resume_step_id = step.step_id
+                break
+        if not resume_step_id:
+            return {
+                "success": False,
+                "error": "No failed or errored step found to resume from",
+            }
+
+    # Reset the resume point and all subsequent steps to PENDING
+    if not resume_step_id:
+        raise ValueError("resume_step_id resolved to None despite early-return guard")
+    reset_count = execution_manager.reset_steps_from(execution_id, resume_step_id)
+
+    # Parse stored inputs
+    inputs: dict[str, Any] = {}
+    if execution.inputs_json:
+        try:
+            inputs = json.loads(execution.inputs_json)
+        except (json.JSONDecodeError, TypeError) as e:
+            return {
+                "success": False,
+                "error": f"Malformed inputs_json for execution {execution_id}: {e}",
+            }
+
+    # Mark as running before spawning background task
+    execution_manager.update_execution_status(
+        execution_id=execution_id,
+        status=ExecutionStatus.RUNNING,
+    )
+
+    task = asyncio.create_task(
+        _execute_pipeline_background(
+            executor,
+            pipeline,
+            inputs,
+            project_id,
+            execution_id,
+            execution.pipeline_name,
+            session_id=session_id or execution.session_id,
+        ),
+        name=f"pipeline-resume-{execution.pipeline_name}-{execution_id[:8]}",
+    )
+    _register_background_task(task)
+
+    return {
+        "success": True,
+        "status": "resuming",
+        "execution_id": execution_id,
+        "reset_from_step": resume_step_id,
+        "steps_reset": reset_count,
+        "message": (
+            f"Pipeline '{execution.pipeline_name}' resuming from step '{resume_step_id}' "
+            f"({reset_count} step(s) reset). You will be notified when it completes."
+        ),
     }
 
 

@@ -2,6 +2,7 @@ import { useDashboard } from '../../hooks/useDashboard'
 import { SystemHealthCard } from './SystemHealthCard'
 import { TasksCard } from './TasksCard'
 import { SessionsCard } from './SessionsCard'
+import { PipelinesCard } from './PipelinesCard'
 import { McpHealthCard } from './McpHealthCard'
 import { MemorySkillsCard } from './MemorySkillsCard'
 import './DashboardPage.css'
@@ -38,6 +39,7 @@ export function DashboardPage() {
           <div className="dash-grid">
             <SystemHealthCard data={data} />
             <TasksCard tasks={data.tasks} />
+            <PipelinesCard pipelines={data.pipelines} />
             <SessionsCard sessions={data.sessions} />
             <McpHealthCard mcpServers={data.mcp_servers} />
             <MemorySkillsCard memory={data.memory} skills={data.skills} />

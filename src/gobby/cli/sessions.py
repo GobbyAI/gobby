@@ -663,3 +663,70 @@ def create_handoff(
         click.echo(f"  Notes: {notes[:50]}{'...' if len(notes) > 50 else ''}")
     for file_path in files_written:
         click.echo(f"  File: {file_path}")
+
+
+@sessions.command("restore")
+@click.argument("session_ref", required=False)
+@click.option("--all", "restore_all", is_flag=True, help="Restore all sessions with stored blobs")
+@click.option("--path", "-p", "target_path", help="Override target path for restore")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def restore_transcript(
+    session_ref: str | None,
+    restore_all: bool,
+    target_path: str | None,
+    json_format: bool,
+) -> None:
+    """Restore session transcript(s) from stored blobs to disk.
+
+    Useful when the CLI has purged the original transcript file
+    but you want to resume the session.
+    """
+    from gobby.storage.session_transcripts import LocalSessionTranscriptManager
+
+    db = LocalDatabase()
+    tm = LocalSessionTranscriptManager(db)
+
+    if not session_ref and not restore_all:
+        raise click.UsageError("Provide a session reference or use --all")
+
+    results: list[dict[str, Any]] = []
+
+    if restore_all:
+        # Find all sessions that have blobs stored
+        rows = db.fetchall(
+            """SELECT st.session_id, s.jsonl_path
+               FROM session_transcripts st
+               JOIN sessions s ON s.id = st.session_id""",
+            (),
+        )
+        for row in rows:
+            sid = row["session_id"]
+            path = tm.restore_to_disk(sid)
+            if path:
+                results.append({"session_id": sid, "path": path, "status": "restored"})
+            else:
+                results.append({"session_id": sid, "status": "skipped", "reason": "no path"})
+    else:
+        assert session_ref is not None
+        resolved_id = resolve_session_id(session_ref)
+        path = tm.restore_to_disk(resolved_id, target_path)
+        if path:
+            results.append({"session_id": resolved_id, "path": path, "status": "restored"})
+        else:
+            click.echo("No transcript blob stored for this session.", err=True)
+            raise SystemExit(1)
+
+    if json_format:
+        click.echo(json.dumps(results, indent=2, default=str))
+        return
+
+    restored = [r for r in results if r["status"] == "restored"]
+    skipped = [r for r in results if r["status"] == "skipped"]
+
+    for r in restored:
+        click.echo(f"Restored {r['session_id'][:12]} -> {r['path']}")
+
+    if skipped:
+        click.echo(f"\nSkipped {len(skipped)} session(s) (no target path)")
+
+    click.echo(f"\nRestored {len(restored)} transcript(s)")

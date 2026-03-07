@@ -185,7 +185,9 @@ class PipelineExecutor:
         if _pipeline_stack is None:
             _pipeline_stack = frozenset()
 
-        if pipeline.name in _pipeline_stack:
+        # Block cross-pipeline cycles (A→B→A) but allow self-recursion (A→A).
+        # Self-recursion is bounded by the depth limit above.
+        if pipeline.name in _pipeline_stack and _pipeline_stack != frozenset({pipeline.name}):
             raise RuntimeError(
                 f"Pipeline cycle detected: '{pipeline.name}' is already in the "
                 f"call stack {sorted(_pipeline_stack)}."
@@ -368,6 +370,31 @@ class PipelineExecutor:
                 # Execute the step
                 step_output = await self._execute_step(step, context, project_id)
 
+                # Detect exec step failures from non-zero exit codes
+                if isinstance(step_output, dict) and step_output.get("exit_code", 0) != 0:
+                    error_msg = (
+                        step_output.get("stderr") or step_output.get("stdout") or "Unknown error"
+                    )
+                    context["steps"][step.id] = {"output": step_output}
+                    self.execution_manager.update_step_execution(
+                        step_execution_id=step_execution.id,
+                        status=StepStatus.FAILED,
+                        output_json=json.dumps(step_output),
+                        error=f"Exit code {step_output['exit_code']}: {error_msg}",
+                    )
+                    raise RuntimeError(
+                        f"Step '{step.id}' failed with exit code {step_output['exit_code']}"
+                    )
+
+                # For exec steps with JSON stdout, merge parsed data into output
+                if isinstance(step_output, dict) and "stdout" in step_output:
+                    try:
+                        parsed = json.loads(step_output["stdout"].strip())
+                        if isinstance(parsed, dict):
+                            step_output.update(parsed)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
                 # Store step output in context for subsequent steps
                 context["steps"][step.id] = {"output": step_output}
 
@@ -388,7 +415,19 @@ class PipelineExecutor:
                     output=step_output,
                 )
 
-            # 5. Mark execution as completed
+            # 5. Safety net — verify no steps failed before marking completed
+            failed_steps = self.execution_manager.get_failed_steps(execution.id)
+            if failed_steps:
+                failed_ids = [s.step_id for s in failed_steps]
+                outputs = self._build_outputs(pipeline, context)
+                self.execution_manager.update_execution_status(
+                    execution_id=execution.id,
+                    status=ExecutionStatus.FAILED,
+                    outputs_json=json.dumps(outputs),
+                )
+                raise RuntimeError(f"Pipeline has failed steps: {', '.join(failed_ids)}")
+
+            # Mark execution as completed
             outputs = self._build_outputs(pipeline, context)
             completed = self.execution_manager.update_execution_status(
                 execution_id=execution.id,
@@ -697,9 +736,17 @@ class PipelineExecutor:
             Dict of output name -> value
         """
         outputs: dict[str, Any] = {}
+        # Build render context once for Jinja2 expressions
+        render_ctx = (
+            self.renderer.build_render_context(context) if self.renderer.template_engine else {}
+        )
 
         for name, expr in pipeline.outputs.items():
-            if isinstance(expr, str) and expr.startswith("$"):
+            if isinstance(expr, str) and "${{" in expr:
+                # Render Jinja2 template expression
+                rendered = self.renderer.render_string(expr, render_ctx)
+                outputs[name] = rendered
+            elif isinstance(expr, str) and expr.startswith("$"):
                 # Resolve $step.output reference
                 value = self._resolve_reference(expr, context)
                 outputs[name] = value

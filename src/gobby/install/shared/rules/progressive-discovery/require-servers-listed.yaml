@@ -1,16 +1,16 @@
-tags: [progressive-discovery, enforcement, mcp]
+tags: [progressive-discovery, enforcement, mcp, gobby, default]
 
 rules:
   require-servers-listed:
-    description: "Block list_tools without prior list_mcp_servers"
+    description: "Block list_tools before list_mcp_servers"
     event: before_tool
     enabled: false
     priority: 20
-    when: "variables.get('enforce_tool_schema_check') and not variables.get('servers_listed')"
+    when: "event.data.get('tool_name') in ('list_tools', 'mcp__gobby__list_tools') and variables.get('enforce_tool_schema_check') and not variables.get('servers_listed')"
     effect:
       type: block
       tools: ["mcp__gobby__list_tools"]
       reason: |
-        Call list_mcp_servers() first, then retry.
+        You haven't called list_mcp_servers() yet.
 
-        Steps: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+        Steps: list_mcp_servers() -> list_tools() -> get_tool_schema() -> call_tool()

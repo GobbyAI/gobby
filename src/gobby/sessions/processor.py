@@ -26,6 +26,10 @@ from gobby.sessions.transcripts.base import TranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.session_messages import LocalSessionMessageManager
+from gobby.storage.session_transcripts import (
+    LocalSessionTranscriptManager,
+    TranscriptSnapshotThrottle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,10 @@ class SessionMessageProcessor:
         self.poll_interval = poll_interval
         self.websocket_server: WebSocketServer | None = websocket_server
         self.session_manager: LocalSessionManager | None = session_manager
+
+        # Transcript blob storage
+        self.transcript_manager = LocalSessionTranscriptManager(db)
+        self._snapshot_throttle = TranscriptSnapshotThrottle()
 
         # Track active sessions: session_id -> transcript_path
         self._active_sessions: dict[str, str] = {}
@@ -116,6 +124,7 @@ class SessionMessageProcessor:
             if session_id in self._parsers:
                 del self._parsers[session_id]
             self._last_mtime.pop(session_id, None)
+            self._snapshot_throttle.remove(session_id)
             logger.debug(f"Unregistered session {session_id}")
 
     async def _loop(self) -> None:
@@ -243,6 +252,9 @@ class SessionMessageProcessor:
                 }
                 await self.websocket_server.broadcast(payload)
 
+        # Snapshot transcript blob (throttled)
+        await self._maybe_snapshot_transcript(session_id, transcript_path)
+
         # Update state
         new_last_index = parsed_messages[-1].index
 
@@ -342,7 +354,46 @@ class SessionMessageProcessor:
             message_index=new_last_index,
         )
 
+        # Snapshot transcript blob (throttled)
+        await self._maybe_snapshot_transcript(session_id, transcript_path)
+
         # Track mtime for change detection
         self._last_mtime[session_id] = current_mtime
 
         logger.debug(f"Processed {len(new_messages)} JSON messages for {session_id}")
+
+    async def _maybe_snapshot_transcript(
+        self, session_id: str, transcript_path: str, *, force: bool = False
+    ) -> None:
+        """Snapshot transcript blob if throttle allows (or force=True)."""
+        if not self._snapshot_throttle.should_snapshot(session_id, force=force):
+            return
+
+        try:
+            raw = await asyncio.to_thread(self._read_file_bytes, transcript_path)
+            if raw:
+                await asyncio.to_thread(self.transcript_manager.store_transcript, session_id, raw)
+                self._snapshot_throttle.record_snapshot(session_id)
+        except Exception as e:
+            logger.warning(f"Transcript snapshot failed for {session_id}: {e}")
+
+    async def force_snapshot(self, session_id: str) -> bool:
+        """Force a transcript snapshot (e.g., on session close).
+
+        Returns True if snapshot was taken, False if no transcript path or error.
+        """
+        transcript_path = self._active_sessions.get(session_id)
+        if not transcript_path or not os.path.exists(transcript_path):
+            return False
+
+        await self._maybe_snapshot_transcript(session_id, transcript_path, force=True)
+        return True
+
+    @staticmethod
+    def _read_file_bytes(path: str) -> bytes | None:
+        """Read entire file as bytes."""
+        try:
+            with open(path, "rb") as f:
+                return f.read()
+        except OSError:
+            return None

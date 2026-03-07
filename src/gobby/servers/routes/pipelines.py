@@ -56,6 +56,73 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
     """
     router = APIRouter(prefix="/api/pipelines", tags=["pipelines"])
 
+    @router.get("/executions")
+    async def list_executions(
+        status: str | None = None,
+        pipeline_name: str | None = None,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """
+        List pipeline executions with optional filters.
+
+        Returns:
+            200: List of executions with steps
+        """
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.workflows.pipeline_state import ExecutionStatus
+
+        execution_manager = LocalPipelineExecutionManager(
+            db=server.services.database, project_id=project_id or ""
+        )
+
+        status_filter = None
+        if status:
+            try:
+                status_filter = ExecutionStatus(status)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from None
+
+        executions = execution_manager.list_executions(
+            status=status_filter,
+            pipeline_name=pipeline_name,
+            limit=limit,
+        )
+
+        # Batch-load steps for all executions in one query
+        all_steps = execution_manager.get_steps_for_executions([e.id for e in executions])
+
+        result = []
+        for execution in executions:
+            steps = all_steps.get(execution.id, [])
+            result.append(
+                {
+                    "id": execution.id,
+                    "pipeline_name": execution.pipeline_name,
+                    "project_id": execution.project_id,
+                    "status": execution.status.value,
+                    "created_at": execution.created_at,
+                    "updated_at": execution.updated_at,
+                    "completed_at": execution.completed_at,
+                    "inputs_json": execution.inputs_json,
+                    "outputs_json": execution.outputs_json,
+                    "steps": [
+                        {
+                            "id": step.id,
+                            "step_id": step.step_id,
+                            "status": step.status.value,
+                            "started_at": step.started_at,
+                            "completed_at": step.completed_at,
+                            "output_json": step.output_json,
+                            "error": step.error,
+                        }
+                        for step in steps
+                    ],
+                }
+            )
+
+        return {"executions": result, "count": len(result)}
+
     @router.post("/run", response_model=None)
     async def run_pipeline(request: PipelineRunRequest) -> dict[str, Any] | JSONResponse:
         """
@@ -155,11 +222,19 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             "status": execution.status.value,
             "created_at": execution.created_at,
             "updated_at": execution.updated_at,
+            "completed_at": execution.completed_at,
+            "inputs_json": execution.inputs_json,
+            "outputs_json": execution.outputs_json,
             "steps": [
                 {
                     "id": step.id,
                     "step_id": step.step_id,
                     "status": step.status.value,
+                    "started_at": step.started_at,
+                    "completed_at": step.completed_at,
+                    "output_json": step.output_json,
+                    "error": step.error,
+                    "approval_token": step.approval_token,
                 }
                 for step in steps
             ],

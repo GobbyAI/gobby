@@ -6,6 +6,7 @@ Provides session registration, listing, lookup, and update endpoints.
 
 import asyncio
 import logging
+import os
 import re
 import subprocess  # nosec B404 - subprocess needed for git commit counting
 import time
@@ -164,6 +165,76 @@ def _sanitize_title(raw: str) -> str:
     return title or "Untitled Session"
 
 
+async def _compute_resumability(
+    server: "HTTPServer",
+    sessions: list[Any],
+    current_session_id: str | None,
+) -> dict[str, tuple[bool, str | None]]:
+    """Compute resumability for each session.
+
+    Returns a dict mapping session_id -> (is_resumable, blocked_reason).
+    """
+    result: dict[str, tuple[bool, str | None]] = {}
+
+    # Batch-load active agent runs and pipeline executions
+    active_agent_session_ids: set[str] = set()
+    active_pipeline_session_ids: set[str] = set()
+
+    if server.session_manager:
+        db = server.session_manager.db
+        try:
+            rows = db.fetchall(
+                "SELECT DISTINCT parent_session_id FROM agent_runs "
+                "WHERE status IN ('pending', 'running') AND parent_session_id IS NOT NULL"
+            )
+            active_agent_session_ids = {r["parent_session_id"] for r in rows}
+        except Exception as e:
+            logger.debug("Failed to fetch active agent session ids: %s", e)
+
+        try:
+            rows = db.fetchall(
+                "SELECT DISTINCT session_id FROM pipeline_executions "
+                "WHERE status IN ('pending', 'running', 'waiting_approval') AND session_id IS NOT NULL"
+            )
+            active_pipeline_session_ids = {r["session_id"] for r in rows}
+        except Exception as e:
+            logger.debug("Failed to fetch active pipeline session ids: %s", e)
+
+    # Active web chat session IDs
+    ws_server = server.services.websocket_server
+    active_chat_db_ids: set[str] = set()
+    if ws_server:
+        chat_sessions = getattr(ws_server, "_chat_sessions", {})
+        for cs in chat_sessions.values():
+            db_sid = getattr(cs, "db_session_id", None)
+            if db_sid:
+                active_chat_db_ids.add(db_sid)
+
+    for session in sessions:
+        sid = session.id
+
+        # Exclude caller's own session
+        if current_session_id and sid == current_session_id:
+            result[sid] = (False, "current session")
+            continue
+
+        if sid in active_agent_session_ids:
+            result[sid] = (False, "has active agent")
+            continue
+
+        if sid in active_pipeline_session_ids:
+            result[sid] = (False, "has active pipeline")
+            continue
+
+        if sid in active_chat_db_ids:
+            result[sid] = (False, "active in web chat")
+            continue
+
+        result[sid] = (True, None)
+
+    return result
+
+
 def create_sessions_router(server: "HTTPServer") -> APIRouter:
     """
     Create sessions router with endpoints bound to server instance.
@@ -272,6 +343,16 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
         status: str | None = None,
         source: str | None = None,
         limit: int = Query(100, ge=1, le=1000),
+        exclude_subagents: bool = Query(
+            False, description="Exclude subagent sessions (agent_depth > 0)"
+        ),
+        include_resumability: bool = Query(
+            False,
+            description="Add is_resumable/resume_blocked_reason fields and filter non-resumable",
+        ),
+        current_session_id: str | None = Query(
+            None, description="Caller's own session ID (excluded from resumable list)"
+        ),
     ) -> dict[str, Any]:
         """
         List sessions with optional filtering and message counts.
@@ -281,6 +362,9 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
             status: Filter by status (active, archived, etc)
             source: Filter by source (Claude Code, Gemini, etc)
             limit: Max results (default 100)
+            exclude_subagents: If true, only return top-level sessions
+            include_resumability: If true, enrich with resumability and filter non-resumable
+            current_session_id: Caller's session to exclude from resumable results
 
         Returns:
             List of session objects with message counts
@@ -292,11 +376,15 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
+            # Over-fetch when resumability filtering is requested, since
+            # non-resumable sessions will be removed post-query
+            fetch_limit = limit * 3 if include_resumability else limit
             sessions = server.session_manager.list(
                 project_id=project_id,
                 status=status,
                 source=source,
-                limit=limit,
+                limit=fetch_limit,
+                exclude_subagents=exclude_subagents,
             )
 
             # Fetch message counts if message manager is available
@@ -307,12 +395,28 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
                 except Exception as e:
                     logger.warning(f"Failed to fetch message counts: {e}")
 
+            # Build resumability info if requested
+            resumability: dict[str, tuple[bool, str | None]] = {}
+            if include_resumability:
+                resumability = await _compute_resumability(server, sessions, current_session_id)
+
             # Enrich sessions with counts
             session_list = []
             for session in sessions:
+                # If resumability requested, skip non-resumable sessions
+                if include_resumability:
+                    is_resumable, blocked_reason = resumability.get(session.id, (False, None))
+                    if not is_resumable:
+                        continue
+
                 session_data = session.to_dict()
                 session_data["message_count"] = message_counts.get(session.id, 0)
+                if include_resumability:
+                    session_data["is_resumable"] = is_resumable
+                    session_data["resume_blocked_reason"] = blocked_reason
                 session_list.append(session_data)
+                if include_resumability and len(session_list) >= limit:
+                    break
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -1058,6 +1162,81 @@ def create_sessions_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             metrics.inc_counter("http_requests_errors_total")
             logger.error(f"Error clearing stop signal: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # --- Transcript Blob Endpoints ---
+
+    @router.get("/{session_id}/transcript/status")
+    async def transcript_status(session_id: str) -> dict[str, Any]:
+        """Check if a transcript blob exists and get size stats."""
+        metrics.inc_counter("http_requests_total")
+        try:
+            from gobby.storage.session_transcripts import LocalSessionTranscriptManager
+
+            tm = LocalSessionTranscriptManager(server.session_manager.db)
+            stats = tm.get_stats(session_id)
+            if not stats:
+                return {"exists": False, "session_id": session_id}
+            stats["session_id"] = session_id
+            return stats
+        except Exception as e:
+            metrics.inc_counter("http_requests_errors_total")
+            logger.error(f"Error getting transcript status: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.get("/{session_id}/transcript")
+    async def get_transcript(session_id: str) -> Any:
+        """Download raw transcript content."""
+        metrics.inc_counter("http_requests_total")
+        try:
+            from fastapi.responses import Response
+
+            from gobby.storage.session_transcripts import LocalSessionTranscriptManager
+
+            tm = LocalSessionTranscriptManager(server.session_manager.db)
+            raw = tm.get_transcript(session_id)
+            if raw is None:
+                raise HTTPException(status_code=404, detail="No transcript blob stored")
+            return Response(
+                content=raw,
+                media_type="application/x-ndjson",
+                headers={"Content-Disposition": f'attachment; filename="{session_id}.jsonl"'},
+            )
+        except HTTPException:
+            metrics.inc_counter("http_requests_errors_total")
+            raise
+        except Exception as e:
+            metrics.inc_counter("http_requests_errors_total")
+            logger.error(f"Error getting transcript: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/{session_id}/restore-transcript")
+    async def restore_transcript(session_id: str) -> dict[str, Any]:
+        """Restore a transcript blob to disk for CLI resume."""
+        metrics.inc_counter("http_requests_total")
+        try:
+            from gobby.storage.session_transcripts import LocalSessionTranscriptManager
+
+            tm = LocalSessionTranscriptManager(server.session_manager.db)
+            path = tm.restore_to_disk(session_id)
+            if path is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No transcript blob stored for this session",
+                )
+            size = os.path.getsize(path)
+            return {
+                "status": "restored",
+                "session_id": session_id,
+                "path": path,
+                "size": size,
+            }
+        except HTTPException:
+            metrics.inc_counter("http_requests_errors_total")
+            raise
+        except Exception as e:
+            metrics.inc_counter("http_requests_errors_total")
+            logger.error(f"Error restoring transcript: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

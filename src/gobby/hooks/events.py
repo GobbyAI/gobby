@@ -136,6 +136,13 @@ class HookResponse:
     system_message: str | None = None  # User-visible message (e.g., handoff notification)
     reason: str | None = None  # Explanation for decision
 
+    # Input rewriting (PreToolUse rewrite_input effect)
+    modified_input: dict[str, Any] | None = None
+    auto_approve: bool = False
+
+    # Output compression (PostToolUse compress_output effect)
+    modified_output: str | None = None
+
     # Future extensibility
     modify_args: dict[str, Any] | None = None
     trigger_action: str | None = None

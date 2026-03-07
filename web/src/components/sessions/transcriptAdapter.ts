@@ -28,6 +28,17 @@ function tryParseResult(str: string | undefined): unknown {
   }
 }
 
+/** Helper: append a tool call to the current tool_chain block, or start a new one. */
+function appendToolBlock(msg: ChatMessage, tc: ToolCall) {
+  if (!msg.contentBlocks) msg.contentBlocks = []
+  const last = msg.contentBlocks[msg.contentBlocks.length - 1]
+  if (last?.type === 'tool_chain') {
+    last.calls.push(tc)
+  } else {
+    msg.contentBlocks.push({ type: 'tool_chain', calls: [tc] })
+  }
+}
+
 /**
  * Transforms SessionMessage[] from the session detail API into ChatMessage[]
  * compatible with the chat page's MessageItem component.
@@ -45,7 +56,7 @@ export function sessionMessagesToChatMessages(messages: SessionMessage[]): ChatM
     // Tool-use messages: create ToolCall and attach to last assistant message
     if (msg.tool_name) {
       const toolCall: ToolCall = {
-        id: `tool-${msg.id}`,
+        id: msg.tool_use_id || `tool-${msg.id}`,
         tool_name: msg.tool_name,
         server_name: extractServerName(msg.tool_name),
         status: 'completed',
@@ -55,6 +66,7 @@ export function sessionMessagesToChatMessages(messages: SessionMessage[]): ChatM
       if (lastAssistant) {
         lastAssistant.toolCalls = lastAssistant.toolCalls || []
         lastAssistant.toolCalls.push(toolCall)
+        appendToolBlock(lastAssistant, toolCall)
       }
       continue
     }
@@ -75,21 +87,23 @@ export function sessionMessagesToChatMessages(messages: SessionMessage[]): ChatM
         }>
         const tools = calls.filter((c) => c.type === 'tool_use')
         if (tools.length > 0) {
+          const toolCalls = tools.map((t) => ({
+            id: t.id || `tool-${msg.id}-${t.name}`,
+            tool_name: t.name || 'unknown',
+            server_name: extractServerName(t.name || ''),
+            status: 'completed' as const,
+            arguments:
+              typeof t.input === 'object' && t.input !== null
+                ? (t.input as Record<string, unknown>)
+                : undefined,
+          }))
           const chatMsg: ChatMessage = {
             id: String(msg.id),
             role: 'assistant',
             content: '',
             timestamp: new Date(msg.timestamp),
-            toolCalls: tools.map((t) => ({
-              id: t.id || `tool-${msg.id}-${t.name}`,
-              tool_name: t.name || 'unknown',
-              server_name: extractServerName(t.name || ''),
-              status: 'completed' as const,
-              arguments:
-                typeof t.input === 'object' && t.input !== null
-                  ? (t.input as Record<string, unknown>)
-                  : undefined,
-            })),
+            toolCalls,
+            contentBlocks: [{ type: 'tool_chain', calls: [...toolCalls] }],
           }
           lastAssistant = chatMsg
           result.push(chatMsg)
@@ -115,6 +129,7 @@ export function sessionMessagesToChatMessages(messages: SessionMessage[]): ChatM
     }
 
     if (role === 'assistant') {
+      chatMsg.contentBlocks = [{ type: 'text', content }]
       lastAssistant = chatMsg
     }
 

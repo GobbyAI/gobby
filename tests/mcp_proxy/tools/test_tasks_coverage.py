@@ -1084,6 +1084,7 @@ class TestCloseTaskTool:
         mock_task.commits = None
         mock_task.project_id = "proj-1"
         mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
         with patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager:
             mock_proj_instance = MagicMock()
@@ -1296,6 +1297,7 @@ class TestCloseTaskTool:
         mock_task.commits = None
         mock_task.project_id = "proj-1"
         mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
         # Mock session with had_edits=True
         mock_session = MagicMock()

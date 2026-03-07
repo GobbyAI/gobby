@@ -101,10 +101,70 @@ class TestCloseTask:
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_close_epic_all_children_closed_no_commit_needed(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Closing a parent task (epic) with all children closed succeeds without commits."""
+        parent = _make_task(task_type="epic", commits=None)
+        child = _make_task(
+            id="child-0000-0000-0000-000000000001",
+            title="Child Task",
+            status="closed",
+            seq_num=43,
+        )
+        mock_task_manager.get_task.return_value = parent
+        # First list_tasks call (limit=1) returns a child -> is a parent
+        # Second list_tasks call (limit=1000) returns all children (all closed)
+        mock_task_manager.list_tasks.return_value = [child]
+        mock_task_manager.close_task.return_value = parent
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle.validate_commit_requirements"
+        ) as mock_vcr:
+            result = await registry.call(
+                "close_task",
+                {"task_id": parent.id, "changes_summary": "All subtasks completed"},
+            )
+            # commit check should NOT have been called
+            mock_vcr.assert_not_called()
+
+        assert "error" not in result
+        assert result.get("success", True) is not False
+        mock_task_manager.close_task.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_epic_open_children_blocked(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Closing a parent task with open children is blocked."""
+        parent = _make_task(task_type="epic", commits=None)
+        open_child = _make_task(
+            id="child-0000-0000-0000-000000000002",
+            title="Open Child",
+            status="in_progress",
+            seq_num=44,
+        )
+        mock_task_manager.get_task.return_value = parent
+        mock_task_manager.list_tasks.return_value = [open_child]
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        result = await registry.call(
+            "close_task",
+            {"task_id": parent.id, "changes_summary": "Trying to close"},
+        )
+
+        assert result["success"] is False
+        assert result["error"] == "validation_failed"
+        assert "open" in result["message"].lower()
+
+    @pytest.mark.asyncio
     async def test_close_commit_requirements_fail(self, mock_task_manager, mock_sync_manager):
         """Returns error when commit requirements fail."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
 
         with (
             patch(

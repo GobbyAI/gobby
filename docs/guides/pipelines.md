@@ -385,8 +385,8 @@ curl -X POST http://localhost:60887/api/pipelines/reject/<token>
 
 **MCP**:
 ```python
-call_tool("gobby-pipelines", "approve_pipeline", {"token": "<token>"})
-call_tool("gobby-pipelines", "reject_pipeline", {"token": "<token>"})
+call_tool("gobby-workflows", "approve_pipeline", {"token": "<token>"})
+call_tool("gobby-workflows", "reject_pipeline", {"token": "<token>"})
 ```
 
 On approval, the pipeline resumes. On rejection, the step is `FAILED` and execution is `CANCELLED`.
@@ -423,8 +423,7 @@ stateDiagram-v2
 
 When run via MCP tools (`run_pipeline`), pipelines execute as background `asyncio` tasks:
 
-- `wait=False` (default): Returns `execution_id` immediately. Poll with `get_pipeline_status`.
-- `wait=True`: Blocks up to `wait_timeout` seconds (default 300). If timeout, returns partial status and pipeline continues in background.
+`run_pipeline` always returns immediately with an `execution_id`. Use `get_pipeline_status` to poll, `wait_for_completion` to block, `continuation_prompt` to get notified when done, or `register_pipeline_continuation` for event-driven re-invocation (used by the orchestrator).
 
 ### Resume After Approval
 
@@ -438,76 +437,66 @@ When execution pauses at an approval gate, the full state is persisted to the da
 
 ### Orchestrator Pipeline
 
-The orchestrator is a recursive pipeline that coordinates an entire epic: expansion, parallel developer dispatch, QA review, and merge.
+The orchestrator is an event-driven pipeline that coordinates an entire epic or standalone task: expansion, parallel developer dispatch, QA review, and merge. Each pass scans state, dispatches agents, registers continuations, and exits. Agent completions trigger the next pass.
 
 ```yaml
 name: orchestrator
 type: pipeline
-version: "2.0"
-description: Async, dependency-aware orchestration with parallel dispatch
+version: "3.0"
+description: Event-driven orchestration with parallel dispatch
 
 inputs:
-  session_task: null         # Epic task ID
+  session_task: null         # Task ID (epic or standalone)
   developer_agent: "developer"
   qa_agent: "qa-reviewer"
   merge_agent: "merge"
   max_concurrent: 5          # Max parallel developers
   max_iterations: 200
-  _current_iteration: 0      # Internal loop counter
-  _worktree_id: null          # Reused across iterations
+  _current_iteration: 0      # Internal pass counter
+  _worktree_id: null          # Reused across passes
 
 steps:
-  # Guard against infinite loops
+  # Guard against runaway passes
   - id: check_limit
     condition: "${{ inputs._current_iteration >= inputs.max_iterations }}"
-    exec: "echo 'ERROR: max iterations reached' && exit 1"
+    mcp: { server: gobby-workflows, tool: fail_pipeline, arguments: { message: "Max iterations reached" } }
 
-  # Expand epic if not yet expanded (first iteration only)
-  - id: expand_epic
-    condition: "${{ not inputs._worktree_id and not get_epic.output.result.is_expanded }}"
-    invoke_pipeline:
-      name: expand-task
-      arguments:
-        task_id: "${{ inputs.session_task }}"
-
-  # Scan task states
+  # Detect standalone vs epic, scan task states
   - id: scan_open
     mcp: { server: gobby-tasks, tool: list_tasks, arguments: { parent_task_id: "${{ inputs.session_task }}", status: "open" } }
+  # ... scan_in_progress, scan_needs_review, scan_approved ...
 
-  # Find next batch of non-conflicting tasks
-  - id: find_next
-    condition: "${{ scan_in_progress.output.tasks | length < inputs.max_concurrent }}"
-    mcp: { server: gobby-tasks, tool: suggest_next_tasks, arguments: { ... } }
-
-  # Dispatch developers (fire-and-forget, parallel batch)
+  # Dispatch agents (fire-and-forget)
   - id: spawn_developers
-    mcp: { server: gobby-agents, tool: dispatch_batch, arguments: { suggestions: "${{ find_next.output.suggestions }}", ... } }
-
-  # Dispatch QA reviewer
+    mcp: { server: gobby-agents, tool: dispatch_batch, arguments: { ... } }
   - id: spawn_qa
-    condition: "${{ scan_needs_review.output.tasks | length > 0 }}"
     mcp: { server: gobby-agents, tool: spawn_agent, arguments: { agent: "${{ inputs.qa_agent }}", ... } }
-
-  # Merge when only approved tasks remain
   - id: spawn_merge
-    condition: "${{ scan_approved.output.tasks | length > 0 and scan_open.output.tasks | length == 0 }}"
     mcp: { server: gobby-agents, tool: spawn_agent, arguments: { agent: "${{ inputs.merge_agent }}", ... } }
 
-  - id: wait_merge
-    wait: { completion_id: "${{ spawn_merge.output.run_id }}", timeout: 600 }
-
-  # Recurse: next iteration
-  - id: next_iteration
+  # Register continuations — any agent completing triggers next pass
+  - id: register_continuations
     condition: "${{ not all_closed.output.done }}"
-    invoke_pipeline:
-      name: orchestrator
+    mcp:
+      server: gobby-workflows
+      tool: register_pipeline_continuation
       arguments:
-        _current_iteration: "${{ inputs._current_iteration + 1 }}"
-        _worktree_id: "${{ inputs._worktree_id or create_worktree.output.worktree_id }}"
-        ...
+        dispatch_outputs:
+          developers: "${{ spawn_developers.output }}"
+          qa: "${{ spawn_qa.output }}"
+          merge: "${{ spawn_merge.output }}"
+        pipeline_name: "orchestrator"
+        inputs:
+          _current_iteration: "${{ inputs._current_iteration + 1 }}"
+          _worktree_id: "${{ inputs._worktree_id or create_worktree.output.worktree_id }}"
+          ...
+
+  # Each pass returns completion status
+  - id: result
+    mcp: { server: gobby-workflows, tool: pipeline_eval, arguments: { data: { orchestration_complete: "${{ all_closed.output.done }}" } } }
 ```
 
-**Key patterns**: recursive self-invocation for looping, `wait` steps for blocking on agents, conditions for branching, `_` prefix for internal state.
+**Key patterns**: continuation callbacks for event-driven re-invocation, conditions for branching, `_` prefix for internal state. Each pass is a separate pipeline execution.
 
 See [Orchestrator Guide](./orchestrator.md) for the full conceptual walkthrough.
 
@@ -614,7 +603,7 @@ steps:
 
 Agents can then invoke it:
 ```python
-call_tool("gobby-pipelines", "pipeline:run-tests", {"test_filter": "test_api"})
+call_tool("gobby-workflows", "pipeline:run-tests", {"test_filter": "test_api"})
 ```
 
 ---
@@ -718,11 +707,11 @@ The CLI tries the daemon HTTP API first (full-featured). If daemon is unavailabl
 
 | Server | Tool | Description |
 |--------|------|-------------|
-| `gobby-pipelines` | `list_pipelines` | List available definitions |
-| `gobby-pipelines` | `run_pipeline` | Run with inputs (`wait`, `wait_timeout` params) |
-| `gobby-pipelines` | `approve_pipeline` | Approve by token |
-| `gobby-pipelines` | `reject_pipeline` | Reject by token |
-| `gobby-pipelines` | `get_pipeline_status` | Get execution status |
+| `gobby-workflows` | `list_pipelines` | List available definitions |
+| `gobby-workflows` | `run_pipeline` | Run with inputs. Returns immediately; use `continuation_prompt` or `wait_for_completion` |
+| `gobby-workflows` | `approve_pipeline` | Approve by token |
+| `gobby-workflows` | `reject_pipeline` | Reject by token |
+| `gobby-workflows` | `get_pipeline_status` | Get execution status |
 | `gobby-workflows` | `create_pipeline` | Create/update pipeline definition |
 | `gobby-workflows` | `delete_pipeline` | Delete pipeline definition |
 | `gobby-workflows` | `export_pipeline` | Export as YAML |

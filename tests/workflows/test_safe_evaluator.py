@@ -488,3 +488,70 @@ class TestNormalizeExpr:
         }
         ev = SafeExpressionEvaluator(ctx, {"len": len})
         assert ev.evaluate(expr_with_newline) is False  # "a:b" in ["a:b"]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Comprehensions — any/all with generator expressions, list comprehensions
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestComprehensions:
+    """Test generator expressions and list comprehensions in the safe evaluator."""
+
+    def test_any_with_generator(self) -> None:
+        """Test any() with a generator expression — the compress rule pattern."""
+        ctx: dict[str, Any] = {"command": "uv run pytest tests/ -v"}
+        ev = SafeExpressionEvaluator(
+            ctx, {"any": any, "str": str}
+        )
+        expr = "any(p in command for p in ['git ', 'pytest', 'ruff '])"
+        assert ev.evaluate(expr) is True
+
+    def test_any_with_generator_no_match(self) -> None:
+        ctx: dict[str, Any] = {"command": "echo hello"}
+        ev = SafeExpressionEvaluator(
+            ctx, {"any": any, "str": str}
+        )
+        expr = "any(p in command for p in ['git ', 'pytest', 'ruff '])"
+        assert ev.evaluate(expr) is False
+
+    def test_all_with_generator(self) -> None:
+        ctx: dict[str, Any] = {"items": [2, 4, 6]}
+        ev = SafeExpressionEvaluator(ctx, {"all": all})
+        assert ev.evaluate("all(x > 0 for x in items)") is True
+
+    def test_all_with_generator_false(self) -> None:
+        ctx: dict[str, Any] = {"items": [2, -1, 6]}
+        ev = SafeExpressionEvaluator(ctx, {"all": all})
+        assert ev.evaluate("all(x > 0 for x in items)") is False
+
+    def test_list_comprehension(self) -> None:
+        ctx: dict[str, Any] = {"items": [1, 2, 3]}
+        ev = SafeExpressionEvaluator(ctx, {"len": len})
+        assert ev.evaluate("len([x for x in items if x > 1])") is True  # 2 > 0
+
+    def test_generator_restores_context(self) -> None:
+        """Loop variable doesn't leak into outer context."""
+        ctx: dict[str, Any] = {"items": [1, 2], "p": "original"}
+        ev = SafeExpressionEvaluator(ctx, {"any": any})
+        ev.evaluate("any(p > 1 for p in items)")
+        assert ctx["p"] == "original"
+
+    def test_compress_bash_rule_condition(self) -> None:
+        """End-to-end test of the exact compress-bash-output rule condition."""
+        ctx: dict[str, Any] = {
+            "event": {
+                "data": {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "uv run pytest tests/ -v"},
+                }
+            }
+        }
+        ev = SafeExpressionEvaluator(ctx, {"any": any, "str": str})
+        expr = (
+            "event.data.get('tool_name') == 'Bash' "
+            "and any(p in str(event.data.get('tool_input', {}).get('command', '')) "
+            "for p in ['git ', 'pytest', 'cargo test', 'npm test', "
+            "'ruff ', 'mypy ', 'eslint ', 'tsc '])"
+        )
+        assert ev.evaluate(expr) is True

@@ -15,9 +15,11 @@ from gobby.mcp_proxy.tools.sessions._crud import register_crud_tools
 from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
 from gobby.mcp_proxy.tools.sessions._messages import register_message_tools
 from gobby.mcp_proxy.tools.sessions._registration import register_registration_tools
+from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tools
 
 if TYPE_CHECKING:
     from gobby.storage.session_messages import LocalSessionMessageManager
+    from gobby.storage.session_transcripts import LocalSessionTranscriptManager
     from gobby.storage.sessions import LocalSessionManager
 
 __all__ = ["create_session_messages_registry"]
@@ -32,6 +34,7 @@ def create_session_messages_registry(
     db: Any | None = None,
     worktree_manager: Any | None = None,
     inter_session_message_manager: Any | None = None,
+    transcript_manager: LocalSessionTranscriptManager | None = None,
 ) -> InternalToolRegistry:
     """
     Create a sessions tool registry with session and message tools.
@@ -93,5 +96,9 @@ def create_session_messages_registry(
             db=db,
             worktree_manager=worktree_manager,
         )
+
+    # --- Transcript Blob Tools ---
+    if session_manager is not None and transcript_manager is not None:
+        register_transcript_tools(registry, transcript_manager, session_manager)
 
     return registry
