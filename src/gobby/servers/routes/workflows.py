@@ -363,4 +363,62 @@ def create_workflows_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Error restoring workflow definition: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
+    # --- Session Variables (top-level shortcuts) ---
+
+    class SetVariableRequest(BaseModel):
+        """Request body for setting a session variable."""
+
+        name: str
+        value: str | int | float | bool | None = None
+        session_id: str | None = None
+
+    class GetVariableRequest(BaseModel):
+        """Request body for getting session variable(s)."""
+
+        name: str | None = None
+        session_id: str | None = None
+
+    @router.post("/variables/set")
+    async def set_variable(request: SetVariableRequest) -> dict[str, Any]:
+        """Set a session-scoped variable."""
+        metrics.inc_counter("http_requests_total")
+        if server.session_manager is None:
+            raise HTTPException(status_code=503, detail="Session manager not available")
+        try:
+            from gobby.mcp_proxy.tools.workflows._variables import set_variable as _set_var
+
+            return _set_var(
+                server.session_manager,
+                server.session_manager.db,
+                name=request.name,
+                value=request.value,
+                session_id=request.session_id,
+                workflow=None,
+            )
+        except Exception as e:
+            metrics.inc_counter("http_requests_errors_total")
+            logger.error(f"Error setting variable: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/variables/get")
+    async def get_variable(request: GetVariableRequest) -> dict[str, Any]:
+        """Get session-scoped variable(s)."""
+        metrics.inc_counter("http_requests_total")
+        if server.session_manager is None:
+            raise HTTPException(status_code=503, detail="Session manager not available")
+        try:
+            from gobby.mcp_proxy.tools.workflows._variables import get_variable as _get_var
+
+            return _get_var(
+                server.session_manager,
+                server.session_manager.db,
+                name=request.name,
+                session_id=request.session_id,
+                workflow=None,
+            )
+        except Exception as e:
+            metrics.inc_counter("http_requests_errors_total")
+            logger.error(f"Error getting variable: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
     return router

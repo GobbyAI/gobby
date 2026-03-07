@@ -259,6 +259,31 @@ class DaemonProxy:
             },
         )
 
+    async def set_variable(
+        self,
+        name: str,
+        value: str | int | float | bool | None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Set a session-scoped variable."""
+        return await self._request(
+            "POST",
+            "/api/workflows/variables/set",
+            json={"name": name, "value": value, "session_id": session_id},
+        )
+
+    async def get_variable(
+        self,
+        name: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Get session-scoped variable(s)."""
+        return await self._request(
+            "POST",
+            "/api/workflows/variables/get",
+            json={"name": name, "session_id": session_id},
+        )
+
     async def init_project(self, name: str, project_path: str | None = None) -> dict[str, Any]:
         """Initialize a new Gobby project.
 
@@ -525,6 +550,42 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             Result dict with error (CLI access required)
         """
         return await proxy.init_project(name, project_path)
+
+    @mcp.tool()
+    async def set_variable(
+        name: str,
+        value: str | int | float | bool | None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Set a session-scoped variable. Top-level shortcut — no progressive discovery needed.
+
+        Args:
+            name: Variable name
+            value: Variable value (string, number, boolean, or null)
+            session_id: Session ID (accepts #N, N, UUID, or prefix)
+
+        Returns:
+            Dict with ok status and stored value
+        """
+        return await proxy.set_variable(name=name, value=value, session_id=session_id)
+
+    @mcp.tool()
+    async def get_variable(
+        name: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Get session-scoped variable(s). Top-level shortcut — no progressive discovery needed.
+
+        Args:
+            name: Variable name (omit to get all variables)
+            session_id: Session ID (accepts #N, N, UUID, or prefix)
+
+        Returns:
+            Dict with variable value(s)
+        """
+        return await proxy.get_variable(name=name, session_id=session_id)
 
 
 async def ensure_daemon_running() -> None:

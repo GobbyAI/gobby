@@ -8,6 +8,13 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.27]
+
+### Features
+- Wired set_variable/get_variable into stdio MCP server (#9879)
+
+---
+
 ## [0.2.26]
 
 ### Features
@@ -33,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added compression banner to compressed tool output (#9814)
 - Expanded compress-bash-output patterns (vitest, jest, npx, pnpm, bun, uv, turbo, nx, webpack, vite)
 
+#### Variable Management
+- Promoted set_variable/get_variable to top-level MCP proxy tools (#9875)
+
 ### Fixes
 - Hardened stdio proxy health check: 3x retries with 5s timeout before restarting daemon
 - Increased default daemon health check timeout from 2s to 5s
@@ -47,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Capitalized Gobby in compression banners and prevented stale session handoff (#9817)
 - Suppressed vitest canvas and forwardRef console warnings (#9854)
 - Corrected tool availability claims in default-web-chat prompt (#9766)
+- Set code-index skill injectionFormat to full (#9857)
+- Used task_type consistently in task serialization (#9862)
+- Added outputs block to orchestrator pipeline for result propagation (#9863)
+- Resolved 4 post-restart daemon warnings (#9873)
+- Addressed CodeRabbit report findings across 7 files (#9865)
+- Reworded error-triage stop gate to prompt confirmation not re-run (#9874)
+- Used task_type consistently in web UI components (#9877)
+- Fixed 11 failing tests across 3 root causes (#9876)
 
 ### Refactoring
 - Renamed CLI group from code-index to index (#9823)
@@ -57,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Docs
 - Added code-index and tool-compression guides (#9848)
 - Added gobby index CLI examples to code-index guide (#9849)
+- Warned against wait_for_completion on orchestrator pipeline (#9864)
 
 ---
 
