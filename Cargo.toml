@@ -2,9 +2,14 @@
 name = "gobby-code"
 version = "0.1.0"
 edition = "2024"
+authors = ["Josh Wilhelmi <josh@gobby.ai>"]
 description = "Fast Rust CLI for Gobby's code index — AST-aware search, symbol navigation, and dependency graph"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/GobbyAI/gobby-code"
+homepage = "https://gobby.ai"
+readme = "README.md"
+keywords = ["code-search", "ast", "code-index", "developer-tools", "gobby"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "gcode"
