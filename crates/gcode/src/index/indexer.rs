@@ -434,6 +434,7 @@ fn upsert_project_stats(conn: &Connection, project: &IndexedProject) {
             last_indexed_at, index_duration_ms
         ) VALUES (?1,?2,?3,?4,?5,?6)
         ON CONFLICT(id) DO UPDATE SET
+            root_path=excluded.root_path,
             total_files=excluded.total_files,
             total_symbols=excluded.total_symbols,
             last_indexed_at=excluded.last_indexed_at,
