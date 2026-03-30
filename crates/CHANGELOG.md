@@ -8,6 +8,19 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4]
+
+### Fixed
+
+#### gcode
+- Fix `root_path` not updated on re-index — `upsert_project_stats` was missing `root_path` in the `ON CONFLICT DO UPDATE` clause (#10)
+
+### Added
+
+#### gcode
+- `gcode invalidate` now notifies the Gobby daemon to clean Neo4j graph nodes and Qdrant vectors via `POST /api/code-index/invalidate` (#11)
+- Daemon URL resolved from `~/.gobby/bootstrap.yaml` (`daemon_port` + `bind_host`) instead of hardcoded default (#12)
+
 ## [0.2.3]
 
 ### Fixed

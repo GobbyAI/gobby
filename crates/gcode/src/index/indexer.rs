@@ -360,10 +360,7 @@ fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
         .send()
     {
         Ok(resp) if !resp.status().is_success() => {
-            eprintln!(
-                "Warning: daemon invalidate returned {}",
-                resp.status()
-            );
+            eprintln!("Warning: daemon invalidate returned {}", resp.status());
         }
         Err(e) => {
             eprintln!("Warning: could not notify daemon: {e}");
