@@ -33,10 +33,7 @@ pub fn summary(ctx: &Context, symbol_id: &str, format: Format) -> anyhow::Result
                 }
             }
         }
-        None => {
-            eprintln!("Symbol not found: {symbol_id}");
-            std::process::exit(1);
-        }
+        None => anyhow::bail!("Symbol not found: {symbol_id}"),
     }
 }
 

@@ -22,6 +22,7 @@ pub fn dedup(lines: Vec<String>) -> Vec<String> {
             count += 1;
         } else {
             if count > 1 {
+                result.push(prev_line.clone());
                 result.push(format!("  [repeated {} times]\n", count));
             } else if count == 1 {
                 result.push(prev_line.clone());
@@ -106,12 +107,14 @@ mod tests {
             "different line\n".into(),
         ];
         let result = dedup(lines);
-        // First group: "error at line N" x3 -> line + repeated
-        // Second group: "warning" x2 -> line + repeated
+        // First group: "error at line N" x3 -> representative line + repeated
+        // Second group: "warning" x2 -> representative line + repeated
         // Third: different line
-        assert!(result.iter().any(|l| l.contains("repeated 3 times")));
-        assert!(result.iter().any(|l| l.contains("repeated 2 times")));
-        assert!(result.iter().any(|l| l.contains("different line")));
+        assert_eq!(result[0], "error at line 1\n");
+        assert!(result[1].contains("repeated 3 times"));
+        assert_eq!(result[2], "warning: something\n");
+        assert!(result[3].contains("repeated 2 times"));
+        assert_eq!(result[4], "different line\n");
     }
 
     #[test]

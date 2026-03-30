@@ -11,9 +11,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GobbyAI/gsqz/actions/workflows/ci.yml"><img src="https://github.com/GobbyAI/gsqz/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/GobbyAI/gsqz/releases/latest"><img src="https://img.shields.io/github/v/release/GobbyAI/gsqz" alt="Release"></a>
-  <a href="https://github.com/GobbyAI/gsqz"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml"><img src="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli/releases/latest"><img src="https://img.shields.io/github/v/release/GobbyAI/gobby-cli" alt="Release"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
 </p>
 
@@ -27,7 +27,7 @@ AI coding assistants run shell commands and dump the full output into the contex
 
 gsqz wraps your shell commands and compresses their output using pattern-matched pipelines. It knows how to summarize `git status`, collapse test output, group lint errors by rule, and truncate walls of text — all configured in plain YAML.
 
-```
+```text
 $ gsqz -- cargo test
 [Output compressed by gsqz — cargo-test, 95% reduction]
 test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
@@ -35,7 +35,7 @@ test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 
 ## How It Works
 
-```
+```text
 command → match pipeline regex → apply steps → compressed output
                                     │
                     ┌───────────────┼───────────────┐
@@ -57,30 +57,30 @@ command → match pipeline regex → apply steps → compressed output
 
 ### Pre-built binaries
 
-Download from [GitHub Releases](https://github.com/GobbyAI/gsqz/releases/latest):
+Download from [GitHub Releases](https://github.com/GobbyAI/gobby-cli/releases/latest):
 
 ```bash
 # macOS (Apple Silicon)
-curl -L https://github.com/GobbyAI/gsqz/releases/latest/download/gsqz-aarch64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gsqz-aarch64-apple-darwin.tar.gz | tar xz
 sudo mv gsqz /usr/local/bin/
 
 # macOS (Intel)
-curl -L https://github.com/GobbyAI/gsqz/releases/latest/download/gsqz-x86_64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gsqz-x86_64-apple-darwin.tar.gz | tar xz
 sudo mv gsqz /usr/local/bin/
 
 # Linux (x86_64)
-curl -L https://github.com/GobbyAI/gsqz/releases/latest/download/gsqz-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gsqz-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv gsqz /usr/local/bin/
 
 # Linux (ARM64)
-curl -L https://github.com/GobbyAI/gsqz/releases/latest/download/gsqz-aarch64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gsqz-aarch64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv gsqz /usr/local/bin/
 ```
 
 ### Build from source
 
 ```bash
-cargo install --git https://github.com/GobbyAI/gsqz
+cargo install --git https://github.com/GobbyAI/gobby-cli
 ```
 
 ### With Gobby

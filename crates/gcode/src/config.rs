@@ -388,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_config_env_override() {
         let (_tmp, _conn) = create_test_db();
         unsafe { std::env::set_var("GOBBY_NEO4J_URL", "http://env-override:9999") };
@@ -398,10 +399,10 @@ mod tests {
 
     #[test]
     fn test_config_defaults() {
-        // When config_store has no neo4j entries, defaults should apply
-        let default_url = "http://localhost:8474";
-        let default_db = "neo4j";
-        assert_eq!(default_url, "http://localhost:8474");
-        assert_eq!(default_db, "neo4j");
+        let (tmp, _conn) = create_test_db();
+        let config = resolve_neo4j_config(tmp.path(), false);
+        let config = config.expect("should return defaults when config_store exists");
+        assert_eq!(config.url, "http://localhost:8474");
+        assert_eq!(config.database, "neo4j");
     }
 }

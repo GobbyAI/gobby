@@ -78,8 +78,9 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 let source = std::fs::read(&file_path)?;
                 let file_bytes = source.len();
                 let end = s.byte_end.min(source.len());
-                let symbol_bytes = end - s.byte_start;
-                let snippet = String::from_utf8_lossy(&source[s.byte_start..end]);
+                let start = s.byte_start.min(end);
+                let symbol_bytes = end - start;
+                let snippet = String::from_utf8_lossy(&source[start..end]);
 
                 // Record savings: symbol bytes vs full file bytes
                 if file_bytes > symbol_bytes {
@@ -124,10 +125,7 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 }
             }
         }
-        None => {
-            eprintln!("Symbol not found: {id}");
-            std::process::exit(1);
-        }
+        None => anyhow::bail!("Symbol not found: {id}"),
     }
 }
 

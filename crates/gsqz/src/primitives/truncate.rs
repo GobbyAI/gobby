@@ -21,7 +21,7 @@ pub fn truncate(
     let omitted = total - head - tail;
     let mut result = Vec::with_capacity(head + tail + 1);
     result.extend_from_slice(&lines[..head]);
-    result.push(format!("\n[... {} lines omitted ...]\n", omitted));
+    result.push(format!("[... {} lines omitted ...]\n", omitted));
     result.extend_from_slice(&lines[total - tail..]);
     result
 }

@@ -2,6 +2,7 @@
 name = "gobby-squeeze"
 version = "0.2.1"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
 description = "YAML-configurable output compressor for LLM token optimization"
 license = "Apache-2.0"

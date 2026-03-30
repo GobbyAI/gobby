@@ -150,7 +150,8 @@ fn extract_symbols(
         }
 
         let docstring = extract_docstring(&node, source, language);
-        let c_hash = symbol_content_hash(source, node.start_byte(), node.end_byte());
+        let c_hash =
+            symbol_content_hash(source, node.start_byte(), node.end_byte()).unwrap_or_default();
         let symbol_id = Symbol::make_id(project_id, rel_path, &name, &kind, node.start_byte());
 
         if seen_ids.contains(&symbol_id) {

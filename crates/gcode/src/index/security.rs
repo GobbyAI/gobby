@@ -36,12 +36,17 @@ pub fn is_symlink_safe(path: &Path, root: &Path) -> bool {
 
 /// Check if file appears to be binary (has null bytes in first 8KB).
 pub fn is_binary(path: &Path) -> bool {
-    let data = match std::fs::read(path) {
-        Ok(d) => d,
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
         Err(_) => return true,
     };
-    let check_len = data.len().min(8192);
-    data[..check_len].contains(&0)
+    let mut buf = [0u8; 8192];
+    let n = match file.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return true,
+    };
+    buf[..n].contains(&0)
 }
 
 /// Check if any path component matches an exclusion pattern.

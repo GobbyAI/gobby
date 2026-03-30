@@ -21,8 +21,16 @@ pub fn file_content_hash(path: &Path) -> anyhow::Result<String> {
 }
 
 /// SHA-256 hash of a byte slice (symbol source).
-pub fn symbol_content_hash(source: &[u8], start: usize, end: usize) -> String {
+pub fn symbol_content_hash(source: &[u8], start: usize, end: usize) -> anyhow::Result<String> {
+    let slice = source.get(start..end).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid byte range {}..{} for source len {}",
+            start,
+            end,
+            source.len()
+        )
+    })?;
     let mut hasher = Sha256::new();
-    hasher.update(&source[start..end]);
-    format!("{:x}", hasher.finalize())
+    hasher.update(slice);
+    Ok(format!("{:x}", hasher.finalize()))
 }

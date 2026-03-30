@@ -137,7 +137,7 @@ pub fn index_directory(
             root_path: root_path.to_string_lossy().to_string(),
             total_files,
             total_symbols,
-            last_indexed_at: iso_now(),
+            last_indexed_at: epoch_secs_str(),
             index_duration_ms: elapsed_ms,
         },
     );
@@ -255,7 +255,7 @@ fn index_file(
             content_hash: h,
             symbol_count: count,
             byte_size: size as usize,
-            indexed_at: iso_now(),
+            indexed_at: epoch_secs_str(),
         },
     );
 
@@ -332,7 +332,7 @@ pub fn invalidate(conn: &Connection, project_id: &str) -> anyhow::Result<()> {
 // ── SQLite helpers ─────────────────────────────────────────────────────
 
 fn upsert_symbols(conn: &Connection, symbols: &[crate::models::Symbol]) {
-    let now = iso_now();
+    let now = epoch_secs_str();
     for sym in symbols {
         let _ = conn.execute(
             "INSERT INTO code_symbols (
@@ -543,7 +543,7 @@ fn relative_path(path: &Path, root: &Path) -> anyhow::Result<String> {
     Ok(abs.strip_prefix(&root_abs)?.to_string_lossy().to_string())
 }
 
-fn iso_now() -> String {
+fn epoch_secs_str() -> String {
     use std::time::SystemTime;
     let secs = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

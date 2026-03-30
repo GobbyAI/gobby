@@ -36,9 +36,15 @@ impl ProgressBar {
         let filled = (pct * self.bar_width as f64) as usize;
         let empty = self.bar_width - filled;
 
-        // Truncate long paths to keep the line reasonable
+        // Truncate long paths to keep the line reasonable (char-safe)
         let display_path = if file_path.len() > 40 {
-            &file_path[file_path.len() - 40..]
+            let start = file_path
+                .char_indices()
+                .rev()
+                .nth(39)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            &file_path[start..]
         } else {
             file_path
         };

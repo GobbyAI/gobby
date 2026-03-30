@@ -268,6 +268,23 @@ const JSON_LANG: LanguageSpec = LanguageSpec {
     call_query: "",
 };
 
+const SWIFT: LanguageSpec = LanguageSpec {
+    extensions: &[".swift"],
+    symbol_query: r#"
+        (function_declaration name: (simple_identifier) @name) @definition.function
+        (class_declaration name: (type_identifier) @name) @definition.class
+        (protocol_declaration name: (type_identifier) @name) @definition.type
+        (struct_declaration name: (type_identifier) @name) @definition.type
+        (enum_declaration name: (type_identifier) @name) @definition.type
+    "#,
+    import_query: r#"
+        (import_declaration) @import
+    "#,
+    call_query: r#"
+        (call_expression (simple_identifier) @name) @call
+    "#,
+};
+
 // ── Registry ───────────────────────────────────────────────────────────
 
 /// All supported languages and their specs.
@@ -285,6 +302,7 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
     ("cpp", &CPP),
     ("elixir", &ELIXIR),
     ("ruby", &RUBY),
+    ("swift", &SWIFT),
     ("markdown", &MARKDOWN),
     ("yaml", &YAML),
     ("json", &JSON_LANG),

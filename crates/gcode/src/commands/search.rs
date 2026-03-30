@@ -55,6 +55,10 @@ pub fn search(
                 rusqlite::params![sym_id],
                 Symbol::from_row,
             )
+            .map_err(|e| {
+                eprintln!("Warning: failed to look up symbol {}: {}", sym_id, e);
+                e
+            })
             .ok()
         });
 

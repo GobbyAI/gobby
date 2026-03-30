@@ -54,6 +54,16 @@ impl Symbol {
 
     /// Read a Symbol from a rusqlite Row (SELECT * FROM code_symbols).
     pub fn from_row(row: &Row) -> rusqlite::Result<Self> {
+        let byte_start_raw = row.get::<_, i64>("byte_start")?;
+        let byte_end_raw = row.get::<_, i64>("byte_end")?;
+        let line_start_raw = row.get::<_, i64>("line_start")?;
+        let line_end_raw = row.get::<_, i64>("line_end")?;
+
+        let to_usize = |val: i64, col: usize| -> rusqlite::Result<usize> {
+            val.try_into()
+                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(col, val))
+        };
+
         Ok(Self {
             id: row.get("id")?,
             project_id: row.get("project_id")?,
@@ -62,10 +72,10 @@ impl Symbol {
             qualified_name: row.get("qualified_name")?,
             kind: row.get("kind")?,
             language: row.get("language")?,
-            byte_start: row.get::<_, i64>("byte_start")? as usize,
-            byte_end: row.get::<_, i64>("byte_end")? as usize,
-            line_start: row.get::<_, i64>("line_start")? as usize,
-            line_end: row.get::<_, i64>("line_end")? as usize,
+            byte_start: to_usize(byte_start_raw, 7)?,
+            byte_end: to_usize(byte_end_raw, 8)?,
+            line_start: to_usize(line_start_raw, 9)?,
+            line_end: to_usize(line_end_raw, 10)?,
             signature: row.get("signature")?,
             docstring: row.get("docstring")?,
             parent_symbol_id: row.get("parent_symbol_id")?,

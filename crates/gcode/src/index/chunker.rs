@@ -38,7 +38,7 @@ pub fn chunk_file_content(
                 line_end: end,
                 content: chunk_content,
                 language: language.unwrap_or("unknown").to_string(),
-                created_at: iso_now(),
+                created_at: epoch_secs_str(),
             });
             chunk_index += 1;
         }
@@ -52,8 +52,8 @@ pub fn chunk_file_content(
     chunks
 }
 
-fn iso_now() -> String {
-    // Minimal ISO-8601 without chrono dependency
+fn epoch_secs_str() -> String {
+    // Unix epoch seconds as a string (no chrono dependency)
     use std::time::SystemTime;
     let secs = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
