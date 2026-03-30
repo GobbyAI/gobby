@@ -1,0 +1,82 @@
+[package]
+name = "gobby-code"
+version = "0.1.0"
+edition = "2024"
+authors = ["Josh Wilhelmi <hello@gobby.ai>"]
+description = "Fast Rust CLI for Gobby's code index — AST-aware search, symbol navigation, and dependency graph"
+license = "Apache-2.0"
+repository = "https://github.com/GobbyAI/gobby-cli"
+homepage = "https://gobby.ai"
+readme = "README.md"
+keywords = ["code-search", "ast", "code-index", "developer-tools", "gobby"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "gcode"
+path = "src/main.rs"
+
+[features]
+default = ["embeddings"]
+embeddings = ["dep:llama-cpp-2"]
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# HTTP (Neo4j)
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+base64 = "0.22"
+
+# Tree-sitter (core + language grammars)
+tree-sitter = "0.24"
+# Tier 1: Primary languages
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-ruby = "0.23"
+tree-sitter-php = "0.23"
+tree-sitter-swift = "0.7"
+tree-sitter-kotlin = "0.3"
+# Tier 2: Additional languages
+tree-sitter-dart = "0.1"
+tree-sitter-elixir = "0.3"
+# Tier 3: Data formats
+tree-sitter-json = "0.23"
+tree-sitter-yaml = "0.7"
+tree-sitter-md = "0.5"
+
+# Iterator
+streaming-iterator = "0.1"
+
+# Utilities
+sha2 = "0.10"
+uuid = { version = "1", features = ["v5"] }
+ignore = "0.4"
+dirs = "6"
+anyhow = "1"
+
+# Secret resolution (Fernet decryption of gobby secrets)
+fernet = "0.2"
+openssl = { version = "0.10", features = ["vendored"] }
+pbkdf2 = { version = "0.12", features = ["simple"] }
+hmac = "0.12"
+
+# Embeddings (GGUF model loading for semantic search)
+llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
+
+# Temp files (for tests)
+tempfile = "3"

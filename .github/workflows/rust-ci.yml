@@ -32,17 +32,21 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
-      - name: Clippy
-        run: cargo clippy --no-default-features -- -D warnings
+      # gsqz: full clippy + tests
+      - name: Clippy (gsqz)
+        run: cargo clippy -p gobby-squeeze -- -D warnings
 
-      - name: Run tests
-        run: cargo test --no-default-features
+      - name: Test (gsqz)
+        run: cargo test -p gobby-squeeze
 
-      - name: Build (with embeddings)
-        if: runner.os == 'macOS'
-        run: cargo build
+      # gcode: clippy + tests without embeddings (Linux CI has no cmake/Metal)
+      - name: Clippy (gcode, no embeddings)
+        run: cargo clippy -p gobby-code --no-default-features -- -D warnings
 
-      - name: Build (without embeddings)
-        run: cargo build --no-default-features
+      - name: Test (gcode, no embeddings)
+        run: cargo test -p gobby-code --no-default-features
+
+      - name: Build workspace (without embeddings)
+        run: cargo build --workspace --no-default-features

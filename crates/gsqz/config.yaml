@@ -1,0 +1,267 @@
+# gsqz — default pipeline configuration
+#
+# Pipelines are matched against the command string in order.
+# First match wins. Steps run sequentially, each feeding the next.
+#
+# Config resolution: built-in config.yaml → ~/.gobby/gsqz.yaml → .gobby/gsqz.yaml
+
+settings:
+  min_output_length: 1000
+  max_compressed_lines: 100
+
+pipelines:
+  # === Git ===
+  git-status:
+    match: '\bgit\s+status\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s*$'
+            - '^On branch '
+            - '^Your branch is '
+            - '^  \(use "git '
+            - '^Changes not staged'
+            - '^Changes to be committed'
+            - '^Untracked files:'
+            - '^no changes added'
+      - group_lines:
+          mode: git_status
+
+  git-diff:
+    match: '\bgit\s+diff\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^index [0-9a-f]'
+            - '^diff --git'
+            - '^--- '
+            - '^\+\+\+ '
+      - truncate:
+          per_file_lines: 50
+          file_marker: '^@@\s'
+
+  git-log:
+    match: '\bgit\s+log\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^Merge:'
+            - '^\s*$'
+      - truncate:
+          head: 40
+          tail: 5
+
+  git-transfer:
+    match: '\bgit\s+(?:push|pull|fetch|clone)\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^remote: Counting'
+            - '^remote: Compressing'
+            - '^remote: Total'
+            - '^Receiving objects:'
+            - '^Resolving deltas:'
+            - '^Unpacking objects:'
+            - '^remote: Enumerating'
+      - truncate:
+          head: 5
+          tail: 5
+
+  git-mutation:
+    match: '\bgit\s+(?:add|commit|stash|tag|branch)\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s*$'
+      - truncate:
+          head: 5
+          tail: 5
+
+  # === Test runners ===
+  pytest:
+    match: '\b(?:pytest|py\.test)\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^tests/.*PASSED'
+            - '^\s*$'
+            - '^=+ ?test session starts'
+            - '^platform '
+            - '^plugins:'
+            - '^cachedir:'
+            - '^rootdir:'
+            - '^configfile:'
+            - '^collecting '
+            - '^collected \d+ items?$'
+      - group_lines:
+          mode: pytest_failures
+
+  cargo-test:
+    match: '\bcargo\s+test\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s+Running '
+            - '^test .* \.\.\. ok$'
+            - '^\s*$'
+            - '^   Compiling '
+            - '^    Finished '
+      - group_lines:
+          mode: test_failures
+
+  generic-test:
+    match: '\b(?:npm\s+test|vitest|jest|mocha|go\s+test)\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s*$'
+            - '^\s*✓'
+            - '^\s*PASS\s'
+            - '^ok\s+\S+\s+\d'
+      - group_lines:
+          mode: test_failures
+
+  # === Linters ===
+  python-lint:
+    match: '\b(?:ruff|mypy|pylint)\b'
+    steps:
+      - dedup: {}
+      - group_lines:
+          mode: lint_by_rule
+      - truncate:
+          head: 60
+          tail: 10
+
+  js-lint:
+    match: '\b(?:eslint|tsc|biome|oxlint)\b'
+    steps:
+      - dedup: {}
+      - group_lines:
+          mode: lint_by_rule
+      - truncate:
+          head: 60
+          tail: 10
+
+  go-lint:
+    match: '\b(?:golangci-lint|staticcheck)\b'
+    steps:
+      - dedup: {}
+      - group_lines:
+          mode: lint_by_rule
+      - truncate:
+          head: 60
+          tail: 10
+
+  # === File operations ===
+  ls-tree:
+    match: '\b(?:ls|tree)\b'
+    steps:
+      - group_lines:
+          mode: by_extension
+      - truncate:
+          head: 40
+          tail: 10
+
+  find:
+    match: '\bfind\b'
+    steps:
+      - group_lines:
+          mode: by_directory
+      - truncate:
+          head: 40
+          tail: 10
+
+  grep:
+    match: '\b(?:grep|rg|ripgrep)\b'
+    steps:
+      - dedup: {}
+      - group_lines:
+          mode: by_file
+      - truncate:
+          head: 40
+          tail: 10
+
+  # === Build tools ===
+  build:
+    match: '\b(?:cargo\s+build|go\s+build|next\s+build|webpack|make)\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s*Compiling '
+            - '^\s*Building '
+            - '^\s*Downloading '
+            - '^\s*Downloaded '
+            - '^\[.*\]\s*\d+%'
+            - '^\s*$'
+      - group_lines:
+          mode: errors_warnings
+      - truncate:
+          head: 30
+          tail: 10
+
+  # === Package management ===
+  package-mgmt:
+    match: '\b(?:pip\s+(?:install|list)|npm\s+(?:install|ls|list)|uv\s+(?:pip|sync|add))\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s*Downloading '
+            - '^\s*Installing '
+            - '^\s*Using cached '
+            - '^\s*Collecting '
+            - '^npm warn'
+            - '^\s*$'
+            - '^added \d+ packages'
+      - truncate:
+          head: 10
+          tail: 10
+
+  # === Container/k8s ===
+  docker-list:
+    match: '\bdocker\s+(?:ps|images)\b'
+    steps:
+      - truncate:
+          head: 30
+          tail: 5
+
+  container-logs:
+    match: '\b(?:docker\s+logs|kubectl\s+logs)\b'
+    steps:
+      - dedup: {}
+      - truncate:
+          head: 30
+          tail: 20
+
+  # === GitHub CLI ===
+  gh-cli:
+    match: '\bgh\s+(?:pr|issue)\s+(?:list|view)\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s*$'
+      - truncate:
+          head: 30
+          tail: 5
+
+  # === Utility ===
+  download:
+    match: '\b(?:wget|curl)\b'
+    steps:
+      - filter_lines:
+          patterns:
+            - '^\s*%\s+Total'
+            - '^\s*\d+\s+\d+'
+            - '^  % Total'
+            - '^\s*$'
+            - '^###'
+      - truncate:
+          head: 10
+          tail: 10
+
+fallback:
+  steps:
+    - truncate:
+        head: 20
+        tail: 20
+
+excluded_commands: []

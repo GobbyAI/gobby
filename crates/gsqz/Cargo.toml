@@ -1,0 +1,30 @@
+[package]
+name = "gobby-squeeze"
+version = "0.1.0"
+edition = "2024"
+authors = ["Josh Wilhelmi <josh@gobby.ai>"]
+description = "YAML-configurable output compressor for LLM token optimization"
+license = "Apache-2.0"
+repository = "https://github.com/GobbyAI/gobby-cli"
+homepage = "https://gobby.ai"
+readme = "README.md"
+keywords = ["cli", "compression", "llm", "token-optimization"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "gsqz"
+path = "src/main.rs"
+
+[features]
+default = ["gobby"]
+gobby = ["ureq", "serde_json"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+
+# Gobby-specific (daemon HTTP integration)
+ureq = { version = "2", features = ["json"], optional = true }
+serde_json = { version = "1", optional = true }
