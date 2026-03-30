@@ -8,6 +8,18 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1]
+
+### Fixes
+
+#### gsqz
+- Fix ripgrep output compression mangling results and making them unreadable (#2)
+- Fix pytest warnings being hidden in compressed output (#3)
+- Fix git-diff compression losing meaningful context (#4)
+
+### CI/CD
+- Add `cargo publish` step to release workflow for crates.io publishing
+
 ## [0.2.0]
 
 ### Features
