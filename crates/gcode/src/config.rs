@@ -398,6 +398,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_config_defaults() {
         let (tmp, _conn) = create_test_db();
         let config = resolve_neo4j_config(tmp.path(), false);

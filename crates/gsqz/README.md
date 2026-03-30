@@ -80,7 +80,7 @@ sudo mv gsqz /usr/local/bin/
 ### Build from source
 
 ```bash
-cargo install --git https://github.com/GobbyAI/gobby-cli
+cargo install gobby-squeeze
 ```
 
 ### With Gobby
