@@ -8,6 +8,15 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3]
+
+### Fixed
+
+#### gcode
+- Fix startup hang caused by llama-cpp-2 v0.1.140 C++ static constructors blocking before main() on macOS Metal — update to v0.1.141 (#9)
+- Wire up batch `embed_texts` in indexing pipeline instead of one-at-a-time `embed_text` calls (#9)
+- Remove unused `embed_texts` export warning (#9)
+
 ## [0.2.2]
 
 ### Fixes

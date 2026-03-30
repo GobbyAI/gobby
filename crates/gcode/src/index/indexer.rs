@@ -219,14 +219,17 @@ fn index_file(
     // Upsert embeddings to Qdrant (when embeddings feature + Qdrant configured)
     if let Some(config) = qdrant {
         let collection = format!("{}{}", config.collection_prefix, project_id);
+        let texts: Vec<String> = parse_result
+            .symbols
+            .iter()
+            .map(semantic::symbol_embed_text)
+            .collect();
+        let embeddings = semantic::embed_texts(&texts, false);
         let points: Vec<(String, Vec<f32>)> = parse_result
             .symbols
             .iter()
-            .filter_map(|sym| {
-                let text = semantic::symbol_embed_text(sym);
-                let embedding = semantic::embed_text(&text, false)?;
-                Some((sym.id.clone(), embedding))
-            })
+            .zip(embeddings)
+            .filter_map(|(sym, emb)| Some((sym.id.clone(), emb?)))
             .collect();
         if !points.is_empty() {
             let _ = semantic::upsert_vectors(config, &collection, &points);
