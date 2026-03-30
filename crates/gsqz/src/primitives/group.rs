@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 pub fn group_lines(lines: Vec<String>, mode: &str) -> Vec<String> {
     match mode {
         "git_status" => group_git_status(lines),
+        "git_diff" => group_git_diff(lines),
         "pytest_failures" => group_pytest_failures(lines),
         "test_failures" => group_test_failures(lines),
         "lint_by_rule" => group_lint_by_rule(lines),
@@ -77,6 +78,110 @@ fn group_git_status(lines: Vec<String>) -> Vec<String> {
     result
 }
 
+// --- Git diff ---
+
+const LOCK_FILES: &[&str] = &[
+    "Cargo.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "poetry.lock",
+    "pnpm-lock.yaml",
+    "Gemfile.lock",
+    "go.sum",
+    "composer.lock",
+    "Pipfile.lock",
+];
+
+const GENERATED_EXTS: &[&str] = &[".min.js", ".min.css", ".js.map", ".css.map"];
+
+const MAX_LINES_PER_FILE: usize = 40;
+
+fn group_git_diff(lines: Vec<String>) -> Vec<String> {
+    static DIFF_HEADER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^diff --git a/(.+) b/(.+)").unwrap());
+    static BINARY_MARKER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^Binary files .* differ").unwrap());
+
+    // Split into file sections
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    let mut preamble: Vec<String> = Vec::new();
+
+    for line in &lines {
+        if let Some(caps) = DIFF_HEADER.captures(line) {
+            let filepath = caps.get(2).map_or("", |m| m.as_str()).to_string();
+            sections.push((filepath, vec![line.clone()]));
+        } else if let Some(section) = sections.last_mut() {
+            section.1.push(line.clone());
+        } else {
+            preamble.push(line.clone());
+        }
+    }
+
+    if sections.is_empty() {
+        return lines;
+    }
+
+    let mut result = Vec::new();
+    result.extend(preamble);
+
+    for (filepath, section_lines) in &sections {
+        let filename = filepath.rsplit('/').next().unwrap_or(filepath);
+
+        // Count additions and deletions
+        let additions = section_lines
+            .iter()
+            .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+            .count();
+        let deletions = section_lines
+            .iter()
+            .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+            .count();
+
+        // Check for binary
+        let is_binary = section_lines.iter().any(|l| BINARY_MARKER.is_match(l));
+        if is_binary {
+            result.push(format!("[binary] {} (changed)\n", filepath));
+            continue;
+        }
+
+        // Check for lock files
+        if LOCK_FILES.contains(&filename) {
+            result.push(format!(
+                "[lock] {} (+{}, -{})\n",
+                filepath, additions, deletions
+            ));
+            continue;
+        }
+
+        // Check for generated files
+        if GENERATED_EXTS.iter().any(|ext| filepath.ends_with(ext)) {
+            result.push(format!(
+                "[generated] {} (+{}, -{})\n",
+                filepath, additions, deletions
+            ));
+            continue;
+        }
+
+        // Normal file — keep diff --git header, ---, +++, and hunk content
+        // but cap total lines per file
+        if section_lines.len() <= MAX_LINES_PER_FILE {
+            result.extend(section_lines.clone());
+        } else {
+            let top = MAX_LINES_PER_FILE / 2;
+            let bottom = MAX_LINES_PER_FILE - top;
+            let omitted = section_lines.len() - MAX_LINES_PER_FILE;
+            result.extend_from_slice(&section_lines[..top]);
+            result.push(format!(
+                "  [... {} lines omitted in {} ...]\n",
+                omitted, filename
+            ));
+            result.extend_from_slice(&section_lines[section_lines.len() - bottom..]);
+        }
+    }
+
+    result
+}
+
 // --- Pytest failures ---
 
 fn group_pytest_failures(lines: Vec<String>) -> Vec<String> {
@@ -84,6 +189,8 @@ fn group_pytest_failures(lines: Vec<String>) -> Vec<String> {
         LazyLock::new(|| Regex::new(r"^=+ (?:FAILURES|ERRORS) =+").unwrap());
     static SUMMARY_HEADER: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^=+ short test summary").unwrap());
+    static WARNINGS_HEADER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^=+ warnings summary =+").unwrap());
     static SECTION_BOUNDARY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^=+").unwrap());
     static FINAL_SUMMARY: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^=+.*(?:passed|failed|error|warning)").unwrap());
@@ -91,26 +198,36 @@ fn group_pytest_failures(lines: Vec<String>) -> Vec<String> {
     let mut result = Vec::new();
     let mut in_failure_section = false;
     let mut in_summary = false;
+    let mut in_warnings = false;
 
     for line in &lines {
         let stripped = line.trim();
         if FAILURES_HEADER.is_match(stripped) {
             in_failure_section = true;
+            in_warnings = false;
+            result.push(line.clone());
+            continue;
+        }
+        if WARNINGS_HEADER.is_match(stripped) {
+            in_failure_section = false;
+            in_warnings = true;
             result.push(line.clone());
             continue;
         }
         if SUMMARY_HEADER.is_match(stripped) {
             in_failure_section = false;
+            in_warnings = false;
             in_summary = true;
             result.push(line.clone());
             continue;
         }
-        if in_summary && SECTION_BOUNDARY.is_match(stripped) {
+        if (in_summary || in_warnings) && SECTION_BOUNDARY.is_match(stripped) {
             result.push(line.clone());
             in_summary = false;
+            in_warnings = false;
             continue;
         }
-        if in_failure_section || in_summary {
+        if in_failure_section || in_summary || in_warnings {
             result.push(line.clone());
             continue;
         }
@@ -489,6 +606,116 @@ mod tests {
     }
 
     #[test]
+    fn test_git_diff_lock_file_collapsed() {
+        let lines = vec![
+            "diff --git a/Cargo.lock b/Cargo.lock\n".into(),
+            "--- a/Cargo.lock\n".into(),
+            "+++ b/Cargo.lock\n".into(),
+            "@@ -1,5 +1,5 @@\n".into(),
+            " name = \"foo\"\n".into(),
+            "-version = \"0.1.0\"\n".into(),
+            "+version = \"0.2.0\"\n".into(),
+        ];
+        let result = group_git_diff(lines);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].starts_with("[lock] Cargo.lock"));
+        assert!(result[0].contains("+1, -1"));
+    }
+
+    #[test]
+    fn test_git_diff_binary_collapsed() {
+        let lines = vec![
+            "diff --git a/logo.png b/logo.png\n".into(),
+            "Binary files a/logo.png and b/logo.png differ\n".into(),
+        ];
+        let result = group_git_diff(lines);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].starts_with("[binary] logo.png"));
+    }
+
+    #[test]
+    fn test_git_diff_generated_collapsed() {
+        let lines = vec![
+            "diff --git a/dist/app.min.js b/dist/app.min.js\n".into(),
+            "--- a/dist/app.min.js\n".into(),
+            "+++ b/dist/app.min.js\n".into(),
+            "@@ -1 +1 @@\n".into(),
+            "-var a=1;\n".into(),
+            "+var a=2;\n".into(),
+        ];
+        let result = group_git_diff(lines);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].starts_with("[generated] dist/app.min.js"));
+        assert!(result[0].contains("+1, -1"));
+    }
+
+    #[test]
+    fn test_git_diff_normal_file_kept() {
+        let lines = vec![
+            "diff --git a/src/main.rs b/src/main.rs\n".into(),
+            "--- a/src/main.rs\n".into(),
+            "+++ b/src/main.rs\n".into(),
+            "@@ -1,3 +1,4 @@\n".into(),
+            " fn main() {\n".into(),
+            "+    println!(\"hello\");\n".into(),
+            " }\n".into(),
+        ];
+        let result = group_git_diff(lines.clone());
+        assert_eq!(result, lines);
+    }
+
+    #[test]
+    fn test_git_diff_large_file_truncated() {
+        let mut lines = vec![
+            "diff --git a/src/big.rs b/src/big.rs\n".into(),
+            "--- a/src/big.rs\n".into(),
+            "+++ b/src/big.rs\n".into(),
+            "@@ -1,100 +1,100 @@\n".into(),
+        ];
+        for i in 0..60 {
+            lines.push(format!("+line {}\n", i));
+        }
+        let result = group_git_diff(lines);
+        assert!(result.iter().any(|l| l.contains("lines omitted in big.rs")));
+        assert!(result.len() < 50);
+    }
+
+    #[test]
+    fn test_git_diff_mixed_files() {
+        let mut lines = vec![
+            "diff --git a/src/lib.rs b/src/lib.rs\n".into(),
+            "--- a/src/lib.rs\n".into(),
+            "+++ b/src/lib.rs\n".into(),
+            "@@ -1,2 +1,3 @@\n".into(),
+            "+use std::io;\n".into(),
+            "diff --git a/Cargo.lock b/Cargo.lock\n".into(),
+            "--- a/Cargo.lock\n".into(),
+            "+++ b/Cargo.lock\n".into(),
+        ];
+        for _ in 0..100 {
+            lines.push("+dep line\n".into());
+        }
+        lines.push("diff --git a/icon.png b/icon.png\n".into());
+        lines.push("Binary files a/icon.png and b/icon.png differ\n".into());
+
+        let result = group_git_diff(lines);
+        // Normal file kept
+        assert!(result.iter().any(|l| l.contains("src/lib.rs")));
+        assert!(result.iter().any(|l| l.contains("use std::io")));
+        // Lock collapsed
+        assert!(result.iter().any(|l| l.starts_with("[lock] Cargo.lock")));
+        // Binary collapsed
+        assert!(result.iter().any(|l| l.starts_with("[binary] icon.png")));
+    }
+
+    #[test]
+    fn test_git_diff_no_diff_headers_passthrough() {
+        let lines = vec!["not a diff\n".into(), "just some text\n".into()];
+        let result = group_git_diff(lines.clone());
+        assert_eq!(result, lines);
+    }
+
+    #[test]
     fn test_pytest_failures_extracts_sections() {
         let lines = vec![
             "collecting ...\n".into(),
@@ -504,6 +731,42 @@ mod tests {
         assert!(result.iter().any(|l| l.contains("FAILURES")));
         assert!(result.iter().any(|l| l.contains("assert False")));
         assert!(result.iter().any(|l| l.contains("short test summary")));
+    }
+
+    #[test]
+    fn test_pytest_failures_preserves_warnings() {
+        let lines = vec![
+            "test_foo.py::test_one PASSED\n".into(),
+            "======== warnings summary ========\n".into(),
+            "tests/test_foo.py:10: DeprecationWarning: deprecated thing\n".into(),
+            "  some detail line\n".into(),
+            "-- Docs: https://docs.pytest.org/en/stable/warnings.html\n".into(),
+            "======== 1 passed, 1 warning ========\n".into(),
+        ];
+        let result = group_pytest_failures(lines);
+        assert!(result.iter().any(|l| l.contains("warnings summary")));
+        assert!(result.iter().any(|l| l.contains("DeprecationWarning")));
+        assert!(result.iter().any(|l| l.contains("1 passed, 1 warning")));
+    }
+
+    #[test]
+    fn test_pytest_failures_warnings_and_errors() {
+        let lines = vec![
+            "======== FAILURES ========\n".into(),
+            "___ test_two ___\n".into(),
+            "assert False\n".into(),
+            "======== warnings summary ========\n".into(),
+            "tests/test_foo.py:10: DeprecationWarning: old api\n".into(),
+            "======== short test summary ========\n".into(),
+            "FAILED test_foo.py::test_two\n".into(),
+            "======== 1 failed, 1 warning ========\n".into(),
+        ];
+        let result = group_pytest_failures(lines);
+        assert!(result.iter().any(|l| l.contains("FAILURES")));
+        assert!(result.iter().any(|l| l.contains("assert False")));
+        assert!(result.iter().any(|l| l.contains("DeprecationWarning")));
+        assert!(result.iter().any(|l| l.contains("short test summary")));
+        assert!(result.iter().any(|l| l.contains("1 failed, 1 warning")));
     }
 
     #[test]

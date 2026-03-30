@@ -33,12 +33,11 @@ pipelines:
       - filter_lines:
           patterns:
             - '^index [0-9a-f]'
-            - '^diff --git'
-            - '^--- '
-            - '^\+\+\+ '
+      - group_lines:
+          mode: git_diff
       - truncate:
-          per_file_lines: 50
-          file_marker: '^@@\s'
+          head: 80
+          tail: 10
 
   git-log:
     match: '\bgit\s+log\b'
@@ -174,7 +173,6 @@ pipelines:
   grep:
     match: '\b(?:grep|rg|ripgrep)\b'
     steps:
-      - dedup: {}
       - group_lines:
           mode: by_file
       - truncate:
