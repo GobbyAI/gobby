@@ -72,7 +72,7 @@ pub fn invalidate(ctx: &Context, force: bool) -> anyhow::Result<()> {
     }
 
     let conn = db::open_readwrite(&ctx.db_path)?;
-    indexer::invalidate(&conn, &ctx.project_id)
+    indexer::invalidate(&conn, &ctx.project_id, ctx.daemon_url.as_deref())
 }
 
 /// List all indexed projects from both standalone and gobby DBs.

@@ -41,6 +41,8 @@ pub struct Context {
     pub neo4j: Option<Neo4jConfig>,
     /// Qdrant config (None if unavailable)
     pub qdrant: Option<QdrantConfig>,
+    /// Gobby daemon base URL (e.g. http://localhost:60887)
+    pub daemon_url: Option<String>,
 }
 
 impl Context {
@@ -66,6 +68,8 @@ impl Context {
         let neo4j = resolve_neo4j_config(&db_path, quiet);
         let qdrant = resolve_qdrant_config(&db_path, quiet);
 
+        let daemon_url = resolve_daemon_url();
+
         Ok(Self {
             db_path,
             project_root,
@@ -73,6 +77,7 @@ impl Context {
             quiet,
             neo4j,
             qdrant,
+            daemon_url,
         })
     }
 }
@@ -193,6 +198,18 @@ pub fn detect_project_root() -> anyhow::Result<PathBuf> {
             Some(parent) => dir = parent,
             None => return Ok(cwd), // Last resort: cwd
         }
+    }
+}
+
+/// Resolve Gobby daemon base URL.
+///
+/// Checks `GOBBY_PORT` env var, defaults to `http://localhost:60887`.
+/// Returns `None` if the env var is set but empty.
+fn resolve_daemon_url() -> Option<String> {
+    match std::env::var("GOBBY_PORT") {
+        Ok(port) if !port.is_empty() => Some(format!("http://localhost:{port}")),
+        Ok(_) => None,
+        Err(_) => Some("http://localhost:60887".to_string()),
     }
 }
 

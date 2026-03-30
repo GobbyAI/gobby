@@ -297,6 +297,7 @@ mod tests {
             quiet: true,
             neo4j: None,
             qdrant: None,
+            daemon_url: None,
         }
     }
 
