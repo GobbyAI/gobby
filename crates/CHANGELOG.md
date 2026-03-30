@@ -8,6 +8,37 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2]
+
+### Fixes
+
+#### gsqz
+- Fix dedup group transition losing representative line before repeat marker (#6)
+- Fix truncate omission marker having extra leading newline (#6)
+- Update README badge and download URLs from old GobbyAI/gsqz repo (#6, #7)
+- Fix cargo install command to target `gobby-squeeze` crate (#7)
+
+#### gcode
+- Fix `symbols` command panic when stale index has byte_start beyond file length (#6)
+- Replace `process::exit(1)` with proper error returns in `summary` and `symbol` commands (#6)
+- Return `Result` from `symbol_content_hash` instead of panicking on invalid ranges (#6)
+- Use safe `try_into()` for i64→usize casts in symbol deserialization (#6)
+- Log database lookup errors in search instead of silently swallowing (#6)
+- Use bounded 8KB read in `is_binary` instead of reading entire file (#6)
+- Fix UTF-8 multi-byte panic in progress bar path truncation (#6)
+- Add missing Swift `LanguageSpec` to match existing tree-sitter parser (#6)
+
+### Improvements
+
+#### gcode
+- Rename misleading `iso_now` to `epoch_secs_str` in chunker and indexer (#6)
+- Add `#[serial_test::serial]` to config tests that read environment variables (#6, #7)
+- Fix `test_config_defaults` to actually test `resolve_neo4j_config` defaults (#6)
+- Set `rust-version = "1.85"` in both crate manifests (#6)
+
+#### Documentation
+- Add `text` language specifier to fenced code blocks in user guides (#6)
+
 ## [0.2.1]
 
 ### Fixes
