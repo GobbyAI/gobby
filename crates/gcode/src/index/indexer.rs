@@ -84,6 +84,16 @@ pub fn index_directory(
         }
     }
 
+    // Ensure Qdrant collection exists (only when Gobby is installed and Qdrant configured)
+    if let Some(config) = qdrant {
+        let collection = format!("{}{}", config.collection_prefix, project_id);
+        if let Err(e) = crate::search::semantic::ensure_collection(config, &collection) {
+            if !quiet {
+                eprintln!("Warning: failed to ensure Qdrant collection: {e}");
+            }
+        }
+    }
+
     // Index each candidate file
     let total_files = candidates.len() + content_only.len();
     let mut progress = ProgressBar::new(total_files, quiet);

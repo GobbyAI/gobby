@@ -15,7 +15,6 @@ use serde_json::Value;
 use crate::config::{Context, QdrantConfig};
 
 /// Embedding dimension for nomic-embed-text-v1.5.
-#[cfg(feature = "embeddings")]
 const EMBEDDING_DIM: usize = 768;
 
 // ── Embedding model (requires `embeddings` feature) ─────────────────
@@ -237,6 +236,52 @@ pub fn vector_search(
         .unwrap_or_default();
 
     Ok(results)
+}
+
+/// Ensure a Qdrant collection exists with the correct vector config.
+/// No-op if the collection already exists.
+pub fn ensure_collection(config: &QdrantConfig, collection: &str) -> anyhow::Result<()> {
+    let url = match &config.url {
+        Some(u) => u,
+        None => return Ok(()),
+    };
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    // Check if collection exists
+    let mut req = client.get(format!("{url}/collections/{collection}"));
+    if let Some(key) = &config.api_key {
+        req = req.header("api-key", key);
+    }
+    let resp = req.send()?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+
+    // Create collection with cosine distance, 768-dim (nomic-embed-text-v1.5)
+    let body = serde_json::json!({
+        "vectors": {
+            "size": EMBEDDING_DIM,
+            "distance": "Cosine"
+        }
+    });
+
+    let mut req = client
+        .put(format!("{url}/collections/{collection}"))
+        .json(&body);
+    if let Some(key) = &config.api_key {
+        req = req.header("api-key", key);
+    }
+
+    let resp = req.send()?;
+    if !resp.status().is_success() {
+        let text = resp.text().unwrap_or_default();
+        anyhow::bail!("Failed to create Qdrant collection '{collection}': {text}");
+    }
+
+    Ok(())
 }
 
 /// Upsert vectors to Qdrant for symbols.
