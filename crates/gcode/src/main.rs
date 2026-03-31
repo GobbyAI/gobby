@@ -121,6 +121,14 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Force-enable Metal tensor API on all Apple Silicon. Must be set BEFORE
+    // any threads are spawned to avoid Undefined Behavior (segfaults) when
+    // other threads read the environment concurrently.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        std::env::set_var("GGML_METAL_TENSOR_ENABLE", "1")
+    };
+
     let cli = Cli::parse();
     search::semantic::configure_logging(cli.verbose);
 

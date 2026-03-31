@@ -68,17 +68,9 @@ mod embedding_impl {
             None => return false,
         };
 
-        // Force-enable Metal tensor API on all Apple Silicon. GGML's
-        // non-tensor codepath (pre-M5 default) has a residency set cleanup
-        // bug that crashes on exit: GGML_ASSERT([rsets->data count] == 0)
-        // at ggml-metal-device.m:612. The tensor API path handles cleanup
-        // correctly. If tensor compilation fails on older hardware, GGML
-        // gracefully disables it — but uses the correct cleanup path.
-        #[cfg(target_os = "macos")]
-        unsafe {
-            std::env::set_var("GGML_METAL_TENSOR_ENABLE", "1")
-        };
-
+        // Force-enable Metal tensor API on all Apple Silicon.
+        // GGML's non-tensor codepath has a residency set cleanup bug.
+        // (This is now set unconditionally in main.rs before any threads spawn)
         let backend = match LlamaBackend::init() {
             Ok(b) => b,
             Err(e) => {
