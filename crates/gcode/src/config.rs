@@ -300,7 +300,7 @@ fn resolve_neo4j_config(db_path: &Path, quiet: bool) -> Option<Neo4jConfig> {
     // Only apply hardcoded default if config_store exists (gobby DB).
     let url = std::env::var("GOBBY_NEO4J_URL")
         .ok()
-        .or_else(|| read_config_value(&conn, "memory.neo4j_url"))
+        .or_else(|| read_config_value(&conn, "databases.neo4j.url"))
         .or_else(|| {
             if has_config_store {
                 Some("http://localhost:8474".to_string())
@@ -311,7 +311,7 @@ fn resolve_neo4j_config(db_path: &Path, quiet: bool) -> Option<Neo4jConfig> {
 
     let raw_auth = std::env::var("GOBBY_NEO4J_AUTH")
         .ok()
-        .or_else(|| read_config_value(&conn, "memory.neo4j_auth"));
+        .or_else(|| read_config_value(&conn, "databases.neo4j.auth"));
 
     // Resolve $secret: patterns in auth
     let auth = match raw_auth {
@@ -328,7 +328,7 @@ fn resolve_neo4j_config(db_path: &Path, quiet: bool) -> Option<Neo4jConfig> {
     };
 
     let database =
-        read_config_value(&conn, "memory.neo4j_database").unwrap_or_else(|| "neo4j".to_string());
+        read_config_value(&conn, "databases.neo4j.database").unwrap_or_else(|| "neo4j".to_string());
 
     Some(Neo4jConfig {
         url,
@@ -349,9 +349,9 @@ fn resolve_qdrant_config(db_path: &Path, quiet: bool) -> Option<QdrantConfig> {
 
     let url = std::env::var("GOBBY_QDRANT_URL")
         .ok()
-        .or_else(|| read_config_value(&conn, "memory.qdrant_url"));
+        .or_else(|| read_config_value(&conn, "databases.qdrant.url"));
 
-    let raw_api_key = read_config_value(&conn, "memory.qdrant_api_key");
+    let raw_api_key = read_config_value(&conn, "databases.qdrant.api_key");
     let api_key = match raw_api_key {
         Some(v) => match secrets::resolve_config_value(&v, db_path) {
             Ok(resolved) => Some(resolved),
@@ -365,7 +365,7 @@ fn resolve_qdrant_config(db_path: &Path, quiet: bool) -> Option<QdrantConfig> {
         None => None,
     };
 
-    let collection_prefix = read_config_value(&conn, "memory.code_symbol_collection_prefix")
+    let collection_prefix = read_config_value(&conn, "databases.qdrant.collection_prefix")
         .unwrap_or_else(|| "code_symbols_".to_string());
 
     // Only return Some if there's a URL (qdrant_path = embedded mode, not accessible from CLI)
