@@ -353,7 +353,8 @@ fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
         Err(_) => return,
     };
 
-    let url = format!("{base_url}/api/code-index/invalidate");
+    let base = base_url.trim_end_matches('/');
+    let url = format!("{base}/api/code-index/invalidate");
     match client
         .post(&url)
         .json(&serde_json::json!({"project_id": project_id}))

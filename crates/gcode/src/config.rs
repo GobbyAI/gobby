@@ -206,7 +206,7 @@ pub fn detect_project_root() -> anyhow::Result<PathBuf> {
 /// Resolution order:
 /// 1. `GOBBY_PORT` env var (explicit override)
 /// 2. `~/.gobby/bootstrap.yaml` `daemon_port` + `bind_host` keys
-/// 3. Returns `None` if bootstrap.yaml is missing or unreadable
+/// 3. Default: `http://localhost:60887`
 fn resolve_daemon_url() -> Option<String> {
     // Env var override takes priority
     if let Ok(port) = std::env::var("GOBBY_PORT") {
@@ -218,19 +218,20 @@ fn resolve_daemon_url() -> Option<String> {
 
     // Read from bootstrap.yaml
     let bootstrap_path = dirs::home_dir()?.join(".gobby").join("bootstrap.yaml");
-    let contents = std::fs::read_to_string(&bootstrap_path).ok()?;
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&contents).ok()?;
+    if let Ok(contents) = std::fs::read_to_string(&bootstrap_path) {
+        if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&contents) {
+            if let Some(port) = yaml.get("daemon_port").and_then(|v| v.as_u64()) {
+                let host = yaml
+                    .get("bind_host")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("localhost");
+                return Some(format!("http://{host}:{port}"));
+            }
+        }
+    }
 
-    let port = yaml
-        .get("daemon_port")
-        .and_then(|v| v.as_u64())
-        .map(|p| p.to_string())?;
-    let host = yaml
-        .get("bind_host")
-        .and_then(|v| v.as_str())
-        .unwrap_or("localhost");
-
-    Some(format!("http://{host}:{port}"))
+    // Well-known default (matches gsqz)
+    Some("http://localhost:60887".to_string())
 }
 
 /// Resolve project ID from identity files or generate deterministically.
