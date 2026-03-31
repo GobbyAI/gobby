@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### gcode
 - `gcode invalidate` now notifies the Gobby daemon to clean Neo4j graph nodes and Qdrant vectors via `POST /api/code-index/invalidate` (#11)
 - Daemon URL resolved from `~/.gobby/bootstrap.yaml` (`daemon_port` + `bind_host`) instead of hardcoded default (#12)
+- Migrate config_store keys from `memory.*` to `databases.neo4j.*` and `databases.qdrant.*` namespace (#15)
 
 ## [0.2.3]
 
