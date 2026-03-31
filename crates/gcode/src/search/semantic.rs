@@ -30,6 +30,7 @@ mod embedding_impl {
     use llama_cpp_2::llama_batch::LlamaBatch;
     use llama_cpp_2::model::params::LlamaModelParams;
     use llama_cpp_2::model::{AddBos, LlamaModel};
+    use llama_cpp_2::{LogOptions, send_logs_to_tracing};
 
     use super::EMBEDDING_DIM;
 
@@ -42,6 +43,13 @@ mod embedding_impl {
     }
 
     static EMBEDDING_MODEL: Mutex<Option<EmbeddingModelInner>> = Mutex::new(None);
+
+    /// Configure GGML/llama.cpp log output. Must be called before backend init.
+    /// Suppresses ~200 lines of debug output (model metadata, tensor loading,
+    /// Metal init, pipeline compilation) that waste agent tokens.
+    pub fn configure_logging(verbose: bool) {
+        send_logs_to_tracing(LogOptions::default().with_logs_enabled(verbose));
+    }
 
     /// Model file path.
     fn model_path() -> Option<PathBuf> {
@@ -59,6 +67,17 @@ mod embedding_impl {
         let path = match model_path() {
             Some(p) => p,
             None => return false,
+        };
+
+        // Force-enable Metal tensor API on all Apple Silicon. GGML's
+        // non-tensor codepath (pre-M5 default) has a residency set cleanup
+        // bug that crashes on exit: GGML_ASSERT([rsets->data count] == 0)
+        // at ggml-metal-device.m:612. The tensor API path handles cleanup
+        // correctly. If tensor compilation fails on older hardware, GGML
+        // gracefully disables it — but uses the correct cleanup path.
+        #[cfg(target_os = "macos")]
+        unsafe {
+            std::env::set_var("GGML_METAL_TENSOR_ENABLE", "1")
         };
 
         let backend = match LlamaBackend::init() {
@@ -146,7 +165,7 @@ mod embedding_impl {
 }
 
 #[cfg(feature = "embeddings")]
-pub use embedding_impl::{embed_text, embed_texts, shutdown};
+pub use embedding_impl::{configure_logging, embed_text, embed_texts, shutdown};
 
 #[cfg(not(feature = "embeddings"))]
 pub fn embed_text(_text: &str, _is_query: bool) -> Option<Vec<f32>> {
@@ -158,6 +177,9 @@ pub fn embed_text(_text: &str, _is_query: bool) -> Option<Vec<f32>> {
 pub fn embed_texts(texts: &[String], _is_query: bool) -> Vec<Option<Vec<f32>>> {
     vec![None; texts.len()]
 }
+
+#[cfg(not(feature = "embeddings"))]
+pub fn configure_logging(_verbose: bool) {}
 
 #[cfg(not(feature = "embeddings"))]
 pub fn shutdown() {}

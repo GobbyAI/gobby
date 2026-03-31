@@ -30,6 +30,10 @@ struct Cli {
     #[arg(long, global = true)]
     quiet: bool,
 
+    /// Enable GGML/llama.cpp debug output (suppressed by default)
+    #[arg(long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -118,6 +122,7 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    search::semantic::configure_logging(cli.verbose);
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     match &cli.command {
