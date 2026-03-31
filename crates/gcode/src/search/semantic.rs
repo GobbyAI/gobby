@@ -69,7 +69,7 @@ mod embedding_impl {
             }
         };
 
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX); // Metal/CUDA auto-detect
+        let model_params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
 
         match LlamaModel::load_from_file(&backend, &path, &model_params) {
             Ok(model) => {
@@ -135,10 +135,18 @@ mod embedding_impl {
     pub fn embed_texts(texts: &[String], is_query: bool) -> Vec<Option<Vec<f32>>> {
         texts.iter().map(|t| embed_text(t, is_query)).collect()
     }
+
+    /// Explicitly drop the embedding model before process exit.
+    /// Prevents GGML_ASSERT([rsets->data count] == 0) crash caused by
+    /// Metal residency sets outliving static destructor teardown order.
+    pub fn shutdown() {
+        let mut guard = EMBEDDING_MODEL.lock().unwrap();
+        *guard = None;
+    }
 }
 
 #[cfg(feature = "embeddings")]
-pub use embedding_impl::{embed_text, embed_texts};
+pub use embedding_impl::{embed_text, embed_texts, shutdown};
 
 #[cfg(not(feature = "embeddings"))]
 pub fn embed_text(_text: &str, _is_query: bool) -> Option<Vec<f32>> {
@@ -150,6 +158,9 @@ pub fn embed_text(_text: &str, _is_query: bool) -> Option<Vec<f32>> {
 pub fn embed_texts(texts: &[String], _is_query: bool) -> Vec<Option<Vec<f32>>> {
     vec![None; texts.len()]
 }
+
+#[cfg(not(feature = "embeddings"))]
+pub fn shutdown() {}
 
 // ── Qdrant REST API ──────────────────────────────────────────────────
 

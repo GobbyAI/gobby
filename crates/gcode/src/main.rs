@@ -136,7 +136,9 @@ fn main() -> anyhow::Result<()> {
 
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
-    match cli.command {
+    // Drop embedding model before exit to avoid Metal residency set assertion
+    // crash during static destructor teardown (ggml-metal-device.m:612).
+    let result = match cli.command {
         Command::Init | Command::Projects => unreachable!(),
         Command::Index { path, files } => commands::index::run(&ctx, path, files),
         Command::Status => commands::status::run(&ctx, cli.format),
@@ -170,5 +172,8 @@ fn main() -> anyhow::Result<()> {
 
         Command::Summary { symbol_id } => commands::summary::summary(&ctx, &symbol_id, cli.format),
         Command::RepoOutline => commands::summary::repo_outline(&ctx, cli.format),
-    }
+    };
+
+    search::semantic::shutdown();
+    result
 }
