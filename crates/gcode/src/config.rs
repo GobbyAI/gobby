@@ -208,12 +208,11 @@ pub fn detect_project_root() -> anyhow::Result<PathBuf> {
 /// 2. `~/.gobby/bootstrap.yaml` `daemon_port` + `bind_host` keys
 /// 3. Default: `http://localhost:60887`
 fn resolve_daemon_url() -> Option<String> {
-    // Env var override takes priority
+    // Env var override takes priority (empty value falls through to defaults)
     if let Ok(port) = std::env::var("GOBBY_PORT") {
         if !port.is_empty() {
             return Some(format!("http://localhost:{port}"));
         }
-        return None;
     }
 
     // Read from bootstrap.yaml
