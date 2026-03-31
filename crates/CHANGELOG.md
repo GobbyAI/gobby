@@ -8,6 +8,22 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5]
+
+### Fixed
+
+#### gcode
+- Fix Metal GPU crash on pre-M5 Apple Silicon (M1-M4) caused by GGML residency set cleanup bug in non-tensor codepath — force-enable tensor API via `GGML_METAL_TENSOR_ENABLE` env var (#18)
+- Fix Metal residency set assertion crash on process exit — explicitly drop embedding model before static destructor teardown (#18)
+- Fix daemon URL fallback returning `None` when bootstrap.yaml has no `bind_host`, and normalize trailing slashes (#16)
+- Fix Qdrant collection not created during `gcode index` — add `ensure_collection` to auto-create with correct vector config when Gobby is installed (#20)
+
+### Added
+
+#### gcode
+- `--verbose` global flag to enable GGML/llama.cpp debug output (suppressed by default to save agent tokens) (#19)
+- `--version` flag for gsqz CLI (#17)
+
 ## [0.2.4]
 
 ### Fixed
