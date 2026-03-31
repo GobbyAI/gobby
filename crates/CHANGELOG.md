@@ -8,6 +8,14 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6]
+
+### Fixed
+
+#### gcode
+- Fix empty `GOBBY_PORT` env var blocking daemon URL fallback — treat empty string same as unset (#22)
+- Move `GGML_METAL_TENSOR_ENABLE` env var to top of `main()` before any threads spawn — setting env vars during lazy init was undefined behavior on macOS due to concurrent reads
+
 ## [0.2.5]
 
 ### Fixed
