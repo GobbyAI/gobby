@@ -18,6 +18,7 @@ static ANSI_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[[0-9;]*[a-
 #[derive(Parser)]
 #[command(
     name = "gsqz",
+    version,
     about = "Run a command and compress its output for LLM consumption"
 )]
 struct Cli {
