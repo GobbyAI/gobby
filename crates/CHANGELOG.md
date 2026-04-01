@@ -8,6 +8,15 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8]
+
+### Added
+
+#### gcode
+- Index coverage tracking: `gcode status` and `gcode projects` now show file coverage percentage (e.g. `39/58 (67%)`) to help agents decide whether to use the index or grep (#27)
+- `total_eligible_files` cached during `gcode index` runs — no extra disk I/O on status queries
+- Schema migration (v1→v2) for standalone `gobby-code-index.db`
+
 ## [0.2.7]
 
 ### Added
