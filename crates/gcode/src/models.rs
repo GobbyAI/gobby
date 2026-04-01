@@ -92,6 +92,18 @@ impl Symbol {
         })
     }
 
+    /// Slim representation for outline output.
+    pub fn to_outline(&self) -> OutlineSymbol {
+        OutlineSymbol {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            kind: self.kind.clone(),
+            line_start: self.line_start,
+            line_end: self.line_end,
+            signature: self.signature.clone(),
+        }
+    }
+
     /// Brief dict-like representation for search results.
     pub fn to_brief(&self) -> SearchResult {
         SearchResult {
@@ -226,6 +238,31 @@ pub struct IndexResult {
     pub symbols_found: usize,
     pub errors: Vec<String>,
     pub duration_ms: u64,
+}
+
+/// Paginated response envelope for JSON output.
+/// Hoists `project_id` to avoid repeating it on every result.
+#[derive(Debug, Clone, Serialize)]
+pub struct PagedResponse<T: Serialize> {
+    pub project_id: String,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub results: Vec<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// Slim symbol for outline output — only what agents need.
+#[derive(Debug, Clone, Serialize)]
+pub struct OutlineSymbol {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub line_start: usize,
+    pub line_end: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 /// Content search hit from FTS.

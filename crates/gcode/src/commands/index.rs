@@ -3,7 +3,12 @@ use crate::db;
 use crate::index::indexer;
 use crate::neo4j::Neo4jClient;
 
-pub fn run(ctx: &Context, path: Option<String>, files: Option<Vec<String>>) -> anyhow::Result<()> {
+pub fn run(
+    ctx: &Context,
+    path: Option<String>,
+    files: Option<Vec<String>>,
+    full: bool,
+) -> anyhow::Result<()> {
     // Auto-init: ensure identity file exists before indexing
     crate::project::ensure_gcode_json(&ctx.project_root)?;
 
@@ -38,7 +43,7 @@ pub fn run(ctx: &Context, path: Option<String>, files: Option<Vec<String>>) -> a
             &conn,
             &root,
             &ctx.project_id,
-            true,
+            !full,
             neo4j_ref,
             qdrant_ref,
             ctx.quiet,

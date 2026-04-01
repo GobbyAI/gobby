@@ -49,6 +49,9 @@ enum Command {
         /// Index only specific files
         #[arg(long, num_args = 1..)]
         files: Option<Vec<String>>,
+        /// Force full reindex (skip incremental hash check)
+        #[arg(long)]
+        full: bool,
     },
     /// Show project index status
     Status,
@@ -62,8 +65,11 @@ enum Command {
     /// Hybrid search: FTS5 + semantic + graph boost
     Search {
         query: String,
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "10")]
         limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
         /// Filter by symbol kind
         #[arg(long)]
         kind: Option<String>,
@@ -71,14 +77,20 @@ enum Command {
     /// FTS5 search on symbol metadata (names, signatures, docstrings)
     SearchText {
         query: String,
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "10")]
         limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
     },
     /// FTS5 search on file content chunks
     SearchContent {
         query: String,
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "10")]
         limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
     },
 
     /// Hierarchical symbol tree for a file
@@ -93,14 +105,20 @@ enum Command {
     /// Find callers of a symbol
     Callers {
         symbol_name: String,
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "10")]
         limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
     },
     /// Find all usages of a symbol (calls + imports)
     Usages {
         symbol_name: String,
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "10")]
         limit: usize,
+        /// Skip first N results (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
     },
     /// Show import graph for a file
     Imports { file: String },
@@ -162,31 +180,52 @@ fn main() -> anyhow::Result<()> {
     // crash during static destructor teardown (ggml-metal-device.m:612).
     let result = match cli.command {
         Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
-        Command::Index { path, files } => commands::index::run(&ctx, path, files),
+        Command::Index { path, files, full } => commands::index::run(&ctx, path, files, full),
         Command::Status => commands::status::run(&ctx, cli.format),
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
 
-        Command::Search { query, limit, kind } => {
-            commands::search::search(&ctx, &query, limit, kind.as_deref(), cli.format)
-        }
-        Command::SearchText { query, limit } => {
-            commands::search::search_text(&ctx, &query, limit, cli.format)
-        }
-        Command::SearchContent { query, limit } => {
-            commands::search::search_content(&ctx, &query, limit, cli.format)
-        }
+        Command::Search {
+            query,
+            limit,
+            offset,
+            kind,
+        } => commands::search::search(
+            &ctx,
+            &query,
+            limit,
+            offset,
+            kind.as_deref(),
+            cli.format,
+            cli.verbose,
+        ),
+        Command::SearchText {
+            query,
+            limit,
+            offset,
+        } => commands::search::search_text(&ctx, &query, limit, offset, cli.format),
+        Command::SearchContent {
+            query,
+            limit,
+            offset,
+        } => commands::search::search_content(&ctx, &query, limit, offset, cli.format),
 
-        Command::Outline { file } => commands::symbols::outline(&ctx, &file, cli.format),
+        Command::Outline { file } => {
+            commands::symbols::outline(&ctx, &file, cli.format, cli.verbose)
+        }
         Command::Symbol { id } => commands::symbols::symbol(&ctx, &id, cli.format),
         Command::Symbols { ids } => commands::symbols::symbols(&ctx, &ids, cli.format),
         Command::Tree => commands::symbols::tree(&ctx, cli.format),
 
-        Command::Callers { symbol_name, limit } => {
-            commands::graph::callers(&ctx, &symbol_name, limit, cli.format)
-        }
-        Command::Usages { symbol_name, limit } => {
-            commands::graph::usages(&ctx, &symbol_name, limit, cli.format)
-        }
+        Command::Callers {
+            symbol_name,
+            limit,
+            offset,
+        } => commands::graph::callers(&ctx, &symbol_name, limit, offset, cli.format),
+        Command::Usages {
+            symbol_name,
+            limit,
+            offset,
+        } => commands::graph::usages(&ctx, &symbol_name, limit, offset, cli.format),
         Command::Imports { file } => commands::graph::imports(&ctx, &file, cli.format),
         Command::BlastRadius { target, depth } => {
             commands::graph::blast_radius(&ctx, &target, depth, cli.format)

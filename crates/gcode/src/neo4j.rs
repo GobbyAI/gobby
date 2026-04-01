@@ -171,10 +171,52 @@ fn row_to_graph_result(row: &Row) -> GraphResult {
 
 // ── Graph query functions (read) ─────────────────────────────────────
 
+/// Count callers of a symbol (server-side COUNT for accurate pagination total).
+pub fn count_callers(ctx: &Context, symbol_name: &str) -> anyhow::Result<usize> {
+    with_neo4j(ctx, 0, |client| {
+        let rows = client.query(
+            "MATCH (caller:CodeSymbol)-[:CALLS]->(callee:CodeSymbol {name: $name, project: $project}) \
+             RETURN count(caller) AS cnt",
+            Some(serde_json::json!({
+                "name": symbol_name,
+                "project": ctx.project_id,
+            })),
+        )?;
+        let count = rows
+            .first()
+            .and_then(|r| r.get("cnt"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        Ok(count)
+    })
+}
+
+/// Count usages of a symbol (server-side COUNT for accurate pagination total).
+pub fn count_usages(ctx: &Context, symbol_name: &str) -> anyhow::Result<usize> {
+    with_neo4j(ctx, 0, |client| {
+        let rows = client.query(
+            "MATCH (n)-[r]->(target:CodeSymbol {name: $name, project: $project}) \
+             WHERE type(r) IN ['CALLS', 'IMPORTS'] \
+             RETURN count(n) AS cnt",
+            Some(serde_json::json!({
+                "name": symbol_name,
+                "project": ctx.project_id,
+            })),
+        )?;
+        let count = rows
+            .first()
+            .and_then(|r| r.get("cnt"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        Ok(count)
+    })
+}
+
 /// Find symbols that call the given symbol name.
 pub fn find_callers(
     ctx: &Context,
     symbol_name: &str,
+    offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
     with_neo4j(ctx, vec![], |client| {
@@ -182,10 +224,11 @@ pub fn find_callers(
             "MATCH (caller:CodeSymbol)-[r:CALLS]->(callee:CodeSymbol {name: $name, project: $project}) \
              RETURN caller.id AS caller_id, caller.name AS caller_name, \
                     r.file AS file, r.line AS line \
-             LIMIT $limit",
+             SKIP $offset LIMIT $limit",
             Some(serde_json::json!({
                 "name": symbol_name,
                 "project": ctx.project_id,
+                "offset": offset,
                 "limit": limit,
             })),
         )?;
@@ -197,18 +240,20 @@ pub fn find_callers(
 pub fn find_usages(
     ctx: &Context,
     symbol_name: &str,
+    offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
     with_neo4j(ctx, vec![], |client| {
         let rows = client.query(
-            "MATCH (n)-[r]->(target {name: $name, project: $project}) \
+            "MATCH (n)-[r]->(target:CodeSymbol {name: $name, project: $project}) \
              WHERE type(r) IN ['CALLS', 'IMPORTS'] \
              RETURN n.id AS source_id, n.name AS source_name, \
                     type(r) AS rel_type, r.file AS file, r.line AS line \
-             LIMIT $limit",
+             SKIP $offset LIMIT $limit",
             Some(serde_json::json!({
                 "name": symbol_name,
                 "project": ctx.project_id,
+                "offset": offset,
                 "limit": limit,
             })),
         )?;
