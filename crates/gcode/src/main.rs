@@ -118,6 +118,12 @@ enum Command {
     RepoOutline,
     /// List indexed projects
     Projects,
+    /// Remove stale projects (dead paths, invalid entries)
+    Prune {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -144,6 +150,9 @@ fn main() -> anyhow::Result<()> {
         Command::Projects => {
             return commands::status::projects(cli.format);
         }
+        Command::Prune { force } => {
+            return commands::status::prune(*force);
+        }
         _ => {}
     }
 
@@ -152,7 +161,7 @@ fn main() -> anyhow::Result<()> {
     // Drop embedding model before exit to avoid Metal residency set assertion
     // crash during static destructor teardown (ggml-metal-device.m:612).
     let result = match cli.command {
-        Command::Init | Command::Projects => unreachable!(),
+        Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
         Command::Index { path, files } => commands::index::run(&ctx, path, files),
         Command::Status => commands::status::run(&ctx, cli.format),
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
