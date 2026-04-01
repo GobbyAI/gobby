@@ -263,6 +263,60 @@ pub fn find_usages(
     })
 }
 
+/// Find symbols that call any of the given symbol names (batch).
+/// Used by graph expansion to find callers of top search results.
+pub fn find_callers_batch(
+    ctx: &Context,
+    names: &[String],
+    limit: usize,
+) -> anyhow::Result<Vec<GraphResult>> {
+    if names.is_empty() {
+        return Ok(vec![]);
+    }
+    with_neo4j(ctx, vec![], |client| {
+        let rows = client.query(
+            "MATCH (caller:CodeSymbol)-[r:CALLS]->(callee:CodeSymbol {project: $project}) \
+             WHERE callee.name IN $names \
+             RETURN caller.id AS caller_id, caller.name AS caller_name, \
+                    r.file AS file, r.line AS line \
+             LIMIT $limit",
+            Some(serde_json::json!({
+                "names": names,
+                "project": ctx.project_id,
+                "limit": limit,
+            })),
+        )?;
+        Ok(rows.iter().map(row_to_graph_result).collect())
+    })
+}
+
+/// Find symbols called by any of the given symbol names (batch).
+/// Used by graph expansion to find callees of top search results.
+pub fn find_callees_batch(
+    ctx: &Context,
+    names: &[String],
+    limit: usize,
+) -> anyhow::Result<Vec<GraphResult>> {
+    if names.is_empty() {
+        return Ok(vec![]);
+    }
+    with_neo4j(ctx, vec![], |client| {
+        let rows = client.query(
+            "MATCH (caller:CodeSymbol {project: $project})-[r:CALLS]->(callee:CodeSymbol) \
+             WHERE caller.name IN $names \
+             RETURN callee.id AS caller_id, callee.name AS caller_name, \
+                    r.file AS file, r.line AS line \
+             LIMIT $limit",
+            Some(serde_json::json!({
+                "names": names,
+                "project": ctx.project_id,
+                "limit": limit,
+            })),
+        )?;
+        Ok(rows.iter().map(row_to_graph_result).collect())
+    })
+}
+
 /// Get import graph for a file.
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
     with_neo4j(ctx, vec![], |client| {

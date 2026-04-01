@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
+
+use rusqlite::Connection;
 
 use crate::config::Context;
 use crate::db;
@@ -32,8 +35,12 @@ pub fn search(
     let semantic_results = semantic::semantic_search(ctx, query, fetch_limit);
     let semantic_ids: Vec<String> = semantic_results.iter().map(|(id, _)| id.clone()).collect();
 
-    // Source 3: Graph boost (Neo4j callers + usages)
+    // Source 3: Graph boost (Neo4j callers + usages of query as symbol name)
     let graph_ids = graph_boost::graph_boost(ctx, query);
+
+    // Source 4: Graph expand — seed from top FTS+semantic results, expand neighborhood
+    let seed_names = extract_seed_names(&fts_results, &semantic_ids, &conn, 5);
+    let expand_ids = graph_boost::graph_expand(ctx, seed_names);
 
     // Build RRF sources (only include non-empty sources)
     let mut sources: Vec<(&str, Vec<String>)> = vec![("fts", fts_ids)];
@@ -42,6 +49,9 @@ pub fn search(
     }
     if !graph_ids.is_empty() {
         sources.push(("graph", graph_ids));
+    }
+    if !expand_ids.is_empty() {
+        sources.push(("graph_expand", expand_ids));
     }
 
     let merged = rrf::merge(sources);
@@ -157,6 +167,49 @@ pub fn search_text(
             Ok(())
         }
     }
+}
+
+/// Extract unique symbol names from the top FTS and semantic results for graph expansion.
+fn extract_seed_names(
+    fts_results: &[Symbol],
+    semantic_ids: &[String],
+    conn: &Connection,
+    per_source: usize,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Top N from FTS (already have Symbol structs with names)
+    for sym in fts_results.iter().take(per_source) {
+        if !sym.name.is_empty() && seen.insert(sym.name.clone()) {
+            names.push(sym.name.clone());
+        }
+    }
+
+    // Top N from semantic (need to resolve IDs to names via DB)
+    let sem_top: Vec<&String> = semantic_ids.iter().take(per_source).collect();
+    if !sem_top.is_empty() {
+        let placeholders: Vec<&str> = sem_top.iter().map(|_| "?").collect();
+        let sql = format!(
+            "SELECT name FROM code_symbols WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+        if let Ok(mut stmt) = conn.prepare(&sql) {
+            let params: Vec<&dyn rusqlite::types::ToSql> = sem_top
+                .iter()
+                .map(|id| id as &dyn rusqlite::types::ToSql)
+                .collect();
+            if let Ok(rows) = stmt.query_map(params.as_slice(), |row| row.get::<_, String>(0)) {
+                for name in rows.flatten() {
+                    if !name.is_empty() && seen.insert(name.clone()) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    names
 }
 
 pub fn search_content(
