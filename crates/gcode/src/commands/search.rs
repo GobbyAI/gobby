@@ -17,8 +17,8 @@ pub fn search(
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
 
-    // Fetch generously for RRF — need enough for accurate total + offset pagination
-    let fetch_limit = ((offset + limit) * 3).max(100);
+    // Fetch generously for RRF — total is bounded by resolved results from all sources
+    let fetch_limit = ((offset + limit) * 3).max(200);
 
     // Source 1: FTS5 (with LIKE fallback)
     let mut fts_results = fts::search_symbols_fts(&conn, query, &ctx.project_id, kind, fetch_limit);
@@ -118,10 +118,14 @@ pub fn search_text(
     format: Format,
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
-    let fetch_limit = ((offset + limit) * 3).max(100);
+    let fetch_limit = offset + limit;
     let all_results = fts::search_text(&conn, query, &ctx.project_id, fetch_limit);
-    let total = all_results.len();
+    let total = fts::count_text(&conn, query, &ctx.project_id);
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+
+    if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
+        eprintln!("No index found for this project. Run `gcode index` first.");
+    }
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -159,10 +163,14 @@ pub fn search_content(
     format: Format,
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
-    let fetch_limit = ((offset + limit) * 3).max(100);
+    let fetch_limit = offset + limit;
     let all_results = fts::search_content(&conn, query, &ctx.project_id, fetch_limit);
-    let total = all_results.len();
+    let total = fts::count_content(&conn, query, &ctx.project_id);
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+
+    if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
+        eprintln!("No index found for this project. Run `gcode index` first.");
+    }
 
     match format {
         Format::Json => output::print_json(&PagedResponse {

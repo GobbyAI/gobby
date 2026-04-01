@@ -136,6 +136,75 @@ pub fn search_symbols_by_name(
     }
 }
 
+/// Count matching symbols (FTS5 with LIKE fallback).
+pub fn count_text(conn: &Connection, query: &str, project_id: &str) -> usize {
+    let fts_query = sanitize_fts_query(query);
+    if fts_query.is_empty() {
+        return 0;
+    }
+
+    let count: Option<usize> = conn
+        .query_row(
+            "SELECT COUNT(*) FROM code_symbols_fts fts \
+             JOIN code_symbols cs ON cs.rowid = fts.rowid \
+             WHERE code_symbols_fts MATCH ?1 AND cs.project_id = ?2",
+            rusqlite::params![&fts_query, project_id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(n) = count {
+        if n > 0 {
+            return n;
+        }
+    }
+
+    // Fallback to LIKE count
+    let pattern = format!("%{query}%");
+    conn.query_row(
+        "SELECT COUNT(*) FROM code_symbols WHERE project_id = ?1 \
+         AND (name LIKE ?2 OR qualified_name LIKE ?2)",
+        rusqlite::params![project_id, &pattern],
+        |row| row.get(0),
+    )
+    .unwrap_or(0)
+}
+
+/// Count matching content chunks (FTS5 with LIKE fallback).
+pub fn count_content(conn: &Connection, query: &str, project_id: &str) -> usize {
+    if query.trim().is_empty() {
+        return 0;
+    }
+
+    let safe_query = query.replace('"', "\"\"");
+
+    let count: Option<usize> = conn
+        .query_row(
+            "SELECT COUNT(*) FROM code_content_fts fts \
+             JOIN code_content_chunks c ON c.rowid = fts.rowid \
+             WHERE code_content_fts MATCH ?1 AND c.project_id = ?2",
+            rusqlite::params![format!("\"{safe_query}\""), project_id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(n) = count {
+        if n > 0 {
+            return n;
+        }
+    }
+
+    // Fallback to LIKE count
+    let like_query = format!("%{query}%");
+    conn.query_row(
+        "SELECT COUNT(*) FROM code_content_chunks \
+         WHERE project_id = ?1 AND content LIKE ?2",
+        rusqlite::params![project_id, &like_query],
+        |row| row.get(0),
+    )
+    .unwrap_or(0)
+}
+
 /// Full-text search for symbols: FTS5 with LIKE fallback.
 pub fn search_text(
     conn: &Connection,
