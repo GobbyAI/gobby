@@ -73,6 +73,9 @@ enum Command {
         /// Filter by symbol kind
         #[arg(long)]
         kind: Option<String>,
+        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
+        #[arg(long)]
+        path: Option<String>,
     },
     /// FTS5 search on symbol metadata (names, signatures, docstrings)
     SearchText {
@@ -82,6 +85,9 @@ enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
+        #[arg(long)]
+        path: Option<String>,
     },
     /// FTS5 search on file content chunks
     SearchContent {
@@ -91,6 +97,9 @@ enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Filter by file path glob (e.g. "src/**/*.rs", "*.py")
+        #[arg(long)]
+        path: Option<String>,
     },
 
     /// Hierarchical symbol tree for a file
@@ -187,17 +196,37 @@ fn main() -> anyhow::Result<()> {
             limit,
             offset,
             kind,
-        } => commands::search::search(&ctx, &query, limit, offset, kind.as_deref(), cli.format),
+            path,
+        } => commands::search::search(
+            &ctx,
+            &query,
+            limit,
+            offset,
+            kind.as_deref(),
+            path.as_deref(),
+            cli.format,
+        ),
         Command::SearchText {
             query,
             limit,
             offset,
-        } => commands::search::search_text(&ctx, &query, limit, offset, cli.format),
+            path,
+        } => {
+            commands::search::search_text(&ctx, &query, limit, offset, path.as_deref(), cli.format)
+        }
         Command::SearchContent {
             query,
             limit,
             offset,
-        } => commands::search::search_content(&ctx, &query, limit, offset, cli.format),
+            path,
+        } => commands::search::search_content(
+            &ctx,
+            &query,
+            limit,
+            offset,
+            path.as_deref(),
+            cli.format,
+        ),
 
         Command::Outline { file } => {
             commands::symbols::outline(&ctx, &file, cli.format, cli.verbose)

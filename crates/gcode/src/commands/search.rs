@@ -15,9 +15,14 @@ pub fn search(
     limit: usize,
     offset: usize,
     kind: Option<&str>,
+    path: Option<&str>,
     format: Format,
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
+    let path_pattern = path
+        .map(glob::Pattern::new)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
 
     // Fetch generously for RRF. Total is a best-effort estimate bounded by fetch_limit
     // per source — exact counts aren't feasible because RRF merges results from FTS5,
@@ -25,9 +30,11 @@ pub fn search(
     let fetch_limit = ((offset + limit) * 3).max(200);
 
     // Source 1: FTS5 (with LIKE fallback)
-    let mut fts_results = fts::search_symbols_fts(&conn, query, &ctx.project_id, kind, fetch_limit);
+    let mut fts_results =
+        fts::search_symbols_fts(&conn, query, &ctx.project_id, kind, path, fetch_limit);
     if fts_results.is_empty() {
-        fts_results = fts::search_symbols_by_name(&conn, query, &ctx.project_id, kind, fetch_limit);
+        fts_results =
+            fts::search_symbols_by_name(&conn, query, &ctx.project_id, kind, path, fetch_limit);
     }
     let fts_ids: Vec<String> = fts_results.iter().map(|s| s.id.clone()).collect();
 
@@ -82,6 +89,16 @@ pub fn search(
         }
     }
 
+    // Post-filter by path glob (semantic/graph results lack SQL-side filtering)
+    let all_resolved = if let Some(ref pat) = path_pattern {
+        all_resolved
+            .into_iter()
+            .filter(|r| pat.matches(&r.file_path))
+            .collect()
+    } else {
+        all_resolved
+    };
+
     let total = all_resolved.len();
     let results: Vec<_> = all_resolved.into_iter().skip(offset).take(limit).collect();
 
@@ -126,12 +143,25 @@ pub fn search_text(
     query: &str,
     limit: usize,
     offset: usize,
+    path: Option<&str>,
     format: Format,
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
+    let path_pattern = path
+        .map(glob::Pattern::new)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
     let fetch_limit = offset + limit;
-    let all_results = fts::search_text(&conn, query, &ctx.project_id, fetch_limit);
-    let total = fts::count_text(&conn, query, &ctx.project_id);
+    let all_results = fts::search_text(&conn, query, &ctx.project_id, path, fetch_limit);
+    let total = fts::count_text(&conn, query, &ctx.project_id, path);
+    let all_results: Vec<_> = if let Some(ref pat) = path_pattern {
+        all_results
+            .into_iter()
+            .filter(|r| pat.matches(&r.file_path))
+            .collect()
+    } else {
+        all_results
+    };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
     if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
@@ -217,12 +247,25 @@ pub fn search_content(
     query: &str,
     limit: usize,
     offset: usize,
+    path: Option<&str>,
     format: Format,
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
+    let path_pattern = path
+        .map(glob::Pattern::new)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid path glob: {e}"))?;
     let fetch_limit = offset + limit;
-    let all_results = fts::search_content(&conn, query, &ctx.project_id, fetch_limit);
-    let total = fts::count_content(&conn, query, &ctx.project_id);
+    let all_results = fts::search_content(&conn, query, &ctx.project_id, path, fetch_limit);
+    let total = fts::count_content(&conn, query, &ctx.project_id, path);
+    let all_results: Vec<_> = if let Some(ref pat) = path_pattern {
+        all_results
+            .into_iter()
+            .filter(|r| pat.matches(&r.file_path))
+            .collect()
+    } else {
+        all_results
+    };
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
     if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {

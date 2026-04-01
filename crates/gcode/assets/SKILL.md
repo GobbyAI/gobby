@@ -24,7 +24,7 @@ gcode init        # Initialize and index the project in one step
 - `gcode search-text "query"` — FTS5 on symbol names, signatures, docstrings
 - `gcode search-content "query"` — full-text search across file bodies (comments, strings, config)
 
-Options: `--limit N` (default 20), `--kind function|class|type` (filter by symbol kind)
+Options: `--limit N` (default 20), `--kind function|class|type` (filter by symbol kind), `--path "glob"` (filter by file path, e.g. `--path "src/**/*.rs"`)
 
 ## Retrieval
 

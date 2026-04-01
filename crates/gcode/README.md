@@ -106,6 +106,7 @@ gcode init
 # Search
 gcode search "query"                      # Hybrid: FTS + semantic + graph boost
 gcode search "query" --kind function      # Filter by symbol kind
+gcode search "query" --path "src/**/*.rs" # Filter by file path glob
 gcode search-text "query"                 # FTS5 on symbol names/signatures
 gcode search-content "query"              # FTS5 on file content
 
