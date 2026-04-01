@@ -81,6 +81,8 @@ pub fn search(
 
     if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
         eprintln!("No index found for this project. Run `gcode index` first.");
+    } else if results.is_empty() && offset > 0 {
+        eprintln!("No results at offset {offset} (total {total})");
     }
 
     match format {
@@ -128,6 +130,8 @@ pub fn search_text(
 
     if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
         eprintln!("No index found for this project. Run `gcode index` first.");
+    } else if results.is_empty() && offset > 0 {
+        eprintln!("No results at offset {offset} (total {total})");
     }
 
     match format {
@@ -174,6 +178,8 @@ pub fn search_content(
 
     if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
         eprintln!("No index found for this project. Run `gcode index` first.");
+    } else if results.is_empty() && offset > 0 {
+        eprintln!("No results at offset {offset} (total {total})");
     }
 
     match format {

@@ -15,8 +15,8 @@ use crate::neo4j;
 /// Returns a ranked list of symbol IDs for use as an RRF source.
 /// Returns empty vec when Neo4j is unavailable (graceful degradation).
 pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
-    let callers = neo4j::find_callers(ctx, query, 10).unwrap_or_default();
-    let usages = neo4j::find_usages(ctx, query, 10).unwrap_or_default();
+    let callers = neo4j::find_callers(ctx, query, 0, 10).unwrap_or_default();
+    let usages = neo4j::find_usages(ctx, query, 0, 10).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();

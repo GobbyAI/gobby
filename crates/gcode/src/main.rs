@@ -189,7 +189,15 @@ fn main() -> anyhow::Result<()> {
             limit,
             offset,
             kind,
-        } => commands::search::search(&ctx, &query, limit, offset, kind.as_deref(), cli.format, cli.verbose),
+        } => commands::search::search(
+            &ctx,
+            &query,
+            limit,
+            offset,
+            kind.as_deref(),
+            cli.format,
+            cli.verbose,
+        ),
         Command::SearchText {
             query,
             limit,

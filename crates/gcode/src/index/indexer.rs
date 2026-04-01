@@ -515,13 +515,11 @@ fn delete_file_data(
 
     // Delete Qdrant vectors for this file's symbols (must query IDs before deleting from SQLite)
     if let Some(config) = qdrant {
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2",
-        ) {
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2")
+        {
             let ids: Vec<String> = stmt
-                .query_map(rusqlite::params![project_id, file_path], |row| {
-                    row.get(0)
-                })
+                .query_map(rusqlite::params![project_id, file_path], |row| row.get(0))
                 .ok()
                 .map(|rows| rows.filter_map(|r| r.ok()).collect())
                 .unwrap_or_default();

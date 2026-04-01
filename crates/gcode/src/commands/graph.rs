@@ -28,9 +28,7 @@ pub fn callers(
     format: Format,
 ) -> anyhow::Result<()> {
     let total = neo4j::count_callers(ctx, symbol_name)?;
-    let fetch_limit = offset + limit;
-    let all_results = neo4j::find_callers(ctx, symbol_name, fetch_limit)?;
-    let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+    let results = neo4j::find_callers(ctx, symbol_name, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -73,9 +71,7 @@ pub fn usages(
     format: Format,
 ) -> anyhow::Result<()> {
     let total = neo4j::count_usages(ctx, symbol_name)?;
-    let fetch_limit = offset + limit;
-    let all_results = neo4j::find_usages(ctx, symbol_name, fetch_limit)?;
-    let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+    let results = neo4j::find_usages(ctx, symbol_name, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
