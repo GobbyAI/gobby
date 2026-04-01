@@ -77,10 +77,16 @@ pbkdf2 = { version = "0.12", features = ["simple"] }
 hmac = "0.12"
 
 # Embeddings (GGUF model loading for semantic search)
-llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
+# Metal GPU acceleration on macOS, CPU-only elsewhere — see target-specific deps below
 
 # Temp files (for tests)
 tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+llama-cpp-2 = { version = "0.1", optional = true }
 
 [dev-dependencies]
 serial_test = "3"
