@@ -249,6 +249,8 @@ pub struct PagedResponse<T: Serialize> {
     pub offset: usize,
     pub limit: usize,
     pub results: Vec<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 /// Slim symbol for outline output — only what agents need.

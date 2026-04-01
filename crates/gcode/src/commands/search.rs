@@ -17,7 +17,9 @@ pub fn search(
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
 
-    // Fetch generously for RRF — total is bounded by resolved results from all sources
+    // Fetch generously for RRF. Total is a best-effort estimate bounded by fetch_limit
+    // per source — exact counts aren't feasible because RRF merges results from FTS5,
+    // Qdrant, and Neo4j with deduplication, so source counts aren't additive.
     let fetch_limit = ((offset + limit) * 3).max(200);
 
     // Source 1: FTS5 (with LIKE fallback)
@@ -88,6 +90,7 @@ pub fn search(
             offset,
             limit,
             results,
+            hint: None,
         }),
         Format::Text => {
             for r in &results {
@@ -134,6 +137,7 @@ pub fn search_text(
             offset,
             limit,
             results,
+            hint: None,
         }),
         Format::Text => {
             for r in &results {
@@ -179,6 +183,7 @@ pub fn search_content(
             offset,
             limit,
             results,
+            hint: None,
         }),
         Format::Text => {
             for r in &results {

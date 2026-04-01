@@ -6,17 +6,11 @@ use crate::output::{self, Format};
 const GOBBY_HINT: &str =
     "Graph commands require Neo4j, available with Gobby. See: https://github.com/GobbyAI/gobby";
 
-/// Print results with a hint when Neo4j is not configured and results are empty.
-fn print_graph_json<T: serde::Serialize>(ctx: &Context, results: &[T]) -> anyhow::Result<()> {
-    if results.is_empty() && ctx.neo4j.is_none() {
-        let wrapped = serde_json::json!({
-            "results": [],
-            "hint": GOBBY_HINT,
-        });
-        println!("{}", serde_json::to_string_pretty(&wrapped)?);
-        Ok(())
+fn hint_for(ctx: &Context) -> Option<String> {
+    if ctx.neo4j.is_none() {
+        Some(GOBBY_HINT.to_string())
     } else {
-        output::print_json(results)
+        None
     }
 }
 
@@ -33,30 +27,20 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    // Fetch generously for accurate total — graph results are typically small
-    let all_results = neo4j::find_callers(ctx, symbol_name, 500)?;
-    let total = all_results.len();
+    let total = neo4j::count_callers(ctx, symbol_name)?;
+    let fetch_limit = offset + limit;
+    let all_results = neo4j::find_callers(ctx, symbol_name, fetch_limit)?;
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
     match format {
-        Format::Json => {
-            if results.is_empty() && ctx.neo4j.is_none() {
-                let wrapped = serde_json::json!({
-                    "results": [],
-                    "hint": GOBBY_HINT,
-                });
-                println!("{}", serde_json::to_string_pretty(&wrapped)?);
-                Ok(())
-            } else {
-                output::print_json(&PagedResponse {
-                    project_id: ctx.project_id.clone(),
-                    total,
-                    offset,
-                    limit,
-                    results,
-                })
-            }
-        }
+        Format::Json => output::print_json(&PagedResponse {
+            project_id: ctx.project_id.clone(),
+            total,
+            offset,
+            limit,
+            results,
+            hint: hint_for(ctx),
+        }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
                 println!("No callers found for '{symbol_name}'");
@@ -88,30 +72,20 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    // Fetch generously for accurate total — graph results are typically small
-    let all_results = neo4j::find_usages(ctx, symbol_name, 500)?;
-    let total = all_results.len();
+    let total = neo4j::count_usages(ctx, symbol_name)?;
+    let fetch_limit = offset + limit;
+    let all_results = neo4j::find_usages(ctx, symbol_name, fetch_limit)?;
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
     match format {
-        Format::Json => {
-            if results.is_empty() && ctx.neo4j.is_none() {
-                let wrapped = serde_json::json!({
-                    "results": [],
-                    "hint": GOBBY_HINT,
-                });
-                println!("{}", serde_json::to_string_pretty(&wrapped)?);
-                Ok(())
-            } else {
-                output::print_json(&PagedResponse {
-                    project_id: ctx.project_id.clone(),
-                    total,
-                    offset,
-                    limit,
-                    results,
-                })
-            }
-        }
+        Format::Json => output::print_json(&PagedResponse {
+            project_id: ctx.project_id.clone(),
+            total,
+            offset,
+            limit,
+            results,
+            hint: hint_for(ctx),
+        }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
                 println!("No usages found for '{symbol_name}'");
@@ -142,8 +116,16 @@ pub fn usages(
 
 pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
     let results = neo4j::get_imports(ctx, file)?;
+    let total = results.len();
     match format {
-        Format::Json => print_graph_json(ctx, &results),
+        Format::Json => output::print_json(&PagedResponse {
+            project_id: ctx.project_id.clone(),
+            total,
+            offset: 0,
+            limit: total,
+            results,
+            hint: hint_for(ctx),
+        }),
         Format::Text => {
             if results.is_empty() {
                 println!("No imports found for '{file}'");
@@ -165,8 +147,16 @@ pub fn blast_radius(
     format: Format,
 ) -> anyhow::Result<()> {
     let results = neo4j::blast_radius(ctx, target, depth)?;
+    let total = results.len();
     match format {
-        Format::Json => print_graph_json(ctx, &results),
+        Format::Json => output::print_json(&PagedResponse {
+            project_id: ctx.project_id.clone(),
+            total,
+            offset: 0,
+            limit: total,
+            results,
+            hint: hint_for(ctx),
+        }),
         Format::Text => {
             if results.is_empty() {
                 println!("No blast radius found for '{target}'");
