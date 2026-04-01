@@ -7,6 +7,27 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2]
+
+### Added
+
+#### gcode
+
+- `--path <glob>` filter for `search`, `search-text`, and `search-content` — scopes results to files matching a glob pattern (e.g. `--path "src/**/*.rs"`). Uses SQL LIKE prefix pre-filter for index-assisted narrowing with Rust `glob::Pattern` post-filter for exact semantics (#67)
+- Restore `summary` field to `Symbol` and `SearchResult` models — the daemon writes summaries to `code_symbols` in `gobby-hub.db`; gcode now reads and surfaces them in search results. Upsert SQL deliberately omits summary to preserve daemon-written values (#68)
+
+### Fixed
+
+#### gcode
+
+- Fix UTF-8 boundary panic in `symbol_embed_text_with_source` — byte-level truncation at 300/500 could land inside multi-byte characters (e.g. box-drawing chars). Uses `floor_char_boundary` polyfill for MSRV 1.85 compatibility (#66)
+
+### Changed
+
+#### gcode
+
+- Refactored FTS search functions to use dynamic parameter builders instead of branch-per-filter pattern, enabling clean composition of optional `--kind` and `--path` filters (#67)
+
 ## [0.4.1]
 
 ### Added
