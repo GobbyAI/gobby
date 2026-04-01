@@ -61,6 +61,8 @@ pub fn callers(
             if results.is_empty() && offset == 0 {
                 println!("No callers found for '{symbol_name}'");
                 print_graph_hint_text(ctx);
+            } else if results.is_empty() {
+                eprintln!("No callers at offset {offset} (total {total})");
             } else {
                 for r in &results {
                     println!("{}:{} {} -> {}", r.file_path, r.line, r.name, symbol_name);
@@ -114,6 +116,8 @@ pub fn usages(
             if results.is_empty() && offset == 0 {
                 println!("No usages found for '{symbol_name}'");
                 print_graph_hint_text(ctx);
+            } else if results.is_empty() {
+                eprintln!("No usages at offset {offset} (total {total})");
             } else {
                 for r in &results {
                     let rel = r.relation.as_deref().unwrap_or("unknown");

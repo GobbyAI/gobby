@@ -158,7 +158,7 @@ pub fn search_content(
     format: Format,
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
-    let fetch_limit = offset + limit + 20;
+    let fetch_limit = ((offset + limit) * 3).max(100);
     let all_results = fts::search_content(&conn, query, &ctx.project_id, fetch_limit);
     let total = all_results.len();
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
