@@ -88,7 +88,10 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                     .unwrap_or_else(|| s.id.clone());
                 println!("{} ({})", name, &s.id[..8]);
                 println!("  Root:     {}", s.root_path);
-                println!("  Files:    {}", format_coverage(s.total_files, s.total_eligible_files));
+                println!(
+                    "  Files:    {}",
+                    format_coverage(s.total_files, s.total_eligible_files)
+                );
                 println!("  Symbols:  {}", s.total_symbols);
                 println!("  Indexed:  {}", format_timestamp(&s.last_indexed_at));
                 println!("  Duration: {}ms", s.index_duration_ms);
