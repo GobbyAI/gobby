@@ -7,6 +7,20 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3]
+
+### Added
+
+#### gsqz
+
+- `SKILL.md` — standalone skill file that teaches AI agents to wrap verbose Bash commands with `gsqz --` for token-optimized output compression (#51)
+
+### Fixed
+
+#### gcode
+
+- Fix `gcode invalidate` returning 404 from daemon — notify daemon to clean Neo4j/Qdrant **before** deleting from SQLite, so the daemon can still read project stats from the shared `gobby-hub.db` (#52)
+
 ## [0.3.2]
 
 ### Added

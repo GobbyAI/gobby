@@ -10,7 +10,7 @@ description: >
 
 # gsqz — Output Compression
 
-Wraps shell commands and compresses output using pattern-matched pipelines. Saves 70-95% of tokens on verbose commands. Always exits 0.
+Wraps shell commands and compresses output using pattern-matched pipelines. Saves 70-95% of tokens on verbose commands. Exits 1 only if the command fails to spawn; otherwise always exits 0 regardless of the wrapped command's exit code.
 
 ## Usage
 
@@ -45,7 +45,7 @@ gsqz auto-detects the command and applies the right compression:
 - **Interactive commands** — gsqz captures all output, breaking interactivity
 - **Short output** — commands producing <1000 chars pass through uncompressed
 - **Piped output** — if downstream needs raw output, don't wrap
-- **Exit code checking** — gsqz always exits 0; pass/fail is in the content
+- **Exit code checking** — gsqz exits 0 after the wrapped command runs (regardless of its exit code); pass/fail is in the content
 
 ## Configuration
 

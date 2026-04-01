@@ -163,21 +163,15 @@ pipelines:
 
 **Group modes:** `git_status`, `pytest_failures`, `test_failures`, `lint_by_rule`, `by_extension`, `by_directory`, `by_file`, `errors_warnings`
 
-## Integration with Claude Code
+## Integration with AI Agents
 
-Add gsqz as a shell wrapper in your Claude Code settings:
+### With Gobby (automatic)
 
-```json
-{
-  "hooks": {
-    "bash_tool": {
-      "command": "gsqz -- $COMMAND"
-    }
-  }
-}
-```
+[Gobby](https://github.com/GobbyAI/gobby) configures gsqz automatically via its rules engine — every Bash command gets wrapped transparently. No setup needed.
 
-Or with [Gobby](https://github.com/GobbyAI/gobby), this is configured automatically.
+### Standalone (skill-based)
+
+gsqz ships with a [`SKILL.md`](SKILL.md) file that teaches AI agents when and how to use gsqz. Copy it into your agent's instruction set (e.g., `.claude/commands/`, project `CLAUDE.md`, or equivalent) and the agent will prefix verbose commands with `gsqz --`.
 
 ## Platform support
 

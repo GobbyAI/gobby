@@ -11,9 +11,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GobbyAI/gobby-code/actions/workflows/ci.yml"><img src="https://github.com/GobbyAI/gobby-code/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/GobbyAI/gobby-code/releases/latest"><img src="https://img.shields.io/github/v/release/GobbyAI/gobby-code" alt="Release"></a>
-  <a href="https://github.com/GobbyAI/gobby-code"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml"><img src="https://github.com/GobbyAI/gobby-cli/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli/releases/latest"><img src="https://img.shields.io/github/v/release/GobbyAI/gobby-cli" alt="Release"></a>
+  <a href="https://github.com/GobbyAI/gobby-cli"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
 </p>
 
@@ -59,27 +59,27 @@ codebase → tree-sitter AST → SQLite index → search / retrieve / navigate
 
 ### Pre-built binaries
 
-Download from [GitHub Releases](https://github.com/GobbyAI/gobby-code/releases/latest):
+Download from [GitHub Releases](https://github.com/GobbyAI/gobby-cli/releases/latest):
 
 ```bash
 # macOS (Apple Silicon)
-curl -L https://github.com/GobbyAI/gobby-code/releases/latest/download/gcode-aarch64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-aarch64-apple-darwin.tar.gz | tar xz
 sudo mv gcode /usr/local/bin/
 
 # macOS (Intel)
-curl -L https://github.com/GobbyAI/gobby-code/releases/latest/download/gcode-x86_64-apple-darwin.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-apple-darwin.tar.gz | tar xz
 sudo mv gcode /usr/local/bin/
 
 # Linux (x86_64)
-curl -L https://github.com/GobbyAI/gobby-code/releases/latest/download/gcode-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv gcode /usr/local/bin/
 
 # Linux (ARM64)
-curl -L https://github.com/GobbyAI/gobby-code/releases/latest/download/gcode-aarch64-unknown-linux-gnu.tar.gz | tar xz
+curl -L https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-aarch64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv gcode /usr/local/bin/
 
 # Windows (x86_64) — PowerShell
-Invoke-WebRequest -Uri https://github.com/GobbyAI/gobby-code/releases/latest/download/gcode-x86_64-pc-windows-msvc.zip -OutFile gcode.zip
+Invoke-WebRequest -Uri https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-x86_64-pc-windows-msvc.zip -OutFile gcode.zip
 Expand-Archive gcode.zip -DestinationPath .
 ```
 
@@ -87,10 +87,10 @@ Expand-Archive gcode.zip -DestinationPath .
 
 ```bash
 # With embeddings (requires cmake for llama-cpp-2)
-cargo install --git https://github.com/GobbyAI/gobby-code
+cargo install gobby-code
 
 # Without embeddings (no cmake needed)
-cargo install --git https://github.com/GobbyAI/gobby-code --no-default-features
+cargo install gobby-code --no-default-features
 ```
 
 ### With Gobby
