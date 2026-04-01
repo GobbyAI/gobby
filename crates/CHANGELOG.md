@@ -7,6 +7,24 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1]
+
+### Added
+
+#### gcode
+
+- Two-pass graph expansion for hybrid search — after FTS+semantic return results, top symbol names are used to batch-query Neo4j for callers and callees, feeding a 4th RRF source (`graph_expand`) that surfaces structurally related symbols (#62)
+- `find_callers_batch` and `find_callees_batch` Neo4j functions with `IN $names` Cypher for efficient batch graph queries (#62)
+- Body snippet enrichment for symbol embeddings — `symbol_embed_text_with_source` appends first 300 chars of function body to embedding text, improving semantic search for conceptual queries (#64)
+- Source bytes carried through `ParseResult`, eliminating double file read during indexing (#64)
+
+### Changed
+
+#### gcode
+
+- `graph_expand` takes `&[String]` slice reference instead of owned `Vec<String>` (#64)
+- `find_callees_batch` uses correct `callee_id`/`callee_name` Cypher aliases; `row_to_graph_result` updated with callee fallback chain (#64)
+
 ## [0.4.0]
 
 ### Added
