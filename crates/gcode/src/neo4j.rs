@@ -309,9 +309,14 @@ pub fn blast_radius(ctx: &Context, target: &str, depth: usize) -> anyhow::Result
 // ── Graph write functions (for indexing) ──────────────────────────────
 
 /// Write DEFINES edges: file → symbol.
-pub fn write_defines(client: &Neo4jClient, project_id: &str, file_path: &str, symbols: &[Symbol]) {
+pub fn write_defines(
+    client: &Neo4jClient,
+    project_id: &str,
+    file_path: &str,
+    symbols: &[Symbol],
+) -> anyhow::Result<()> {
     for sym in symbols {
-        let _ = client.query(
+        client.query(
             "MERGE (f:CodeFile {path: $file, project: $project}) \
              MERGE (s:CodeSymbol {id: $symbol_id, project: $project}) \
              SET s.name = $name, s.kind = $kind \
@@ -323,14 +328,19 @@ pub fn write_defines(client: &Neo4jClient, project_id: &str, file_path: &str, sy
                 "name": sym.name,
                 "kind": sym.kind,
             })),
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Write CALLS edges: caller → callee.
-pub fn write_calls(client: &Neo4jClient, project_id: &str, calls: &[CallRelation]) {
+pub fn write_calls(
+    client: &Neo4jClient,
+    project_id: &str,
+    calls: &[CallRelation],
+) -> anyhow::Result<()> {
     for call in calls {
-        let _ = client.query(
+        client.query(
             "MERGE (caller:CodeSymbol {id: $caller_id, project: $project}) \
              MERGE (callee:CodeSymbol {name: $callee_name, project: $project}) \
              MERGE (caller)-[:CALLS {file: $file, line: $line}]->(callee)",
@@ -341,14 +351,19 @@ pub fn write_calls(client: &Neo4jClient, project_id: &str, calls: &[CallRelation
                 "line": call.line,
                 "project": project_id,
             })),
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Write IMPORTS edges: file → module.
-pub fn write_imports(client: &Neo4jClient, project_id: &str, imports: &[ImportRelation]) {
+pub fn write_imports(
+    client: &Neo4jClient,
+    project_id: &str,
+    imports: &[ImportRelation],
+) -> anyhow::Result<()> {
     for imp in imports {
-        let _ = client.query(
+        client.query(
             "MERGE (f:CodeFile {path: $source, project: $project}) \
              MERGE (m:CodeModule {name: $target, project: $project}) \
              MERGE (f)-[:IMPORTS]->(m)",
@@ -357,19 +372,24 @@ pub fn write_imports(client: &Neo4jClient, project_id: &str, imports: &[ImportRe
                 "target": imp.module_name,
                 "project": project_id,
             })),
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Delete graph data for a file before re-indexing.
 ///
 /// Preserves incoming CALLS edges to symbol nodes (from other files).
 /// Symbol nodes become orphaned but are re-merged by write_defines.
-pub fn delete_file_graph(client: &Neo4jClient, project_id: &str, file_path: &str) {
+pub fn delete_file_graph(
+    client: &Neo4jClient,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<()> {
     // 1. Delete outgoing relationships from symbols defined in this file
     // 2. Detach-delete the CodeFile node (removes DEFINES + IMPORTS edges)
     // Symbol nodes remain with incoming CALLS edges intact.
-    let _ = client.query(
+    client.query(
         "MATCH (f:CodeFile {path: $file_path, project: $project}) \
          OPTIONAL MATCH (f)-[:DEFINES]->(s:CodeSymbol) \
          OPTIONAL MATCH (s)-[r_out]->() \
@@ -380,16 +400,17 @@ pub fn delete_file_graph(client: &Neo4jClient, project_id: &str, file_path: &str
             "file_path": file_path,
             "project": project_id,
         })),
-    );
+    )?;
     // Clean up orphaned modules
-    let _ = client.query(
+    client.query(
         "MATCH (m:CodeModule {project: $project}) \
          WHERE NOT (m)<-[:IMPORTS]-() \
          DETACH DELETE m",
         Some(serde_json::json!({
             "project": project_id,
         })),
-    );
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
