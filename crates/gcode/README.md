@@ -163,8 +163,6 @@ Gobby adds graph queries, semantic search, and infrastructure that makes gcode b
 
 **Search quality improves.** With Neo4j, `gcode search` blends FTS5 text matching with call-graph relevance. Symbols that are heavily referenced rank higher. With Qdrant, conceptual queries like "database connection pooling" find semantically similar code even when the exact words don't match.
 
-**Summaries appear.** `gcode summary <symbol_id>` returns AI-generated explanations of what a symbol does. The Gobby daemon generates these; standalone always returns null.
-
 **Config and secrets are managed.** Neo4j URLs, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
 
 **Indexing happens automatically.** The Gobby daemon watches for file changes and re-indexes in the background. Standalone requires manual `gcode index`.
@@ -176,7 +174,6 @@ Gobby adds graph queries, semantic search, and infrastructure that makes gcode b
 | Semantic vector search | — | Yes (Qdrant + GGUF) |
 | Call graph / blast radius | — | Yes (Neo4j) |
 | Import graph | — | Yes (Neo4j) |
-| LLM symbol summaries | — | Yes (daemon-generated) |
 | Auto-indexing on file change | — | Yes (daemon file watcher) |
 | Centralized config + secrets | — | Yes (encrypted, no env vars) |
 | Shared index (daemon + CLI) | — | Yes (gobby-hub.db) |

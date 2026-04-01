@@ -481,9 +481,9 @@ fn upsert_symbols(conn: &Connection, symbols: &[crate::models::Symbol]) {
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
                 line_start, line_end, signature, docstring,
-                parent_symbol_id, content_hash, summary,
+                parent_symbol_id, content_hash,
                 created_at, updated_at
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, qualified_name=excluded.qualified_name,
                 kind=excluded.kind, byte_start=excluded.byte_start,
@@ -508,7 +508,6 @@ fn upsert_symbols(conn: &Connection, symbols: &[crate::models::Symbol]) {
                 sym.docstring,
                 sym.parent_symbol_id,
                 sym.content_hash,
-                sym.summary,
                 &now,
                 &now,
             ],

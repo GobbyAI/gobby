@@ -449,7 +449,6 @@ mod tests {
             docstring: Some("Do the thing.".into()),
             parent_symbol_id: None,
             content_hash: String::new(),
-            summary: None,
             created_at: String::new(),
             updated_at: String::new(),
         };

@@ -31,7 +31,6 @@ Options: `--limit N` (default 20), `--kind function|class|type` (filter by symbo
 - `gcode outline path/to/file` — hierarchical symbol map (much cheaper than Read)
 - `gcode symbol <id>` — retrieve source code by symbol ID (O(1) byte-offset read)
 - `gcode symbols <id1> <id2> ...` — batch-retrieve multiple symbols
-- `gcode summary <id>` — cached one-line summary
 
 ## Navigation
 

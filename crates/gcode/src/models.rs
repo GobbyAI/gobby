@@ -30,8 +30,6 @@ pub struct Symbol {
     pub parent_symbol_id: Option<String>,
     #[serde(default)]
     pub content_hash: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]
@@ -82,7 +80,6 @@ impl Symbol {
             content_hash: row
                 .get::<_, Option<String>>("content_hash")?
                 .unwrap_or_default(),
-            summary: row.get("summary")?,
             created_at: row
                 .get::<_, Option<String>>("created_at")?
                 .unwrap_or_default(),
@@ -114,7 +111,6 @@ impl Symbol {
             file_path: self.file_path.clone(),
             line_start: self.line_start,
             score: 0.0,
-            summary: self.summary.clone(),
             signature: self.signature.clone(),
             sources: None,
         }
@@ -201,8 +197,6 @@ pub struct SearchResult {
     pub file_path: String,
     pub line_start: usize,
     pub score: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

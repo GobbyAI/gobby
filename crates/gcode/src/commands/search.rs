@@ -13,7 +13,6 @@ pub fn search(
     offset: usize,
     kind: Option<&str>,
     format: Format,
-    verbose: bool,
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
 
@@ -69,9 +68,6 @@ pub fn search(
             let mut result = s.to_brief();
             result.score = *score;
             result.sources = Some(source_names.clone());
-            if !verbose {
-                result.summary = None;
-            }
             all_resolved.push(result);
         }
     }

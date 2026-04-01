@@ -175,7 +175,6 @@ fn extract_symbols(
             docstring,
             parent_symbol_id: None,
             content_hash: c_hash,
-            summary: None,
             created_at: String::new(),
             updated_at: String::new(),
         });

@@ -130,8 +130,6 @@ enum Command {
         depth: usize,
     },
 
-    /// Return cached LLM summary for a symbol
-    Summary { symbol_id: String },
     /// Directory-grouped project stats
     RepoOutline,
     /// List indexed projects
@@ -189,15 +187,7 @@ fn main() -> anyhow::Result<()> {
             limit,
             offset,
             kind,
-        } => commands::search::search(
-            &ctx,
-            &query,
-            limit,
-            offset,
-            kind.as_deref(),
-            cli.format,
-            cli.verbose,
-        ),
+        } => commands::search::search(&ctx, &query, limit, offset, kind.as_deref(), cli.format),
         Command::SearchText {
             query,
             limit,
@@ -231,8 +221,7 @@ fn main() -> anyhow::Result<()> {
             commands::graph::blast_radius(&ctx, &target, depth, cli.format)
         }
 
-        Command::Summary { symbol_id } => commands::summary::summary(&ctx, &symbol_id, cli.format),
-        Command::RepoOutline => commands::summary::repo_outline(&ctx, cli.format),
+        Command::RepoOutline => commands::status::repo_outline(&ctx, cli.format),
     };
 
     search::semantic::shutdown();
