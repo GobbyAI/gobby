@@ -15,8 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `--offset` flag on `search`, `search-text`, `search-content`, `callers`, `usages` for stateless pagination (#43)
 - `--full` flag on `index` to force non-incremental reindex, cleaning up stale external indices (#43)
-- Pagination envelope on all paginated JSON commands: `{ project_id, total, offset, limit, results }` (#43)
+- `PagedResponse` envelope on all paginated JSON commands: `{ project_id, total, offset, limit, results, hint }` (#43, #45)
 - Text mode pagination footer: `-- 10 of 47 results (use --offset 10 for more)` (#43)
+- Accurate `total` counts via FTS5 COUNT queries for `search-text` and `search-content` (#44)
+- Neo4j server-side COUNT queries (`count_callers`, `count_usages`) for accurate graph pagination totals (#45)
+- Neo4j server-side SKIP/LIMIT for `find_callers` and `find_usages` — no more over-fetch and skip in Rust (#48)
+- Empty-offset messaging across all search and graph commands (#48)
+
+#### Documentation
+
+- Development guides for gcode and gsqz — architecture, data flow, internals, design decisions (#46)
 
 ### Changed
 
@@ -26,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `outline` JSON output uses slim `OutlineSymbol` struct (6 fields vs 18) — full output via `--verbose` (#43)
 - `search` JSON output drops `summary` by default — include via `--verbose` (#43)
 - `project_id` hoisted to response envelope instead of repeating on every result (#43)
+- Graph commands (`callers`, `usages`, `imports`, `blast-radius`) all use `PagedResponse` consistently — removed ad-hoc JSON hint wrapper (#45)
+- `:CodeSymbol` label added to `find_usages` and `count_usages` target node for consistent Neo4j query planning (#48)
 
 ## [0.3.1]
 
