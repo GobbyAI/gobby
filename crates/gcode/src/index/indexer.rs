@@ -296,11 +296,10 @@ fn index_file(
             has_graph_synced,
         );
 
-        if let Ok(source) = std::fs::read(file_path) {
-            let chunks = chunker::chunk_file_content(&source, &rel, project_id, Some(language));
-            if !chunks.is_empty() {
-                upsert_content_chunks(&tx, &chunks);
-            }
+        let chunks =
+            chunker::chunk_file_content(&parse_result.source, &rel, project_id, Some(language));
+        if !chunks.is_empty() {
+            upsert_content_chunks(&tx, &chunks);
         }
 
         tx.commit().ok()?;
@@ -341,7 +340,7 @@ fn index_file(
         let texts: Vec<String> = parse_result
             .symbols
             .iter()
-            .map(semantic::symbol_embed_text)
+            .map(|sym| semantic::symbol_embed_text_with_source(sym, &parse_result.source))
             .collect();
         let embeddings = semantic::embed_texts(&texts, false);
         let points: Vec<(String, Vec<f32>)> = parse_result

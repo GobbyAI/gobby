@@ -392,6 +392,29 @@ pub fn symbol_embed_text(sym: &crate::models::Symbol) -> String {
     text
 }
 
+/// Build embedding text with body snippet from source bytes.
+///
+/// Appends the first ~300 chars of the function body (after the signature line)
+/// to give the embedding model context about what the function *does*.
+pub fn symbol_embed_text_with_source(sym: &crate::models::Symbol, source: &[u8]) -> String {
+    let mut text = symbol_embed_text(sym);
+    if sym.byte_start < sym.byte_end && sym.byte_end <= source.len() {
+        let body = &source[sym.byte_start..sym.byte_end];
+        if let Ok(body_str) = std::str::from_utf8(body) {
+            // Skip first line (already captured in signature), take rest up to 300 chars
+            if let Some(first_newline) = body_str.find('\n') {
+                let rest = &body_str[first_newline + 1..];
+                let snippet = &rest[..rest.len().min(300)];
+                if !snippet.trim().is_empty() {
+                    text.push(' ');
+                    text.push_str(snippet.trim());
+                }
+            }
+        }
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

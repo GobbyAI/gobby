@@ -40,7 +40,7 @@ pub fn search(
 
     // Source 4: Graph expand — seed from top FTS+semantic results, expand neighborhood
     let seed_names = extract_seed_names(&fts_results, &semantic_ids, &conn, 5);
-    let expand_ids = graph_boost::graph_expand(ctx, seed_names);
+    let expand_ids = graph_boost::graph_expand(ctx, &seed_names);
 
     // Build RRF sources (only include non-empty sources)
     let mut sources: Vec<(&str, Vec<String>)> = vec![("fts", fts_ids)];

@@ -80,6 +80,7 @@ pub fn parse_file(
         symbols,
         imports,
         calls,
+        source,
     })
 }
 

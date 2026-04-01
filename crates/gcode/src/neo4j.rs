@@ -137,6 +137,7 @@ fn row_to_graph_result(row: &Row) -> GraphResult {
     GraphResult {
         id: row
             .get("caller_id")
+            .or_else(|| row.get("callee_id"))
             .or_else(|| row.get("source_id"))
             .or_else(|| row.get("symbol_id"))
             .or_else(|| row.get("id"))
@@ -145,6 +146,7 @@ fn row_to_graph_result(row: &Row) -> GraphResult {
             .to_string(),
         name: row
             .get("caller_name")
+            .or_else(|| row.get("callee_name"))
             .or_else(|| row.get("source_name"))
             .or_else(|| row.get("symbol_name"))
             .or_else(|| row.get("name"))
@@ -302,9 +304,9 @@ pub fn find_callees_batch(
     }
     with_neo4j(ctx, vec![], |client| {
         let rows = client.query(
-            "MATCH (caller:CodeSymbol {project: $project})-[r:CALLS]->(callee:CodeSymbol) \
-             WHERE caller.name IN $names \
-             RETURN callee.id AS caller_id, callee.name AS caller_name, \
+            "MATCH (src:CodeSymbol {project: $project})-[r:CALLS]->(callee:CodeSymbol) \
+             WHERE src.name IN $names \
+             RETURN callee.id AS callee_id, callee.name AS callee_name, \
                     r.file AS file, r.line AS line \
              LIMIT $limit",
             Some(serde_json::json!({

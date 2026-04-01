@@ -221,6 +221,8 @@ pub struct ParseResult {
     pub symbols: Vec<Symbol>,
     pub imports: Vec<ImportRelation>,
     pub calls: Vec<CallRelation>,
+    /// Raw file bytes — carried through for body snippet extraction at embedding time.
+    pub source: Vec<u8>,
 }
 
 /// Aggregate result of indexing a directory.
