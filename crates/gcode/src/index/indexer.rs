@@ -18,6 +18,15 @@ use crate::neo4j::Neo4jClient;
 use crate::progress::ProgressBar;
 use crate::search::semantic;
 
+/// Why a file needs re-indexing.
+#[derive(Debug)]
+enum StaleReason {
+    /// Content hash changed — full reindex needed.
+    ContentChanged,
+    /// Hash matches but graph_synced=0 — retry external writes only.
+    GraphSyncPending,
+}
+
 /// Default exclude patterns (matching Python CodeIndexConfig defaults).
 const DEFAULT_EXCLUDES: &[&str] = &[
     "node_modules",
@@ -61,9 +70,12 @@ pub fn index_directory(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
 
+    // Detect whether gobby-hub.db has the graph_synced column
+    let has_graph_synced = has_graph_synced_column(conn);
+
     // Build current hash map for incremental detection
     let mut current_hashes: HashMap<String, String> = HashMap::new();
-    let stale: Option<std::collections::HashSet<String>> = if incremental {
+    let stale: Option<HashMap<String, StaleReason>> = if incremental {
         for path in &candidates {
             if let Ok(rel) = relative_path(path, root_path)
                 && let Ok(h) = hasher::file_content_hash(path)
@@ -71,7 +83,12 @@ pub fn index_directory(
                 current_hashes.insert(rel, h);
             }
         }
-        Some(get_stale_files(conn, project_id, &current_hashes))
+        Some(get_stale_files(
+            conn,
+            project_id,
+            &current_hashes,
+            has_graph_synced,
+        ))
     } else {
         None
     };
@@ -106,14 +123,29 @@ pub fn index_directory(
 
         progress.tick(&rel);
 
-        if let Some(ref stale_set) = stale
-            && !stale_set.contains(&rel)
-        {
-            result.files_skipped += 1;
-            continue;
-        }
+        let graph_sync_only = match &stale {
+            Some(stale_map) => match stale_map.get(&rel) {
+                None => {
+                    result.files_skipped += 1;
+                    continue;
+                }
+                Some(StaleReason::GraphSyncPending) => true,
+                Some(StaleReason::ContentChanged) => false,
+            },
+            None => false, // full reindex
+        };
 
-        match index_file(conn, path, project_id, root_path, &excludes, neo4j, qdrant) {
+        match index_file(
+            conn,
+            path,
+            project_id,
+            root_path,
+            &excludes,
+            neo4j,
+            qdrant,
+            graph_sync_only,
+            has_graph_synced,
+        ) {
             Some(count) => {
                 result.files_indexed += 1;
                 result.symbols_found += count;
@@ -176,6 +208,7 @@ pub fn index_files(
     };
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+    let has_graph_synced = has_graph_synced_column(conn);
 
     for fp in file_paths {
         let abs = if Path::new(fp).is_absolute() {
@@ -190,8 +223,17 @@ pub fn index_files(
             continue;
         }
 
-        if let Some(count) = index_file(conn, &abs, project_id, root_path, &excludes, neo4j, qdrant)
-        {
+        if let Some(count) = index_file(
+            conn,
+            &abs,
+            project_id,
+            root_path,
+            &excludes,
+            neo4j,
+            qdrant,
+            false, // always full reindex for targeted files
+            has_graph_synced,
+        ) {
             result.files_indexed += 1;
             result.symbols_found += count;
         }
@@ -202,6 +244,10 @@ pub fn index_files(
 }
 
 /// Index a single file. Returns symbol count or None if skipped.
+///
+/// When `graph_sync_only` is true, SQLite data is assumed correct — only
+/// external writes (Neo4j/Qdrant) are retried and `graph_synced` is flipped.
+#[allow(clippy::too_many_arguments)]
 fn index_file(
     conn: &Connection,
     file_path: &Path,
@@ -210,11 +256,10 @@ fn index_file(
     exclude_patterns: &[String],
     neo4j: Option<&Neo4jClient>,
     qdrant: Option<&QdrantConfig>,
+    graph_sync_only: bool,
+    has_graph_synced: bool,
 ) -> Option<usize> {
     let rel = relative_path(file_path, root_path).ok()?;
-
-    // Clear old data first
-    delete_file_data(conn, project_id, &rel, neo4j, qdrant);
 
     let parse_result = parser::parse_file(file_path, project_id, root_path, exclude_patterns)?;
 
@@ -224,10 +269,73 @@ fn index_file(
 
     let count = parse_result.symbols.len();
 
-    // Upsert symbols to SQLite
-    upsert_symbols(conn, &parse_result.symbols);
+    // Phase 1: SQLite writes (transactional) — skip if graph_sync_only
+    if !graph_sync_only {
+        let tx = conn.unchecked_transaction().ok()?;
 
-    // Upsert embeddings to Qdrant (when embeddings feature + Qdrant configured)
+        delete_file_sqlite_data(&tx, project_id, &rel);
+        upsert_symbols(&tx, &parse_result.symbols);
+
+        let language =
+            languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
+        let h = hasher::file_content_hash(file_path).unwrap_or_default();
+        let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
+
+        upsert_file(
+            &tx,
+            &IndexedFile {
+                id: IndexedFile::make_id(project_id, &rel),
+                project_id: project_id.to_string(),
+                file_path: rel.clone(),
+                language: language.to_string(),
+                content_hash: h,
+                symbol_count: count,
+                byte_size: size as usize,
+                indexed_at: epoch_secs_str(),
+            },
+            has_graph_synced,
+        );
+
+        if let Ok(source) = std::fs::read(file_path) {
+            let chunks = chunker::chunk_file_content(&source, &rel, project_id, Some(language));
+            if !chunks.is_empty() {
+                upsert_content_chunks(&tx, &chunks);
+            }
+        }
+
+        tx.commit().ok()?;
+    }
+
+    // Phase 2: External writes (Neo4j/Qdrant) — outside transaction
+    let mut external_ok = true;
+
+    // Delete old external data (only on full reindex)
+    if !graph_sync_only {
+        if let Some(client) = neo4j {
+            if crate::neo4j::delete_file_graph(client, project_id, &rel).is_err() {
+                external_ok = false;
+            }
+        }
+        if let Some(config) = qdrant {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2")
+            {
+                let ids: Vec<String> = stmt
+                    .query_map(rusqlite::params![project_id, &rel], |row| row.get(0))
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
+                if !ids.is_empty() {
+                    let collection = format!("{}{}", config.collection_prefix, project_id);
+                    if semantic::delete_vectors(config, &collection, &ids).is_err() {
+                        external_ok = false;
+                    }
+                }
+            }
+        }
+    }
+
+    // Write new Qdrant vectors
     if let Some(config) = qdrant {
         let collection = format!("{}{}", config.collection_prefix, project_id);
         let texts: Vec<String> = parse_result
@@ -242,43 +350,24 @@ fn index_file(
             .zip(embeddings)
             .filter_map(|(sym, emb)| Some((sym.id.clone(), emb?)))
             .collect();
-        if !points.is_empty() {
-            let _ = semantic::upsert_vectors(config, &collection, &points);
+        if !points.is_empty() && semantic::upsert_vectors(config, &collection, &points).is_err() {
+            external_ok = false;
         }
     }
 
-    // Write graph edges to Neo4j
+    // Write new Neo4j graph edges
     if let Some(client) = neo4j {
-        crate::neo4j::write_defines(client, project_id, &rel, &parse_result.symbols);
-        crate::neo4j::write_calls(client, project_id, &parse_result.calls);
-        crate::neo4j::write_imports(client, project_id, &parse_result.imports);
+        if crate::neo4j::write_defines(client, project_id, &rel, &parse_result.symbols).is_err()
+            || crate::neo4j::write_calls(client, project_id, &parse_result.calls).is_err()
+            || crate::neo4j::write_imports(client, project_id, &parse_result.imports).is_err()
+        {
+            external_ok = false;
+        }
     }
 
-    // Upsert file record
-    let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
-    let h = hasher::file_content_hash(file_path).unwrap_or_default();
-    let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
-
-    upsert_file(
-        conn,
-        &IndexedFile {
-            id: IndexedFile::make_id(project_id, &rel),
-            project_id: project_id.to_string(),
-            file_path: rel.clone(),
-            language: language.to_string(),
-            content_hash: h,
-            symbol_count: count,
-            byte_size: size as usize,
-            indexed_at: epoch_secs_str(),
-        },
-    );
-
-    // Content chunks
-    if let Ok(source) = std::fs::read(file_path) {
-        let chunks = chunker::chunk_file_content(&source, &rel, project_id, Some(language));
-        if !chunks.is_empty() {
-            upsert_content_chunks(conn, &chunks);
-        }
+    // Flip graph_synced based on external write success
+    if has_graph_synced {
+        set_graph_synced(conn, project_id, &rel, external_ok);
     }
 
     Some(count)
@@ -427,28 +516,53 @@ fn upsert_symbols(conn: &Connection, symbols: &[crate::models::Symbol]) {
     }
 }
 
-fn upsert_file(conn: &Connection, file: &IndexedFile) {
-    let _ = conn.execute(
-        "INSERT INTO code_indexed_files (
-            id, project_id, file_path, language, content_hash,
-            symbol_count, byte_size, indexed_at
-        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-        ON CONFLICT(id) DO UPDATE SET
-            content_hash=excluded.content_hash,
-            symbol_count=excluded.symbol_count,
-            byte_size=excluded.byte_size,
-            indexed_at=excluded.indexed_at",
-        rusqlite::params![
-            file.id,
-            file.project_id,
-            file.file_path,
-            file.language,
-            file.content_hash,
-            file.symbol_count as i64,
-            file.byte_size as i64,
-            file.indexed_at,
-        ],
-    );
+fn upsert_file(conn: &Connection, file: &IndexedFile, has_graph_synced: bool) {
+    if has_graph_synced {
+        let _ = conn.execute(
+            "INSERT INTO code_indexed_files (
+                id, project_id, file_path, language, content_hash,
+                symbol_count, byte_size, indexed_at, graph_synced
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8, 0)
+            ON CONFLICT(id) DO UPDATE SET
+                content_hash=excluded.content_hash,
+                symbol_count=excluded.symbol_count,
+                byte_size=excluded.byte_size,
+                indexed_at=excluded.indexed_at,
+                graph_synced=0",
+            rusqlite::params![
+                file.id,
+                file.project_id,
+                file.file_path,
+                file.language,
+                file.content_hash,
+                file.symbol_count as i64,
+                file.byte_size as i64,
+                file.indexed_at,
+            ],
+        );
+    } else {
+        let _ = conn.execute(
+            "INSERT INTO code_indexed_files (
+                id, project_id, file_path, language, content_hash,
+                symbol_count, byte_size, indexed_at
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+            ON CONFLICT(id) DO UPDATE SET
+                content_hash=excluded.content_hash,
+                symbol_count=excluded.symbol_count,
+                byte_size=excluded.byte_size,
+                indexed_at=excluded.indexed_at",
+            rusqlite::params![
+                file.id,
+                file.project_id,
+                file.file_path,
+                file.language,
+                file.content_hash,
+                file.symbol_count as i64,
+                file.byte_size as i64,
+                file.indexed_at,
+            ],
+        );
+    }
 }
 
 fn upsert_content_chunks(conn: &Connection, chunks: &[crate::models::ContentChunk]) {
@@ -502,6 +616,8 @@ fn upsert_project_stats(conn: &Connection, project: &IndexedProject) {
     );
 }
 
+/// Delete all data for a file from all stores (SQLite, Neo4j, Qdrant).
+/// Used for orphan cleanup where we want everything gone.
 fn delete_file_data(
     conn: &Connection,
     project_id: &str,
@@ -511,7 +627,7 @@ fn delete_file_data(
 ) {
     // Delete graph data first
     if let Some(client) = neo4j {
-        crate::neo4j::delete_file_graph(client, project_id, file_path);
+        let _ = crate::neo4j::delete_file_graph(client, project_id, file_path);
     }
 
     // Delete Qdrant vectors for this file's symbols (must query IDs before deleting from SQLite)
@@ -531,6 +647,11 @@ fn delete_file_data(
         }
     }
 
+    delete_file_sqlite_data(conn, project_id, file_path);
+}
+
+/// Delete only SQLite data for a file. Safe to call inside a transaction.
+fn delete_file_sqlite_data(conn: &Connection, project_id: &str, file_path: &str) {
     let _ = conn.execute(
         "DELETE FROM code_symbols WHERE project_id = ?1 AND file_path = ?2",
         rusqlite::params![project_id, file_path],
@@ -545,12 +666,34 @@ fn delete_file_data(
     );
 }
 
+/// Check if the code_indexed_files table has a graph_synced column (gobby-hub.db only).
+fn has_graph_synced_column(conn: &Connection) -> bool {
+    conn.prepare("PRAGMA table_info(code_indexed_files)")
+        .ok()
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .ok()
+                .map(|names| names.flatten().any(|n| n == "graph_synced"))
+        })
+        .unwrap_or(false)
+}
+
+/// Set graph_synced flag for a file after external writes complete.
+fn set_graph_synced(conn: &Connection, project_id: &str, file_path: &str, synced: bool) {
+    let _ = conn.execute(
+        "UPDATE code_indexed_files SET graph_synced = ?3 \
+         WHERE project_id = ?1 AND file_path = ?2",
+        rusqlite::params![project_id, file_path, synced as i32],
+    );
+}
+
 fn get_stale_files(
     conn: &Connection,
     project_id: &str,
     current_hashes: &HashMap<String, String>,
-) -> std::collections::HashSet<String> {
-    let mut stale = std::collections::HashSet::new();
+    has_graph_synced: bool,
+) -> HashMap<String, StaleReason> {
+    let mut stale = HashMap::new();
 
     // Create temp table for comparison
     let _ = conn.execute_batch(
@@ -566,6 +709,7 @@ fn get_stale_files(
         );
     }
 
+    // Files with changed content or not yet indexed
     if let Ok(mut stmt) = conn.prepare(
         "SELECT ch.file_path FROM _current_hashes ch \
          LEFT JOIN code_indexed_files cf \
@@ -575,7 +719,25 @@ fn get_stale_files(
         stmt.query_map(rusqlite::params![project_id], |row| row.get::<_, String>(0))
     {
         for row in rows.flatten() {
-            stale.insert(row);
+            stale.insert(row, StaleReason::ContentChanged);
+        }
+    }
+
+    // Files where hash matches but graph_synced=0 (external writes pending)
+    if has_graph_synced
+        && let Ok(mut stmt) = conn.prepare(
+            "SELECT cf.file_path FROM code_indexed_files cf \
+             JOIN _current_hashes ch ON cf.file_path = ch.file_path \
+             WHERE cf.project_id = ?1 \
+               AND cf.content_hash = ch.content_hash \
+               AND cf.graph_synced = 0",
+        )
+        && let Ok(rows) =
+            stmt.query_map(rusqlite::params![project_id], |row| row.get::<_, String>(0))
+    {
+        for row in rows.flatten() {
+            // ContentChanged takes priority if already present
+            stale.entry(row).or_insert(StaleReason::GraphSyncPending);
         }
     }
 
