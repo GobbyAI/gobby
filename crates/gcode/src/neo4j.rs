@@ -1,9 +1,11 @@
 //! Neo4j HTTP API client for graph queries and writes.
 //!
 //! Sends Cypher queries via POST /db/{database}/query/v2 with Basic Auth.
-//! All graph functions degrade gracefully — returning empty results on connection failure.
 //!
-//! Source: src/gobby/memory/neo4j_client.py, src/gobby/code_index/graph.py
+//! Read helpers (wrapped by `with_neo4j`) degrade gracefully — returning
+//! empty results on connection failure. Write functions (`write_defines`,
+//! `write_calls`, `write_imports`, `delete_file_graph`) propagate errors
+//! to callers via `Result<()>` so failures can be tracked.
 
 use std::collections::HashMap;
 

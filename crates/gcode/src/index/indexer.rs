@@ -355,12 +355,14 @@ fn index_file(
         }
     }
 
-    // Write new Neo4j graph edges
+    // Write new Neo4j graph edges (attempt all independently)
     if let Some(client) = neo4j {
-        if crate::neo4j::write_defines(client, project_id, &rel, &parse_result.symbols).is_err()
-            || crate::neo4j::write_calls(client, project_id, &parse_result.calls).is_err()
-            || crate::neo4j::write_imports(client, project_id, &parse_result.imports).is_err()
-        {
+        let defines_ok =
+            crate::neo4j::write_defines(client, project_id, &rel, &parse_result.symbols).is_ok();
+        let calls_ok = crate::neo4j::write_calls(client, project_id, &parse_result.calls).is_ok();
+        let imports_ok =
+            crate::neo4j::write_imports(client, project_id, &parse_result.imports).is_ok();
+        if !defines_ok || !calls_ok || !imports_ok {
             external_ok = false;
         }
     }
