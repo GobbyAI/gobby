@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "0.2.8"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -19,6 +19,9 @@ path = "src/main.rs"
 [features]
 default = ["embeddings"]
 embeddings = ["dep:llama-cpp-2"]
+cuda = ["embeddings", "llama-cpp-2/cuda"]
+vulkan = ["embeddings", "llama-cpp-2/vulkan"]
+rocm = ["embeddings", "llama-cpp-2/rocm"]
 
 [dependencies]
 # CLI
@@ -77,7 +80,8 @@ pbkdf2 = { version = "0.12", features = ["simple"] }
 hmac = "0.12"
 
 # Embeddings (GGUF model loading for semantic search)
-# Metal GPU acceleration on macOS, CPU-only elsewhere — see target-specific deps below
+# macOS gets Metal automatically. Linux/Windows: CPU by default,
+# opt-in GPU via --features cuda/vulkan/rocm
 
 # Temp files (for tests)
 tempfile = "3"
