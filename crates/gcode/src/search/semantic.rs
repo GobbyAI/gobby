@@ -319,6 +319,44 @@ pub fn upsert_vectors(
     Ok(())
 }
 
+/// Delete points from Qdrant by their IDs.
+///
+/// Used during re-indexing to clean up stale vectors before inserting new ones.
+/// Silently ignores errors (fire-and-forget, same as upsert).
+pub fn delete_vectors(
+    config: &QdrantConfig,
+    collection: &str,
+    ids: &[String],
+) -> anyhow::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+
+    let url = match &config.url {
+        Some(u) => u,
+        None => return Ok(()),
+    };
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    let body = serde_json::json!({
+        "points": ids,
+    });
+
+    let mut req = client
+        .post(format!("{url}/collections/{collection}/points/delete"))
+        .json(&body);
+
+    if let Some(key) = &config.api_key {
+        req = req.header("api-key", key);
+    }
+
+    let _ = req.send()?;
+    Ok(())
+}
+
 // ── Composite functions ──────────────────────────────────────────────
 
 /// Run semantic search for a query. Returns (symbol_id, score) pairs.

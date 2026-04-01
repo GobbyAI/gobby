@@ -80,7 +80,7 @@ pub fn index_directory(
     if incremental && !current_hashes.is_empty() {
         let orphans = get_orphan_files(conn, project_id, &current_hashes);
         for orphan in &orphans {
-            delete_file_data(conn, project_id, orphan, neo4j);
+            delete_file_data(conn, project_id, orphan, neo4j, qdrant);
         }
     }
 
@@ -186,7 +186,7 @@ pub fn index_files(
 
         if !abs.exists() {
             // File deleted — clean up
-            delete_file_data(conn, project_id, fp, neo4j);
+            delete_file_data(conn, project_id, fp, neo4j, qdrant);
             continue;
         }
 
@@ -214,7 +214,7 @@ fn index_file(
     let rel = relative_path(file_path, root_path).ok()?;
 
     // Clear old data first
-    delete_file_data(conn, project_id, &rel, neo4j);
+    delete_file_data(conn, project_id, &rel, neo4j, qdrant);
 
     let parse_result = parser::parse_file(file_path, project_id, root_path, exclude_patterns)?;
 
@@ -506,10 +506,30 @@ fn delete_file_data(
     project_id: &str,
     file_path: &str,
     neo4j: Option<&Neo4jClient>,
+    qdrant: Option<&QdrantConfig>,
 ) {
     // Delete graph data first
     if let Some(client) = neo4j {
         crate::neo4j::delete_file_graph(client, project_id, file_path);
+    }
+
+    // Delete Qdrant vectors for this file's symbols (must query IDs before deleting from SQLite)
+    if let Some(config) = qdrant {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2",
+        ) {
+            let ids: Vec<String> = stmt
+                .query_map(rusqlite::params![project_id, file_path], |row| {
+                    row.get(0)
+                })
+                .ok()
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default();
+            if !ids.is_empty() {
+                let collection = format!("{}{}", config.collection_prefix, project_id);
+                let _ = semantic::delete_vectors(config, &collection, &ids);
+            }
+        }
     }
 
     let _ = conn.execute(
