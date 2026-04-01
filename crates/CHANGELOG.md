@@ -8,6 +8,25 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0]
+
+### Changed
+
+#### gcode
+- **Breaking (build):** Metal GPU acceleration is now platform-conditional — automatically enabled on macOS, absent on other platforms. Previously, `embeddings` always pulled in Metal, which failed to build on Linux/Windows (#30)
+- Split release workflow into per-crate workflows (`release-gcode.yml`, `release-gsqz.yml`) — both still trigger on `v*` tags (#31)
+
+### Added
+
+#### gcode
+- `cuda` feature flag — opt-in NVIDIA GPU acceleration for embeddings on Linux/Windows (requires CUDA toolkit) (#32)
+- `vulkan` feature flag — opt-in cross-vendor GPU acceleration for embeddings on Linux/Windows (requires Vulkan SDK) (#32)
+- `rocm` feature flag — opt-in AMD GPU acceleration for embeddings on Linux (requires ROCm stack) (#32)
+
+#### Platform Support
+- Linux and Windows can now build with embeddings enabled (CPU inference by default)
+- GPU acceleration available via `--features cuda`, `--features vulkan`, or `--features rocm`
+
 ## [0.2.8]
 
 ### Added
@@ -173,8 +192,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Platform Support
 - macOS (aarch64, x86_64) — with local embeddings via Metal GPU
-- Linux (x86_64, aarch64) — without embeddings
-- Windows (x86_64, aarch64) — without embeddings
+- Linux (x86_64, aarch64) — without embeddings (embeddings added in 0.3.0)
+- Windows (x86_64, aarch64) — without embeddings (embeddings added in 0.3.0)
 
 ### Fixes
 - Fix standalone config isolation and invalidate cleanup (#12)
