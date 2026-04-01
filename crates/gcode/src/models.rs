@@ -175,6 +175,8 @@ pub struct IndexedProject {
     pub total_symbols: usize,
     pub last_indexed_at: String,
     pub index_duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_eligible_files: Option<usize>,
 }
 
 /// Search result with score.

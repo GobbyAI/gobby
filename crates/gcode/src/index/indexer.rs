@@ -95,8 +95,8 @@ pub fn index_directory(
     }
 
     // Index each candidate file
-    let total_files = candidates.len() + content_only.len();
-    let mut progress = ProgressBar::new(total_files, quiet);
+    let eligible_files = candidates.len() + content_only.len();
+    let mut progress = ProgressBar::new(eligible_files, quiet);
 
     for path in &candidates {
         let rel = match relative_path(path, root_path) {
@@ -149,6 +149,7 @@ pub fn index_directory(
             total_symbols,
             last_indexed_at: epoch_secs_str(),
             index_duration_ms: elapsed_ms,
+            total_eligible_files: Some(eligible_files),
         },
     );
 
@@ -479,14 +480,15 @@ fn upsert_project_stats(conn: &Connection, project: &IndexedProject) {
     let _ = conn.execute(
         "INSERT INTO code_indexed_projects (
             id, root_path, total_files, total_symbols,
-            last_indexed_at, index_duration_ms
-        ) VALUES (?1,?2,?3,?4,?5,?6)
+            last_indexed_at, index_duration_ms, total_eligible_files
+        ) VALUES (?1,?2,?3,?4,?5,?6,?7)
         ON CONFLICT(id) DO UPDATE SET
             root_path=excluded.root_path,
             total_files=excluded.total_files,
             total_symbols=excluded.total_symbols,
             last_indexed_at=excluded.last_indexed_at,
-            index_duration_ms=excluded.index_duration_ms",
+            index_duration_ms=excluded.index_duration_ms,
+            total_eligible_files=excluded.total_eligible_files",
         rusqlite::params![
             project.id,
             project.root_path,
@@ -494,6 +496,7 @@ fn upsert_project_stats(conn: &Connection, project: &IndexedProject) {
             project.total_symbols as i64,
             project.last_indexed_at,
             project.index_duration_ms as i64,
+            project.total_eligible_files.map(|n| n as i64),
         ],
     );
 }

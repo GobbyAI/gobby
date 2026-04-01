@@ -68,6 +68,11 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                         .get::<_, Option<String>>("last_indexed_at")?
                         .unwrap_or_default(),
                     index_duration_ms: row.get::<_, i64>("index_duration_ms")? as u64,
+                    total_eligible_files: row
+                        .get::<_, Option<i64>>("total_eligible_files")
+                        .ok()
+                        .flatten()
+                        .map(|n| n as usize),
                 })
             },
         )
@@ -83,7 +88,7 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
                     .unwrap_or_else(|| s.id.clone());
                 println!("{} ({})", name, &s.id[..8]);
                 println!("  Root:     {}", s.root_path);
-                println!("  Files:    {}", s.total_files);
+                println!("  Files:    {}", format_coverage(s.total_files, s.total_eligible_files));
                 println!("  Symbols:  {}", s.total_symbols);
                 println!("  Indexed:  {}", format_timestamp(&s.last_indexed_at));
                 println!("  Duration: {}ms", s.index_duration_ms);
@@ -173,6 +178,11 @@ fn collect_projects() -> anyhow::Result<Vec<(IndexedProject, std::path::PathBuf)
                     .get::<_, Option<String>>("last_indexed_at")?
                     .unwrap_or_default(),
                 index_duration_ms: row.get::<_, i64>("index_duration_ms")? as u64,
+                total_eligible_files: row
+                    .get::<_, Option<i64>>("total_eligible_files")
+                    .ok()
+                    .flatten()
+                    .map(|n| n as usize),
             })
         })?;
 
@@ -184,6 +194,17 @@ fn collect_projects() -> anyhow::Result<Vec<(IndexedProject, std::path::PathBuf)
     }
 
     Ok(all)
+}
+
+/// Format file count with optional coverage percentage.
+fn format_coverage(indexed: usize, eligible: Option<usize>) -> String {
+    match eligible {
+        Some(total) if total > 0 => {
+            let pct = (indexed as f64 / total as f64 * 100.0) as usize;
+            format!("{indexed}/{total} ({pct}%)")
+        }
+        _ => format!("{indexed}"),
+    }
 }
 
 /// Format a project name for display.
@@ -216,7 +237,7 @@ pub fn projects(format: Format) -> anyhow::Result<()> {
                     println!("{} — {}", display_name(p), p.root_path);
                     println!(
                         "  {} files, {} symbols | Last indexed: {}",
-                        p.total_files,
+                        format_coverage(p.total_files, p.total_eligible_files),
                         p.total_symbols,
                         format_timestamp(&p.last_indexed_at)
                     );

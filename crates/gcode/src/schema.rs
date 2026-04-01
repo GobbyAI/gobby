@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use rusqlite::Connection;
 
 /// Current schema version for gcode-created databases.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// Ensure all required tables exist for gcode to operate standalone.
 ///
@@ -18,6 +18,8 @@ pub fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
         .unwrap_or(false);
 
     if table_exists {
+        // Run migrations on gcode-owned DBs (has gcode_schema table)
+        migrate(conn)?;
         return Ok(());
     }
 
@@ -79,6 +81,7 @@ pub fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
             total_symbols INTEGER NOT NULL DEFAULT 0,
             last_indexed_at TEXT,
             index_duration_ms INTEGER,
+            total_eligible_files INTEGER,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -201,6 +204,44 @@ pub fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
     .context("failed to insert schema version")?;
 
     tx.commit().context("failed to commit schema transaction")?;
+    Ok(())
+}
+
+/// Run incremental migrations on gcode-owned standalone databases.
+/// Skips silently for gobby-managed DBs (no `gcode_schema` table).
+fn migrate(conn: &Connection) -> anyhow::Result<()> {
+    let has_schema_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='gcode_schema')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !has_schema_table {
+        return Ok(()); // gobby-managed DB — daemon handles migrations
+    }
+
+    let version: i64 = conn
+        .query_row("SELECT version FROM gcode_schema", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    if version < 2 {
+        // v1 → v2: add total_eligible_files column
+        let has_column: bool = conn
+            .prepare("PRAGMA table_info(code_indexed_projects)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .any(|name| name.as_deref() == Ok("total_eligible_files"));
+
+        if !has_column {
+            conn.execute_batch(
+                "ALTER TABLE code_indexed_projects ADD COLUMN total_eligible_files INTEGER;",
+            )?;
+        }
+
+        conn.execute("UPDATE gcode_schema SET version = 2", [])?;
+    }
+
     Ok(())
 }
 
