@@ -327,6 +327,12 @@ pub fn invalidate(
     project_id: &str,
     daemon_url: Option<&str>,
 ) -> anyhow::Result<()> {
+    // Notify daemon FIRST — it reads project stats from the same SQLite
+    // to know what to clean from Neo4j/Qdrant.
+    if let Some(url) = daemon_url {
+        notify_daemon_invalidate(url, project_id);
+    }
+
     conn.execute(
         "DELETE FROM code_symbols WHERE project_id = ?1",
         rusqlite::params![project_id],
@@ -344,11 +350,6 @@ pub fn invalidate(
         rusqlite::params![project_id],
     )?;
     eprintln!("Invalidated code index for project {project_id}");
-
-    // Notify daemon to clean Neo4j/Qdrant (best-effort)
-    if let Some(url) = daemon_url {
-        notify_daemon_invalidate(url, project_id);
-    }
 
     Ok(())
 }
