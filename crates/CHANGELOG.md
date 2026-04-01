@@ -8,6 +8,14 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1]
+
+### Fixed
+
+#### gcode
+- Fix stale Qdrant vectors causing "failed to look up symbol" warnings during search — `delete_file_data` now cleans up Qdrant vectors alongside SQLite and Neo4j when re-indexing files (#38)
+- Suppress noisy stderr warnings for stale external index entries — silently skipped instead (#38)
+
 ## [0.3.0]
 
 ### Changed
