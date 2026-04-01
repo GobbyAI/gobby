@@ -488,6 +488,7 @@ mod tests {
             docstring: Some("Do the thing.".into()),
             parent_symbol_id: None,
             content_hash: String::new(),
+            summary: None,
             created_at: String::new(),
             updated_at: String::new(),
         };
@@ -495,5 +496,40 @@ mod tests {
         assert!(text.contains("module.foo"));
         assert!(text.contains("def foo"));
         assert!(text.contains("Do the thing"));
+    }
+
+    #[test]
+    fn test_symbol_embed_text_utf8_truncation() {
+        // 498 ASCII bytes + a 4-byte emoji = 502 bytes total.
+        // Truncation at 500 lands inside the emoji; floor_char_boundary
+        // should back up to byte 498 instead of panicking.
+        let mut doc = "a".repeat(498);
+        doc.push('\u{1F600}'); // 😀 — 4 bytes
+        assert_eq!(doc.len(), 502);
+
+        let sym = crate::models::Symbol {
+            id: "id".into(),
+            project_id: "p".into(),
+            file_path: "f.py".into(),
+            name: "bar".into(),
+            qualified_name: "module.bar".into(),
+            kind: "function".into(),
+            language: "python".into(),
+            byte_start: 0,
+            byte_end: 100,
+            line_start: 1,
+            line_end: 10,
+            signature: None,
+            docstring: Some(doc),
+            parent_symbol_id: None,
+            content_hash: String::new(),
+            summary: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let text = symbol_embed_text(&sym);
+        // Should not panic, and the emoji should be cleanly truncated
+        assert!(text.contains(&"a".repeat(498)));
+        assert!(!text.contains('\u{1F600}'));
     }
 }
