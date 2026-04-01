@@ -17,8 +17,8 @@ pub fn search(
 ) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
 
-    // Fetch generously for RRF — need enough to support offset + limit
-    let fetch_limit = (offset + limit) * 2 + 20;
+    // Fetch generously for RRF — need enough for accurate total + offset pagination
+    let fetch_limit = ((offset + limit) * 3).max(100);
 
     // Source 1: FTS5 (with LIKE fallback)
     let mut fts_results = fts::search_symbols_fts(&conn, query, &ctx.project_id, kind, fetch_limit);

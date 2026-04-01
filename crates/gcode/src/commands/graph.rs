@@ -33,8 +33,8 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let fetch_limit = offset + limit + 10;
-    let all_results = neo4j::find_callers(ctx, symbol_name, fetch_limit)?;
+    // Fetch generously for accurate total — graph results are typically small
+    let all_results = neo4j::find_callers(ctx, symbol_name, 500)?;
     let total = all_results.len();
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
@@ -86,8 +86,8 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let fetch_limit = offset + limit + 10;
-    let all_results = neo4j::find_usages(ctx, symbol_name, fetch_limit)?;
+    // Fetch generously for accurate total — graph results are typically small
+    let all_results = neo4j::find_usages(ctx, symbol_name, 500)?;
     let total = all_results.len();
     let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
 
