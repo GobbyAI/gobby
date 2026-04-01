@@ -44,7 +44,6 @@ pub fn search(
     }
 
     let merged = rrf::merge(sources);
-    let total = merged.len();
 
     // Build symbol cache from FTS results
     let mut symbol_cache: HashMap<String, Symbol> = HashMap::new();
@@ -52,9 +51,9 @@ pub fn search(
         symbol_cache.insert(sym.id.clone(), sym);
     }
 
-    // Resolve results with offset + limit
-    let mut results: Vec<SearchResult> = Vec::new();
-    for (sym_id, score, source_names) in merged.iter().skip(offset).take(limit) {
+    // Resolve ALL results first so total reflects resolvable symbols only
+    let mut all_resolved: Vec<SearchResult> = Vec::new();
+    for (sym_id, score, source_names) in &merged {
         let sym = symbol_cache.get(sym_id).cloned().or_else(|| {
             conn.query_row(
                 "SELECT * FROM code_symbols WHERE id = ?1",
@@ -68,13 +67,15 @@ pub fn search(
             let mut result = s.to_brief();
             result.score = *score;
             result.sources = Some(source_names.clone());
-            // Strip summary unless verbose
             if !verbose {
                 result.summary = None;
             }
-            results.push(result);
+            all_resolved.push(result);
         }
     }
+
+    let total = all_resolved.len();
+    let results: Vec<_> = all_resolved.into_iter().skip(offset).take(limit).collect();
 
     if results.is_empty() && offset == 0 && !crate::project::has_identity_file(&ctx.project_root) {
         eprintln!("No index found for this project. Run `gcode index` first.");
