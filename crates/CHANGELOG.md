@@ -8,6 +8,19 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7]
+
+### Added
+
+#### gcode
+- `gcode prune` command to detect and remove stale project entries (dead paths, relative paths, sentinel UUIDs) with daemon Neo4j/Qdrant cleanup notification (#25)
+
+### Improved
+
+#### gcode
+- `gcode projects` and `gcode status` text output now shows friendly project names (basename + short UUID) and human-readable timestamps (#25)
+- Timestamps normalized across epoch seconds and ISO 8601 formats to consistent `YYYY-MM-DD HH:MM:SS UTC` display (#25)
+
 ## [0.2.6]
 
 ### Fixed
