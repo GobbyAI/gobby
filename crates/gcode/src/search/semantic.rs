@@ -387,9 +387,24 @@ pub fn symbol_embed_text(sym: &crate::models::Symbol) -> String {
     }
     if let Some(doc) = &sym.docstring {
         text.push(' ');
-        text.push_str(&doc[..doc.len().min(500)]);
+        let end = floor_char_boundary(doc, doc.len().min(500));
+        text.push_str(&doc[..end]);
     }
     text
+}
+
+/// Find the largest byte index <= `i` that is a UTF-8 char boundary.
+/// Equivalent to `str::floor_char_boundary` (stable in 1.91), inlined for MSRV 1.85.
+fn floor_char_boundary(s: &str, i: usize) -> usize {
+    if i >= s.len() {
+        s.len()
+    } else {
+        let mut pos = i;
+        while pos > 0 && !s.is_char_boundary(pos) {
+            pos -= 1;
+        }
+        pos
+    }
 }
 
 /// Build embedding text with body snippet from source bytes.
@@ -404,7 +419,8 @@ pub fn symbol_embed_text_with_source(sym: &crate::models::Symbol, source: &[u8])
             // Skip first line (already captured in signature), take rest up to 300 chars
             if let Some(first_newline) = body_str.find('\n') {
                 let rest = &body_str[first_newline + 1..];
-                let snippet = &rest[..rest.len().min(300)];
+                let end = floor_char_boundary(rest, rest.len().min(300));
+                let snippet = &rest[..end];
                 if !snippet.trim().is_empty() {
                     text.push(' ');
                     text.push_str(snippet.trim());
