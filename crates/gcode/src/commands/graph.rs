@@ -1,4 +1,5 @@
 use crate::config::Context;
+use crate::models::PagedResponse;
 use crate::neo4j;
 use crate::output::{self, Format};
 
@@ -29,18 +30,48 @@ pub fn callers(
     ctx: &Context,
     symbol_name: &str,
     limit: usize,
+    offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let results = neo4j::find_callers(ctx, symbol_name, limit)?;
+    let fetch_limit = offset + limit + 10;
+    let all_results = neo4j::find_callers(ctx, symbol_name, fetch_limit)?;
+    let total = all_results.len();
+    let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+
     match format {
-        Format::Json => print_graph_json(ctx, &results),
+        Format::Json => {
+            if results.is_empty() && ctx.neo4j.is_none() {
+                let wrapped = serde_json::json!({
+                    "results": [],
+                    "hint": GOBBY_HINT,
+                });
+                println!("{}", serde_json::to_string_pretty(&wrapped)?);
+                Ok(())
+            } else {
+                output::print_json(&PagedResponse {
+                    project_id: ctx.project_id.clone(),
+                    total,
+                    offset,
+                    limit,
+                    results,
+                })
+            }
+        }
         Format::Text => {
-            if results.is_empty() {
+            if results.is_empty() && offset == 0 {
                 println!("No callers found for '{symbol_name}'");
                 print_graph_hint_text(ctx);
             } else {
                 for r in &results {
                     println!("{}:{} {} -> {}", r.file_path, r.line, r.name, symbol_name);
+                }
+                if total > offset + results.len() {
+                    eprintln!(
+                        "-- {} of {} results (use --offset {} for more)",
+                        results.len(),
+                        total,
+                        offset + results.len()
+                    );
                 }
             }
             Ok(())
@@ -52,13 +83,35 @@ pub fn usages(
     ctx: &Context,
     symbol_name: &str,
     limit: usize,
+    offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let results = neo4j::find_usages(ctx, symbol_name, limit)?;
+    let fetch_limit = offset + limit + 10;
+    let all_results = neo4j::find_usages(ctx, symbol_name, fetch_limit)?;
+    let total = all_results.len();
+    let results: Vec<_> = all_results.into_iter().skip(offset).take(limit).collect();
+
     match format {
-        Format::Json => print_graph_json(ctx, &results),
+        Format::Json => {
+            if results.is_empty() && ctx.neo4j.is_none() {
+                let wrapped = serde_json::json!({
+                    "results": [],
+                    "hint": GOBBY_HINT,
+                });
+                println!("{}", serde_json::to_string_pretty(&wrapped)?);
+                Ok(())
+            } else {
+                output::print_json(&PagedResponse {
+                    project_id: ctx.project_id.clone(),
+                    total,
+                    offset,
+                    limit,
+                    results,
+                })
+            }
+        }
         Format::Text => {
-            if results.is_empty() {
+            if results.is_empty() && offset == 0 {
                 println!("No usages found for '{symbol_name}'");
                 print_graph_hint_text(ctx);
             } else {
@@ -67,6 +120,14 @@ pub fn usages(
                     println!(
                         "{}:{} [{}] {} -> {}",
                         r.file_path, r.line, rel, r.name, symbol_name
+                    );
+                }
+                if total > offset + results.len() {
+                    eprintln!(
+                        "-- {} of {} results (use --offset {} for more)",
+                        results.len(),
+                        total,
+                        offset + results.len()
                     );
                 }
             }

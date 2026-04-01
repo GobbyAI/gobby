@@ -4,7 +4,7 @@ use crate::models::Symbol;
 use crate::output::{self, Format};
 use crate::savings;
 
-pub fn outline(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> {
+pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyhow::Result<()> {
     let conn = db::open_readwrite(&ctx.db_path)?;
     let mut stmt = conn.prepare(
         "SELECT * FROM code_symbols WHERE project_id = ?1 AND file_path = ?2 ORDER BY line_start",
@@ -43,7 +43,14 @@ pub fn outline(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> 
     }
 
     match format {
-        Format::Json => output::print_json(&symbols),
+        Format::Json => {
+            if verbose {
+                output::print_json(&symbols)
+            } else {
+                let slim: Vec<_> = symbols.iter().map(|s| s.to_outline()).collect();
+                output::print_json(&slim)
+            }
+        }
         Format::Text => {
             for s in &symbols {
                 let indent = if s.parent_symbol_id.is_some() {

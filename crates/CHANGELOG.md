@@ -8,6 +8,24 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2]
+
+### Added
+
+#### gcode
+- `--offset` flag on `search`, `search-text`, `search-content`, `callers`, `usages` for stateless pagination (#43)
+- `--full` flag on `index` to force non-incremental reindex, cleaning up stale external indices (#43)
+- Pagination envelope on all paginated JSON commands: `{ project_id, total, offset, limit, results }` (#43)
+- Text mode pagination footer: `-- 10 of 47 results (use --offset 10 for more)` (#43)
+
+### Changed
+
+#### gcode
+- Default `--limit` reduced from 20 → 10 on search/callers/usages commands (#43)
+- `outline` JSON output uses slim `OutlineSymbol` struct (6 fields vs 18) — full output via `--verbose` (#43)
+- `search` JSON output drops `summary` by default — include via `--verbose` (#43)
+- `project_id` hoisted to response envelope instead of repeating on every result (#43)
+
 ## [0.3.1]
 
 ### Fixed
