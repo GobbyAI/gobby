@@ -1,17 +1,9 @@
-//! Direct DB savings tracking for gcode.
+//! Daemon-based savings tracking for gcode.
 //!
-//! Records token savings to the `savings_ledger` table when gcode returns
+//! Reports token savings to the Gobby daemon via HTTP POST when gcode returns
 //! compact symbol/outline data instead of full file contents.
 //!
 //! Display output follows the gsqz pattern: stderr prefix showing savings.
-//!
-//! Source: src/gobby/savings/tracker.py (schema, CHARS_PER_TOKEN)
-
-use rusqlite::Connection;
-
-/// Empirical chars-per-token for code-heavy content.
-/// Matches Python: CHARS_PER_TOKEN in savings/tracker.py
-const CHARS_PER_TOKEN: f64 = 3.7;
 
 /// Calculate savings percentage.
 pub fn savings_pct(original_chars: usize, actual_chars: usize) -> f64 {
@@ -21,43 +13,46 @@ pub fn savings_pct(original_chars: usize, actual_chars: usize) -> f64 {
     (1.0 - actual_chars as f64 / original_chars as f64) * 100.0
 }
 
-/// Record a savings event to the savings_ledger table.
+/// Report a savings event to the Gobby daemon via HTTP POST.
 ///
-/// Best-effort: returns Ok(()) even if the table doesn't exist or the write fails,
-/// matching the Python pattern of never letting savings tracking break functionality.
-pub fn record_savings(
-    conn: &Connection,
-    category: &str,
-    original_chars: usize,
-    actual_chars: usize,
-    project_id: Option<&str>,
-    metadata: Option<&str>,
-) -> anyhow::Result<()> {
-    let original_tokens = (original_chars as f64 / CHARS_PER_TOKEN) as i64;
-    let actual_tokens = (actual_chars as f64 / CHARS_PER_TOKEN) as i64;
-    let tokens_saved = (original_tokens - actual_tokens).max(0);
+/// Best-effort: all errors are silently ignored. The daemon being down
+/// should never break gcode functionality.
+pub fn report_savings(base_url: &str, original_chars: usize, actual_chars: usize) {
+    let url = format!("{}/api/admin/savings/record", base_url);
+    let payload = serde_json::json!({
+        "category": "code_index",
+        "original_chars": original_chars,
+        "actual_chars": actual_chars,
+        "metadata": { "strategy": "outline" }
+    });
+    let _ = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(1))
+        .send_json(payload);
+}
 
-    let result = conn.execute(
-        "INSERT INTO savings_ledger \
-         (session_id, project_id, category, original_tokens, actual_tokens, \
-          tokens_saved, cost_saved_usd, model, metadata) \
-         VALUES (NULL, ?1, ?2, ?3, ?4, ?5, 0.0, NULL, ?6)",
-        rusqlite::params![
-            project_id,
-            category,
-            original_tokens,
-            actual_tokens,
-            tokens_saved,
-            metadata,
-        ],
-    );
-
-    // Best-effort: don't fail if table missing or write error
-    if let Err(e) = result {
-        eprintln!("Warning: failed to record savings: {e}");
+/// Resolve the daemon URL from config or environment.
+///
+/// Resolution order: config `daemon_url` → `GOBBY_PORT` env → default port 60887
+pub fn resolve_daemon_url(config_url: Option<&str>) -> Option<String> {
+    if let Some(url) = config_url {
+        // Expand ${GOBBY_PORT} if present
+        if url.contains("${GOBBY_PORT}") {
+            if let Ok(port) = std::env::var("GOBBY_PORT") {
+                return Some(url.replace("${GOBBY_PORT}", &port));
+            }
+            // Fall through to defaults if GOBBY_PORT not set
+        } else {
+            return Some(url.to_string());
+        }
     }
 
-    Ok(())
+    // Fall back to GOBBY_PORT env var
+    if let Ok(port) = std::env::var("GOBBY_PORT") {
+        return Some(format!("http://localhost:{}", port));
+    }
+
+    // Default to well-known Gobby daemon (matches bootstrap.yaml defaults)
+    Some("http://localhost:60887".to_string())
 }
 
 /// Print savings info to stderr in gsqz-style format.
@@ -72,13 +67,6 @@ pub fn print_savings(label: &str, original_chars: usize, actual_chars: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_chars_to_tokens() {
-        // 3700 chars / 3.7 = 1000 tokens
-        let tokens = (3700.0 / CHARS_PER_TOKEN) as i64;
-        assert_eq!(tokens, 1000);
-    }
 
     #[test]
     fn test_savings_pct_basic() {
@@ -97,47 +85,31 @@ mod tests {
     }
 
     #[test]
-    fn test_record_savings_insert() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE savings_ledger (
-                session_id TEXT,
-                project_id TEXT,
-                category TEXT NOT NULL,
-                original_tokens INTEGER NOT NULL,
-                actual_tokens INTEGER NOT NULL,
-                tokens_saved INTEGER NOT NULL,
-                cost_saved_usd REAL NOT NULL,
-                model TEXT,
-                metadata TEXT
-            )",
-        )
-        .unwrap();
+    fn test_resolve_daemon_url_config_value() {
+        let url = resolve_daemon_url(Some("http://custom:9999"));
+        assert_eq!(url, Some("http://custom:9999".to_string()));
+    }
 
-        record_savings(
-            &conn,
-            "code_index",
-            3700,
-            370,
-            Some("test-project"),
-            Some(r#"{"symbol":"foo"}"#),
-        )
-        .unwrap();
+    #[test]
+    fn test_resolve_daemon_url_env_var() {
+        std::env::set_var("GOBBY_PORT", "12345");
+        let url = resolve_daemon_url(None);
+        assert_eq!(url, Some("http://localhost:12345".to_string()));
+        std::env::remove_var("GOBBY_PORT");
+    }
 
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM savings_ledger", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 1);
+    #[test]
+    fn test_resolve_daemon_url_default() {
+        std::env::remove_var("GOBBY_PORT");
+        let url = resolve_daemon_url(None);
+        assert_eq!(url, Some("http://localhost:60887".to_string()));
+    }
 
-        let (original, actual, saved): (i64, i64, i64) = conn
-            .query_row(
-                "SELECT original_tokens, actual_tokens, tokens_saved FROM savings_ledger",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(original, 1000);
-        assert_eq!(actual, 100);
-        assert_eq!(saved, 900);
+    #[test]
+    fn test_resolve_daemon_url_expand_port() {
+        std::env::set_var("GOBBY_PORT", "54321");
+        let url = resolve_daemon_url(Some("http://myhost:${GOBBY_PORT}"));
+        assert_eq!(url, Some("http://myhost:54321".to_string()));
+        std::env::remove_var("GOBBY_PORT");
     }
 }

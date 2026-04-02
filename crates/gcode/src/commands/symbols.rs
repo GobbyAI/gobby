@@ -30,15 +30,9 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
             .sum();
         if file_bytes > outline_bytes {
             savings::print_savings(&format!("outline {file}"), file_bytes, outline_bytes);
-            let metadata = serde_json::json!({"file": file, "symbols": symbols.len()}).to_string();
-            let _ = savings::record_savings(
-                &conn,
-                "code_index",
-                file_bytes,
-                outline_bytes,
-                Some(&ctx.project_id),
-                Some(&metadata),
-            );
+            if let Some(url) = savings::resolve_daemon_url(None) {
+                savings::report_savings(&url, file_bytes, outline_bytes);
+            }
         }
     }
 
@@ -96,19 +90,9 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                         file_bytes,
                         symbol_bytes,
                     );
-                    let metadata = serde_json::json!({
-                        "symbol": s.qualified_name,
-                        "file": s.file_path
-                    })
-                    .to_string();
-                    let _ = savings::record_savings(
-                        &conn,
-                        "code_index",
-                        file_bytes,
-                        symbol_bytes,
-                        Some(&ctx.project_id),
-                        Some(&metadata),
-                    );
+                    if let Some(url) = savings::resolve_daemon_url(None) {
+                        savings::report_savings(&url, file_bytes, symbol_bytes);
+                    }
                 }
 
                 match format {
@@ -169,15 +153,9 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
             total_file_bytes,
             total_symbol_bytes,
         );
-        let metadata = serde_json::json!({"count": results.len(), "ids": ids}).to_string();
-        let _ = savings::record_savings(
-            &conn,
-            "code_index",
-            total_file_bytes,
-            total_symbol_bytes,
-            Some(&ctx.project_id),
-            Some(&metadata),
-        );
+        if let Some(url) = savings::resolve_daemon_url(None) {
+            savings::report_savings(&url, total_file_bytes, total_symbol_bytes);
+        }
     }
 
     match format {

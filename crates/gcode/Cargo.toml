@@ -73,6 +73,7 @@ uuid = { version = "1", features = ["v5"] }
 ignore = "0.4"
 dirs = "6"
 anyhow = "1"
+ureq = { version = "2", features = ["json"] }
 
 # Secret resolution (Fernet decryption of gobby secrets)
 fernet = "0.2"
