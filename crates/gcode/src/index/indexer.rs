@@ -48,6 +48,7 @@ const DEFAULT_EXCLUDES: &[&str] = &[
 ];
 
 /// Index a directory (full or incremental).
+#[allow(clippy::too_many_arguments)]
 pub fn index_directory(
     conn: &Connection,
     root_path: &Path,
@@ -56,6 +57,7 @@ pub fn index_directory(
     neo4j: Option<&Neo4jClient>,
     qdrant: Option<&QdrantConfig>,
     quiet: bool,
+    daemon_url: Option<&str>,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -93,20 +95,30 @@ pub fn index_directory(
         None
     };
 
+    // When daemon is available, it handles external sync — defer orphan cleanup
+    let defer_external = daemon_url.is_some() && has_graph_synced;
+
     // Clean orphans
     if incremental && !current_hashes.is_empty() {
         let orphans = get_orphan_files(conn, project_id, &current_hashes);
+        let (orphan_neo4j, orphan_qdrant) = if defer_external {
+            (None, None)
+        } else {
+            (neo4j, qdrant)
+        };
         for orphan in &orphans {
-            delete_file_data(conn, project_id, orphan, neo4j, qdrant);
+            delete_file_data(conn, project_id, orphan, orphan_neo4j, orphan_qdrant);
         }
     }
 
-    // Ensure Qdrant collection exists (only when Gobby is installed and Qdrant configured)
-    if let Some(config) = qdrant {
-        let collection = format!("{}{}", config.collection_prefix, project_id);
-        if let Err(e) = crate::search::semantic::ensure_collection(config, &collection) {
-            if !quiet {
-                eprintln!("Warning: failed to ensure Qdrant collection: {e}");
+    // Ensure Qdrant collection exists (skip when daemon handles external sync)
+    if !defer_external {
+        if let Some(config) = qdrant {
+            let collection = format!("{}{}", config.collection_prefix, project_id);
+            if let Err(e) = crate::search::semantic::ensure_collection(config, &collection) {
+                if !quiet {
+                    eprintln!("Warning: failed to ensure Qdrant collection: {e}");
+                }
             }
         }
     }
@@ -129,6 +141,11 @@ pub fn index_directory(
                     result.files_skipped += 1;
                     continue;
                 }
+                Some(StaleReason::GraphSyncPending) if defer_external => {
+                    // Daemon worker handles graph sync retries
+                    result.files_skipped += 1;
+                    continue;
+                }
                 Some(StaleReason::GraphSyncPending) => true,
                 Some(StaleReason::ContentChanged) => false,
             },
@@ -145,6 +162,7 @@ pub fn index_directory(
             qdrant,
             graph_sync_only,
             has_graph_synced,
+            daemon_url,
         ) {
             Some(count) => {
                 result.files_indexed += 1;
@@ -196,6 +214,7 @@ pub fn index_files(
     file_paths: &[String],
     neo4j: Option<&Neo4jClient>,
     qdrant: Option<&QdrantConfig>,
+    daemon_url: Option<&str>,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -209,6 +228,7 @@ pub fn index_files(
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let has_graph_synced = has_graph_synced_column(conn);
+    let defer_external = daemon_url.is_some() && has_graph_synced;
 
     for fp in file_paths {
         let abs = if Path::new(fp).is_absolute() {
@@ -218,8 +238,13 @@ pub fn index_files(
         };
 
         if !abs.exists() {
-            // File deleted — clean up
-            delete_file_data(conn, project_id, fp, neo4j, qdrant);
+            // File deleted — clean up (defer external if daemon available)
+            let (del_neo4j, del_qdrant) = if defer_external {
+                (None, None)
+            } else {
+                (neo4j, qdrant)
+            };
+            delete_file_data(conn, project_id, fp, del_neo4j, del_qdrant);
             continue;
         }
 
@@ -233,6 +258,7 @@ pub fn index_files(
             qdrant,
             false, // always full reindex for targeted files
             has_graph_synced,
+            daemon_url,
         ) {
             result.files_indexed += 1;
             result.symbols_found += count;
@@ -258,6 +284,7 @@ fn index_file(
     qdrant: Option<&QdrantConfig>,
     graph_sync_only: bool,
     has_graph_synced: bool,
+    daemon_url: Option<&str>,
 ) -> Option<usize> {
     let rel = relative_path(file_path, root_path).ok()?;
 
@@ -268,6 +295,11 @@ fn index_file(
     }
 
     let count = parse_result.symbols.len();
+
+    // Detect optional tables for import/call storage (daemon migration v183)
+    let has_imports_table = has_table(conn, "code_imports");
+    let has_calls_table = has_table(conn, "code_calls");
+    let has_vectors_synced = has_vectors_synced_column(conn);
 
     // Phase 1: SQLite writes (transactional) — skip if graph_sync_only
     if !graph_sync_only {
@@ -294,7 +326,16 @@ fn index_file(
                 indexed_at: epoch_secs_str(),
             },
             has_graph_synced,
+            has_vectors_synced,
         );
+
+        // Write import/call relations to SQLite (if daemon migration v183 applied)
+        if has_imports_table {
+            upsert_imports(&tx, project_id, &rel, &parse_result.imports);
+        }
+        if has_calls_table {
+            upsert_calls(&tx, project_id, &rel, &parse_result.calls);
+        }
 
         let chunks =
             chunker::chunk_file_content(&parse_result.source, &rel, project_id, Some(language));
@@ -303,6 +344,11 @@ fn index_file(
         }
 
         tx.commit().ok()?;
+    }
+
+    // When daemon is available, defer external writes — flags stay 0 for daemon worker
+    if has_graph_synced && daemon_url.is_some() {
+        return Some(count);
     }
 
     // Phase 2: External writes (Neo4j/Qdrant) — outside transaction
@@ -516,8 +562,37 @@ fn upsert_symbols(conn: &Connection, symbols: &[crate::models::Symbol]) {
     }
 }
 
-fn upsert_file(conn: &Connection, file: &IndexedFile, has_graph_synced: bool) {
-    if has_graph_synced {
+fn upsert_file(
+    conn: &Connection,
+    file: &IndexedFile,
+    has_graph_synced: bool,
+    has_vectors_synced: bool,
+) {
+    if has_graph_synced && has_vectors_synced {
+        let _ = conn.execute(
+            "INSERT INTO code_indexed_files (
+                id, project_id, file_path, language, content_hash,
+                symbol_count, byte_size, indexed_at, graph_synced, vectors_synced
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8, 0, 0)
+            ON CONFLICT(id) DO UPDATE SET
+                content_hash=excluded.content_hash,
+                symbol_count=excluded.symbol_count,
+                byte_size=excluded.byte_size,
+                indexed_at=excluded.indexed_at,
+                graph_synced=0,
+                vectors_synced=0",
+            rusqlite::params![
+                file.id,
+                file.project_id,
+                file.file_path,
+                file.language,
+                file.content_hash,
+                file.symbol_count as i64,
+                file.byte_size as i64,
+                file.indexed_at,
+            ],
+        );
+    } else if has_graph_synced {
         let _ = conn.execute(
             "INSERT INTO code_indexed_files (
                 id, project_id, file_path, language, content_hash,
@@ -664,18 +739,100 @@ fn delete_file_sqlite_data(conn: &Connection, project_id: &str, file_path: &str)
         "DELETE FROM code_content_chunks WHERE project_id = ?1 AND file_path = ?2",
         rusqlite::params![project_id, file_path],
     );
+    // Clean import/call tables if they exist (daemon migration v183)
+    if has_table(conn, "code_imports") {
+        let _ = conn.execute(
+            "DELETE FROM code_imports WHERE project_id = ?1 AND source_file = ?2",
+            rusqlite::params![project_id, file_path],
+        );
+    }
+    if has_table(conn, "code_calls") {
+        let _ = conn.execute(
+            "DELETE FROM code_calls WHERE project_id = ?1 AND file_path = ?2",
+            rusqlite::params![project_id, file_path],
+        );
+    }
+}
+
+/// Write import relations to SQLite (delete-then-insert per file).
+fn upsert_imports(
+    conn: &Connection,
+    project_id: &str,
+    file_path: &str,
+    imports: &[crate::models::ImportRelation],
+) {
+    let _ = conn.execute(
+        "DELETE FROM code_imports WHERE project_id = ?1 AND source_file = ?2",
+        rusqlite::params![project_id, file_path],
+    );
+    for imp in imports {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO code_imports (project_id, source_file, target_module) \
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![project_id, &imp.file_path, &imp.module_name],
+        );
+    }
+}
+
+/// Write call relations to SQLite (delete-then-insert per file).
+fn upsert_calls(
+    conn: &Connection,
+    project_id: &str,
+    file_path: &str,
+    calls: &[crate::models::CallRelation],
+) {
+    let _ = conn.execute(
+        "DELETE FROM code_calls WHERE project_id = ?1 AND file_path = ?2",
+        rusqlite::params![project_id, file_path],
+    );
+    for call in calls {
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO code_calls \
+             (project_id, caller_symbol_id, callee_name, file_path, line) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                project_id,
+                &call.caller_id,
+                &call.callee_name,
+                &call.file_path,
+                call.line as i64,
+            ],
+        );
+    }
 }
 
 /// Check if the code_indexed_files table has a graph_synced column (gobby-hub.db only).
 fn has_graph_synced_column(conn: &Connection) -> bool {
-    conn.prepare("PRAGMA table_info(code_indexed_files)")
+    has_column(conn, "code_indexed_files", "graph_synced")
+}
+
+/// Check if the code_indexed_files table has a vectors_synced column (daemon migration v183).
+fn has_vectors_synced_column(conn: &Connection) -> bool {
+    has_column(conn, "code_indexed_files", "vectors_synced")
+}
+
+/// Check if a table has a specific column.
+fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    let sql = format!("PRAGMA table_info({table})");
+    conn.prepare(&sql)
         .ok()
         .and_then(|mut stmt| {
             stmt.query_map([], |row| row.get::<_, String>(1))
                 .ok()
-                .map(|names| names.flatten().any(|n| n == "graph_synced"))
+                .map(|names| names.flatten().any(|n| n == column))
         })
         .unwrap_or(false)
+}
+
+/// Check if a table exists in the database.
+fn has_table(conn: &Connection, table: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+        rusqlite::params![table],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap_or(0)
+        > 0
 }
 
 /// Set graph_synced flag for a file after external writes complete.

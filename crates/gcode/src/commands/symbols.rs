@@ -174,9 +174,8 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
 
 pub fn kinds(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let conn = db::open_readonly(&ctx.db_path)?;
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT kind FROM code_symbols WHERE project_id = ?1 ORDER BY kind",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT kind FROM code_symbols WHERE project_id = ?1 ORDER BY kind")?;
     let kinds: Vec<String> = stmt
         .query_map(rusqlite::params![&ctx.project_id], |row| row.get(0))?
         .filter_map(|r| r.ok())

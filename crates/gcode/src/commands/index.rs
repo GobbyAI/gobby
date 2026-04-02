@@ -14,8 +14,8 @@ pub fn run(
     let (root, project_id, conn) = match path.as_deref() {
         Some(p) => {
             let target = std::path::PathBuf::from(p);
-            let target_root = crate::project::find_project_root(&target)
-                .unwrap_or_else(|| target.clone());
+            let target_root =
+                crate::project::find_project_root(&target).unwrap_or_else(|| target.clone());
             if target_root != ctx.project_root {
                 // Path belongs to a different project — re-resolve everything
                 let db_path = crate::config::resolve_db_path(&target_root)?;
@@ -59,6 +59,7 @@ pub fn run(
             &file_list,
             neo4j_ref,
             qdrant_ref,
+            ctx.daemon_url.as_deref(),
         )?;
         if !ctx.quiet {
             eprintln!(
@@ -75,6 +76,7 @@ pub fn run(
             neo4j_ref,
             qdrant_ref,
             ctx.quiet,
+            ctx.daemon_url.as_deref(),
         )?;
         if !ctx.quiet {
             eprintln!(
