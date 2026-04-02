@@ -57,7 +57,7 @@ pub fn resolve_daemon_url(config_url: Option<&str>) -> Option<String> {
 
 /// Print savings info to stderr in gsqz-style format.
 pub fn print_savings(label: &str, original_chars: usize, actual_chars: usize) {
-    if original_chars <= actual_chars || original_chars == 0 {
+    if actual_chars == 0 || original_chars <= actual_chars {
         return;
     }
     let pct = savings_pct(original_chars, actual_chars);

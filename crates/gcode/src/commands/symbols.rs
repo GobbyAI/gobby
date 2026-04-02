@@ -28,7 +28,7 @@ pub fn outline(ctx: &Context, file: &str, format: Format, verbose: bool) -> anyh
                     + 20 // line numbers, separators
             })
             .sum();
-        if file_bytes > outline_bytes {
+        if outline_bytes > 0 && file_bytes > outline_bytes {
             savings::print_savings(&format!("outline {file}"), file_bytes, outline_bytes);
             if let Some(url) = savings::resolve_daemon_url(None) {
                 savings::report_savings(&url, file_bytes, outline_bytes);
@@ -84,7 +84,7 @@ pub fn symbol(ctx: &Context, id: &str, format: Format) -> anyhow::Result<()> {
                 let snippet = String::from_utf8_lossy(&source[start..end]);
 
                 // Record savings: symbol bytes vs full file bytes
-                if file_bytes > symbol_bytes {
+                if symbol_bytes > 0 && file_bytes > symbol_bytes {
                     savings::print_savings(
                         &format!("symbol {}", s.qualified_name),
                         file_bytes,
@@ -147,7 +147,7 @@ pub fn symbols(ctx: &Context, ids: &[String], format: Format) -> anyhow::Result<
             total_symbol_bytes += s.byte_end - s.byte_start;
         }
     }
-    if total_file_bytes > total_symbol_bytes {
+    if total_symbol_bytes > 0 && total_file_bytes > total_symbol_bytes {
         savings::print_savings(
             &format!("symbols ({})", results.len()),
             total_file_bytes,
