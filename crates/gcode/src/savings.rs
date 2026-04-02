@@ -92,24 +92,24 @@ mod tests {
 
     #[test]
     fn test_resolve_daemon_url_env_var() {
-        std::env::set_var("GOBBY_PORT", "12345");
+        unsafe { std::env::set_var("GOBBY_PORT", "12345") };
         let url = resolve_daemon_url(None);
         assert_eq!(url, Some("http://localhost:12345".to_string()));
-        std::env::remove_var("GOBBY_PORT");
+        unsafe { std::env::remove_var("GOBBY_PORT") };
     }
 
     #[test]
     fn test_resolve_daemon_url_default() {
-        std::env::remove_var("GOBBY_PORT");
+        unsafe { std::env::remove_var("GOBBY_PORT") };
         let url = resolve_daemon_url(None);
         assert_eq!(url, Some("http://localhost:60887".to_string()));
     }
 
     #[test]
     fn test_resolve_daemon_url_expand_port() {
-        std::env::set_var("GOBBY_PORT", "54321");
+        unsafe { std::env::set_var("GOBBY_PORT", "54321") };
         let url = resolve_daemon_url(Some("http://myhost:${GOBBY_PORT}"));
         assert_eq!(url, Some("http://myhost:54321".to_string()));
-        std::env::remove_var("GOBBY_PORT");
+        unsafe { std::env::remove_var("GOBBY_PORT") };
     }
 }
