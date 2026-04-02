@@ -40,9 +40,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    // ── Project Setup ────────────────────────────────────────────────
     /// Initialize project context (.gobby/gcode.json)
     Init,
-    /// Index a directory (full or incremental)
+    /// Index a directory (full or incremental). SQLite-only when Gobby daemon is running
     Index {
         /// Path to index (default: project root)
         path: Option<String>,
@@ -62,7 +63,8 @@ enum Command {
         force: bool,
     },
 
-    /// Hybrid search: FTS5 + semantic + graph boost
+    // ── Search (works in all modes) ──────────────────────────────────
+    /// Hybrid search: FTS5 + optional semantic (Qdrant) + optional graph boost (Neo4j)
     Search {
         query: String,
         #[arg(long, default_value = "10")]
@@ -102,6 +104,7 @@ enum Command {
         path: Option<String>,
     },
 
+    // ── Symbol Retrieval (works in all modes) ────────────────────────
     /// Hierarchical symbol tree for a file
     Outline { file: String },
     /// Fetch symbol source code by ID (byte-offset read)
@@ -113,7 +116,8 @@ enum Command {
     /// File tree with symbol counts
     Tree,
 
-    /// Find callers of a symbol
+    // ── Dependency Graph (requires Gobby) ──────────────────────────────
+    /// Find callers of a symbol [requires Gobby]
     Callers {
         symbol_name: String,
         #[arg(long, default_value = "10")]
@@ -122,7 +126,7 @@ enum Command {
         #[arg(long, default_value = "0")]
         offset: usize,
     },
-    /// Find all usages of a symbol (calls + imports)
+    /// Find all usages of a symbol — calls + imports [requires Gobby]
     Usages {
         symbol_name: String,
         #[arg(long, default_value = "10")]
@@ -131,9 +135,9 @@ enum Command {
         #[arg(long, default_value = "0")]
         offset: usize,
     },
-    /// Show import graph for a file
+    /// Show import graph for a file [requires Gobby]
     Imports { file: String },
-    /// Transitive impact analysis
+    /// Transitive impact analysis [requires Gobby]
     BlastRadius {
         /// Symbol name or file path
         target: String,
@@ -141,6 +145,7 @@ enum Command {
         depth: usize,
     },
 
+    // ── Project Management ───────────────────────────────────────────
     /// Directory-grouped project stats
     RepoOutline,
     /// List indexed projects

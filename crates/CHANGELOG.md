@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Import/call relation SQLite storage** — `gcode index` now writes parsed import relations (`code_imports` table) and call relations (`code_calls` table) to SQLite when the tables exist (daemon migration v183). Enables the daemon to rebuild Neo4j graph edges without re-parsing files. Table detection via PRAGMA means no deployment ordering required (#78)
 - `vectors_synced` column support — detected at runtime alongside `graph_synced`, set to `0` on file upsert. Allows independent tracking of Qdrant vector sync status vs Neo4j graph sync (#78)
 - `gcode kinds` command — lists all distinct symbol kinds in the current project index (#76)
+- Context-aware CLI help — graph commands (`callers`, `usages`, `imports`, `blast-radius`) marked `[requires Gobby]` in help text. `search` describes optional semantic/graph sources. `index` notes SQLite-only behavior when daemon is running. Commands grouped by mode requirements (#77)
 - Generic `has_column()` and `has_table()` helpers replacing the single-purpose `has_graph_synced_column()` (#78)
 
 ### Fixed
