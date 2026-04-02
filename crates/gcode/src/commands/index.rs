@@ -9,14 +9,42 @@ pub fn run(
     files: Option<Vec<String>>,
     full: bool,
 ) -> anyhow::Result<()> {
-    // Auto-init: ensure identity file exists before indexing
-    crate::project::ensure_gcode_json(&ctx.project_root)?;
+    // Resolve root, project_id, and DB connection — re-resolve if path
+    // belongs to a different project than the CWD-derived context.
+    let (root, project_id, conn) = match path.as_deref() {
+        Some(p) => {
+            let target = std::path::PathBuf::from(p);
+            let target_root = crate::project::find_project_root(&target)
+                .unwrap_or_else(|| target.clone());
+            if target_root != ctx.project_root {
+                // Path belongs to a different project — re-resolve everything
+                let db_path = crate::config::resolve_db_path(&target_root)?;
+                let project_id = crate::project::read_project_id(&target_root)
+                    .or_else(|_| crate::project::read_gcode_json(&target_root))
+                    .unwrap_or_else(|_| crate::project::generate_project_id(&target_root));
+                if !ctx.quiet {
+                    eprintln!(
+                        "Warning: path '{}' belongs to project {} (not {}), re-resolving context",
+                        p,
+                        &project_id[..8],
+                        &ctx.project_id[..8]
+                    );
+                }
+                let conn = db::open_readwrite(&db_path)?;
+                (target_root, project_id, conn)
+            } else {
+                let conn = db::open_readwrite(&ctx.db_path)?;
+                (target, ctx.project_id.clone(), conn)
+            }
+        }
+        None => {
+            let conn = db::open_readwrite(&ctx.db_path)?;
+            (ctx.project_root.clone(), ctx.project_id.clone(), conn)
+        }
+    };
 
-    let conn = db::open_readwrite(&ctx.db_path)?;
-    let root = path
-        .as_deref()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| ctx.project_root.clone());
+    // Auto-init: ensure identity file exists before indexing
+    crate::project::ensure_gcode_json(&root)?;
 
     // Create Neo4j client if configured
     let neo4j_client = ctx.neo4j.as_ref().map(Neo4jClient::from_config);
@@ -27,7 +55,7 @@ pub fn run(
         let result = indexer::index_files(
             &conn,
             &root,
-            &ctx.project_id,
+            &project_id,
             &file_list,
             neo4j_ref,
             qdrant_ref,
@@ -42,7 +70,7 @@ pub fn run(
         let result = indexer::index_directory(
             &conn,
             &root,
-            &ctx.project_id,
+            &project_id,
             !full,
             neo4j_ref,
             qdrant_ref,

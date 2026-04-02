@@ -7,6 +7,14 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5]
+
+### Fixed
+
+#### gcode
+
+- Fix cross-project symbol contamination when `gcode index <path>` targets a different project than CWD — re-resolves project ID and DB path from the target path instead of using CWD-derived context. Prints a warning when context is re-resolved (#75)
+
 ## [0.4.4]
 
 ### Fixed

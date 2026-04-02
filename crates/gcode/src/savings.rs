@@ -91,6 +91,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_resolve_daemon_url_env_var() {
         unsafe { std::env::set_var("GOBBY_PORT", "12345") };
         let url = resolve_daemon_url(None);
@@ -99,6 +100,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_resolve_daemon_url_default() {
         unsafe { std::env::remove_var("GOBBY_PORT") };
         let url = resolve_daemon_url(None);
@@ -106,6 +108,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_resolve_daemon_url_expand_port() {
         unsafe { std::env::set_var("GOBBY_PORT", "54321") };
         let url = resolve_daemon_url(Some("http://myhost:${GOBBY_PORT}"));
