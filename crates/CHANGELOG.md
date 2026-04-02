@@ -7,6 +7,33 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+### Changed
+
+#### gcode
+
+- **Defer external writes to daemon** — when the Gobby daemon is available (`daemon_url` resolved and `graph_synced` column detected), `gcode index` now performs SQLite writes only and skips all Neo4j/Qdrant operations. Sync flags (`graph_synced`, `vectors_synced`) stay at `0` for the daemon's background worker to process. FTS search works immediately; graph/semantic search follows once the daemon syncs. Standalone mode is unchanged (#78)
+- `GraphSyncPending` files are skipped during incremental indexing when daemon is available — the daemon worker handles retries instead of gcode (#78)
+- Orphan file cleanup defers Neo4j/Qdrant deletion to the daemon's `reconcile_stores` when daemon is available (#78)
+- Qdrant collection creation skipped when daemon handles external sync (#78)
+
+### Added
+
+#### gcode
+
+- **Import/call relation SQLite storage** — `gcode index` now writes parsed import relations (`code_imports` table) and call relations (`code_calls` table) to SQLite when the tables exist (daemon migration v183). Enables the daemon to rebuild Neo4j graph edges without re-parsing files. Table detection via PRAGMA means no deployment ordering required (#78)
+- `vectors_synced` column support — detected at runtime alongside `graph_synced`, set to `0` on file upsert. Allows independent tracking of Qdrant vector sync status vs Neo4j graph sync (#78)
+- `gcode kinds` command — lists all distinct symbol kinds in the current project index (#76)
+- Generic `has_column()` and `has_table()` helpers replacing the single-purpose `has_graph_synced_column()` (#78)
+
+### Fixed
+
+#### gcode
+
+- Fix cross-project symbol contamination when `gcode index <path>` targets a different project than CWD — re-resolves project ID and DB path from the target path instead of using CWD-derived context. Prints a warning when context is re-resolved (#75)
+- Fix bogus "saved 100%" output when outline/symbol returns empty results — skip savings reporting when actual bytes is zero (#74)
+
 ## [0.4.5]
 
 ### Fixed
