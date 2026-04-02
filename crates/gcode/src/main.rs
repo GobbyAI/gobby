@@ -108,6 +108,8 @@ enum Command {
     Symbol { id: String },
     /// Batch retrieve symbols by ID
     Symbols { ids: Vec<String> },
+    /// List distinct symbol kinds in the index
+    Kinds,
     /// File tree with symbol counts
     Tree,
 
@@ -233,6 +235,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Symbol { id } => commands::symbols::symbol(&ctx, &id, cli.format),
         Command::Symbols { ids } => commands::symbols::symbols(&ctx, &ids, cli.format),
+        Command::Kinds => commands::symbols::kinds(&ctx, cli.format),
         Command::Tree => commands::symbols::tree(&ctx, cli.format),
 
         Command::Callers {
