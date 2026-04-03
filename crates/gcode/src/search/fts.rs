@@ -132,6 +132,74 @@ pub fn search_symbols_by_name(
         .unwrap_or_default()
 }
 
+/// Resolve user input to a symbol name for graph queries.
+///
+/// Tries exact match first, then falls back to LIKE matching.
+/// Returns `(resolved_name, suggestions)` — suggestions populated when no exact match.
+pub fn resolve_symbol_name(
+    conn: &Connection,
+    input: &str,
+    project_id: &str,
+) -> (Option<String>, Vec<String>) {
+    // 1. Exact match on name
+    let exact: Option<String> = conn
+        .query_row(
+            "SELECT name FROM code_symbols WHERE project_id = ? AND name = ? LIMIT 1",
+            rusqlite::params![project_id, input],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(name) = exact {
+        return (Some(name), vec![]);
+    }
+
+    // 2. LIKE fallback — collect top matches as suggestions
+    let pattern = format!("%{input}%");
+    let mut stmt = match conn.prepare(
+        "SELECT DISTINCT name FROM code_symbols \
+         WHERE project_id = ? AND (name LIKE ? OR qualified_name LIKE ?) \
+         ORDER BY name LIMIT 5",
+    ) {
+        Ok(s) => s,
+        Err(_) => return (None, vec![]),
+    };
+    let names: Vec<String> = stmt
+        .query_map(rusqlite::params![project_id, &pattern, &pattern], |row| {
+            row.get(0)
+        })
+        .ok()
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+
+    if names.len() == 1 {
+        return (Some(names[0].clone()), vec![]);
+    } else if !names.is_empty() {
+        return (Some(names[0].clone()), names);
+    }
+
+    // 3. FTS5 fallback — search across names, signatures, docstrings
+    let fts_results = search_symbols_fts(conn, input, project_id, None, None, 5);
+    let mut seen = std::collections::HashSet::new();
+    let fts_names: Vec<String> = fts_results
+        .iter()
+        .filter_map(|s| {
+            if seen.insert(s.name.clone()) {
+                Some(s.name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if fts_names.len() == 1 {
+        (Some(fts_names[0].clone()), vec![])
+    } else if fts_names.is_empty() {
+        (None, vec![])
+    } else {
+        (Some(fts_names[0].clone()), fts_names)
+    }
+}
+
 /// Count matching symbols (FTS5 with LIKE fallback).
 pub fn count_text(conn: &Connection, query: &str, project_id: &str, path: Option<&str>) -> usize {
     let fts_query = sanitize_fts_query(query);

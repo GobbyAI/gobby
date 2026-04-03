@@ -1,7 +1,9 @@
 use crate::config::Context;
+use crate::db;
 use crate::models::PagedResponse;
 use crate::neo4j;
 use crate::output::{self, Format};
+use crate::search::fts;
 
 const GOBBY_HINT: &str =
     "Graph commands require Neo4j, available with Gobby. See: https://github.com/GobbyAI/gobby";
@@ -20,6 +22,34 @@ fn print_graph_hint_text(ctx: &Context) {
     }
 }
 
+/// Resolve user input to a symbol name, printing suggestions on ambiguity.
+/// Returns None and prints an error message if no match found.
+fn resolve_name(ctx: &Context, input: &str) -> Option<String> {
+    let conn = match db::open_readonly(&ctx.db_path) {
+        Ok(c) => c,
+        Err(_) => return Some(input.to_string()), // Can't resolve, pass through
+    };
+    let (resolved, suggestions) = fts::resolve_symbol_name(&conn, input, &ctx.project_id);
+    match &resolved {
+        Some(name) if !suggestions.is_empty() => {
+            eprintln!(
+                "Resolved '{input}' to '{name}' (also matched: {})",
+                suggestions
+                    .iter()
+                    .filter(|s| s != &name)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        None => {
+            eprintln!("No symbol matching '{input}' found");
+        }
+        _ => {}
+    }
+    resolved
+}
+
 pub fn callers(
     ctx: &Context,
     symbol_name: &str,
@@ -27,8 +57,24 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let total = neo4j::count_callers(ctx, symbol_name)?;
-    let results = neo4j::find_callers(ctx, symbol_name, offset, limit)?;
+    let name = match resolve_name(ctx, symbol_name) {
+        Some(n) => n,
+        None => {
+            return match format {
+                Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
+                    project_id: ctx.project_id.clone(),
+                    total: 0,
+                    offset: 0,
+                    limit: 0,
+                    results: vec![],
+                    hint: hint_for(ctx),
+                }),
+                Format::Text => Ok(()),
+            };
+        }
+    };
+    let total = neo4j::count_callers(ctx, &name)?;
+    let results = neo4j::find_callers(ctx, &name, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -41,13 +87,13 @@ pub fn callers(
         }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
-                println!("No callers found for '{symbol_name}'");
+                println!("No callers found for '{name}'");
                 print_graph_hint_text(ctx);
             } else if results.is_empty() {
                 eprintln!("No callers at offset {offset} (total {total})");
             } else {
                 for r in &results {
-                    println!("{}:{} {} -> {}", r.file_path, r.line, r.name, symbol_name);
+                    println!("{}:{} {} -> {}", r.file_path, r.line, r.name, name);
                 }
                 if total > offset + results.len() {
                     eprintln!(
@@ -70,8 +116,24 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let total = neo4j::count_usages(ctx, symbol_name)?;
-    let results = neo4j::find_usages(ctx, symbol_name, offset, limit)?;
+    let name = match resolve_name(ctx, symbol_name) {
+        Some(n) => n,
+        None => {
+            return match format {
+                Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
+                    project_id: ctx.project_id.clone(),
+                    total: 0,
+                    offset: 0,
+                    limit: 0,
+                    results: vec![],
+                    hint: hint_for(ctx),
+                }),
+                Format::Text => Ok(()),
+            };
+        }
+    };
+    let total = neo4j::count_usages(ctx, &name)?;
+    let results = neo4j::find_usages(ctx, &name, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -84,7 +146,7 @@ pub fn usages(
         }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
-                println!("No usages found for '{symbol_name}'");
+                println!("No usages found for '{name}'");
                 print_graph_hint_text(ctx);
             } else if results.is_empty() {
                 eprintln!("No usages at offset {offset} (total {total})");
@@ -93,7 +155,7 @@ pub fn usages(
                     let rel = r.relation.as_deref().unwrap_or("unknown");
                     println!(
                         "{}:{} [{}] {} -> {}",
-                        r.file_path, r.line, rel, r.name, symbol_name
+                        r.file_path, r.line, rel, r.name, name
                     );
                 }
                 if total > offset + results.len() {
@@ -142,7 +204,23 @@ pub fn blast_radius(
     depth: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let results = neo4j::blast_radius(ctx, target, depth)?;
+    let name = match resolve_name(ctx, target) {
+        Some(n) => n,
+        None => {
+            return match format {
+                Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
+                    project_id: ctx.project_id.clone(),
+                    total: 0,
+                    offset: 0,
+                    limit: 0,
+                    results: vec![],
+                    hint: hint_for(ctx),
+                }),
+                Format::Text => Ok(()),
+            };
+        }
+    };
+    let results = neo4j::blast_radius(ctx, &name, depth)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -155,7 +233,7 @@ pub fn blast_radius(
         }),
         Format::Text => {
             if results.is_empty() {
-                println!("No blast radius found for '{target}'");
+                println!("No blast radius found for '{name}'");
                 print_graph_hint_text(ctx);
             } else {
                 for r in &results {

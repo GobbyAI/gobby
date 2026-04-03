@@ -348,6 +348,7 @@ pub fn blast_radius(ctx: &Context, target: &str, depth: usize) -> anyhow::Result
              RETURN DISTINCT affected.id AS symbol_id, \
                     affected.name AS symbol_name, \
                     affected.kind AS kind, file.path AS file_path, \
+                    affected.line_start AS line, \
                     distance \
              ORDER BY distance ASC, affected.name ASC \
              LIMIT $limit"
@@ -377,7 +378,7 @@ pub fn write_defines(
         client.query(
             "MERGE (f:CodeFile {path: $file, project: $project}) \
              MERGE (s:CodeSymbol {id: $symbol_id, project: $project}) \
-             SET s.name = $name, s.kind = $kind \
+             SET s.name = $name, s.kind = $kind, s.line_start = $line_start \
              MERGE (f)-[:DEFINES]->(s)",
             Some(serde_json::json!({
                 "file": file_path,
@@ -385,6 +386,7 @@ pub fn write_defines(
                 "symbol_id": sym.id,
                 "name": sym.name,
                 "kind": sym.kind,
+                "line_start": sym.line_start,
             })),
         )?;
     }
