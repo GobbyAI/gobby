@@ -7,6 +7,21 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1]
+
+### Added
+
+#### gcode
+
+- **Symbol name resolution for graph commands** — `callers`, `usages`, and `blast-radius` now resolve fuzzy input before querying Neo4j. Resolution tries exact match → LIKE substring match → FTS5 search (names, signatures, docstrings). When multiple matches are found, the best is used and alternatives are shown. When no match is found, a clear "No symbol matching" message is printed (#80)
+- **`line_start` on Neo4j CodeSymbol nodes** — `write_defines` now stores `line_start` on CodeSymbol nodes. `blast-radius` Cypher returns `affected.line_start AS line` for non-zero line numbers in output (requires re-index to populate) (#80)
+
+### Changed
+
+#### gcode
+
+- **Progress bar redesign** — static-width layout with bar on left, counter and filename on right: `[████░░░░░░░░] 21/42 : path/to/file.rs`. No more jumping as path lengths change (#83)
+
 ## [0.5.0]
 
 ### Changed
