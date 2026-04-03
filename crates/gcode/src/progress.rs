@@ -36,7 +36,7 @@ impl ProgressBar {
         let filled = (pct * self.bar_width as f64) as usize;
         let empty = self.bar_width - filled;
 
-        let bar: String = "=".repeat(filled) + &" ".repeat(empty);
+        let bar: String = "█".repeat(filled) + &"░".repeat(empty);
         let counter = format!("{}/{}", self.current, self.total);
 
         // Truncate path from the left to fit remaining terminal width
