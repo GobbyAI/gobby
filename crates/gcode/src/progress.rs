@@ -36,26 +36,28 @@ impl ProgressBar {
         let filled = (pct * self.bar_width as f64) as usize;
         let empty = self.bar_width - filled;
 
-        // Truncate long paths to keep the line reasonable (char-safe)
-        let display_path = if file_path.len() > 40 {
+        let bar: String = "=".repeat(filled) + &" ".repeat(empty);
+        let counter = format!("{}/{}", self.current, self.total);
+
+        // Truncate path from the left to fit remaining terminal width
+        // Layout: \r[{bar}] {counter} : {path}\x1b[K
+        // Fixed prefix width: 1 + bar_width + 1 + 1 + counter + 3 = bar_width + 6 + counter.len()
+        let prefix_width = self.bar_width + 6 + counter.len();
+        let max_path = 80usize.saturating_sub(prefix_width);
+        let display_path = if file_path.len() > max_path && max_path > 3 {
             let start = file_path
                 .char_indices()
                 .rev()
-                .nth(39)
+                .nth(max_path - 4)
                 .map(|(i, _)| i)
                 .unwrap_or(0);
-            &file_path[start..]
+            format!("...{}", &file_path[start..])
         } else {
-            file_path
+            file_path.to_string()
         };
 
-        let bar: String = "█".repeat(filled) + &"░".repeat(empty);
-
         // \r overwrites the line, \x1b[K clears to end of line
-        eprint!(
-            "\rIndexing {} {} {}/{}  \x1b[K",
-            display_path, bar, self.current, self.total
-        );
+        eprint!("\r[{bar}] {counter} : {display_path}\x1b[K");
         let _ = std::io::stderr().flush();
     }
 
