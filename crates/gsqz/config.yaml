@@ -35,9 +35,6 @@ pipelines:
             - '^index [0-9a-f]'
       - group_lines:
           mode: git_diff
-      - truncate:
-          head: 80
-          tail: 10
 
   git-log:
     match: '\bgit\s+log\b'
@@ -46,9 +43,6 @@ pipelines:
           patterns:
             - '^Merge:'
             - '^\s*$'
-      - truncate:
-          head: 40
-          tail: 5
 
   git-transfer:
     match: '\bgit\s+(?:push|pull|fetch|clone)\b'
@@ -62,9 +56,6 @@ pipelines:
             - '^Resolving deltas:'
             - '^Unpacking objects:'
             - '^remote: Enumerating'
-      - truncate:
-          head: 5
-          tail: 5
 
   git-mutation:
     match: '\bgit\s+(?:add|commit|stash|tag|branch)\b'
@@ -72,9 +63,6 @@ pipelines:
       - filter_lines:
           patterns:
             - '^\s*$'
-      - truncate:
-          head: 5
-          tail: 5
 
   # === Test runners ===
   pytest:
