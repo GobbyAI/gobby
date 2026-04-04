@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [features]
 default = ["embeddings"]
-embeddings = ["dep:llama-cpp-2"]
+embeddings = ["dep:llama-cpp-2", "dep:libc"]
 cuda = ["embeddings", "llama-cpp-2/cuda"]
 vulkan = ["embeddings", "llama-cpp-2/vulkan"]
 rocm = ["embeddings", "llama-cpp-2/rocm"]
@@ -84,6 +84,7 @@ hmac = "0.12"
 # Embeddings (GGUF model loading for semantic search)
 # macOS gets Metal automatically. Linux/Windows: CPU by default,
 # opt-in GPU via --features cuda/vulkan/rocm
+libc = { version = "0.2", optional = true }
 
 # Temp files (for tests)
 tempfile = "3"

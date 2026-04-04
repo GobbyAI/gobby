@@ -21,6 +21,7 @@ const EMBEDDING_DIM: usize = 768;
 
 #[cfg(feature = "embeddings")]
 mod embedding_impl {
+    use std::os::unix::io::IntoRawFd;
     use std::path::PathBuf;
     use std::sync::Mutex;
 
@@ -42,6 +43,30 @@ mod embedding_impl {
     }
 
     static EMBEDDING_MODEL: Mutex<Option<EmbeddingModelInner>> = Mutex::new(None);
+
+    /// Suppress stderr for the duration of a closure. llama.cpp's C layer
+    /// prints init warnings via fprintf(stderr) that bypass the Rust log
+    /// callback. This redirects fd 2 to /dev/null and restores it afterward.
+    fn with_stderr_suppressed<T>(f: impl FnOnce() -> T) -> T {
+        use std::fs::File;
+        unsafe {
+            let original = libc::dup(2);
+            if original < 0 {
+                return f();
+            }
+            let devnull = File::open("/dev/null")
+                .map(|f| f.into_raw_fd())
+                .unwrap_or(-1);
+            if devnull >= 0 {
+                libc::dup2(devnull, 2);
+                libc::close(devnull);
+            }
+            let result = f();
+            libc::dup2(original, 2);
+            libc::close(original);
+            result
+        }
+    }
 
     /// Configure GGML/llama.cpp log output. Must be called before backend init.
     /// Suppresses ~200 lines of debug output (model metadata, tensor loading,
@@ -71,19 +96,21 @@ mod embedding_impl {
         // Force-enable Metal tensor API on all Apple Silicon.
         // GGML's non-tensor codepath has a residency set cleanup bug.
         // (This is now set unconditionally in main.rs before any threads spawn)
-        let backend = match LlamaBackend::init() {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("Warning: failed to init llama backend: {e}");
-                return false;
-            }
-        };
+        //
+        // Suppress stderr during init — llama.cpp's C layer prints warnings
+        // like "embeddings required but some input tokens were not marked as
+        // outputs -> overriding" via fprintf(stderr), bypassing the log callback.
+        let result = with_stderr_suppressed(|| {
+            let backend = LlamaBackend::init().map_err(|e| format!("{e}"))?;
+            let model_params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
+            let model = LlamaModel::load_from_file(&backend, &path, &model_params)
+                .map_err(|e| format!("{e}"))?;
+            Ok::<_, String>(EmbeddingModelInner { backend, model })
+        });
 
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(u32::MAX);
-
-        match LlamaModel::load_from_file(&backend, &path, &model_params) {
-            Ok(model) => {
-                *guard = Some(EmbeddingModelInner { backend, model });
+        match result {
+            Ok(inner) => {
+                *guard = Some(inner);
                 true
             }
             Err(e) => {
