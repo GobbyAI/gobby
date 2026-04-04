@@ -182,24 +182,23 @@ fn default_fallback_steps() -> Vec<Step> {
 }
 
 impl Config {
-    /// Load config: CLI override → ./gsqz.yaml → compiled-in default.
+    /// Load config: CLI override → ./gsqz.yaml → auto-export default.
     /// First found wins entirely (no merging).
     pub fn load(config_override: Option<&Path>) -> Self {
         // Priority 1: explicit CLI --config path
         if let Some(path) = config_override {
             if let Ok(content) = std::fs::read_to_string(path) {
-                if let Ok(config) = serde_yaml::from_str(&content) {
-                    return config;
+                match serde_yaml::from_str(&content) {
+                    Ok(config) => return config,
+                    Err(e) => {
+                        eprintln!("Error: failed to parse {}: {e}", path.display());
+                        eprintln!("Run `gsqz --init` to regenerate the default config.");
+                        std::process::exit(1);
+                    }
                 }
-                eprintln!(
-                    "Warning: failed to parse {}, falling back to defaults",
-                    path.display()
-                );
             } else {
-                eprintln!(
-                    "Warning: could not read {}, falling back to defaults",
-                    path.display()
-                );
+                eprintln!("Error: could not read {}", path.display());
+                std::process::exit(1);
             }
         }
 
@@ -207,10 +206,14 @@ impl Config {
         let cwd_config = Path::new("gsqz.yaml");
         if cwd_config.exists() {
             if let Ok(content) = std::fs::read_to_string(cwd_config) {
-                if let Ok(config) = serde_yaml::from_str(&content) {
-                    return config;
+                match serde_yaml::from_str(&content) {
+                    Ok(config) => return config,
+                    Err(e) => {
+                        eprintln!("Error: failed to parse ./gsqz.yaml: {e}");
+                        eprintln!("Run `gsqz --init` to regenerate the default config.");
+                        std::process::exit(1);
+                    }
                 }
-                eprintln!("Warning: failed to parse ./gsqz.yaml, falling back to defaults");
             }
         }
 
@@ -380,9 +383,12 @@ mod tests {
     }
 
     #[test]
-    fn test_config_override_path_fallback() {
-        // Nonexistent override file falls through to compiled default
-        let config = Config::load(Some(Path::new("/nonexistent/config.yaml")));
+    fn test_config_from_valid_override() {
+        // A valid config file should be loaded successfully
+        let path = std::env::temp_dir().join("gsqz_test_config.yaml");
+        std::fs::write(&path, DEFAULT_CONFIG).unwrap();
+        let config = Config::load(Some(&path));
+        let _ = std::fs::remove_file(&path);
         assert!(!config.pipelines.is_empty());
     }
 
@@ -399,4 +405,3 @@ mod tests {
         }
     }
 }
-

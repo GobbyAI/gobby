@@ -52,11 +52,24 @@ fn main() {
     // Load config
     let config = Config::load(cli.config.as_deref());
 
+    // Auto-export default config if no gsqz.yaml exists and no CLI override was given
+    if cli.config.is_none()
+        && !std::path::Path::new("gsqz.yaml").exists()
+        && !cli.init
+        && std::fs::write("gsqz.yaml", config::DEFAULT_CONFIG_YAML).is_ok()
+    {
+        eprintln!("Created ./gsqz.yaml with default config.");
+    }
+
     if cli.init {
         let dest = std::path::Path::new("gsqz.yaml");
         if dest.exists() {
-            eprintln!("gsqz.yaml already exists in current directory");
-            return;
+            let bak = std::path::Path::new("gsqz.yaml.bak");
+            if let Err(e) = std::fs::rename(dest, bak) {
+                eprintln!("Failed to backup gsqz.yaml: {e}");
+                return;
+            }
+            eprintln!("Backed up ./gsqz.yaml → ./gsqz.yaml.bak");
         }
         if let Err(e) = std::fs::write(dest, config::DEFAULT_CONFIG_YAML) {
             eprintln!("Failed to write gsqz.yaml: {e}");

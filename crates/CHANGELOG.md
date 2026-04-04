@@ -7,6 +7,27 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2]
+
+### Fixed
+
+#### gcode
+
+- **Suppress llama.cpp stderr noise** — redirect fd 2 to `/dev/null` during embedding model init to suppress "embeddings required but some input tokens were not marked as outputs" warnings from llama.cpp's C layer (#87)
+- **Empty search feedback** — `search`, `search-text`, and `search-content` now print "No results." to stderr in text format when the result set is empty. Previously text format produced no output, making it impossible to distinguish zero results from a failure (#88)
+
+## [0.3.1]
+
+### Changed
+
+#### gsqz
+
+- **Simplified config loading** — replaced 4-layer merge system (built-in → global → project → CLI) with simple priority: `--config` flag → `./gsqz.yaml` → compiled-in default. First found wins, no merging (#89)
+- **Auto-export config** — on first run, if no `./gsqz.yaml` exists, gsqz creates one from the built-in default so users can edit immediately (#90)
+- **`--init` flag** — writes the default config to `./gsqz.yaml`. If the file already exists, renames it to `gsqz.yaml.bak` first (#90)
+- **Config error handling** — malformed YAML now prints a parse error and suggests `gsqz --init` instead of silently falling back (#90)
+- **Removed git truncation** — `git-diff`, `git-log`, `git-transfer`, and `git-mutation` pipelines no longer truncate output. Filter and group steps remain (#86)
+
 ## [0.5.1]
 
 ### Added

@@ -98,6 +98,9 @@ gsqz -- npm run lint
 # Show compression stats
 gsqz --stats -- pytest tests/
 
+# Generate default config in current directory
+gsqz --init
+
 # Dump resolved config
 gsqz --dump-config
 
@@ -107,19 +110,33 @@ gsqz --config my-config.yaml -- make build
 
 ## Configuration
 
-gsqz uses layered YAML configuration:
+gsqz uses a single YAML config file:
 
-1. **Built-in** — Ships with 20+ pipelines for common tools
-2. **Global** — `~/.gobby/gsqz.yaml` (or `$XDG_CONFIG_HOME/gsqz/config.yaml`)
-3. **Project** — `.gobby/gsqz.yaml` (or `.gsqz.yaml`)
-4. **CLI override** — `--config path/to/config.yaml`
+1. **CLI override** — `gsqz --config path/to/config.yaml`
+2. **Local** — `./gsqz.yaml` in the current working directory
+3. **Built-in default** — compiled into the binary (fallback)
 
-Later layers override earlier ones. Pipelines merge by name; settings merge by field.
+First found wins entirely — no merging between layers.
+
+On first run, if no `./gsqz.yaml` exists, gsqz automatically creates one from the built-in default so you can start editing immediately.
+
+### Managing config
+
+```bash
+# Generate (or regenerate) the default config
+gsqz --init
+
+# If gsqz.yaml already exists, --init backs it up first
+gsqz --init  # → gsqz.yaml.bak + fresh gsqz.yaml
+
+# Dump the resolved config (human-readable summary)
+gsqz --dump-config
+```
 
 ### Example: Add a custom pipeline
 
 ```yaml
-# .gobby/gsqz.yaml
+# gsqz.yaml
 pipelines:
   my-tool:
     match: '\bmy-tool\s+run\b'
