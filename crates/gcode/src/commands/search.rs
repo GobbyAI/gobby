@@ -106,6 +106,8 @@ pub fn search(
         eprintln!("No index found for this project. Run `gcode index` first.");
     } else if results.is_empty() && offset > 0 {
         eprintln!("No results at offset {offset} (total {total})");
+    } else if results.is_empty() {
+        eprintln!("No results.");
     }
 
     match format {
@@ -168,6 +170,8 @@ pub fn search_text(
         eprintln!("No index found for this project. Run `gcode index` first.");
     } else if results.is_empty() && offset > 0 {
         eprintln!("No results at offset {offset} (total {total})");
+    } else if results.is_empty() {
+        eprintln!("No results.");
     }
 
     match format {
@@ -272,6 +276,8 @@ pub fn search_content(
         eprintln!("No index found for this project. Run `gcode index` first.");
     } else if results.is_empty() && offset > 0 {
         eprintln!("No results at offset {offset} (total {total})");
+    } else if results.is_empty() {
+        eprintln!("No results.");
     }
 
     match format {
