@@ -26,16 +26,23 @@ struct Cli {
     #[arg(long)]
     stats: bool,
 
-    /// Dump resolved config (merged from all sources) and exit
+    /// Dump resolved config and exit
     #[arg(long)]
     dump_config: bool,
+
+    /// Write the default config to ./gsqz.yaml and exit
+    #[arg(long)]
+    init: bool,
 
     /// Path to config file (overrides default locations)
     #[arg(long, value_name = "PATH")]
     config: Option<std::path::PathBuf>,
 
     /// Command to run (everything after --)
-    #[arg(trailing_var_arg = true, required_unless_present = "dump_config")]
+    #[arg(
+        trailing_var_arg = true,
+        required_unless_present_any = ["dump_config", "init"]
+    )]
     command: Vec<String>,
 }
 
@@ -44,6 +51,20 @@ fn main() {
 
     // Load config
     let config = Config::load(cli.config.as_deref());
+
+    if cli.init {
+        let dest = std::path::Path::new("gsqz.yaml");
+        if dest.exists() {
+            eprintln!("gsqz.yaml already exists in current directory");
+            return;
+        }
+        if let Err(e) = std::fs::write(dest, config::DEFAULT_CONFIG_YAML) {
+            eprintln!("Failed to write gsqz.yaml: {e}");
+            return;
+        }
+        eprintln!("Created ./gsqz.yaml");
+        return;
+    }
 
     if cli.dump_config {
         print!("{}", config.dump());

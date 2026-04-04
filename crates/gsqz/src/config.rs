@@ -2,9 +2,12 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const DEFAULT_CONFIG: &str = include_str!("../config.yaml");
+
+/// The raw compiled-in config YAML, for `--init` to write to disk.
+pub const DEFAULT_CONFIG_YAML: &str = DEFAULT_CONFIG;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -179,31 +182,40 @@ fn default_fallback_steps() -> Vec<Step> {
 }
 
 impl Config {
-    /// Load config with layered merging: built-in → global → project → CLI override.
+    /// Load config: CLI override → ./gsqz.yaml → compiled-in default.
+    /// First found wins entirely (no merging).
     pub fn load(config_override: Option<&Path>) -> Self {
-        let mut config: Config =
-            serde_yaml::from_str(DEFAULT_CONFIG).expect("built-in config.yaml is invalid");
-
-        // Layer 2: global config
-        if let Some(global_path) = global_config_path()
-            && global_path.exists()
-        {
-            merge_from_file(&mut config, &global_path);
-        }
-
-        // Layer 3: project config
-        if let Some(project_path) = project_config_path()
-            && project_path.exists()
-        {
-            merge_from_file(&mut config, &project_path);
-        }
-
-        // Layer 4: CLI override
+        // Priority 1: explicit CLI --config path
         if let Some(path) = config_override {
-            merge_from_file(&mut config, path);
+            if let Ok(content) = std::fs::read_to_string(path) {
+                if let Ok(config) = serde_yaml::from_str(&content) {
+                    return config;
+                }
+                eprintln!(
+                    "Warning: failed to parse {}, falling back to defaults",
+                    path.display()
+                );
+            } else {
+                eprintln!(
+                    "Warning: could not read {}, falling back to defaults",
+                    path.display()
+                );
+            }
         }
 
-        config
+        // Priority 2: ./gsqz.yaml in cwd
+        let cwd_config = Path::new("gsqz.yaml");
+        if cwd_config.exists() {
+            if let Ok(content) = std::fs::read_to_string(cwd_config) {
+                if let Ok(config) = serde_yaml::from_str(&content) {
+                    return config;
+                }
+                eprintln!("Warning: failed to parse ./gsqz.yaml, falling back to defaults");
+            }
+        }
+
+        // Priority 3: compiled-in default
+        serde_yaml::from_str(DEFAULT_CONFIG).expect("built-in config.yaml is invalid")
     }
 
     /// Dump the resolved config as YAML.
@@ -239,36 +251,6 @@ impl Config {
         }
         out
     }
-}
-
-#[cfg(feature = "gobby")]
-fn global_config_path() -> Option<PathBuf> {
-    dirs_path(".gobby/gsqz.yaml")
-}
-
-#[cfg(not(feature = "gobby"))]
-fn global_config_path() -> Option<PathBuf> {
-    std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| dirs_path(".config"))
-        .map(|p| p.join("gsqz/config.yaml"))
-}
-
-#[cfg(feature = "gobby")]
-fn project_config_path() -> Option<PathBuf> {
-    Some(PathBuf::from(".gobby/gsqz.yaml"))
-}
-
-#[cfg(not(feature = "gobby"))]
-fn project_config_path() -> Option<PathBuf> {
-    Some(PathBuf::from(".gsqz.yaml"))
-}
-
-fn dirs_path(suffix: &str) -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(suffix))
 }
 
 #[cfg(test)]
@@ -385,55 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_overlay_replaces_pipeline() {
-        let mut base = Config::load(None);
-        let original_step_count = base
-            .pipelines
-            .get("git-status")
-            .map(|p| p.steps.len())
-            .unwrap_or(0);
-
-        // Create an overlay that replaces git-status with a single-step pipeline
-        let overlay_yaml = r#"
-pipelines:
-  git-status:
-    match: '^git\s+status'
-    steps:
-      - truncate:
-          head: 5
-          tail: 5
-"#;
-        let overlay: Config = serde_yaml::from_str(overlay_yaml).unwrap();
-        for (name, pipeline) in overlay.pipelines {
-            base.pipelines.insert(name, pipeline);
-        }
-
-        let new_step_count = base.pipelines.get("git-status").unwrap().steps.len();
-        assert_eq!(new_step_count, 1);
-        assert_ne!(new_step_count, original_step_count);
-    }
-
-    #[test]
-    fn test_merge_overlay_adds_new_pipeline() {
-        let mut base = Config::load(None);
-        assert!(!base.pipelines.contains_key("custom-tool"));
-
-        let overlay_yaml = r#"
-pipelines:
-  custom-tool:
-    match: '^my-tool'
-    steps:
-      - dedup: {}
-"#;
-        let overlay: Config = serde_yaml::from_str(overlay_yaml).unwrap();
-        for (name, pipeline) in overlay.pipelines {
-            base.pipelines.insert(name, pipeline);
-        }
-
-        assert!(base.pipelines.contains_key("custom-tool"));
-    }
-
-    #[test]
     fn test_fallback_default() {
         let fallback = Fallback::default();
         assert_eq!(fallback.steps.len(), 1);
@@ -447,9 +380,8 @@ pipelines:
     }
 
     #[test]
-    fn test_config_override_path() {
-        // Loading with a nonexistent override file should still work
-        // (merge_from_file silently skips unreadable files)
+    fn test_config_override_path_fallback() {
+        // Nonexistent override file falls through to compiled default
         let config = Config::load(Some(Path::new("/nonexistent/config.yaml")));
         assert!(!config.pipelines.is_empty());
     }
@@ -468,32 +400,3 @@ pipelines:
     }
 }
 
-fn merge_from_file(base: &mut Config, path: &Path) {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let overlay: Config = match serde_yaml::from_str(&content) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    // Merge pipelines (overlay replaces by name, adds new ones)
-    for (name, pipeline) in overlay.pipelines {
-        base.pipelines.insert(name, pipeline);
-    }
-
-    // Merge settings (overlay wins for non-default values)
-    if overlay.settings.min_output_length != default_min_output_length() {
-        base.settings.min_output_length = overlay.settings.min_output_length;
-    }
-    if overlay.settings.max_compressed_lines != default_max_compressed_lines() {
-        base.settings.max_compressed_lines = overlay.settings.max_compressed_lines;
-    }
-    if overlay.settings.daemon_url.is_some() {
-        base.settings.daemon_url = overlay.settings.daemon_url;
-    }
-
-    // Merge excluded commands (additive)
-    base.excluded_commands.extend(overlay.excluded_commands);
-}
