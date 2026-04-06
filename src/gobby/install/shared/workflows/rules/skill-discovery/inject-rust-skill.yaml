@@ -1,0 +1,22 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  inject-rust-skill:
+    description: "Inject rust coding standards on first .rs file read"
+    event: after_tool
+    enabled: true
+    priority: 30
+    when: >
+      'rust' not in variables.get('injected_skills', [])
+      and event.data.get('tool_name') == 'Read'
+      and tool_input.get('file_path', '').endswith('.rs')
+    effects:
+      - type: mcp_call
+        server: gobby-skills
+        tool: get_skill
+        arguments:
+          name: rust
+        inject_result: true
+      - type: set_variable
+        variable: injected_skills
+        value: "variables.get('injected_skills', []) + ['rust']"
