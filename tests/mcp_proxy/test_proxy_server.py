@@ -347,3 +347,140 @@ async def test_call_tool_success_returns_raw_result(daemon_tools):
     assert isinstance(result, dict)
     assert result.get("tasks") is not None
     assert result.get("count") == 1
+
+
+# --- Cross-project project_id parameter tests ---
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_project_id_override(daemon_tools):
+    """Explicit project_id sets project context via set_project_context_from_ref."""
+    from unittest.mock import sentinel
+
+    daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
+
+    # Give daemon_tools a session_manager with a db
+    mock_sm = MagicMock()
+    mock_sm.db = MagicMock()
+    daemon_tools._session_manager = mock_sm
+
+    mock_token = sentinel.token
+
+    with patch(
+        "gobby.utils.project_context.set_project_context_from_ref",
+        return_value=mock_token,
+    ) as mock_ref, patch(
+        "gobby.utils.project_context.reset_project_context"
+    ) as mock_reset:
+        result = await daemon_tools.call_tool(
+            "gobby-tasks", "list_tasks", {}, project_id="other-project"
+        )
+
+    assert result == {"ok": True}
+    mock_ref.assert_called_once_with("other-project", mock_sm.db)
+    mock_reset.assert_called_once_with(mock_token)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_invalid_project_id(daemon_tools):
+    """Returns error when project_id doesn't resolve."""
+    from mcp.types import CallToolResult
+
+    mock_sm = MagicMock()
+    mock_sm.db = MagicMock()
+    daemon_tools._session_manager = mock_sm
+
+    with patch(
+        "gobby.utils.project_context.set_project_context_from_ref",
+        return_value=None,
+    ):
+        result = await daemon_tools.call_tool(
+            "gobby-tasks", "list_tasks", {}, project_id="nonexistent"
+        )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is True
+    assert "nonexistent" in result.content[0].text
+    assert "not found" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_call_tool_project_id_without_db(daemon_tools):
+    """Returns error when project_id provided but no session manager."""
+    from mcp.types import CallToolResult
+
+    daemon_tools._session_manager = None
+
+    result = await daemon_tools.call_tool(
+        "gobby-tasks", "list_tasks", {}, project_id="some-project"
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is True
+    assert "no database" in result.content[0].text.lower()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_project_id_priority_over_session(daemon_tools):
+    """project_id overrides session-derived project context."""
+    from unittest.mock import sentinel
+
+    daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
+
+    mock_sm = MagicMock()
+    mock_sm.db = MagicMock()
+    mock_session = MagicMock()
+    mock_session.external_id = "ext-123"
+    mock_sm.get.return_value = mock_session
+    daemon_tools._session_manager = mock_sm
+
+    mock_token = sentinel.token
+
+    with patch(
+        "gobby.utils.project_context.set_project_context_from_ref",
+        return_value=mock_token,
+    ) as mock_ref, patch(
+        "gobby.utils.project_context.reset_project_context",
+    ):
+        result = await daemon_tools.call_tool(
+            "gobby-tasks",
+            "list_tasks",
+            {},
+            session_id="sess-1",
+            project_id="override-project",
+        )
+
+    assert result == {"ok": True}
+    # project_id path was used, not session path
+    mock_ref.assert_called_once_with("override-project", mock_sm.db)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
+    """project_id in arguments dict is stripped (leaked-key protection)."""
+    from unittest.mock import sentinel
+
+    daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
+
+    mock_sm = MagicMock()
+    mock_sm.db = MagicMock()
+    daemon_tools._session_manager = mock_sm
+
+    with patch(
+        "gobby.utils.project_context.set_project_context_from_ref",
+        return_value=sentinel.token,
+    ), patch(
+        "gobby.utils.project_context.reset_project_context",
+    ):
+        await daemon_tools.call_tool(
+            "gobby-tasks",
+            "create_task",
+            {"title": "Test", "project_id": "leaked-value"},
+            project_id="real-project",
+        )
+
+    # Verify project_id was stripped from the arguments passed to tool_proxy
+    call_args = daemon_tools.tool_proxy.call_tool.call_args
+    effective_args = call_args[0][2]  # Third positional arg is arguments
+    assert "project_id" not in effective_args
+    assert effective_args["title"] == "Test"

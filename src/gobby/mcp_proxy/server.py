@@ -152,6 +152,7 @@ class GobbyDaemonTools:
         tool_name: str,
         arguments: str | dict[str, Any] | None = None,
         session_id: str | None = None,
+        project_id: str | None = None,
     ) -> Any:
         """Call a tool.
 
@@ -162,12 +163,53 @@ class GobbyDaemonTools:
 
         When session_id is provided and a workflow is active, checks that the
         tool is not blocked by the current workflow step's blocked_tools setting.
+
+        Args:
+            server_name: Target MCP server name.
+            tool_name: Tool to call on the server.
+            arguments: Tool arguments (dict or JSON string).
+            session_id: Session ID for context resolution and workflow checks.
+            project_id: Optional project UUID or name. When provided, overrides
+                session-derived project context, enabling cross-project tool
+                operations (e.g., an agent in project A creating a task in
+                project B).
         """
-        # Set session's project + session context for this call
+        # Set project + session context for this call.
+        # Priority: explicit project_id > session-derived project > no context.
+        # Session context (conversation tracking) is always from session_id.
         project_token = None
         session_token = None
-        if session_id:
+        if project_id:
+            from gobby.utils.project_context import set_project_context_from_ref
+
+            if self._session_manager and self._session_manager.db:
+                project_token = set_project_context_from_ref(project_id, self._session_manager.db)
+                if project_token is None:
+                    return CallToolResult(
+                        content=[
+                            TextContent(
+                                type="text",
+                                text=f"Error: project_id '{project_id}' not found. "
+                                "Use a valid project UUID or name.",
+                            )
+                        ],
+                        isError=True,
+                    )
+            else:
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="Error: project_id provided but no database available "
+                            "to resolve it.",
+                        )
+                    ],
+                    isError=True,
+                )
+        elif session_id:
             project_token = self._resolve_and_set_project_context(session_id)
+
+        if session_id:
             conversation_id = None
             if self._session_manager:
                 session = self._session_manager.get(session_id)
@@ -200,7 +242,7 @@ class GobbyDaemonTools:
         effective_arguments: dict[str, Any] | None = None
         if isinstance(arguments, dict):
             effective_arguments = dict(arguments)  # Shallow copy to avoid modifying original
-            for leaked_key in ("server_name", "tool_name"):
+            for leaked_key in ("server_name", "tool_name", "project_id"):
                 effective_arguments.pop(leaked_key, None)
 
         try:
