@@ -56,20 +56,20 @@ steps:
     wait: { completion_id: "${{ steps.spawn_researcher.output.run_id }}" }
 
   - id: validate            # 3. Validate the saved spec
-    mcp: { server: gobby-tasks, tool: validate_expansion_spec }
+    mcp: { server: gobby-tasks-ops, tool: validate_expansion_spec }
 
   - id: check_valid         # 4. Fail if invalid
     condition: "${{ not steps.validate.output.valid }}"
     exec: "exit 1"
 
   - id: execute             # 5. Create subtasks atomically
-    mcp: { server: gobby-tasks, tool: execute_expansion }
+    mcp: { server: gobby-tasks-ops, tool: execute_expansion }
 
   - id: wire_files          # 6. Attach file annotations
-    mcp: { server: gobby-tasks, tool: wire_affected_files_from_spec }
+    mcp: { server: gobby-tasks-ops, tool: wire_affected_files_from_spec }
 
   - id: analyze_deps        # 7. Detect file contention
-    mcp: { server: gobby-tasks, tool: find_file_overlaps }
+    mcp: { server: gobby-tasks-ops, tool: find_file_overlaps }
 ```
 
 The hard boundary: the expander agent only researches and saves a spec. It cannot call `execute_expansion` or `create_task` — those tools are blocked in the expander's step workflow. The pipeline validates and executes mechanically.
@@ -84,7 +84,7 @@ The expander agent has a two-step workflow: `research` → `terminate`.
 
 During `research`, most tools are available for codebase exploration — Read, Grep, Glob, Bash, MCP tools. But these MCP tools are blocked:
 
-- `gobby-tasks:execute_expansion` — Pipeline's job, not the agent's
+- `gobby-tasks-ops:execute_expansion` — Pipeline's job, not the agent's
 - `gobby-tasks:create_task` — No manual task creation
 - `gobby-tasks:close_task` — Can't close tasks
 - `gobby-agents:kill_agent` — Can't terminate prematurely
@@ -177,7 +177,7 @@ This is mechanical — no LLM involved. The spec fully determines the output.
 
 ### Post-Execution: File Wiring
 
-`wire_affected_files_from_spec` reads the spec's `affected_files` for each subtask and attaches them to the corresponding task. These annotations are used by `suggest_next_tasks` to detect file contention and avoid dispatching conflicting tasks in parallel.
+`wire_affected_files_from_spec` reads the spec's `affected_files` for each subtask and attaches them to the corresponding task. These annotations are used by `suggest_next_task` (with `count` > 1) to detect file contention and avoid dispatching conflicting tasks in parallel.
 
 ### Post-Execution: Overlap Detection
 
@@ -336,7 +336,7 @@ The orchestrator automatically invokes expansion on the first iteration if the e
 If expansion is interrupted (session compaction, crash), the spec persists in the database. The `/gobby expand` skill checks for pending specs on startup:
 
 ```python
-result = call_tool("gobby-tasks", "get_expansion_spec", {"task_id": "#42"})
+result = call_tool("gobby-tasks-ops", "get_expansion_spec", {"task_id": "#42"})
 if result.get("pending"):
     # Skip research — go straight to validate + execute
 ```
