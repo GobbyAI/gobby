@@ -235,11 +235,13 @@ class MemoryBackupManager:
                     # Use storage directly for sync import (skip auto-embedding)
                     # Don't pass source_session_id — the session may not exist
                     # on this machine (cross-machine sync via git)
+                    raw_source = data.get("source", "agent")
+                    source_type = raw_source if raw_source in ("user", "agent") else "agent"
                     self.memory_manager.storage.create_memory(
                         content=content,
                         memory_type=data.get("type", "fact"),
                         tags=data.get("tags", []),
-                        source_type="import",
+                        source_type=source_type,
                     )
                     count += 1
                 except json.JSONDecodeError:

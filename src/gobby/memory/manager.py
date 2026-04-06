@@ -187,7 +187,7 @@ class MemoryManager:
             created_at=record.created_at.isoformat() if record.created_at else "",
             updated_at=record.updated_at.isoformat() if record.updated_at else "",
             project_id=record.project_id,
-            source_type=cast(Literal["user", "session", "inferred"] | None, record.source_type),
+            source_type=cast(Literal["user", "agent"], record.source_type or "agent"),
             source_session_id=record.source_session_id,
             access_count=record.access_count,
             last_accessed_at=(
@@ -290,7 +290,7 @@ class MemoryManager:
         content: str,
         memory_type: str = "fact",
         project_id: str | None = None,
-        source_type: str = "user",
+        source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:

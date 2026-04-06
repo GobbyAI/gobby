@@ -182,7 +182,7 @@ class MemoryRecord:
         project_id: Associated project ID
         user_id: Associated user ID (for multi-tenant backends)
         tags: List of tags for organization
-        source_type: Origin of memory (user, session, inferred)
+        source_type: Origin of memory — "user" (human-requested) or "agent" (agent-captured)
         source_session_id: Session that created the memory
         access_count: Number of times memory was accessed
         last_accessed_at: When memory was last accessed
@@ -207,7 +207,7 @@ class MemoryRecord:
     project_id: str | None = None
     user_id: str | None = None
     tags: list[str] = field(default_factory=list)
-    source_type: str | None = None
+    source_type: str = "agent"
     source_session_id: str | None = None
     access_count: int = 0
     last_accessed_at: datetime | None = None
@@ -335,7 +335,7 @@ class MemoryBackendProtocol(Protocol):
         project_id: str | None = None,
         user_id: str | None = None,
         tags: list[str] | None = None,
-        source_type: str | None = None,
+        source_type: str = "agent",
         source_session_id: str | None = None,
         media: list[MediaAttachment] | None = None,
         metadata: dict[str, Any] | None = None,

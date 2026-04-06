@@ -115,12 +115,12 @@ async def test_search_memories_user_source_boost(manager, mock_vector_store, moc
     """search_memories should boost user memories by 1.2x."""
     # Create two memories
     user_mem = await manager.create_memory(content="user memory", source_type="user")
-    session_mem = await manager.create_memory(content="session memory", source_type="session")
+    agent_mem = await manager.create_memory(content="agent memory", source_type="agent")
     mock_embed_fn.reset_mock()
 
     # Both returned with same score
     mock_vector_store.search.return_value = [
-        (session_mem.id, 0.8),
+        (agent_mem.id, 0.8),
         (user_mem.id, 0.8),
     ]
 

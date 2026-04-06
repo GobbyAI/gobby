@@ -113,7 +113,7 @@ def create_memory_registry(
                 memory_type=memory_type,
                 project_id=project_id,
                 tags=tags,
-                source_type="mcp_tool",
+                source_type="agent",
                 source_session_id=resolved_session_id,
             )
 
@@ -420,7 +420,7 @@ def create_memory_registry(
                 memory_type=memory_type,
                 project_id=get_current_project_id(),
                 tags=tags,
-                source_type="mcp_tool",
+                source_type="agent",
             )
             return {
                 "success": True,
@@ -475,7 +475,7 @@ def create_memory_registry(
                 memory_type=memory_type,
                 project_id=get_current_project_id(),
                 tags=tags,
-                source_type="mcp_tool",
+                source_type="agent",
             )
             return {
                 "success": True,

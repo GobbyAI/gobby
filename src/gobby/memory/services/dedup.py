@@ -65,7 +65,7 @@ class DedupService:
         project_id: str | None = None,
         memory_type: str = "fact",
         tags: list[str] | None = None,
-        source_type: str = "user",
+        source_type: str = "agent",
         source_session_id: str | None = None,
     ) -> DedupResult:
         """

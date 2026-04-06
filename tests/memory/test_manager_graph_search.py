@@ -355,7 +355,7 @@ class TestSearchMemoriesGraphIntegration:
         user_mem = _mock_memory("mem-2", "user content")
         user_mem.source_type = "user"
         system_mem = _mock_memory("mem-1", "system content")
-        system_mem.source_type = "session"
+        system_mem.source_type = "agent"
 
         manager.storage.get_memory = MagicMock(
             side_effect=lambda mid: user_mem if mid == "mem-2" else system_mem

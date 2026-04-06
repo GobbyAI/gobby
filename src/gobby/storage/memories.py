@@ -57,7 +57,7 @@ class Memory:
     created_at: str
     updated_at: str
     project_id: str | None = None
-    source_type: Literal["user", "session", "inferred"] | None = None
+    source_type: Literal["user", "agent"] = "agent"
     source_session_id: str | None = None
     access_count: int = 0
     last_accessed_at: str | None = None
@@ -124,7 +124,7 @@ class LocalMemoryManager:
         content: str,
         memory_type: str = "fact",
         project_id: str | None = None,
-        source_type: str = "user",
+        source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
         media: str | None = None,

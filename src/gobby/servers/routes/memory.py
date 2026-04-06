@@ -29,7 +29,10 @@ class MemoryCreateRequest(BaseModel):
         default="fact", description="Memory type (fact, preference, pattern, context)"
     )
     project_id: str | None = Field(default=None, description="Project ID to associate with")
-    source_type: str = Field(default="user", description="Source type (user, session, inferred)")
+    source_type: str = Field(
+        default="user",
+        description="Source type: 'user' (human-requested) or 'agent' (agent-captured)",
+    )
     source_session_id: str | None = Field(default=None, description="Source session ID")
     tags: list[str] | None = Field(default=None, description="Tags for categorization")
 

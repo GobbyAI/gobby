@@ -46,7 +46,7 @@ def create(ctx: click.Context, content: str, memory_type: str, project_ref: str 
             content=content,
             memory_type=memory_type,
             project_id=project_id,
-            source_type="cli",
+            source_type="user",
         )
     )
     click.echo(f"Created memory: {memory.id} - {memory.content}")
@@ -380,7 +380,7 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
         """
         SELECT id, content, source_session_id
         FROM memories
-        WHERE project_id IS NULL AND source_type = 'session' AND source_session_id IS NOT NULL
+        WHERE project_id IS NULL AND source_type IN ('session', 'agent') AND source_session_id IS NOT NULL
         """,
         (),
     )
@@ -389,7 +389,7 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
         click.echo("No memories with NULL project_id from sessions found.")
         return
 
-    click.echo(f"Found {len(rows)} memories with NULL project_id from sessions.")
+    click.echo(f"Found {len(rows)} memories with NULL project_id from sessions/agents.")
 
     fixed = 0
     for row in rows:
