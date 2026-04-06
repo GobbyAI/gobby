@@ -174,7 +174,7 @@ First, plan your subtasks by saving an expansion specification:
 
 ```python
 # MCP: Save expansion spec for review/later execution
-call_tool(server_name="gobby-tasks", tool_name="save_expansion_spec", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="save_expansion_spec", arguments={
     "task_id": "gt-abc123",
     "spec": {
         "subtasks": [
@@ -192,7 +192,7 @@ Then atomically create all subtasks with dependencies:
 
 ```python
 # MCP: Execute the saved expansion spec
-call_tool(server_name="gobby-tasks", tool_name="execute_expansion", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="execute_expansion", arguments={
     "task_id": "gt-abc123"
 })
 ```
@@ -203,7 +203,7 @@ After session compaction, check if expansion was interrupted:
 
 ```python
 # MCP: Check for pending expansion spec
-call_tool(server_name="gobby-tasks", tool_name="get_expansion_spec", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="get_expansion_spec", arguments={
     "task_id": "gt-abc123"
 })
 ```
@@ -220,6 +220,12 @@ Get AI-powered suggestion for the best task to work on:
 # Get AI suggestion for next task
 call_tool(server_name="gobby-tasks", tool_name="suggest_next_task", arguments={
     "session_id": "<your_session_id>"
+})
+
+# Get multiple suggestions with conflict avoidance
+call_tool(server_name="gobby-tasks", tool_name="suggest_next_task", arguments={
+    "session_id": "<your_session_id>",
+    "count": 3  # Returns batch with conflict avoidance (default: 1)
 })
 ```
 
@@ -282,23 +288,7 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
 
 ### Manual Validation
 
-```python
-# Validate a task explicitly (with optional changes_summary)
-call_tool(server_name="gobby-tasks", tool_name="validate_task", arguments={
-    "task_id": "gt-abc123",
-    "changes_summary": "Added login form with validation"  # Optional - uses git diff if not provided
-})
-
-# Check validation status
-call_tool(server_name="gobby-tasks", tool_name="get_validation_status", arguments={
-    "task_id": "gt-abc123"
-})
-
-# Reset validation count for retry
-call_tool(server_name="gobby-tasks", tool_name="reset_validation_count", arguments={
-    "task_id": "gt-abc123"
-})
-```
+> **Note:** Validation tools (`validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history`) are internal-only Python functions, not available via MCP. Use the CLI commands below or the automatic validation on `close_task` instead.
 
 ### CLI Validation Commands
 

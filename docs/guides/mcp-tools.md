@@ -365,7 +365,6 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 | :--- | :--- |
 
 | `search_tasks` | TF-IDF semantic search |
-| `reindex_tasks` | Rebuild search index |
 
 ### Example: Task Workflow
 
@@ -394,6 +393,49 @@ call_tool("gobby-tasks", "close_task", {
     "commit_sha": "abc123"
 })
 ```
+
+---
+
+## Task Operations (`gobby-tasks-ops`)
+
+13 tools for expansion, affected files, GitHub issues, and search reindexing.
+
+### Expansion
+
+| Tool | Description |
+| :--- | :--- |
+
+| `save_expansion_spec` | Save expansion spec for later execution |
+| `execute_expansion` | Execute saved expansion atomically |
+| `get_expansion_spec` | Check for pending expansion |
+| `validate_expansion_spec` | Validate spec structure and dependencies |
+| `save_expansion_qa_result` | Save QA result for expansion |
+| `check_expansion_qa_result` | Check QA result for expansion |
+
+### Affected Files
+
+| Tool | Description |
+| :--- | :--- |
+
+| `set_affected_files` | Set affected files for a task |
+| `get_affected_files` | Get affected files for a task |
+| `find_file_overlaps` | Find file contention across tasks |
+| `wire_affected_files_from_spec` | Wire affected files from expansion spec |
+
+### GitHub Integration
+
+| Tool | Description |
+| :--- | :--- |
+
+| `import_github_issues` | Import issues from GitHub |
+| `link_task_to_github_issue` | Link a task to a GitHub issue |
+
+### Search
+
+| Tool | Description |
+| :--- | :--- |
+
+| `reindex_tasks` | Rebuild search index |
 
 ---
 
