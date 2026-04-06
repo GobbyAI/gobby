@@ -1,7 +1,8 @@
 """Rule definition synchronization from bundled YAML templates.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly — no intermediate template rows, no propagation.
+directly. Installed rows are overwritten when the template changes
+(preserving the user's enabled toggle). Soft-deleted rows are not restored.
 """
 
 import json
@@ -16,7 +17,6 @@ from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.utils.dev import is_dev_mode
 from gobby.workflows.definitions import RuleDefinitionBody
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,6 @@ def sync_bundled_rules(
         return result
 
     manager = LocalWorkflowDefinitionManager(db)
-    dev = is_dev_mode()
     on_disk: set[str] = set()
 
     for yaml_file in sorted(rules_path.rglob("*.yaml")):
@@ -140,7 +139,6 @@ def sync_bundled_rules(
                         file_tags=file_tags,
                         file_sources=file_sources,
                         result=result,
-                        dev_mode=dev,
                     )
                 except Exception as e:
                     error_msg = f"Failed to sync rule '{rule_name}' from {yaml_file.name}: {e}"
@@ -228,14 +226,12 @@ def _sync_single_rule(
     file_tags: list[str] | None,
     file_sources: list[str] | None,
     result: dict[str, Any],
-    *,
-    dev_mode: bool = False,
 ) -> None:
     """Sync a single rule to workflow_definitions.
 
-    Creates an installed row if none exists. In dev mode, overwrites
-    existing installed rows when the template changes (preserving the
-    user's enabled toggle). Otherwise skips existing rows.
+    Creates an installed row if none exists. Overwrites existing installed
+    rows when the template changes (preserving the user's enabled toggle).
+    Soft-deleted rows are not restored.
     """
     # Build the RuleDefinitionBody dict
     body_dict: dict[str, Any] = {
@@ -276,20 +272,19 @@ def _sync_single_rule(
             result["skipped"] += 1
             return
 
-        if dev_mode and existing.source == "installed":
-            # Dev mode: overwrite installed rows when template changes,
+        if existing.source == "installed" and existing.definition_json != definition_json:
+            # Overwrite installed rows when template changes,
             # preserving the user's enabled toggle (same pattern as skills sync).
-            if existing.definition_json != definition_json:
-                manager.update(
-                    existing.id,
-                    definition_json=definition_json,
-                    description=description,
-                    priority=priority,
-                    tags=file_tags,
-                    sources=file_sources,
-                )
-                result["updated"] += 1
-                return
+            manager.update(
+                existing.id,
+                definition_json=definition_json,
+                description=description,
+                priority=priority,
+                tags=file_tags,
+                sources=file_sources,
+            )
+            result["updated"] += 1
+            return
 
         # Row exists and is active — skip (no overwrite)
         result["skipped"] += 1
