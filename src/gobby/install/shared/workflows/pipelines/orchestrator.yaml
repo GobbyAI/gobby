@@ -197,10 +197,10 @@ steps:
     condition: "${{ not done_check.output.orchestration_complete and count_active.output.available_slots > 0 and len(scan_open.output.tasks) > 0 }}"
     mcp:
       server: gobby-tasks
-      tool: suggest_next_tasks
+      tool: suggest_next_task
       arguments:
         parent_task_id: "${{ inputs.task_id }}"
-        max_count: "${{ count_active.output.available_slots }}"
+        count: "${{ count_active.output.available_slots }}"
 
   - id: dispatch_devs
     condition: "${{ suggest_tasks.output and len(suggest_tasks.output.suggestions) > 0 }}"

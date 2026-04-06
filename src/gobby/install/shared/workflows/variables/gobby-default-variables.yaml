@@ -55,6 +55,7 @@ variables:
   listed_servers:
     value:
       - gobby-tasks
+      - gobby-tasks-ops
       - gobby-sessions
       - gobby-memory
       - gobby-workflows

@@ -173,6 +173,23 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         func=search_tasks,
     )
 
+    return registry
+
+
+def create_reindex_registry(ctx: RegistryContext) -> InternalToolRegistry:
+    """Create a registry with the reindex_tasks tool (gobby-tasks-ops).
+
+    Args:
+        ctx: Shared registry context
+
+    Returns:
+        InternalToolRegistry with reindex tool registered
+    """
+    registry = InternalToolRegistry(
+        name="gobby-tasks-reindex",
+        description="Task search index admin operations",
+    )
+
     def reindex_tasks(all_projects: bool = False, project: str | None = None) -> dict[str, Any]:
         """Force rebuild of the task search index.
 

@@ -99,9 +99,9 @@ def task_sync_registry(
     mock_task_sync_manager,
     mock_session_manager,
 ):
-    from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+    from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
-    return create_sync_registry(
+    return create_commit_registry(
         sync_manager=mock_task_sync_manager,
         task_manager=mock_task_manager,
         session_manager=mock_session_manager,
@@ -175,39 +175,7 @@ class TestMemorySyncExport:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestTaskSyncImport:
-    """Verify sync_import is registered on gobby-tasks sync registry."""
-
-    def test_tool_registered(self, task_sync_registry) -> None:
-        assert "sync_import" in task_sync_registry._tools
-
-    @pytest.mark.asyncio
-    async def test_calls_sync_manager(
-        self, task_sync_registry, mock_task_sync_manager, mock_session_manager
-    ) -> None:
-        result = await task_sync_registry.call("sync_import", {"session_id": "sess-1"})
-        assert result["success"] is True
-        mock_task_sync_manager.import_from_jsonl.assert_called_once()
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# gobby-tasks: sync_export
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestTaskSyncExport:
-    """Verify sync_export is registered on gobby-tasks sync registry."""
-
-    def test_tool_registered(self, task_sync_registry) -> None:
-        assert "sync_export" in task_sync_registry._tools
-
-    @pytest.mark.asyncio
-    async def test_calls_sync_manager(
-        self, task_sync_registry, mock_task_sync_manager, mock_session_manager
-    ) -> None:
-        result = await task_sync_registry.call("sync_export", {"session_id": "sess-1"})
-        assert result["success"] is True
-        mock_task_sync_manager.export_to_jsonl.assert_called_once()
+# NOTE: TestTaskSyncImport and TestTaskSyncExport removed — sync tools are now CLI-only.
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -519,9 +519,10 @@ def create_readiness_registry(
         parent_task_id: str | None = None,
         session_id: str | None = None,
         project: str | None = None,
+        count: int = 1,
     ) -> dict[str, Any]:
         """
-        Suggest the best next task to work on.
+        Suggest the best next task(s) to work on.
 
         Uses a scoring algorithm considering:
         - Task is ready (no blockers)
@@ -529,6 +530,9 @@ def create_readiness_registry(
         - Is a leaf task (subtask with no children)
         - Has clear scope (complexity_score if available)
         - Proximity to current in_progress task (same branch preferred)
+
+        When count > 1, uses file annotations to detect contention and returns
+        a batch of non-conflicting tasks safe to work on concurrently.
 
         Args:
             task_type: Filter by task type (optional)
@@ -541,9 +545,12 @@ def create_readiness_registry(
                        for session_task variable and auto-scopes suggestions to that task's
                        hierarchy. Function signature is optional for TUI/internal callers.
             project: Filter by project name or UUID (optional).
+            count: Number of tasks to suggest (default: 1). When > 1, returns a batch
+                   with file-conflict avoidance for parallel dispatch.
 
         Returns:
-            Suggested task with reasoning
+            When count == 1: suggested task with reasoning.
+            When count > 1: list of non-conflicting suggestions with conflict stats.
         """
         # Filter by project
         try:
@@ -551,6 +558,8 @@ def create_readiness_registry(
 
             project_id = resolve_project_filter_standalone(project, False, task_manager.db)
         except ValueError as e:
+            if count > 1:
+                return {"error": str(e), "suggestions": []}
             return {"error": str(e), "suggestion": None}
 
         result = _resolve_ready_tasks(
@@ -564,6 +573,11 @@ def create_readiness_registry(
         )
         if "early_return" in result:
             early_return: dict[str, Any] = result["early_return"]
+            if count > 1:
+                # Adapt singular early_return format to plural
+                if "suggestion" in early_return:
+                    early_return["suggestions"] = []
+                    del early_return["suggestion"]
             return early_return
 
         ready_tasks = result["ready_tasks"]
@@ -571,6 +585,53 @@ def create_readiness_registry(
 
         # Score tasks
         scored = _score_tasks(ready_tasks, task_manager, prefer_subtasks, active_ancestry)
+
+        # --- Batch mode (count > 1): conflict-avoidance selection ---
+        if count > 1:
+            in_progress_tasks = result["in_progress_tasks"]
+
+            # Collect occupied files from in-progress tasks
+            af_manager = TaskAffectedFileManager(task_manager.db)
+            occupied_files: set[str] = set()
+            for ip_task in in_progress_tasks:
+                files = af_manager.get_files(ip_task.id)
+                occupied_files.update(f.file_path for f in files)
+
+            # Greedy selection with file-conflict detection
+            selected: list[dict[str, Any]] = []
+            selected_files: set[str] = set()
+            conflicts_avoided = 0
+            skipped_refs: list[str] = []
+
+            for task, _score, _is_leaf, _proximity_boost in scored:
+                if len(selected) >= count:
+                    break
+
+                task_files = af_manager.get_files(task.id)
+                task_file_paths = {f.file_path for f in task_files}
+
+                if task_file_paths:
+                    # Check for overlap with occupied or already-selected files
+                    if task_file_paths & occupied_files or task_file_paths & selected_files:
+                        conflicts_avoided += 1
+                        brief = task.to_brief()
+                        skipped_refs.append(brief.get("ref", brief.get("id", str(task.id))))
+                        continue
+                    # No conflicts — add files to selected set
+                    selected_files.update(task_file_paths)
+
+                # Tasks with no file annotations are allowed (optimistic)
+                selected.append(task.to_brief())
+
+            return {
+                "suggestions": selected,
+                "total_ready": len(ready_tasks),
+                "count": count,
+                "conflicts_avoided": conflicts_avoided,
+                "skipped_refs": skipped_refs[:10],
+            }
+
+        # --- Single mode (count == 1): detailed suggestion ---
         best_task, best_score, is_leaf, best_proximity = scored[0]
 
         reasons = []
@@ -610,9 +671,10 @@ def create_readiness_registry(
 
     registry.register(
         name="suggest_next_task",
-        description="Suggest the best next task to work on based on priority, readiness, and complexity. "
-        "Requires session_id to check workflow's session_task variable for automatic scoping. "
-        "Use parent_task_id to explicitly scope suggestions to a specific epic/feature hierarchy.",
+        description="Suggest the best next task(s) to work on based on priority, readiness, and complexity. "
+        "With count=1 (default), returns a single best suggestion with reasoning. "
+        "With count>1, returns a batch of non-conflicting tasks for parallel dispatch, "
+        "using file annotations to avoid dispatching tasks that touch the same files.",
         input_schema={
             "type": "object",
             "properties": {
@@ -642,152 +704,15 @@ def create_readiness_registry(
                     "description": "Filter by project name or UUID (e.g., '_personal')",
                     "default": None,
                 },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of tasks to suggest (default: 1). "
+                    "When > 1, returns a batch with file-conflict avoidance for parallel dispatch.",
+                    "default": 1,
+                },
             },
         },
         func=suggest_next_task,
-    )
-
-    # --- suggest_next_tasks (plural, for parallel dispatch) ---
-
-    def suggest_next_tasks(
-        max_count: int = 3,
-        task_type: str | None = None,
-        prefer_subtasks: bool = True,
-        parent_task_id: str | None = None,
-        session_id: str | None = None,
-        project: str | None = None,
-    ) -> dict[str, Any]:
-        """Suggest multiple non-conflicting tasks for parallel dispatch.
-
-        Uses file annotations to detect contention between tasks. Tasks that
-        share affected files with in-progress tasks or other selected tasks
-        are excluded from the batch. Tasks with no file annotations are
-        treated as non-conflicting (optimistic).
-
-        Args:
-            max_count: Maximum number of tasks to suggest (default: 3)
-            task_type: Filter by task type (optional)
-            prefer_subtasks: Prefer leaf tasks over parent tasks (default: True)
-            parent_task_id: Filter to descendants of this task (optional)
-            session_id: Your session ID (from system context)
-            project: Filter by project name or UUID (optional)
-
-        Returns:
-            Dict with suggestions list, total_ready count, and conflicts_avoided count
-        """
-        # Filter by project
-        try:
-            from gobby.mcp_proxy.tools.tasks._context import resolve_project_filter_standalone
-
-            project_id = resolve_project_filter_standalone(project, False, task_manager.db)
-        except ValueError as e:
-            return {"error": str(e), "suggestions": []}
-
-        result = _resolve_ready_tasks(
-            task_manager,
-            session_manager,
-            session_var_manager,
-            task_type,
-            parent_task_id,
-            session_id,
-            project_id,
-        )
-        if "early_return" in result:
-            early: dict[str, Any] = result["early_return"]
-            # Adapt singular early_return format to plural
-            if "suggestion" in early:
-                early["suggestions"] = []
-                del early["suggestion"]
-            return early
-
-        ready_tasks = result["ready_tasks"]
-        active_ancestry = result["active_ancestry"]
-        in_progress_tasks = result["in_progress_tasks"]
-
-        # Score tasks
-        scored = _score_tasks(ready_tasks, task_manager, prefer_subtasks, active_ancestry)
-
-        # Collect occupied files from in-progress tasks
-        af_manager = TaskAffectedFileManager(task_manager.db)
-        occupied_files: set[str] = set()
-        for ip_task in in_progress_tasks:
-            files = af_manager.get_files(ip_task.id)
-            occupied_files.update(f.file_path for f in files)
-
-        # Greedy selection with file-conflict detection
-        selected: list[dict[str, Any]] = []
-        selected_files: set[str] = set()
-        conflicts_avoided = 0
-        skipped_refs: list[str] = []
-
-        for task, _score, _is_leaf, _proximity_boost in scored:
-            if len(selected) >= max_count:
-                break
-
-            task_files = af_manager.get_files(task.id)
-            task_file_paths = {f.file_path for f in task_files}
-
-            if task_file_paths:
-                # Check for overlap with occupied or already-selected files
-                if task_file_paths & occupied_files or task_file_paths & selected_files:
-                    conflicts_avoided += 1
-                    brief = task.to_brief()
-                    skipped_refs.append(brief.get("ref", brief.get("id", str(task.id))))
-                    continue
-                # No conflicts — add files to selected set
-                selected_files.update(task_file_paths)
-
-            # Tasks with no file annotations are allowed (optimistic)
-            selected.append(task.to_brief())
-
-        return {
-            "suggestions": selected,
-            "total_ready": len(ready_tasks),
-            "max_count": max_count,
-            "conflicts_avoided": conflicts_avoided,
-            "skipped_refs": skipped_refs[:10],
-        }
-
-    registry.register(
-        name="suggest_next_tasks",
-        description="Suggest multiple non-conflicting tasks for parallel dispatch. "
-        "Uses file annotations to avoid dispatching tasks that touch the same files. "
-        "Returns a batch of tasks safe to work on concurrently.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "max_count": {
-                    "type": "integer",
-                    "description": "Maximum number of tasks to suggest (default: 3)",
-                    "default": 3,
-                },
-                "task_type": {
-                    "type": "string",
-                    "description": "Filter by task type (optional)",
-                    "default": None,
-                },
-                "prefer_subtasks": {
-                    "type": "boolean",
-                    "description": "Prefer leaf tasks over parent tasks (default: True)",
-                    "default": True,
-                },
-                "parent_task_id": {
-                    "type": "string",
-                    "description": "Filter to descendants of this task (#N, N, path, or UUID)",
-                    "default": None,
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": "Your session ID (from system context). Auto-scopes via session_task variable.",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Filter by project name or UUID",
-                    "default": None,
-                },
-            },
-        },
-        func=suggest_next_tasks,
     )
 
     return registry

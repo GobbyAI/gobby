@@ -131,6 +131,18 @@ def setup_internal_registries(
             manager.add_registry(tasks_registry)
             logger.debug("Tasks registry initialized")
 
+            # Initialize tasks-ops registry (expansion, affected files, github, reindex)
+            from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+
+            ops_registry = create_task_ops_registry(
+                task_manager=task_manager,
+                sync_manager=sync_manager,
+                task_validator=task_validator,
+                config=_config,
+            )
+            manager.add_registry(ops_registry)
+            logger.debug("Tasks-ops registry initialized")
+
     # Initialize sessions registry (messages + session CRUD)
     if local_session_manager is not None:
         from gobby.mcp_proxy.tools.sessions import create_session_messages_registry

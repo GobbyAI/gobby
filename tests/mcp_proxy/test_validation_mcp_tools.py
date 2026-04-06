@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.validation import TaskValidator
@@ -40,7 +41,21 @@ def mock_task_validator():
 
 @pytest.fixture
 def registry_with_patches(mock_task_manager, mock_task_validator):
-    """Create a task registry with dependency managers patched."""
+    """Create a validation registry directly (validation tools are internal-only)."""
+    with patch(
+        "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
+        side_effect=lambda tm, tid, *a, **kw: tid,
+    ):
+        registry = create_validation_registry(
+            task_manager=mock_task_manager,
+            task_validator=mock_task_validator,
+        )
+        yield registry
+
+
+@pytest.fixture
+def task_registry_with_patches(mock_task_manager, mock_task_validator):
+    """Create a full task registry for testing de_escalate_task (now in lifecycle)."""
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
@@ -451,12 +466,12 @@ class TestClearValidationHistoryTool:
 
 
 class TestDeEscalateTaskTool:
-    """Tests for de_escalate_task MCP tool."""
+    """Tests for de_escalate_task MCP tool (now in lifecycle registry via gobby-tasks)."""
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_returns_to_open_status(
-        self, mock_task_manager, registry_with_patches
+        self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de_escalate_task returns task to open status."""
         escalated_task = Task(
@@ -487,7 +502,7 @@ class TestDeEscalateTaskTool:
         )
         mock_task_manager.update_task.return_value = reopened_task
 
-        result = await registry_with_patches.call(
+        result = await task_registry_with_patches.call(
             "de_escalate_task", {"task_id": "t1", "reason": "Fixed manually"}
         )
 
@@ -497,7 +512,7 @@ class TestDeEscalateTaskTool:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_de_escalate_task_requires_reason(self, mock_task_manager, registry_with_patches):
+    async def test_de_escalate_task_requires_reason(self, mock_task_manager, task_registry_with_patches):
         """Test that de_escalate_task requires a reason."""
         escalated_task = Task(
             id="t1",
@@ -513,12 +528,12 @@ class TestDeEscalateTaskTool:
 
         # Missing reason should raise an error (TypeError for missing required arg)
         with pytest.raises(TypeError):
-            await registry_with_patches.call("de_escalate_task", {"task_id": "t1"})
+            await task_registry_with_patches.call("de_escalate_task", {"task_id": "t1"})
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_not_escalated_error(
-        self, mock_task_manager, registry_with_patches
+        self, mock_task_manager, task_registry_with_patches
     ):
         """Test de_escalate_task fails if task is not escalated."""
         non_escalated_task = Task(
@@ -533,7 +548,7 @@ class TestDeEscalateTaskTool:
         )
         mock_task_manager.get_task.return_value = non_escalated_task
 
-        result = await registry_with_patches.call(
+        result = await task_registry_with_patches.call(
             "de_escalate_task", {"task_id": "t1", "reason": "Trying to de-escalate"}
         )
 
@@ -542,11 +557,11 @@ class TestDeEscalateTaskTool:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_de_escalate_task_task_not_found(self, mock_task_manager, registry_with_patches):
+    async def test_de_escalate_task_task_not_found(self, mock_task_manager, task_registry_with_patches):
         """Test de_escalate_task with non-existent task."""
         mock_task_manager.get_task.return_value = None
 
-        result = await registry_with_patches.call(
+        result = await task_registry_with_patches.call(
             "de_escalate_task", {"task_id": "nonexistent", "reason": "Test"}
         )
 
@@ -556,7 +571,7 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_clears_escalation_fields(
-        self, mock_task_manager, registry_with_patches
+        self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de_escalate_task clears escalation-related fields."""
         escalated_task = Task(
@@ -573,7 +588,7 @@ class TestDeEscalateTaskTool:
         )
         mock_task_manager.get_task.return_value = escalated_task
 
-        await registry_with_patches.call(
+        await task_registry_with_patches.call(
             "de_escalate_task", {"task_id": "t1", "reason": "Resolved manually"}
         )
 
@@ -587,7 +602,7 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_records_de_escalation_reason(
-        self, mock_task_manager, registry_with_patches
+        self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de-escalation reason is recorded somewhere."""
         escalated_task = Task(
@@ -616,7 +631,7 @@ class TestDeEscalateTaskTool:
         )
         mock_task_manager.update_task.return_value = reopened_task
 
-        result = await registry_with_patches.call(
+        result = await task_registry_with_patches.call(
             "de_escalate_task", {"task_id": "t1", "reason": "Human fixed the issue"}
         )
 
@@ -626,7 +641,7 @@ class TestDeEscalateTaskTool:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_de_escalate_task_resets_validation_state(
-        self, mock_task_manager, registry_with_patches
+        self, mock_task_manager, task_registry_with_patches
     ):
         """Test that de_escalate_task optionally resets validation state."""
         escalated_task = Task(
@@ -644,7 +659,7 @@ class TestDeEscalateTaskTool:
         )
         mock_task_manager.get_task.return_value = escalated_task
 
-        await registry_with_patches.call(
+        await task_registry_with_patches.call(
             "de_escalate_task",
             {"task_id": "t1", "reason": "Fixed", "reset_validation": True},
         )
@@ -685,9 +700,9 @@ class TestValidationToolsRegistration:
         assert "clear_validation_history" in tool_names
 
     @pytest.mark.integration
-    def test_de_escalate_task_tool_registered(self, registry_with_patches) -> None:
-        """Test that de_escalate_task is registered as an MCP tool."""
-        tools = registry_with_patches.list_tools()
+    def test_de_escalate_task_tool_registered(self, task_registry_with_patches) -> None:
+        """Test that de_escalate_task is registered on gobby-tasks (lifecycle)."""
+        tools = task_registry_with_patches.list_tools()
         tool_names = [t["name"] for t in tools]
         assert "de_escalate_task" in tool_names
 
@@ -726,9 +741,9 @@ class TestValidationToolsRegistration:
         assert "task_id" in input_schema["properties"]
 
     @pytest.mark.integration
-    def test_de_escalate_task_tool_schema(self, registry_with_patches) -> None:
+    def test_de_escalate_task_tool_schema(self, task_registry_with_patches) -> None:
         """Test that de_escalate_task has correct input schema."""
-        schema = registry_with_patches.get_schema("de_escalate_task")
+        schema = task_registry_with_patches.get_schema("de_escalate_task")
 
         assert schema is not None
         input_schema = schema.get("inputSchema", schema)

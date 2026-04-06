@@ -265,7 +265,8 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 | Registry | Tools | Purpose |
 | :--- | :--- | :--- |
 
-| `gobby-tasks` | 42 | Task management, dependencies, validation, sync |
+| `gobby-tasks` | ~30 | Task management, dependencies, lifecycle |
+| `gobby-tasks-ops` | 13 | Expansion, affected files, GitHub issues, reindex |
 | `gobby-orchestration` | 11 | Task orchestration, agent spawning, monitoring, waiting |
 | `gobby-sessions` | 11 | Session lifecycle, handoffs, messages |
 | `gobby-memory` | 11 | Persistent memory storage and retrieval |
@@ -282,7 +283,7 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 
 ## Task Management (`gobby-tasks`)
 
-42 tools for persistent task tracking with dependencies, validation, and sync.
+~30 tools for persistent task tracking with dependencies and lifecycle management.
 
 ### CRUD Operations
 
@@ -323,7 +324,7 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 
 | `list_ready_tasks` | Tasks with no unresolved blockers |
 | `list_blocked_tasks` | Tasks waiting on others |
-| `suggest_next_task` | AI suggests best next task |
+| `suggest_next_task` | AI suggests best next task. Use `count` param (default 1) for batch suggestions with conflict avoidance. |
 
 ### Session Integration
 
@@ -334,38 +335,25 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 | `get_session_tasks` | Tasks linked to a session |
 | `get_task_sessions` | Sessions that touched a task |
 
-### Expansion
+### Lifecycle
 
 | Tool | Description |
 | :--- | :--- |
 
-| `save_expansion_spec` | Save expansion spec for later execution |
-| `execute_expansion` | Execute saved expansion atomically |
-| `get_expansion_spec` | Check for pending expansion |
-
-### Validation
-
-| Tool | Description |
-| :--- | :--- |
-
-| `validate_task` | Validate task completion (auto-gathers git context) |
-| `get_validation_status` | Get validation details |
-| `reset_validation_count` | Reset failure count for retry |
-| `get_validation_history` | Full validation history with iterations |
-| `get_recurring_issues` | Analyze recurring validation issues |
-| `clear_validation_history` | Clear all validation history |
 | `de_escalate_task` | Return escalated task to open status |
 | `generate_validation_criteria` | Generate criteria using AI |
 | `run_fix_attempt` | Spawn fix agent for validation issues |
 | `validate_and_fix` | Run validation loop with auto-fix |
+
+> **Note:** Validation tools (`validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history`) are internal-only Python functions, not available via MCP.
+
+> **Note:** Sync tools (`sync_tasks`, `sync_import`, `sync_export`, `get_sync_status`) are CLI-only, not available via MCP.
 
 ### Git Integration
 
 | Tool | Description |
 | :--- | :--- |
 
-| `sync_tasks` | Import/export tasks to JSONL |
-| `get_sync_status` | Get sync status |
 | `link_commit` | Link git commit to task |
 | `unlink_commit` | Unlink commit from task |
 | `auto_link_commits` | Auto-detect commits mentioning task IDs |

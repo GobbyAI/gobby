@@ -83,8 +83,8 @@ steps:
       Then call save_expansion_qa_result with your findings.
     allowed_tools: "all"
     blocked_mcp_tools:
-      - "gobby-tasks:execute_expansion"
-      - "gobby-tasks:save_expansion_spec"
+      - "gobby-tasks-ops:execute_expansion"
+      - "gobby-tasks-ops:save_expansion_spec"
       - "gobby-tasks:close_task"
       - "gobby-tasks:create_task"
       - "gobby-tasks:delete_task"
@@ -93,13 +93,13 @@ steps:
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
-      - server: gobby-tasks
+      - server: gobby-tasks-ops
         tool: save_expansion_qa_result
         action: set_variable
         variable: qa_result_saved
         value: true
     on_mcp_error:
-      - server: gobby-tasks
+      - server: gobby-tasks-ops
         tool: save_expansion_qa_result
         action: set_variable
         variable: qa_result_failed

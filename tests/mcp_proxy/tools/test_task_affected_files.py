@@ -41,7 +41,7 @@ def _make_af(task_id: str, file_path: str, source: str = "manual") -> TaskAffect
 
 class TestSetAffectedFiles:
     def test_set_files_success(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
@@ -52,7 +52,7 @@ class TestSetAffectedFiles:
                 _make_af("task-1", "src/b.py"),
             ]
 
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             set_files = registry.get_tool("set_affected_files")
             result = set_files(task_id="task-1", files=["src/a.py", "src/b.py"], source="manual")
 
@@ -61,17 +61,17 @@ class TestSetAffectedFiles:
             mock_mgr.set_files.assert_called_once_with("task-1", ["src/a.py", "src/b.py"], "manual")
 
     def test_set_files_invalid_source(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         with patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"):
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             set_files = registry.get_tool("set_affected_files")
             result = set_files(task_id="task-1", files=["src/a.py"], source="invalid")
 
             assert "error" in result
 
     def test_set_files_invalid_task(self, ctx) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
         from gobby.storage.tasks import TaskNotFoundError
 
         with patch(
@@ -79,7 +79,7 @@ class TestSetAffectedFiles:
             side_effect=TaskNotFoundError("not found"),
         ):
             with patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"):
-                registry = create_affected_files_registry(ctx)
+                registry = create_ops_affected_files_registry(ctx)
                 set_files = registry.get_tool("set_affected_files")
                 result = set_files(task_id="bad-id", files=["src/a.py"])
 
@@ -88,7 +88,7 @@ class TestSetAffectedFiles:
 
 class TestGetAffectedFiles:
     def test_get_files_success(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
@@ -98,7 +98,7 @@ class TestGetAffectedFiles:
                 _make_af("task-1", "src/a.py"),
             ]
 
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             get_files = registry.get_tool("get_affected_files")
             result = get_files(task_id="task-1")
 
@@ -106,14 +106,14 @@ class TestGetAffectedFiles:
             assert result["files"][0]["file_path"] == "src/a.py"
 
     def test_get_files_empty(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
         ) as MockMgr:
             MockMgr.return_value.get_files.return_value = []
 
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             get_files = registry.get_tool("get_affected_files")
             result = get_files(task_id="task-1")
 
@@ -123,7 +123,7 @@ class TestGetAffectedFiles:
 
 class TestFindFileOverlaps:
     def test_find_overlaps_success(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
@@ -133,7 +133,7 @@ class TestFindFileOverlaps:
                 ("task-1", "task-2"): ["src/shared.py"],
             }
 
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             find_overlaps = registry.get_tool("find_file_overlaps")
             result = find_overlaps(task_ids=["task-1", "task-2"])
 
@@ -142,14 +142,14 @@ class TestFindFileOverlaps:
             assert result["overlaps"][0]["shared_files"] == ["src/shared.py"]
 
     def test_find_overlaps_none(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
         ) as MockMgr:
             MockMgr.return_value.find_overlapping_tasks.return_value = {}
 
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             find_overlaps = registry.get_tool("find_file_overlaps")
             result = find_overlaps(task_ids=["task-1", "task-2"])
 
@@ -157,7 +157,7 @@ class TestFindFileOverlaps:
             assert result["overlaps"] == []
 
     def test_find_overlaps_invalid_task(self, ctx) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
         from gobby.storage.tasks import TaskNotFoundError
 
         with patch(
@@ -165,7 +165,7 @@ class TestFindFileOverlaps:
             side_effect=TaskNotFoundError("not found"),
         ):
             with patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"):
-                registry = create_affected_files_registry(ctx)
+                registry = create_ops_affected_files_registry(ctx)
                 find_overlaps = registry.get_tool("find_file_overlaps")
                 result = find_overlaps(task_ids=["bad-id"])
 
@@ -197,7 +197,7 @@ def _make_mock_child(task_id: str, title: str) -> MagicMock:
 
 class TestWireAffectedFilesFromSpec:
     def test_wire_success(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         spec = {
             "subtasks": [
@@ -224,7 +224,7 @@ class TestWireAffectedFilesFromSpec:
             mock_mgr = MockMgr.return_value
             mock_mgr.set_files.return_value = []
 
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             wire_fn = registry.get_tool("wire_affected_files_from_spec")
             result = wire_fn(parent_task_id="parent-1")
 
@@ -238,7 +238,7 @@ class TestWireAffectedFilesFromSpec:
             mock_mgr.set_files.assert_any_call("child-2", ["src/routes.py"], "expansion")
 
     def test_wire_skips_subtasks_without_files(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         spec = {
             "subtasks": [
@@ -259,7 +259,7 @@ class TestWireAffectedFilesFromSpec:
             mock_mgr = MockMgr.return_value
             mock_mgr.set_files.return_value = []
 
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             wire_fn = registry.get_tool("wire_affected_files_from_spec")
             result = wire_fn(parent_task_id="parent-1")
 
@@ -268,13 +268,13 @@ class TestWireAffectedFilesFromSpec:
             mock_mgr.set_files.assert_called_once_with("child-2", ["src/code.py"], "expansion")
 
     def test_wire_no_expansion_context(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         parent = _make_mock_task(expansion_context=None)
         ctx.task_manager.get_task.return_value = parent
 
         with patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"):
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             wire_fn = registry.get_tool("wire_affected_files_from_spec")
             result = wire_fn(parent_task_id="parent-1")
 
@@ -282,7 +282,7 @@ class TestWireAffectedFilesFromSpec:
             assert "no expansion spec" in result["error"].lower()
 
     def test_wire_no_children(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         spec = {"subtasks": [{"title": "Task", "affected_files": ["a.py"]}]}
         parent = _make_mock_task(expansion_context=json.dumps(spec))
@@ -290,7 +290,7 @@ class TestWireAffectedFilesFromSpec:
         ctx.task_manager.list_tasks.return_value = []
 
         with patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"):
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             wire_fn = registry.get_tool("wire_affected_files_from_spec")
             result = wire_fn(parent_task_id="parent-1")
 
@@ -298,7 +298,7 @@ class TestWireAffectedFilesFromSpec:
             assert "no child tasks" in result["error"].lower()
 
     def test_wire_title_mismatch_skipped(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         spec = {
             "subtasks": [
@@ -315,7 +315,7 @@ class TestWireAffectedFilesFromSpec:
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
         ) as MockMgr:
             mock_mgr = MockMgr.return_value
-            registry = create_affected_files_registry(ctx)
+            registry = create_ops_affected_files_registry(ctx)
             wire_fn = registry.get_tool("wire_affected_files_from_spec")
             result = wire_fn(parent_task_id="parent-1")
 

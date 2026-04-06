@@ -1,7 +1,7 @@
 """Status transition handlers for task lifecycle.
 
-Handles reopen, escalate, mark_task_review_approved, and mark_task_needs_review
-tool registrations.
+Handles reopen, escalate, de_escalate, mark_task_review_approved, and
+mark_task_needs_review tool registrations.
 """
 
 import logging
@@ -415,4 +415,88 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
             "required": ["task_id"],
         },
         func=mark_task_needs_review,
+    )
+
+
+def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
+    """Register the de_escalate_task tool on the given registry."""
+
+    def de_escalate_task(
+        task_id: str,
+        reason: str,
+        reset_validation: bool = False,
+    ) -> dict[str, Any]:
+        """De-escalate a task back to open status.
+
+        Returns an escalated task to open after human intervention resolves
+        the issue. Optionally resets the validation failure count.
+
+        Args:
+            task_id: Task reference (#N, path, or UUID)
+            reason: Reason for de-escalation (required)
+            reset_validation: Also reset validation fail count (default: False)
+
+        Returns:
+            Updated task details on success, or error dict.
+        """
+        try:
+            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+        except (TaskNotFoundError, ValueError) as e:
+            return {"success": False, "error": f"Invalid task_id: {e}"}
+
+        task = ctx.task_manager.get_task(resolved_id)
+        if not task:
+            return {"success": False, "error": f"Task {task_id} not found"}
+
+        if task.status != "escalated":
+            return {
+                "success": False,
+                "error": f"Task {task_id} is not escalated (current status: {task.status})",
+            }
+
+        # Build update kwargs
+        update_kwargs: dict[str, Any] = {
+            "status": "open",
+            "escalated_at": None,
+            "escalation_reason": None,
+        }
+
+        if reset_validation:
+            update_kwargs["validation_fail_count"] = 0
+
+        updated_task = ctx.task_manager.update_task(task.id, **update_kwargs)
+
+        return {
+            "success": True,
+            "task_id": updated_task.id,
+            "status": updated_task.status,
+            "escalated_at": updated_task.escalated_at,
+            "escalation_reason": updated_task.escalation_reason,
+            "de_escalation_reason": reason,
+            "validation_reset": reset_validation,
+        }
+
+    registry.register(
+        name="de_escalate_task",
+        description="Return an escalated task to open status after human intervention resolves the issue. Optionally resets validation failure count.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task reference: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why the task is being de-escalated (e.g., 'dependency resolved', 'workaround applied')",
+                },
+                "reset_validation": {
+                    "type": "boolean",
+                    "description": "Also reset the validation failure count (default: false)",
+                    "default": False,
+                },
+            },
+            "required": ["task_id", "reason"],
+        },
+        func=de_escalate_task,
     )

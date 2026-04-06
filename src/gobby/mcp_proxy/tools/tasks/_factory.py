@@ -8,14 +8,11 @@ from typing import TYPE_CHECKING
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_dependencies import create_dependency_registry
-from gobby.mcp_proxy.tools.task_github import create_github_registry
 from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
-from gobby.mcp_proxy.tools.task_sync import create_sync_registry
-from gobby.mcp_proxy.tools.task_validation import create_validation_registry
-from gobby.mcp_proxy.tools.tasks._affected_files import create_affected_files_registry
+from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
-from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
@@ -70,25 +67,8 @@ def create_task_registry(
     # Merge session tools
     registry.merge_from(create_session_registry(ctx))
 
-    # Merge search tools
+    # Merge search tools (search_tasks only; reindex_tasks is in gobby-tasks-ops)
     registry.merge_from(create_search_registry(ctx))
-
-    # Merge expansion tools (skill-based task decomposition)
-    registry.merge_from(create_expansion_registry(ctx))
-
-    # Merge validation tools from extracted module (Strangler Fig pattern)
-    validation_max_retries = 3
-    if config:
-        validation_max_retries = config.gobby_tasks.validation.max_retries
-    registry.merge_from(
-        create_validation_registry(
-            task_manager=task_manager,
-            task_validator=task_validator,
-            project_manager=ctx.project_manager,
-            get_project_repo_path=ctx.get_project_repo_path,
-            max_retries=validation_max_retries,
-        )
-    )
 
     # Merge dependency tools from extracted module (Strangler Fig pattern)
     registry.merge_from(
@@ -101,15 +81,15 @@ def create_task_registry(
     # Merge readiness tools from extracted module (Strangler Fig pattern)
     registry.merge_from(create_readiness_registry(task_manager=task_manager))
 
-    # Merge affected files tools
-    registry.merge_from(create_affected_files_registry(ctx))
+    # Merge core affected files tools (update_observed_files only; rest in gobby-tasks-ops)
+    registry.merge_from(create_core_affected_files_registry(ctx))
 
-    # Merge sync tools from extracted module (Strangler Fig pattern)
+    # Merge commit linking tools (sync tools removed — CLI only)
     from gobby.tasks.commits import auto_link_commits as auto_link_commits_fn
     from gobby.tasks.commits import get_task_diff
 
     registry.merge_from(
-        create_sync_registry(
+        create_commit_registry(
             sync_manager=sync_manager,
             task_manager=task_manager,
             project_manager=ctx.project_manager,
@@ -118,8 +98,5 @@ def create_task_registry(
             session_manager=ctx.session_manager,
         )
     )
-
-    # Merge GitHub integration tools
-    registry.merge_from(create_github_registry(task_manager=task_manager))
 
     return registry

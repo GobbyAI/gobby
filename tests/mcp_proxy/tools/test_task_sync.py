@@ -1,11 +1,8 @@
 """
-Tests for task_sync.py MCP tools module.
+Tests for task_sync.py MCP tools module (commit linking tools).
 
-This file tests the sync and commit linking tools that will be extracted
-from tasks.py into task_sync.py using Strangler Fig pattern.
-
-RED PHASE: These tests will fail initially because task_sync.py
-does not exist yet. The module will be created in the green phase.
+Sync tools (sync_tasks, get_sync_status, sync_import, sync_export) have been
+removed from MCP — they are CLI-only operations.
 """
 
 from unittest.mock import MagicMock, patch
@@ -15,97 +12,12 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-class TestSyncTasks:
-    """Tests for sync_tasks MCP tool."""
-
-    def test_sync_tasks_both_directions(self, mock_sync_registry) -> None:
-        """Test sync_tasks with both directions."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
-
-        sync_manager = MagicMock()
-        registry = create_sync_registry(task_manager=MagicMock(), sync_manager=sync_manager)
-
-        sync = registry.get_tool("sync_tasks")
-        result = sync(direction="both")
-
-        assert result["import"] == "completed"
-        assert result["export"] == "completed"
-        sync_manager.import_from_jsonl.assert_called_once()
-        sync_manager.export_to_jsonl.assert_called_once()
-
-    def test_sync_tasks_import_only(self, mock_sync_registry) -> None:
-        """Test sync_tasks with import direction only."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
-
-        sync_manager = MagicMock()
-        registry = create_sync_registry(task_manager=MagicMock(), sync_manager=sync_manager)
-
-        sync = registry.get_tool("sync_tasks")
-        result = sync(direction="import")
-
-        assert result["import"] == "completed"
-        assert "export" not in result
-        sync_manager.import_from_jsonl.assert_called_once()
-        sync_manager.export_to_jsonl.assert_not_called()
-
-    def test_sync_tasks_export_only(self, mock_sync_registry) -> None:
-        """Test sync_tasks with export direction only."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
-
-        sync_manager = MagicMock()
-        registry = create_sync_registry(task_manager=MagicMock(), sync_manager=sync_manager)
-
-        sync = registry.get_tool("sync_tasks")
-        result = sync(direction="export")
-
-        assert result["export"] == "completed"
-        assert "import" not in result
-        sync_manager.export_to_jsonl.assert_called_once()
-        sync_manager.import_from_jsonl.assert_not_called()
-
-    def test_sync_tasks_default_is_both(self, mock_sync_registry) -> None:
-        """Test that default direction is 'both'."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
-
-        sync_manager = MagicMock()
-        registry = create_sync_registry(task_manager=MagicMock(), sync_manager=sync_manager)
-
-        sync = registry.get_tool("sync_tasks")
-        result = sync()
-
-        assert "import" in result
-        assert "export" in result
-
-
-class TestGetSyncStatus:
-    """Tests for get_sync_status MCP tool."""
-
-    def test_get_sync_status_basic(self, mock_sync_registry) -> None:
-        """Test get_sync_status returns sync manager status."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
-
-        sync_manager = MagicMock()
-        sync_manager.get_sync_status.return_value = {
-            "last_import": "2026-01-01T00:00:00Z",
-            "last_export": "2026-01-01T00:00:00Z",
-            "pending_changes": 0,
-        }
-        registry = create_sync_registry(task_manager=MagicMock(), sync_manager=sync_manager)
-
-        get_status = registry.get_tool("get_sync_status")
-        result = get_status()
-
-        assert "last_import" in result
-        assert "last_export" in result
-        sync_manager.get_sync_status.assert_called_once()
-
-
 class TestLinkCommit:
     """Tests for link_commit MCP tool."""
 
     def test_link_commit_success(self, mock_sync_registry) -> None:
         """Test successful commit linking."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -113,7 +25,7 @@ class TestLinkCommit:
         mock_task.commits = ["abc123"]
         task_manager.link_commit.return_value = mock_task
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -127,12 +39,12 @@ class TestLinkCommit:
 
     def test_link_commit_error(self, mock_sync_registry) -> None:
         """Test link_commit returns error on failure."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.link_commit.side_effect = ValueError("Task not found")
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -145,7 +57,7 @@ class TestLinkCommit:
 
     def test_link_commit_empty_commits_list(self, mock_sync_registry) -> None:
         """Test link_commit when task had no previous commits."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -153,7 +65,7 @@ class TestLinkCommit:
         mock_task.commits = None  # No commits yet
         task_manager.link_commit.return_value = mock_task
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -170,7 +82,7 @@ class TestUnlinkCommit:
 
     def test_unlink_commit_success(self, mock_sync_registry) -> None:
         """Test successful commit unlinking."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -178,7 +90,7 @@ class TestUnlinkCommit:
         mock_task.commits = []  # After unlink
         task_manager.unlink_commit.return_value = mock_task
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -192,12 +104,12 @@ class TestUnlinkCommit:
 
     def test_unlink_commit_error(self, mock_sync_registry) -> None:
         """Test unlink_commit returns error on failure."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.unlink_commit.side_effect = ValueError("Commit not linked")
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -214,7 +126,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_basic(self, mock_sync_registry) -> None:
         """Test auto_link_commits basic call."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -227,7 +139,7 @@ class TestAutoLinkCommits:
         mock_result.total_linked = 2
         mock_result.skipped = []
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
             project_manager=project_manager,
@@ -243,7 +155,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_with_task_filter(self, mock_sync_registry) -> None:
         """Test auto_link_commits with task_id filter."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -256,7 +168,7 @@ class TestAutoLinkCommits:
         mock_result.skipped = []
         mock_fn.return_value = mock_result
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
             project_manager=project_manager,
@@ -272,7 +184,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_with_since(self, mock_sync_registry) -> None:
         """Test auto_link_commits with since parameter."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -285,7 +197,7 @@ class TestAutoLinkCommits:
         mock_result.skipped = []
         mock_fn.return_value = mock_result
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
             project_manager=project_manager,
@@ -300,7 +212,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_no_project(self, mock_sync_registry) -> None:
         """Test auto_link_commits when no project context."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -317,7 +229,7 @@ class TestAutoLinkCommits:
             "gobby.mcp_proxy.tools.task_sync.get_project_context",
             return_value=None,
         ):
-            registry = create_sync_registry(
+            registry = create_commit_registry(
                 task_manager=task_manager,
                 sync_manager=MagicMock(),
                 project_manager=project_manager,
@@ -337,7 +249,7 @@ class TestGetTaskDiff:
 
     def test_get_task_diff_basic(self, mock_sync_registry) -> None:
         """Test get_task_diff basic call."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -357,7 +269,7 @@ class TestGetTaskDiff:
 
         mock_get_task_diff = MagicMock(return_value=mock_diff_result)
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
             project_manager=project_manager,
@@ -374,12 +286,12 @@ class TestGetTaskDiff:
 
     def test_get_task_diff_task_not_found(self, mock_sync_registry) -> None:
         """Test get_task_diff when task not found."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.get_task.return_value = None
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -392,7 +304,7 @@ class TestGetTaskDiff:
 
     def test_get_task_diff_include_uncommitted(self, mock_sync_registry) -> None:
         """Test get_task_diff with include_uncommitted=True."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -410,7 +322,7 @@ class TestGetTaskDiff:
 
         mock_get_task_diff = MagicMock(return_value=mock_diff_result)
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
             project_manager=project_manager,
@@ -430,7 +342,7 @@ class TestGitIntegrationEdgeCases:
 
     def test_link_commit_full_sha(self, mock_sync_registry) -> None:
         """Test linking with full SHA."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -438,7 +350,7 @@ class TestGitIntegrationEdgeCases:
         mock_task.commits = ["abc123def456"]
         task_manager.link_commit.return_value = mock_task
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -451,7 +363,7 @@ class TestGitIntegrationEdgeCases:
 
     def test_link_commit_short_sha(self, mock_sync_registry) -> None:
         """Test linking with short SHA."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -459,7 +371,7 @@ class TestGitIntegrationEdgeCases:
         mock_task.commits = ["abc123"]
         task_manager.link_commit.return_value = mock_task
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
         )
@@ -471,7 +383,7 @@ class TestGitIntegrationEdgeCases:
 
     def test_auto_link_with_skipped_commits(self, mock_sync_registry) -> None:
         """Test auto_link_commits reports skipped commits."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -487,7 +399,7 @@ class TestGitIntegrationEdgeCases:
         ]
         mock_fn.return_value = mock_result
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
             project_manager=project_manager,
@@ -501,7 +413,7 @@ class TestGitIntegrationEdgeCases:
 
     def test_get_task_diff_no_commits(self, mock_sync_registry) -> None:
         """Test get_task_diff when task has no linked commits."""
-        from gobby.mcp_proxy.tools.task_sync import create_sync_registry
+        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -519,7 +431,7 @@ class TestGitIntegrationEdgeCases:
 
         mock_get_task_diff = MagicMock(return_value=mock_diff_result)
 
-        registry = create_sync_registry(
+        registry = create_commit_registry(
             task_manager=task_manager,
             sync_manager=MagicMock(),
             project_manager=project_manager,

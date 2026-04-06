@@ -46,7 +46,6 @@ LLM_TASK_TOOLS = (
     "expand_task",
     "apply_tdd",
     "suggest_next_task",
-    "validate_task",
 )
 
 

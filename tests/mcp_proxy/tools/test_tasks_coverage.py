@@ -2000,20 +2000,17 @@ class TestRegistryIntegration:
     def test_merged_registries_available(self, task_registry) -> None:
         """Test tools from merged registries are available."""
         merged_tools = [
-            # From task_validation
-            "validate_task",
-            # From task_expansion (skill-based)
-            "save_expansion_spec",
-            "execute_expansion",
-            "get_expansion_spec",
             # From task_dependencies
             "add_dependency",
             "remove_dependency",
             # From task_readiness
             "list_ready_tasks",
             "list_blocked_tasks",
-            # From task_sync
-            "sync_tasks",
+            # From task_sync (commit tools only)
+            "link_commit",
+            "auto_link_commits",
+            # From affected_files (core only)
+            "update_observed_files",
         ]
 
         tools_list = task_registry.list_tools()
