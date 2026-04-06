@@ -1,8 +1,8 @@
-"""Session digest pipeline — turn recording, boundary summaries, and memory extraction.
+"""Session digest pipeline — turn recording and boundary summaries.
 
 Relocated from workflows/memory_actions.py as part of dead-code cleanup.
 These functions handle the per-turn digest pipeline (build_turn_and_digest),
-session boundary summaries, memory extraction from sessions, and sync operations.
+session boundary summaries, and sync operations.
 """
 
 from __future__ import annotations
@@ -253,95 +253,6 @@ def _build_title_synthesis_prompt(digest_markdown: str) -> str:
     )
 
 
-async def _extract_memories_from_turn(
-    turn_text: str,
-    session_id: str,
-    memory_manager: Any,
-    provider: Any,
-    model: str | None = None,
-    session_manager: Any | None = None,
-) -> list[str]:
-    """Extract reusable facts/patterns from a turn record.
-
-    Uses LLM to identify high-value memories from a single turn's record,
-    then stores them via memory_manager.
-
-    Args:
-        turn_text: The last_turn_markdown content
-        session_id: Session ID for memory attribution
-        memory_manager: Memory manager for storage
-        provider: LLM provider for extraction
-        model: Model override (e.g., "haiku")
-
-    Returns:
-        List of memory IDs created
-    """
-    if not turn_text or len(turn_text) < 50:
-        return []
-
-    extraction_prompt = (
-        "Analyze this turn record from a coding session. Extract ONLY memories that would\n"
-        "save a future session more than 5 minutes of investigation.\n\n"
-        "## Turn Record\n"
-        f"{turn_text}\n\n"
-        "## Rules\n"
-        "- Extract 0-3 memories (0 is fine if nothing is worth saving)\n"
-        "- Each memory must be a specific, verifiable fact or recurring pattern\n"
-        "- NO generic programming knowledge\n"
-        "- NO information already in project docs or README\n"
-        "- Include file paths, function names, and specifics\n\n"
-        "## Output Format\n"
-        "Output each memory as a JSON object on its own line, no other text:\n"
-        '{"content": "...", "memory_type": "fact|pattern", "tags": ["tag1", "tag2"]}\n\n'
-        "If nothing is worth saving, output exactly: NONE"
-    )
-
-    response = await provider.generate_text(extraction_prompt, model=model)
-    response = response.strip()
-
-    if response.upper() == "NONE" or not response:
-        return []
-
-    memory_ids: list[str] = []
-    # Resolve project_id from session
-    session = session_manager.get(session_id) if session_manager else None
-    project_id = getattr(session, "project_id", None) if session else None
-
-    for line in response.splitlines():
-        line = line.strip()
-        if not line or line.upper() == "NONE":
-            continue
-        try:
-            candidate = json.loads(line)
-            if not isinstance(candidate, dict) or "content" not in candidate:
-                continue
-
-            content = candidate["content"]
-            if not content or len(content) < 10:
-                continue
-
-            # Deduplicate against existing memories
-            if memory_manager.content_exists(content, project_id=project_id):
-                logger.debug(f"Skipping duplicate memory: {content[:50]}...")
-                continue
-
-            memory = await memory_manager.create_memory(
-                content=content,
-                memory_type=candidate.get("memory_type", "fact"),
-                project_id=project_id,
-                source_type="auto_extract",
-                source_session_id=session_id,
-                tags=candidate.get("tags"),
-            )
-            memory_ids.append(memory.id)
-            logger.info(f"Extracted memory from turn: {content[:80]}")
-        except Exception as e:
-            logger.debug(f"Failed to parse memory candidate: {e}")
-            continue
-
-    return memory_ids
-
-
 async def _resolve_undigested_pairs(
     session: Any,
     prompt_text: str | None,
@@ -469,12 +380,11 @@ async def build_turn_and_digest(
     db: Any | None = None,
     config: Any | None = None,
 ) -> dict[str, Any] | None:
-    """Build a detailed turn record, append to digest, synthesize title, and extract memories.
+    """Build a detailed turn record, append to digest, and synthesize title.
 
     This is the core per-turn pipeline, fired after each agent response (stop event).
     It reads the last user/assistant exchange from the transcript, generates a structured
-    turn record via LLM, appends it to the session's rolling digest, synthesizes a title,
-    and extracts reusable memories.
+    turn record via LLM, appends it to the session's rolling digest, and synthesizes a title.
 
     Args:
         memory_manager: The memory manager instance
@@ -562,21 +472,6 @@ async def build_turn_and_digest(
                 result["title"] = title
         except Exception as e:
             logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
-
-        # 8. Extract memories from turn record
-        try:
-            extracted = await _extract_memories_from_turn(
-                last_turn,
-                session_id,
-                memory_manager,
-                provider,
-                model=model,
-                session_manager=session_manager,
-            )
-            if extracted:
-                result["memories_extracted"] = len(extracted)
-        except Exception as e:
-            logger.warning(f"build_turn_and_digest: Memory extraction failed: {e}")
 
         return result
 

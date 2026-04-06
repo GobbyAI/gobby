@@ -347,40 +347,6 @@ class TestBuildTurnAndDigest:
         assert "### Turn 2" in digest_content
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
-    async def test_memory_extraction_from_turn(
-        self,
-        mock_rename,
-        mock_memory_manager,
-        mock_session_manager,
-        mock_llm_service,
-    ):
-        """Test that memories are extracted when LLM returns candidates."""
-        provider = mock_llm_service.get_default_provider.return_value
-        provider.generate_text = AsyncMock(
-            side_effect=[
-                "Agent fixed auth bug in auth.py by adding token validation.",
-                "Fix Auth Bug",
-                '{"content": "auth.py requires token validation on line 42", "memory_type": "fact", "tags": ["auth", "debugging"]}',
-            ]
-        )
-
-        # Mock the storage lookup for project_id
-        mock_memory_manager.storage.db.fetchone.return_value = {"project_id": "proj-1"}
-
-        result = await build_turn_and_digest(
-            memory_manager=mock_memory_manager,
-            session_manager=mock_session_manager,
-            session_id="session-123",
-            prompt_text="Fix the auth bug",
-            llm_service=mock_llm_service,
-        )
-
-        assert result is not None
-        assert result.get("memories_extracted", 0) == 1
-        mock_memory_manager.create_memory.assert_awaited_once()
-
-    @pytest.mark.asyncio
     async def test_digest_config_disabled(
         self, mock_memory_manager, mock_session_manager, mock_llm_service
     ):
