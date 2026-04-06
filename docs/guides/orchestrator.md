@@ -30,7 +30,7 @@ flowchart TD
     MERGE_CHECK -->|yes| SPAWN_MERGE[Spawn merge agent]
 
     MERGE_CHECK -->|no| DISPATCH_CHECK{Below capacity?}
-    DISPATCH_CHECK -->|yes| FIND[suggest_next_tasks]
+    DISPATCH_CHECK -->|yes| FIND[suggest_next_task]
     FIND --> WORKTREE{First iteration?}
     WORKTREE -->|yes| CREATE_WT[Create worktree]
     CREATE_WT --> DISPATCH
@@ -123,22 +123,22 @@ The conductor (a cron-ticked LLM agent) drives orchestrator re-invocation:
 
 This is safe for concurrent triggers — multiple passes may overlap, but:
 - Scans are read-only
-- `suggest_next_tasks` uses file annotations for conflict detection
+- `suggest_next_task` uses file annotations for conflict detection
 - `dispatch_batch` checks task status to avoid double-dispatch (task must be `open`)
 - A duplicate pass just finds nothing to dispatch and exits
 
 ### Parallel Dispatch with File Contention Detection
 
-The `suggest_next_tasks` tool finds tasks that can run in parallel by checking `affected_files` annotations. Tasks that touch the same files are not dispatched together.
+The `suggest_next_task` tool (with `count` > 1) finds tasks that can run in parallel by checking `affected_files` annotations. Tasks that touch the same files are not dispatched together.
 
 ```yaml
 - id: find_next
   condition: "${{ scan_in_progress.output.tasks | length < inputs.max_concurrent }}"
   mcp:
     server: gobby-tasks
-    tool: suggest_next_tasks
+    tool: suggest_next_task
     arguments:
-      max_count: "${{ inputs.max_concurrent - (scan_in_progress.output.tasks | length) }}"
+      count: "${{ inputs.max_concurrent - (scan_in_progress.output.tasks | length) }}"
 ```
 
 The `max_concurrent` input (default: 5) caps how many developers can run simultaneously.

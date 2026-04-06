@@ -360,7 +360,7 @@ call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
 })
 
 # Rebuild search index (usually automatic)
-call_tool(server_name="gobby-tasks", tool_name="reindex_tasks", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="reindex_tasks", arguments={
     "all_projects": False       # Optional: reindex all projects
 })
 ```
@@ -443,42 +443,51 @@ task = call_tool(server_name="gobby-tasks", tool_name="get_task", arguments={"ta
 | `get_session_tasks` | Tasks linked to a session |
 | `get_task_sessions` | Sessions that touched a task |
 
-### Git Sync
+### Git Sync (CLI-only)
+
+> **Note:** Sync tools (`sync_tasks`, `get_sync_status`) are CLI-only, not available via MCP. Use `gobby tasks sync` from the command line.
+
+### Ready Work / Suggestions
 
 | Tool | Description |
 |------|-------------|
-| `sync_tasks` | Trigger import/export |
-| `get_sync_status` | Get sync status |
+| `suggest_next_task` | AI suggests next task to work on. Use `count` param (default 1) for batch with conflict avoidance. |
 
-### Task Expansion
-
-| Tool | Description |
-|------|-------------|
-| `save_expansion_spec` | Save expansion spec for later execution |
-| `execute_expansion` | Execute saved expansion atomically |
-| `get_expansion_spec` | Check for pending expansion (resume after compaction) |
-| `suggest_next_task` | AI suggests next task to work on |
-
-### Validation
+### Lifecycle
 
 | Tool | Description |
 |------|-------------|
-| `validate_task` | Validate task completion (auto-gathers git context) |
-| `get_validation_status` | Get validation details |
-| `reset_validation_count` | Reset failure count for retry |
-| `get_validation_history` | Full validation history with iterations |
-| `get_recurring_issues` | Analyze recurring validation issues |
-| `clear_validation_history` | Clear all validation history |
 | `de_escalate_task` | Return escalated task to open status |
 | `generate_validation_criteria` | Generate validation criteria using LLM |
 | `run_fix_attempt` | Spawn fix agent for validation issues |
 | `validate_and_fix` | Run validation loop with auto-fix |
+
+### Validation (internal-only)
+
+> **Note:** `validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history` are internal-only Python functions, not available via MCP.
 
 ### Search
 
 | Tool | Description |
 |------|-------------|
 | `search_tasks` | Full-text search tasks by content (TF-IDF) |
+
+### Task Expansion & Operations (`gobby-tasks-ops`)
+
+| Tool | Description |
+|------|-------------|
+| `save_expansion_spec` | Save expansion spec for later execution |
+| `execute_expansion` | Execute saved expansion atomically |
+| `get_expansion_spec` | Check for pending expansion (resume after compaction) |
+| `validate_expansion_spec` | Validate spec structure and dependencies |
+| `save_expansion_qa_result` | Save QA result for expansion |
+| `check_expansion_qa_result` | Check QA result for expansion |
+| `set_affected_files` | Set affected files for a task |
+| `get_affected_files` | Get affected files for a task |
+| `find_file_overlaps` | Find file contention across tasks |
+| `wire_affected_files_from_spec` | Wire affected files from expansion spec |
+| `import_github_issues` | Import issues from GitHub |
+| `link_task_to_github_issue` | Link a task to a GitHub issue |
 | `reindex_tasks` | Rebuild search index |
 
 ## CLI Command Reference
