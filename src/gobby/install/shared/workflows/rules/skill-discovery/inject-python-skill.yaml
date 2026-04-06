@@ -17,6 +17,6 @@ rules:
         arguments:
           name: python
         inject_result: true
-      - type: append_to_set
+      - type: set_variable
         variable: injected_skills
-        value: "python"
+        value: "variables.get('injected_skills', []) + ['python']"
