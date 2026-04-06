@@ -1,0 +1,22 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  inject-python-skill:
+    description: "Inject python coding standards on first .py file read"
+    event: after_tool
+    enabled: true
+    priority: 30
+    when: >
+      'python' not in variables.get('injected_skills', [])
+      and event.data.get('tool_name') == 'Read'
+      and tool_input.get('file_path', '').endswith('.py')
+    effects:
+      - type: mcp_call
+        server: gobby-skills
+        tool: get_skill
+        arguments:
+          name: python
+        inject_result: true
+      - type: append_to_set
+        variable: injected_skills
+        value: "python"

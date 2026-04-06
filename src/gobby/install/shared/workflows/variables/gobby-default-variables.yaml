@@ -76,6 +76,9 @@ variables:
   is_subagent:
     value: false
     description: "True while a native Claude Code subagent is active (toggled by SUBAGENT_START/STOP hooks)"
+  injected_skills:
+    value: []
+    description: "Set of skill names fully injected into context this session (dedup for JIT skill loading)"
   edit_write_pending:
     value: false
     description: "True when an Edit/Write tool call is pending (pre-tool fired, post-tool not yet succeeded)"
