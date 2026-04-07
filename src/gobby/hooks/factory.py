@@ -346,8 +346,16 @@ class HookManagerFactory:
             try:
                 # Inject event context (mirrors dispatch_mcp_calls behavior)
                 args = dict(arguments)
-                if "session_id" not in args and event:
-                    args["session_id"] = event.metadata.get("_platform_session_id", "")
+                if event:
+                    if "session_id" not in args:
+                        args["session_id"] = event.metadata.get("_platform_session_id", "")
+                    if "prompt_text" not in args:
+                        args["prompt_text"] = event.data.get("prompt") if event.data else None
+                    if "project_path" not in args:
+                        args["project_path"] = event.metadata.get("project_path") or None
+                    # Map prompt_text to query for tools that expect it
+                    if "query" not in args and args.get("prompt_text"):
+                        args["query"] = args["prompt_text"]
 
                 result = await proxy.call_tool(server, tool, args, strip_unknown=True)
                 success = isinstance(result, dict) and result.get("success", False)

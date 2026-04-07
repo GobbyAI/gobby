@@ -121,7 +121,7 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
     elif tool == "search_memories":
         memories = result.get("memories", [])
         if not memories:
-            return ""
+            return "<project-memory>\nNo relevant memories found.\n</project-memory>"
         lines = ["<project-memory>"]
         for m in memories:
             content = m.get("content", "").strip()

@@ -662,15 +662,21 @@ class MemoryManager:
                     mem.similarity = s
                 memories = [mem for mem, _ in scored[:limit]]
         else:
-            # No query or no VectorStore: list from SQLite
-            memories = self.storage.list_memories(
-                project_id=project_id,
-                memory_type=memory_type,
-                limit=limit,
-                tags_all=tags_all,
-                tags_any=tags_any,
-                tags_none=tags_none,
-            )
+            # No query or no VectorStore: list from SQLite.
+            # When a min_score threshold is requested but vector search is
+            # unavailable, we cannot meaningfully score relevance — return
+            # empty rather than dumping unscored memories.
+            if min_score and min_score > 0 and query:
+                memories = []
+            else:
+                memories = self.storage.list_memories(
+                    project_id=project_id,
+                    memory_type=memory_type,
+                    limit=limit,
+                    tags_all=tags_all,
+                    tags_any=tags_any,
+                    tags_none=tags_none,
+                )
 
         # Update access stats for retrieved memories
         self._update_access_stats(memories)
