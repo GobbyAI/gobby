@@ -70,6 +70,11 @@ class MemoryManager:
         # Primary storage layer — always SQLite via LocalMemoryManager
         self.storage = LocalMemoryManager(db)
 
+        # FTS5 keyword search fallback (always available — SQLite-based)
+        from gobby.memory.fts_search import MemoryFTS5Searcher
+
+        self._fts_searcher = MemoryFTS5Searcher(db)
+
         # Backend for async protocol operations (always StorageAdapter)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage)
 
@@ -662,12 +667,18 @@ class MemoryManager:
                     mem.similarity = s
                 memories = [mem for mem, _ in scored[:limit]]
         else:
-            # No query or no VectorStore: list from SQLite.
-            # When a min_score threshold is requested but vector search is
-            # unavailable, we cannot meaningfully score relevance — return
-            # empty rather than dumping unscored memories.
-            if min_score and min_score > 0 and query:
-                memories = []
+            # No query or no VectorStore — try FTS5 keyword search if we
+            # have a query, otherwise fall back to recency-ordered SQLite list.
+            if query:
+                memories = self._fts5_fallback(
+                    query,
+                    limit,
+                    project_id,
+                    memory_type,
+                    tags_all,
+                    tags_any,
+                    tags_none,
+                )
             else:
                 memories = self.storage.list_memories(
                     project_id=project_id,
@@ -678,9 +689,56 @@ class MemoryManager:
                     tags_none=tags_none,
                 )
 
+        # FTS5 fallback: if vector+graph returned nothing above threshold
+        if not memories and query:
+            memories = self._fts5_fallback(
+                query,
+                limit,
+                project_id,
+                memory_type,
+                tags_all,
+                tags_any,
+                tags_none,
+            )
+
         # Update access stats for retrieved memories
         self._update_access_stats(memories)
 
+        return memories
+
+    def _fts5_fallback(
+        self,
+        query: str,
+        limit: int,
+        project_id: str | None,
+        memory_type: str | None,
+        tags_all: list[str] | None,
+        tags_any: list[str] | None,
+        tags_none: list[str] | None,
+    ) -> list[Memory]:
+        """FTS5 keyword search fallback when vector search returns nothing."""
+        fts_results = self._fts_searcher.search(query=query, top_k=limit * 2, project_id=project_id)
+        if not fts_results:
+            return []
+
+        memories: list[Memory] = []
+        for mem_id, score in fts_results:
+            try:
+                mem = self.storage.get_memory(mem_id)
+            except ValueError:
+                continue
+            if memory_type and mem.memory_type != memory_type:
+                continue
+            if tags_all and not all(t in (mem.tags or []) for t in tags_all):
+                continue
+            if tags_any and not any(t in (mem.tags or []) for t in tags_any):
+                continue
+            if tags_none and any(t in (mem.tags or []) for t in tags_none):
+                continue
+            mem.similarity = score
+            memories.append(mem)
+            if len(memories) >= limit:
+                break
         return memories
 
     async def search_memories_as_context(
