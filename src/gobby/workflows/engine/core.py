@@ -84,12 +84,14 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         db: DatabaseProtocol,
         skill_manager: Any | None = None,
         metrics_event_store: "MetricsEventStore | None" = None,
+        mcp_dispatcher: Any | None = None,
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
         self.instance_manager = WorkflowInstanceManager(db)
         self._skill_manager = skill_manager
         self._event_store = metrics_event_store
+        self._mcp_dispatcher = mcp_dispatcher
 
     async def evaluate(
         self,
@@ -406,7 +408,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             continue
 
                         # Apply non-block effects immediately
-                        self._apply_effect(
+                        should_continue = await self._apply_effect(
                             effect,
                             _row,
                             variables,
@@ -415,6 +417,8 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             context_parts,
                             mcp_calls,
                         )
+                        if not should_continue:
+                            break  # Inline dispatch failed — skip remaining effects
 
                     # Now apply deferred block (if any)
                     if deferred_block is not None:

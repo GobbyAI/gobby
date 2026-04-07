@@ -152,6 +152,14 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         lines.append("</available-skills>")
         return "\n".join(lines)
 
+    elif tool == "get_skill":
+        skill = result.get("skill") or result.get("result", {}).get("skill") or {}
+        name = skill.get("name", "unknown")
+        content = skill.get("content", "")
+        if content:
+            return f'<skill name="{name}">\n{content}\n</skill>'
+        return ""
+
     else:
         return f"**{tool} result:**\n```json\n{json.dumps(result, indent=2, default=str)}\n```"
 

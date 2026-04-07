@@ -22,6 +22,7 @@ class EffectsMixin:
     """Mixin providing effect handling methods for RuleEngine."""
 
     _skill_manager: Any
+    _mcp_dispatcher: Any
 
     if TYPE_CHECKING:
         # Provided by TemplatingMixin at runtime via RuleEngine MRO
@@ -34,7 +35,7 @@ class EffectsMixin:
 
         def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]: ...
 
-    def _apply_effect(
+    async def _apply_effect(
         self,
         effect: Any,
         row: WorkflowDefinitionRow,
@@ -43,8 +44,13 @@ class EffectsMixin:
         allowed_funcs: dict[str, Callable[..., Any]],
         context_parts: list[str],
         mcp_calls: list[dict[str, Any]],
-    ) -> None:
-        """Apply a single non-block effect."""
+    ) -> bool:
+        """Apply a single non-block effect.
+
+        Returns:
+            True to continue processing sibling effects, False to abort
+            remaining effects for this rule (e.g. inline mcp_call failed).
+        """
         if effect.type == "set_variable":
             self._apply_set_variable(effect, variables, ctx)
 
@@ -78,6 +84,42 @@ class EffectsMixin:
                 k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
                 for k, v in raw_args.items()
             }
+
+            # Inline dispatch for inject_result calls — ensures atomicity with
+            # sibling effects (e.g. set_variable that tracks injection state).
+            # Background calls are always deferred regardless of inject_result.
+            if effect.inject_result and not effect.background and self._mcp_dispatcher:
+                event = ctx.get("event")
+                try:
+                    dr = await self._mcp_dispatcher(
+                        effect.server, effect.tool, rendered_args, event
+                    )
+                    success = isinstance(dr, dict) and dr.get("success", False)
+                    if success and dr.get("result"):
+                        from gobby.hooks.dispatchers.mcp import format_discovery_result
+
+                        formatted = format_discovery_result(
+                            {"tool": effect.tool, "result": dr["result"]}
+                        )
+                        if formatted:
+                            context_parts.append(formatted)
+                    elif not success:
+                        error = dr.get("result", {}).get("error", "unknown") if dr else "no result"
+                        logger.warning(
+                            f"Inline mcp_call {effect.server}/{effect.tool} failed "
+                            f"(rule {row.name}): {error} — aborting remaining effects",
+                        )
+                        return False
+                except Exception:
+                    logger.warning(
+                        f"Inline mcp_call {effect.server}/{effect.tool} raised "
+                        f"(rule {row.name}) — aborting remaining effects",
+                        exc_info=True,
+                    )
+                    return False
+                return True
+
+            # Deferred dispatch (background, non-inject, or no dispatcher)
             mcp_calls.append(
                 {
                     "server": effect.server,
@@ -149,6 +191,8 @@ class EffectsMixin:
                 logger.warning(
                     f"load_skill effect: no skill_manager available (rule {row.name})",
                 )
+
+        return True
 
     def _should_block(self, effect: Any, event: HookEvent) -> bool:
         """Check if a block effect matches the current tool/event."""
