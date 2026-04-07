@@ -204,6 +204,7 @@ class ChatMessagingMixin:
         model = data.get("model")
         request_id = data.get("request_id", "")
         project_id = data.get("project_id")
+        provider = data.get("provider")
 
         # Use content_blocks (multimodal) if provided, otherwise plain text
         if content_blocks and isinstance(content_blocks, list):
@@ -236,6 +237,7 @@ class ChatMessagingMixin:
                 request_id,
                 project_id,
                 inject_context=inject_context,
+                provider=provider,
             )
         )
         task.add_done_callback(self._on_chat_task_done)
@@ -258,6 +260,7 @@ class ChatMessagingMixin:
         request_id: str = "",
         project_id: str | None = None,
         inject_context: str | None = None,
+        provider: str | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
         from gobby.llm.claude_models import (
@@ -384,7 +387,10 @@ class ChatMessagingMixin:
             if session is None:
                 try:
                     session = await self._create_chat_session(
-                        conversation_id, model=model, project_id=project_id
+                        conversation_id,
+                        model=model,
+                        project_id=project_id,
+                        provider=provider,
                     )
                     # Notify client of session identity + branch context
                     ref = _session_ref()

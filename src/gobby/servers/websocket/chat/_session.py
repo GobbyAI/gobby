@@ -167,6 +167,7 @@ class ChatSessionMixin:
         model: str | None = None,
         project_id: str | None = None,
         resume_session_id: str | None = None,
+        provider: str | None = None,
     ) -> ChatSessionProtocol:
         """Create and bootstrap a new ChatSession with lifecycle hooks wired.
 
@@ -180,7 +181,7 @@ class ChatSessionMixin:
             if existing is not None:
                 return existing
             return await self._create_chat_session_inner(
-                conversation_id, model, project_id, resume_session_id
+                conversation_id, model, project_id, resume_session_id, provider
             )
 
     async def _create_chat_session_inner(
@@ -189,6 +190,7 @@ class ChatSessionMixin:
         model: str | None = None,
         project_id: str | None = None,
         resume_session_id: str | None = None,
+        provider: str | None = None,
     ) -> ChatSessionProtocol:
         """Inner implementation — must be called under the per-conversation lock from _session_create_locks."""
         # Early agent resolution to determine provider (Codex vs Claude SDK)
@@ -211,8 +213,22 @@ class ChatSessionMixin:
             except Exception as e:
                 logger.warning(f"Failed to resolve agent '{agent_name}' for provider check: {e}")
 
-        # Create session — all sessions route to ChatSession (Claude SDK) until CLIChatSession lands
-        session: ChatSessionProtocol = ChatSession(conversation_id=conversation_id)
+        # Provider precedence: explicit UI provider > agent definition > resumed session > default
+        effective_provider = provider
+        if not effective_provider and agent_body:
+            effective_provider = getattr(agent_body, "provider", None)
+
+        # Route to appropriate session implementation
+        if effective_provider == "claude":
+            from gobby.servers.cli_chat_session import CLIChatSession
+
+            session: ChatSessionProtocol = CLIChatSession(
+                conversation_id=conversation_id, model=model
+            )
+        else:
+            # Default: existing SDK path (backwards compat during transition)
+            session = ChatSession(conversation_id=conversation_id)
+
         if resume_session_id:
             session.resume_session_id = resume_session_id
 

@@ -86,6 +86,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     """
 
     conversation_id: str
+    provider: str = field(default="claude")
     db_session_id: str | None = field(default=None)
     seq_num: int | None = field(default=None)
     project_id: str | None = field(default=None)
