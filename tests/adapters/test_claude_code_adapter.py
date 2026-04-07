@@ -612,7 +612,8 @@ class TestResponseMetadata:
         ctx = result["hookSpecificOutput"]["additionalContext"]
         assert "Gobby Session ID: uuid-123" in ctx
 
-    def test_subsequent_hook_minimal_metadata(self) -> None:
+    def test_no_metadata_on_subsequent_hooks(self) -> None:
+        """Subsequent hooks do not inject session ref."""
         adapter = ClaudeCodeAdapter()
         response = HookResponse(
             decision="allow",
@@ -623,20 +624,6 @@ class TestResponseMetadata:
             },
         )
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
-        ctx = result["hookSpecificOutput"]["additionalContext"]
-        assert ctx == "Gobby Session ID: #100"
-
-    def test_subsequent_hook_no_session_ref(self) -> None:
-        adapter = ClaudeCodeAdapter()
-        response = HookResponse(
-            decision="allow",
-            metadata={
-                "session_id": "uuid-123",
-                "_first_hook_for_session": False,
-            },
-        )
-        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
-        # No session_ref means no context injected for subsequent hook
         assert "hookSpecificOutput" not in result
 
     def test_terminal_session_ids(self) -> None:

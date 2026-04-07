@@ -274,10 +274,6 @@ class ClaudeCodeAdapter(BaseAdapter):
                             friendly_name = key.replace("terminal_", "").replace("_", " ")
                             context_lines.append(f"{friendly_name}: {response.metadata[key]}")
                     additional_context_parts.append("\n".join(context_lines))
-                else:
-                    # Subsequent hooks: inject minimal session ref only (~8 tokens)
-                    if session_ref:
-                        additional_context_parts.append(f"Gobby Session ID: {session_ref}")
 
         # Build hookSpecificOutput if we have any context to inject
         # Only include hookSpecificOutput for hook types that Claude Code's schema accepts

@@ -356,15 +356,6 @@ class GeminiAdapter(BaseAdapter):
                     hook_specific["additionalContext"] = (
                         f"{existing}\n{new_context}" if existing else new_context
                     )
-                else:
-                    # Subsequent hooks: inject minimal session ref only (~8 tokens)
-                    if session_ref:
-                        hook_specific["hookEventName"] = hook_event_name
-                        existing = hook_specific.get("additionalContext", "")
-                        minimal_context = f"Gobby Session ID: {session_ref}"
-                        hook_specific["additionalContext"] = (
-                            f"{existing}\n{minimal_context}" if existing else minimal_context
-                        )
 
         # Handle BeforeModel-specific output (llm_request modification)
         if hook_type == "BeforeModel" and response.modify_args:

@@ -621,6 +621,19 @@ class TestTranslateFromHookResponse:
         # modify_args should be ignored without proper hook_type
         assert "hookSpecificOutput" not in result
 
+    def test_no_metadata_on_subsequent_hooks(self, adapter) -> None:
+        """Subsequent hooks do not inject session ref."""
+        response = HookResponse(
+            decision="allow",
+            metadata={
+                "session_id": "uuid-123",
+                "session_ref": "#42",
+                "_first_hook_for_session": False,
+            },
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+        assert "hookSpecificOutput" not in result
+
 
 class TestHandleNative:
     """Tests for handle_native() method."""
