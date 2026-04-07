@@ -175,31 +175,54 @@ def create_memory_registry(
             tags_none: Memory must have NONE of these tags
         """
         try:
-            memories = await memory_manager.search_memories(
+            effective_min_score = (
+                min_score if min_score > 0 else memory_manager.config.min_recall_score
+            )
+
+            # Fetch extra candidates so we can report diagnostics when
+            # nothing passes the threshold.
+            candidates = await memory_manager.search_memories(
                 query=query,
                 project_id=get_current_project_id(),
-                limit=limit,
-                min_score=min_score if min_score > 0 else memory_manager.config.min_recall_score,
+                limit=limit * 2,
+                min_score=None,  # no threshold — filter below
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
             )
-            result_memories = [
-                {
-                    "id": m.id,
-                    "content": m.content,
-                    "type": m.memory_type,
-                    "created_at": m.created_at,
-                    "tags": m.tags,
-                    "similarity": getattr(m, "similarity", None),
-                }
-                for m in memories
-            ]
 
-            return {
+            # Split by threshold
+            above: list[dict[str, Any]] = []
+            below_count = 0
+            max_score_seen = 0.0
+            for m in candidates:
+                score = getattr(m, "similarity", None) or 0.0
+                max_score_seen = max(max_score_seen, score)
+                if effective_min_score > 0 and score < effective_min_score:
+                    below_count += 1
+                    continue
+                if len(above) < limit:
+                    above.append(
+                        {
+                            "id": m.id,
+                            "content": m.content,
+                            "type": m.memory_type,
+                            "created_at": m.created_at,
+                            "tags": m.tags,
+                            "similarity": score,
+                        }
+                    )
+
+            result: dict[str, Any] = {
                 "success": True,
-                "memories": result_memories,
+                "memories": above,
             }
+            if not above and below_count > 0:
+                result["below_threshold_count"] = below_count
+                result["max_score_seen"] = round(max_score_seen, 4)
+                result["threshold"] = effective_min_score
+
+            return result
         except Exception as e:
             return {"success": False, "error": str(e)}
 

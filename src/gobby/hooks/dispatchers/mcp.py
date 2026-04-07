@@ -121,6 +121,16 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
     elif tool == "search_memories":
         memories = result.get("memories", [])
         if not memories:
+            below = result.get("below_threshold_count", 0)
+            if below:
+                max_score = result.get("max_score_seen", 0)
+                threshold = result.get("threshold", 0)
+                return (
+                    "<project-memory>\n"
+                    f"No relevant memories found. {below} results below "
+                    f"threshold {threshold} (max score: {max_score})\n"
+                    "</project-memory>"
+                )
             return "<project-memory>\nNo relevant memories found.\n</project-memory>"
         lines = ["<project-memory>"]
         for m in memories:
