@@ -3,7 +3,7 @@ tags: [skill-discovery, context, gobby, default]
 rules:
   inject-python-skill:
     description: "Inject python coding standards on first .py file read"
-    event: after_tool
+    event: before_tool
     enabled: true
     priority: 30
     when: >

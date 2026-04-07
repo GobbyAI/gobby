@@ -3,7 +3,7 @@ tags: [skill-discovery, context, gobby, default]
 rules:
   inject-rust-skill:
     description: "Inject rust coding standards on first .rs file read"
-    event: after_tool
+    event: before_tool
     enabled: true
     priority: 30
     when: >
