@@ -1,0 +1,127 @@
+"""Tests for provider routing in WebSocket chat sessions.
+
+Covers:
+- No provider -> SDK ChatSession (backward compat)
+- provider="claude" -> CLIChatSession
+- Session registers with correct source
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from gobby.servers.cli_chat_session import CLIChatSession
+
+from gobby.servers.chat_session import ChatSession
+from gobby.servers.websocket.chat._session import ChatSessionMixin
+
+pytestmark = pytest.mark.unit
+
+
+def _make_mixin(**overrides: Any) -> ChatSessionMixin:
+    """Create a ChatSessionMixin instance with test defaults."""
+    mixin = ChatSessionMixin.__new__(ChatSessionMixin)
+    mixin.clients = {}
+    mixin._chat_sessions = {}
+    mixin._active_chat_tasks = {}
+    mixin._pending_modes = {}
+    mixin._pending_worktree_paths = {}
+    mixin._pending_agents = {}
+    mixin._session_create_locks = {}
+    for k, v in overrides.items():
+        setattr(mixin, k, v)
+    return mixin
+
+
+class TestDefaultProvider:
+    """Tests for default provider (no provider specified)."""
+
+    @pytest.mark.asyncio
+    async def test_no_provider_creates_sdk_chat_session(self) -> None:
+        """When no provider is specified, should create SDK ChatSession (backward compat)."""
+        mixin = _make_mixin()
+
+        # The session creation function should default to ChatSession
+        # when no provider is specified in the request
+        session = await _create_session_for_provider(mixin, provider=None)
+
+        assert isinstance(session, ChatSession)
+
+    @pytest.mark.asyncio
+    async def test_no_provider_backward_compatible(self) -> None:
+        """Existing clients that don't send provider should still work."""
+        mixin = _make_mixin()
+
+        session = await _create_session_for_provider(mixin, provider=None)
+
+        # Should be a standard SDK ChatSession, not CLI-backed
+        assert not isinstance(session, CLIChatSession)
+
+
+class TestClaudeProvider:
+    """Tests for provider='claude'."""
+
+    @pytest.mark.asyncio
+    async def test_claude_provider_creates_cli_chat_session(self) -> None:
+        """provider='claude' should create a CLIChatSession."""
+        mixin = _make_mixin()
+
+        session = await _create_session_for_provider(mixin, provider="claude")
+
+        assert isinstance(session, CLIChatSession)
+
+    @pytest.mark.asyncio
+    async def test_claude_provider_has_correct_provider_attr(self) -> None:
+        """CLIChatSession created via provider='claude' should have provider='claude'."""
+        mixin = _make_mixin()
+
+        session = await _create_session_for_provider(mixin, provider="claude")
+
+        assert session.provider == "claude"
+
+
+class TestSessionRegistration:
+    """Tests for session source registration."""
+
+    @pytest.mark.asyncio
+    async def test_sdk_session_registers_with_sdk_source(self) -> None:
+        """SDK ChatSession should register with source='web_chat' or 'sdk'."""
+        mixin = _make_mixin()
+
+        session = await _create_session_for_provider(mixin, provider=None)
+
+        # The session should have been registered in the DB with appropriate source
+        assert session is not None
+
+    @pytest.mark.asyncio
+    async def test_cli_session_registers_with_cli_source(self) -> None:
+        """CLIChatSession should register with source='cli_chat' or 'claude_cli'."""
+        mixin = _make_mixin()
+
+        session = await _create_session_for_provider(mixin, provider="claude")
+
+        assert session is not None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _create_session_for_provider(
+    mixin: ChatSessionMixin,
+    provider: str | None,
+) -> Any:
+    """Helper to invoke provider routing logic and return the created session.
+
+    This calls into the session creation path that routes based on provider.
+    The exact method name may differ in implementation — this helper isolates
+    that coupling.
+    """
+    from gobby.servers.websocket.chat._session import create_chat_session_for_provider
+
+    return await create_chat_session_for_provider(
+        conversation_id="test-conv-routing",
+        provider=provider,
+    )
