@@ -291,17 +291,6 @@ class ChatSessionMixin:
                 except (ConnectionClosed, ConnectionClosedError):
                     pass
 
-            # Persist pending plan path to DB for recovery after daemon restart
-            _sm = getattr(self, "session_manager", None)
-            _s = self._chat_sessions.get(conversation_id)
-            if _sm and _s and _s.db_session_id and getattr(_s, "_plan_file_path", None):
-                try:
-                    await asyncio.to_thread(
-                        _sm.update_pending_plan, _s.db_session_id, _s._plan_file_path
-                    )
-                except Exception:
-                    logger.debug("Failed to persist pending_plan_path", exc_info=True)
-
         session._on_plan_ready = _notify_plan_ready
 
         # Wire config from daemon
@@ -367,9 +356,6 @@ class ChatSessionMixin:
                         session._approved_tools = set(json.loads(db_session.approved_tools_json))
                     except (ValueError, TypeError):
                         logger.debug("Malformed approved_tools_json, ignoring")
-                if db_session.pending_plan_path:
-                    session._plan_file_path = db_session.pending_plan_path
-
                 logger.info(
                     f"Registered web-chat session {db_session.id} "
                     f"(conv={conversation_id[:8]}, project={project_id or PERSONAL_PROJECT_ID})"

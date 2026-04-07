@@ -383,13 +383,6 @@ class LocalSessionManager:
             (chat_mode, session_id),
         )
 
-    def update_pending_plan(self, session_id: str, plan_path: str | None) -> None:
-        """Persist or clear the pending plan file path for restart recovery."""
-        self.db.execute(
-            "UPDATE sessions SET pending_plan_path = ? WHERE id = ?",
-            (plan_path, session_id),
-        )
-
     def update_approved_tools(self, session_id: str, tools: set[str]) -> None:
         """Persist the set of user-approved tools as JSON."""
         import json as _json
@@ -399,16 +392,6 @@ class LocalSessionManager:
             "UPDATE sessions SET approved_tools_json = ? WHERE id = ?",
             (tools_json, session_id),
         )
-
-    def find_pending_plans(self) -> list[Session]:
-        """Find active web-chat sessions with a pending plan approval."""
-        rows = self.db.fetchall(
-            """SELECT * FROM sessions
-            WHERE status = 'active'
-            AND session_type = 'web_chat'
-            AND pending_plan_path IS NOT NULL""",
-        )
-        return [Session.from_row(r) for r in rows]
 
     def update_title(self, session_id: str, title: str) -> Session | None:
         """Update session title."""

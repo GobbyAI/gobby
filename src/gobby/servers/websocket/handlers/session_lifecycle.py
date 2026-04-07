@@ -74,9 +74,6 @@ async def handle_clear_chat(
                 await asyncio.to_thread(
                     session_manager.update, session.db_session_id, status="completed"
                 )
-                await asyncio.to_thread(
-                    session_manager.update_pending_plan, session.db_session_id, None
-                )
             except Exception as e:
                 logger.warning(f"Failed to update session status on clear: {e}", exc_info=True)
 
@@ -146,7 +143,6 @@ async def handle_delete_chat(
         try:
             if session_manager:
                 await asyncio.to_thread(session_manager.update, db_session_id, status="expired")
-                await asyncio.to_thread(session_manager.update_pending_plan, db_session_id, None)
         except Exception as e:
             logger.warning(f"Failed to soft-delete session from DB: {e}")
 
@@ -175,18 +171,13 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                     mixin._session_create_locks.pop(conv_id, None)
                 if session is None:
                     continue
-                # Mark as paused in database and clear pending plan before stopping
+                # Mark as paused in database before stopping
                 if session.db_session_id:
                     session_manager = getattr(mixin, "session_manager", None)
                     if session_manager:
                         try:
                             await asyncio.to_thread(
                                 session_manager.update, session.db_session_id, status="paused"
-                            )
-                            await asyncio.to_thread(
-                                session_manager.update_pending_plan,
-                                session.db_session_id,
-                                None,
                             )
                         except Exception as e:
                             logger.warning(f"Failed to update session status: {e}")

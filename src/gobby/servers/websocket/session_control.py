@@ -88,9 +88,6 @@ class SessionControlMixin:
     ) -> None:
         await _plan.handle_recovered_plan_approval(self, websocket, conversation_id, data)
 
-    async def _rebroadcast_pending_plans(self, websocket: Any) -> None:
-        await _plan.rebroadcast_pending_plans(self, websocket)
-
     async def _rebroadcast_pending_interactions(
         self, websocket: Any, conversation_ids: list[str]
     ) -> None:
@@ -99,12 +96,6 @@ class SessionControlMixin:
 
         manager = getattr(self, "_pending_interaction_manager", None)
         if not manager:
-            # Fall back to old plan rebroadcast if manager not wired yet
-            await self._rebroadcast_pending_plans(websocket)
-            return
-
-        session_manager = getattr(self, "session_manager", None)
-        if not session_manager:
             return
 
         for conv_id in conversation_ids:

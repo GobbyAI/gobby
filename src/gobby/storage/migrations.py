@@ -799,6 +799,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
             WHERE status = 'pending';
         """,
     ),
+    (
+        203,
+        "Remove pending_plan_path from sessions table",
+        "ALTER TABLE sessions DROP COLUMN pending_plan_path;",
+    ),
 ]
 
 

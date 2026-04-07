@@ -202,7 +202,6 @@ CREATE TABLE sessions (
     turn_count INTEGER DEFAULT 0,
     tool_call_count INTEGER DEFAULT 0,
     last_assistant_content TEXT,
-    pending_plan_path TEXT,
     approved_tools_json TEXT,
     session_type TEXT NOT NULL DEFAULT 'terminal',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
