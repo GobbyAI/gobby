@@ -92,6 +92,13 @@ def create_app(server: "HTTPServer") -> FastAPI:
             server._hook_manager = app.state.hook_manager
         logger.debug("HookManager initialized in daemon")
 
+        # Initialize PendingInteractionManager for web chat approval flows
+        from gobby.servers.pending_interactions import PendingInteractionManager
+
+        app.state.pending_interaction_manager = PendingInteractionManager(server.services.db)
+        await app.state.pending_interaction_manager.expire_all_pending()
+        logger.debug("PendingInteractionManager initialized (all pending expired on startup)")
+
         # Wire up stop_registry to WebSocket server for stop_request handling
         # Check both services container and direct attribute (runner sets both)
         ws_server = server.services.websocket_server or server.websocket_server
@@ -303,6 +310,11 @@ def create_app(server: "HTTPServer") -> FastAPI:
                 logger.debug("TmuxPaneMonitor stopped")
         except Exception as e:
             logger.warning(f"Failed to stop TmuxPaneMonitor: {e}")
+
+        # Cleanup PendingInteractionManager
+        if hasattr(app.state, "pending_interaction_manager"):
+            await app.state.pending_interaction_manager.cleanup()
+            logger.debug("PendingInteractionManager cleanup complete")
 
         # Cleanup HookManager
         if hasattr(app.state, "hook_manager"):

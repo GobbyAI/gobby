@@ -185,8 +185,8 @@ class WebSocketServer(
                 )
             )
 
-            # Re-broadcast pending plan approvals for sessions orphaned by restart
-            await self._rebroadcast_pending_plans(websocket)
+            # Re-broadcast pending interactions for active conversations
+            await self._rebroadcast_pending_interactions(websocket, active_conversations)
 
             # Message processing loop
             async for message in websocket:
