@@ -201,6 +201,39 @@ def test_otel_trace_formatter_short_name():
     assert formatter.format(record2) == "other.test"
 
 
+def test_otel_trace_formatter_conditional_trace_id_append():
+    """Trace ID is appended at end only when a real span is active."""
+    formatter = OTelTraceFormatter("%(message)s")
+    record = logging.LogRecord("test", logging.INFO, "", 0, "test message", (), None)
+
+    # Without active span — no brackets
+    formatted = formatter.format(record)
+    assert formatted == "test message"
+    assert "[-]" not in formatted
+
+    # With active span — trace ID appended in brackets
+    provider = TracerProvider()
+    tracer = provider.get_tracer(__name__)
+    with tracer.start_as_current_span("test-span") as span:
+        trace_id = format(span.get_span_context().trace_id, "032x")
+        formatted = formatter.format(record)
+        assert formatted == f"test message [{trace_id}]"
+
+
+def test_otel_trace_formatter_trace_id_before_extras():
+    """Trace ID appears before extra fields when both are present."""
+    formatter = OTelTraceFormatter("%(message)s")
+    record = logging.LogRecord("test", logging.INFO, "", 0, "msg", (), None)
+    record.custom_field = "value"
+
+    provider = TracerProvider()
+    tracer = provider.get_tracer(__name__)
+    with tracer.start_as_current_span("test-span") as span:
+        trace_id = format(span.get_span_context().trace_id, "032x")
+        formatted = formatter.format(record)
+        assert f"msg [{trace_id}] | custom_field=value" == formatted
+
+
 def test_otel_trace_formatter_extra_fields():
     formatter = OTelTraceFormatter("%(message)s")
     record = logging.LogRecord("test", logging.INFO, "", 0, "msg", (), None)
