@@ -293,7 +293,7 @@ call_tool("gobby-tasks-ops", "save_expansion_spec", {
 
 # 4. Execute expansion per phase with TDD
 call_tool("gobby-tasks-ops", "execute_expansion", {
-    "parent_task_id": phase1["ref"], "tdd": true
+    "parent_task_id": phase1["ref"], "tdd": True
 })
 
 # 5. Wire cross-phase dependencies

@@ -1,4 +1,6 @@
-# Unified Web Chat
+# Unified Web Chat (v1 — Deprecated)
+
+> **Deprecated:** This plan has been superseded by [unified-web-chat-v2.md](unified-web-chat-v2.md). The v2 plan replaces the session management approach with CLI subprocesses and introduces `PendingInteractionManager` for approval flows. See v2 for the canonical `ChatSessionProtocol` design.
 
 ## Overview
 
@@ -362,8 +364,9 @@ def _classify_event(data: dict[str, Any]) -> StreamEvent:
     ...
 ```
 
-**Claude stream-json schema reference (verified April 2026):**
-```
+**Expected Claude stream-json schema (to be verified during implementation):**
+
+```text
 system/init → system/hook_* → assistant{content:[{type:"thinking"|"text"|"tool_use"}]} → rate_limit_event → result
 ```
 

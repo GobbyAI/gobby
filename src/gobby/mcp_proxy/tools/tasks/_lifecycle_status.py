@@ -437,20 +437,23 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
             reset_validation: Also reset validation fail count (default: False)
 
         Returns:
-            Updated task details on success, or error dict.
+            Empty dict on success, or error dict with details.
         """
+        from gobby.utils.session_context import get_current_session_id
+
+        session_id = get_current_session_id()
+
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
-            return {"success": False, "error": f"Invalid task_id: {e}"}
+            return {"error": f"Invalid task_id: {e}"}
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
-            return {"success": False, "error": f"Task {task_id} not found"}
+            return {"error": f"Task {task_id} not found"}
 
         if task.status != "escalated":
             return {
-                "success": False,
                 "error": f"Task {task_id} is not escalated (current status: {task.status})",
             }
 
@@ -464,17 +467,28 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         if reset_validation:
             update_kwargs["validation_fail_count"] = 0
 
-        updated_task = ctx.task_manager.update_task(task.id, **update_kwargs)
+        ctx.task_manager.update_task(task.id, **update_kwargs)
 
-        return {
-            "success": True,
-            "task_id": updated_task.id,
-            "status": updated_task.status,
-            "escalated_at": updated_task.escalated_at,
-            "escalation_reason": updated_task.escalation_reason,
-            "de_escalation_reason": reason,
-            "validation_reset": reset_validation,
-        }
+        notify_parent_on_status_change(
+            ctx.task_manager.db,
+            resolved_id,
+            "open",
+            task_ref=f"#{task.seq_num}" if task.seq_num else None,
+        )
+
+        # Link task to session (best-effort)
+        if session_id:
+            resolved_session_id = session_id
+            try:
+                resolved_session_id = ctx.resolve_session_id(session_id)
+            except ValueError:
+                pass
+            try:
+                ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "de_escalated")
+            except Exception as e:
+                logger.debug(f"Best-effort de-escalation linking failed: {e}")
+
+        return {}
 
     registry.register(
         name="de_escalate_task",

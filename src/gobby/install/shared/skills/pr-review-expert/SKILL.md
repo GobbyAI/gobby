@@ -175,8 +175,8 @@ grep -n "\.find\|\.findOne\|\.query\|db\." /tmp/pr-$PR.diff | grep "^+" | head -
 # Unbounded loops
 grep -n "while (True\|while True" /tmp/pr-$PR.diff | grep "^+"
 
-# Missing await
-grep -n "await.*await" /tmp/pr-$PR.diff | grep "^+" | head -10
+# Missing await — regex is unreliable for this; use a linter or AST tool
+# (e.g., pylint, ESLint no-floating-promises, or ruff async checks) instead
 ```
 
 ## Complete Review Checklist

@@ -4,6 +4,14 @@
 
 Replace the SDK-backed and Codex-specific web chat with a unified architecture where all three CLIs (Claude, Gemini, Codex) are driven as subprocesses behind a single `ChatSessionProtocol`. Provider-switchable from the frontend. Source identity normalized to bare providers + `session_type` column.
 
+## Relationship to unified-web-chat.md (v1)
+
+This plan (v2) **supersedes** the original `docs/plans/unified-web-chat.md`:
+
+- **Superseded:** Session management (replaced by CLI subprocess approach), approval flow (replaced by `PendingInteractionManager`), `ChatSessionProtocol` design (v2 is the canonical version)
+- **Still valid:** Stream JSON parser design (adopted with minor changes in Phase 1.1), provider availability detection (adopted in Phase 4.1)
+- **v1 status:** Deprecated. A deprecation notice has been added to the v1 document pointing here.
+
 ## Constraints
 
 - `PendingInteractionManager` is the Phase 2 critical path — most other Phase 2 tasks depend on it
@@ -96,8 +104,9 @@ def _classify_event(data: dict[str, Any]) -> StreamEvent:
     ...
 ```
 
-**Claude stream-json schema reference (verified April 2026):**
-```
+**Expected Claude stream-json schema (to be verified during implementation):**
+
+```text
 system/init → system/hook_* → assistant{content:[{type:"thinking"|"text"|"tool_use"}]} → rate_limit_event → result
 ```
 
@@ -125,6 +134,9 @@ class ClaudeCLI:
             raise FileNotFoundError("Claude CLI not found")
         return path
 
+    # Security: only these env vars may be overridden
+    ALLOWED_ENV_OVERRIDES = {"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "CLAUDE_MODEL"}
+
     def session(
         self,
         session_id: str | None = None,
@@ -132,6 +144,17 @@ class ClaudeCLI:
         env_overrides: dict[str, str] | None = None,
     ) -> "CLISession":
         """Create a new multi-turn CLI session."""
+        if env_overrides:
+            disallowed = set(env_overrides) - self.ALLOWED_ENV_OVERRIDES
+            if disallowed:
+                raise ValueError(f"Disallowed env overrides: {disallowed}")
+            # Validate ANTHROPIC_BASE_URL: must be localhost to prevent SSRF
+            base_url = env_overrides.get("ANTHROPIC_BASE_URL", "")
+            if base_url:
+                from urllib.parse import urlparse
+                parsed = urlparse(base_url)
+                if parsed.hostname not in ("localhost", "127.0.0.1"):
+                    raise ValueError(f"ANTHROPIC_BASE_URL must be localhost, got: {parsed.hostname}")
         return CLISession(
             cli_path_resolver=self._resolve_path,
             session_id=session_id,
@@ -256,9 +279,17 @@ def _migrate_v201(self, conn: Connection) -> None:
         "CREATE INDEX idx_pending_interactions_session "
         "ON pending_interactions(session_id, status)"
     )
+    # Enforce single pending interaction per (session_id, kind) at DB level
+    conn.execute(
+        "CREATE UNIQUE INDEX idx_pending_interactions_active "
+        "ON pending_interactions(session_id, kind) "
+        "WHERE status = 'pending'"
+    )
 ```
 
 Update `CURRENT_VERSION` to 201.
+
+> **Implementation note (SQLite version):** The v202 migration that drops `pending_plan_path` should detect SQLite version at runtime (`SELECT sqlite_version()`). If >= 3.35.0, use `ALTER TABLE DROP COLUMN`. Otherwise, use the safe table-recreation pattern (create new table, copy data, drop old, rename).
 
 **Target:** `src/gobby/storage/baseline_schema.sql`
 
@@ -335,6 +366,15 @@ class PendingInteractionManager:
 ```
 
 **Supersession rules:** Before creating a new interaction, `supersede()` expires any existing one of the same `(session_id, kind)`. This is safe because all three providers guarantee single-outstanding-blocking per kind.
+
+**Memory leak prevention:** Every code path must clean up `_waiters`, `_results`, and `_timeouts` entries:
+- `create()` registers a timeout `asyncio.Task` that calls `expire()` on expiration
+- `resolve()` and `expire()` must cancel+pop the timeout task, set the Event, and populate `_results`
+- `wait()` must pop `_results` and `_waiters` after returning the result
+- `cleanup()` must cancel/await all remaining timeout tasks and clear all dicts
+- `expire_all_pending()` on startup reconciles DB state and purges orphaned in-memory entries
+
+**Race condition in `create()`:** Wrap `supersede()` + INSERT in a retry loop (up to 3 attempts) catching `IntegrityError` from the partial unique index (`idx_pending_interactions_active`), with brief backoff between retries. This handles the race between concurrent `supersede()` and INSERT operations.
 
 **Daemon restart:** `expire_all_pending()` called on startup — all pending rows marked expired (fail-closed). Sessions get "approval lost, please retry" on next hook.
 
@@ -518,6 +558,10 @@ if session and session.session_type == "web_chat":
 
     if hook_type == "PreToolUse" and _is_gated_tool(tool_name, session):
         manager: PendingInteractionManager = request.app.state.pending_interaction_manager
+        # Rate limit: prevent thread exhaustion from too many held-open requests
+        MAX_PENDING_PER_SESSION = 3  # configurable
+        if await manager.count_pending(session.id) >= MAX_PENDING_PER_SESSION:
+            return {"decision": "deny", "reason": "too_many_pending"}
         interaction_id = await manager.create(
             session_id=session.id,
             kind="tool",
@@ -575,6 +619,12 @@ async def _create_chat_session_inner(
     if not effective_provider:
         agent = await resolve_agent(cli_source="claude", ...)
         effective_provider = getattr(agent, "provider", None)
+
+    # Verify CLI is installed before routing to CLI session (reuse Phase 4.1 logic)
+    if effective_provider and effective_provider != "claude":
+        if not await check_provider_available(effective_provider):
+            logger.warning(f"Provider {effective_provider} not available, falling back to SDK")
+            effective_provider = None
 
     match effective_provider:
         case "claude":
@@ -770,7 +820,7 @@ class GeminiCLIChatSession:
     async def switch_model(self, new_model: str) -> None: ...
 ```
 
-**Resume:** Gemini `--resume <id>` is provisional — verify actual behavior. If resume doesn't work, sessions are observable-only (no continue).
+**Resume:** Gemini `--resume <id>` is provisional — verify actual behavior. If resume doesn't work, sessions are observable-only (no continue). Resume absence does **not** block provider switching — Phase 4.2 creates new sessions on switch (old sessions remain backgrounded). Phase 2.9 WebSocket rebroadcasting is independent of resume support and only replays already-seen interactions.
 
 **Verification:** Unit tests with mocked `GeminiACPClient`. Integration test if Gemini CLI is available.
 
@@ -911,6 +961,13 @@ Wire provider picker to use `switchProvider`. Fetch available providers from `GE
 | Viewed session (`viewingSessionId`) | Preserved (independent) |
 | Attached session (`attachedSessionId`) | Detached |
 
+**Session lifecycle rules:**
+- Keep background subprocess alive for configurable timeout (e.g., 5 minutes) to allow fast switch-back
+- Auto-deny pending approvals in background sessions with "Provider switched" message
+- Terminate background subprocess after timeout, leaving session read-only
+- New sessions start with empty context (no history transfer)
+- Old session visible in activity panel with "(Provider: {old_provider})" suffix
+
 **Verification:** Switch from Claude to Gemini → new session created, old session visible in activity. Switch back → another new session. Pending approvals in background session expire via timeout.
 
 ### 4.3 Wire local LLM support via ANTHROPIC_BASE_URL [category: code] (depends: 2.3)
@@ -922,13 +979,23 @@ When a local LLM endpoint is configured, pass `ANTHROPIC_BASE_URL` to the Claude
 In `CLIChatSession.__init__` or `start()`:
 
 ```python
-# Check daemon config for local LLM endpoint
-local_endpoint = config.get("local_llm_endpoint")
-if local_endpoint and self.provider == "claude":
-    self._env_overrides["ANTHROPIC_BASE_URL"] = local_endpoint
+# Read from DaemonConfig.local_llm (not ad-hoc config key)
+if config.local_llm.enabled and self.provider == "claude":
+    endpoint = config.local_llm.endpoint
+    # Validate: must be http(s), host must be localhost/127.0.0.1
+    self._env_overrides["ANTHROPIC_BASE_URL"] = endpoint
 ```
 
-**Target:** Configuration — determine where `local_llm_endpoint` is stored. Could be in `DaemonConfig` (`src/gobby/config/app.py`) or a project-level setting.
+**Target:** `src/gobby/config/app.py` — add `local_llm` section to `DaemonConfig`:
+
+```python
+class LocalLLMConfig(BaseModel):
+    enabled: bool = False
+    endpoint: str = ""  # Validated: http(s), localhost/127.0.0.1 only
+    providers: list[str] = ["claude"]  # Which providers support local LLM
+```
+
+**Validation:** Endpoint must be http(s) with localhost/127.0.0.1 host (SSRF prevention). Test connection with timeout on startup. Migration path: existing configs without `local_llm` get defaults (`enabled=false`).
 
 **Verification:** With local endpoint configured → Claude CLI subprocess receives `ANTHROPIC_BASE_URL` in env. Without config → no env override (uses Anthropic API). Other providers unaffected.
 

@@ -177,7 +177,7 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
 
 def create_reindex_registry(ctx: RegistryContext) -> InternalToolRegistry:
-    """Create a registry with the reindex_tasks tool (gobby-tasks-ops).
+    """Create a registry with the reindex_tasks tool (gobby-tasks-reindex).
 
     Args:
         ctx: Shared registry context

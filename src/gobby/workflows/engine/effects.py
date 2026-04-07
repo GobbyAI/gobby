@@ -90,7 +90,7 @@ class EffectsMixin:
             # Background calls are always deferred regardless of inject_result.
             if effect.inject_result and not effect.background and self._mcp_dispatcher:
                 event = ctx.get("event")
-                try:
+                try:  # Broad catch intentional — external MCP dispatcher is an opaque async callable
                     dr = await self._mcp_dispatcher(
                         effect.server, effect.tool, rendered_args, event
                     )

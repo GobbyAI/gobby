@@ -272,29 +272,28 @@ def run_pipeline(
     display_name = name or (pipeline.name if pipeline else None) or "pipeline"
 
     # Try daemon first (has MCP tool access and LLM service)
-    if name:
-        daemon_result = _try_daemon_run(name, input_dict, project_id)
-        if daemon_result is not None:
-            status = daemon_result.get("status", "")
-            if status == "waiting_approval":
-                if json_format:
-                    click.echo(json.dumps(daemon_result, indent=2))
-                else:
-                    click.echo(f"⏸ Pipeline '{display_name}' waiting for approval")
-                    click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
-                    click.echo(f"  Step: {daemon_result.get('step_id', '')}")
-                    click.echo(f"  Message: {daemon_result.get('message', '')}")
-                    token = daemon_result.get("token", "")
-                    click.echo(f"\nTo approve: gobby pipelines approve {token}")
-                    click.echo(f"To reject:  gobby pipelines reject {token}")
-                return
+    daemon_result = _try_daemon_run(name, input_dict, project_id)
+    if daemon_result is not None:
+        status = daemon_result.get("status", "")
+        if status == "waiting_approval":
             if json_format:
                 click.echo(json.dumps(daemon_result, indent=2))
             else:
-                click.echo(f"✓ Pipeline '{display_name}' completed")
+                click.echo(f"⏸ Pipeline '{display_name}' waiting for approval")
                 click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
-                click.echo(f"  Status: {status}")
+                click.echo(f"  Step: {daemon_result.get('step_id', '')}")
+                click.echo(f"  Message: {daemon_result.get('message', '')}")
+                token = daemon_result.get("token", "")
+                click.echo(f"\nTo approve: gobby pipelines approve {token}")
+                click.echo(f"To reject:  gobby pipelines reject {token}")
             return
+        if json_format:
+            click.echo(json.dumps(daemon_result, indent=2))
+        else:
+            click.echo(f"✓ Pipeline '{display_name}' completed")
+            click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
+            click.echo(f"  Status: {status}")
+        return
 
     # Fall back to local executor (no MCP tool access)
     executor = get_pipeline_executor()

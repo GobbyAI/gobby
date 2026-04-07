@@ -318,7 +318,7 @@ class HookManagerFactory:
     @staticmethod
     def _build_inline_mcp_dispatcher(
         tool_proxy_getter: Any | None,
-    ) -> Any:
+    ) -> Callable[..., Any] | None:
         """Build an async dispatcher for inline mcp_call effects.
 
         Used by the rule engine to dispatch inject_result mcp_calls within

@@ -42,7 +42,7 @@ fn roundtrip_serialization() -> anyhow::Result<()> {
 
 ## Integration Test Structure
 
-```
+```text
 tests/
 ├── common/
 │   └── mod.rs          # Shared helpers, test fixtures

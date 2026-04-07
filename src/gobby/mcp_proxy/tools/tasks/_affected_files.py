@@ -88,6 +88,9 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
                 "files": [],
             }
 
+        # Resolve repo path for git commands
+        repo_path = ctx.get_project_repo_path(task.project_id)
+
         # Collect changed files from each commit
         all_files: set[str] = set()
         commits_processed = 0
@@ -98,6 +101,7 @@ def create_core_affected_files_registry(ctx: "RegistryContext") -> InternalToolR
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    cwd=repo_path,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     all_files.update(result.stdout.strip().split("\n"))

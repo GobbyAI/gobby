@@ -631,7 +631,7 @@ class TestTranslateFromHookResponse:
                 "_first_hook_for_session": False,
             },
         )
-        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+        result = adapter.translate_from_hook_response(response, hook_type="BeforeTool")
         assert "hookSpecificOutput" not in result
 
 

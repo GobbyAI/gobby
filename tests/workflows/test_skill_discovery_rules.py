@@ -8,6 +8,7 @@ and evaluate conditions properly.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,7 +36,13 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 
 def _sync_bundled(db):
-    """Sync bundled rules from the real rules directory."""
+    """Sync bundled rules and coerce source to 'installed' for test evaluation.
+
+    sync_bundled_rules() imports templates with source='template', but the rule
+    engine (list_rules_by_event) filters out template-sourced rules. Tests need
+    rules to evaluate, so we coerce source to 'installed' to simulate activation
+    via install_from_template().
+    """
     from gobby.workflows.sync import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
@@ -139,7 +146,7 @@ class TestInjectPythonSkillCondition:
     ) -> bool:
         context = {
             "variables": {"injected_skills": injected_skills or []},
-            "event": type("E", (), {"data": {"tool_name": tool_name}})(),
+            "event": SimpleNamespace(data={"tool_name": tool_name}),
             "tool_input": {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)
@@ -220,7 +227,7 @@ class TestInjectRustSkillCondition:
     ) -> bool:
         context = {
             "variables": {"injected_skills": injected_skills or []},
-            "event": type("E", (), {"data": {"tool_name": tool_name}})(),
+            "event": SimpleNamespace(data={"tool_name": tool_name}),
             "tool_input": {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)

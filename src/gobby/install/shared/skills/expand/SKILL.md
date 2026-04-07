@@ -153,7 +153,7 @@ for phase in phases:
         continue
 
     call_tool("gobby-tasks-ops", "execute_expansion", {
-        "parent_task_id": phase_ref, "tdd": true
+        "parent_task_id": phase_ref, "tdd": True
     })
 
     call_tool("gobby-tasks-ops", "wire_affected_files_from_spec", {

@@ -106,8 +106,8 @@ let port: Option<u16> = config
     .get("port")
     .and_then(|v| v.parse().ok());
 
-// Convert Option to Result
-let port: Result<u16, AppError> = config
+// Convert Option to Result, then unwrap with ?
+let port: u16 = config
     .get("port")
     .ok_or(AppError::MissingField("port"))?;
 
