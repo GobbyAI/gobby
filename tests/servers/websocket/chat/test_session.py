@@ -196,6 +196,36 @@ class TestCreateChatSessionInner:
             assert mock_session._accumulated_output_tokens == 500
 
     @pytest.mark.asyncio
+    async def test_register_passes_session_type_web_chat(self, mixin: DummyMixin):
+        """Web chat sessions must register with session_type='web_chat'."""
+        with (
+            patch("gobby.servers.websocket.chat._session.ChatSession") as MockSessionClass,
+            patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
+        ):
+            mock_session = AsyncMock()
+            mock_session.chat_mode = "code"
+            mock_session.db_session_id = None
+            mock_session.resume_session_id = None
+            mock_session.project_path = None
+            mock_session.project_id = None
+            mock_session.system_prompt_override = None
+            MockSessionClass.return_value = mock_session
+
+            mock_db_sess = MagicMock()
+            mock_db_sess.id = "db-id-456"
+            mock_db_sess.usage_output_tokens = 0
+            mock_db_sess.chat_mode = "plan"
+
+            mixin.session_manager = MagicMock()
+            mixin.session_manager.register.return_value = mock_db_sess
+
+            await mixin._create_chat_session_inner("conv-web")
+
+            mixin.session_manager.register.assert_called_once()
+            call_kwargs = mixin.session_manager.register.call_args
+            assert call_kwargs.kwargs.get("session_type") == "web_chat"
+
+    @pytest.mark.asyncio
     async def test_fire_session_end(self, mixin: DummyMixin):
         mixin._fire_lifecycle = AsyncMock()
         await mixin._fire_session_end("conv-end")
