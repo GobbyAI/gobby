@@ -1111,3 +1111,22 @@ CREATE TABLE checkpoints (
 CREATE INDEX idx_checkpoints_task ON checkpoints(task_id, created_at DESC);
 CREATE INDEX idx_checkpoints_session ON checkpoints(session_id);
 CREATE INDEX idx_checkpoints_run ON checkpoints(run_id);
+
+CREATE TABLE pending_interactions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    tool_name TEXT,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decision TEXT,
+    response_json TEXT,
+    timeout_seconds INTEGER NOT NULL DEFAULT 300,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT
+);
+CREATE INDEX idx_pending_interactions_session ON pending_interactions(session_id, status);
+CREATE UNIQUE INDEX idx_pending_interactions_active
+    ON pending_interactions(session_id, kind)
+    WHERE status = 'pending';

@@ -772,6 +772,33 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Add FTS5 search table for memories",
         _setup_memories_fts,
     ),
+    (
+        202,
+        "Add pending_interactions table for durable approval state",
+        """
+        CREATE TABLE IF NOT EXISTS pending_interactions (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            tool_name TEXT,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            decision TEXT,
+            response_json TEXT,
+            timeout_seconds INTEGER NOT NULL DEFAULT 300,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            resolved_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pending_interactions_session
+            ON pending_interactions(session_id, status);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_interactions_active
+            ON pending_interactions(session_id, kind)
+            WHERE status = 'pending';
+        """,
+    ),
 ]
 
 
