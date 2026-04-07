@@ -82,8 +82,19 @@ export function ChatPage({
   const activity = useActivityPanel();
   const fileChanges = useFileChanges(chat.messages, projectId ?? null);
 
-  // Available LLM providers — hardcoded for now; Phase 3/4 will populate dynamically
-  const availableProviders = ["claude"];
+  // Available LLM providers — fetched from daemon API
+  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/providers")
+      .then((r) => r.json())
+      .then((data) => {
+        const names = (data.providers || [])
+          .filter((p: { available: boolean }) => p.available)
+          .map((p: { name: string }) => p.name);
+        setAvailableProviders(names);
+      })
+      .catch(() => setAvailableProviders(["claude"]));
+  }, []);
 
   // Modals
   const [showCommandPalette, setShowCommandPalette] = useState(false);
