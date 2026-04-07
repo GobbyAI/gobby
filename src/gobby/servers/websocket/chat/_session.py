@@ -197,8 +197,6 @@ class ChatSessionMixin:
         agent_name = pending_agent or "default-web-chat"
         agent_body = None
         session_manager = getattr(self, "session_manager", None)
-        use_codex = False
-
         if session_manager:
             try:
                 from gobby.workflows.agent_resolver import resolve_agent
@@ -210,21 +208,11 @@ class ChatSessionMixin:
                     cli_source="claude_sdk_web_chat",
                     project_id=project_id or PERSONAL_PROJECT_ID,
                 )
-                if agent_body:
-                    sources: list[str] | None = getattr(agent_body, "sources", None)
-                    use_codex = getattr(agent_body, "provider", None) == "codex" or (
-                        sources is not None and "codex_web_chat" in sources
-                    )
             except Exception as e:
                 logger.warning(f"Failed to resolve agent '{agent_name}' for provider check: {e}")
 
-        # Create the right session type
-        if use_codex:
-            from gobby.servers.codex_chat_session import CodexChatSession
-
-            session: ChatSessionProtocol = CodexChatSession(conversation_id=conversation_id)
-        else:
-            session = ChatSession(conversation_id=conversation_id)
+        # Create session — all sessions route to ChatSession (Claude SDK) until CLIChatSession lands
+        session: ChatSessionProtocol = ChatSession(conversation_id=conversation_id)
         if resume_session_id:
             session.resume_session_id = resume_session_id
 
@@ -330,7 +318,7 @@ class ChatSessionMixin:
                     session_manager.register,
                     external_id=conversation_id,
                     machine_id=get_machine_id(),
-                    source="codex_web_chat" if use_codex else "claude_sdk_web_chat",
+                    source="claude",
                     project_id=project_id or PERSONAL_PROJECT_ID,
                 )
                 session.db_session_id = db_session.id
@@ -431,7 +419,7 @@ class ChatSessionMixin:
 
         if agent_body and session_manager:
             try:
-                cli_source = "codex_web_chat" if use_codex else "claude_sdk_web_chat"
+                cli_source = "claude"
                 context_parts: list[str] = []
                 preamble = agent_body.build_prompt_preamble()
                 if preamble:
