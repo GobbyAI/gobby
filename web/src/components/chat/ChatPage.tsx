@@ -148,11 +148,16 @@ export function ChatPage({
       const headingMatch = content.match(/^#\s+(.+)$/m);
       const title = headingMatch?.[1]?.trim() || "Implementation Plan";
 
-      if (planArtifactIdRef.current && artifacts.has(planArtifactIdRef.current)) {
+      if (
+        planArtifactIdRef.current &&
+        artifacts.has(planArtifactIdRef.current)
+      ) {
         updateArtifact(planArtifactIdRef.current, content);
         openArtifact(planArtifactIdRef.current);
       } else {
-        const id = createArtifact("text", content, "markdown", title, { isPlan: true });
+        const id = createArtifact("text", content, "markdown", title, {
+          isPlan: true,
+        });
         planArtifactIdRef.current = id;
       }
       setPlanPendingLocal(true);
@@ -310,9 +315,7 @@ export function ChatPage({
               id="provider-select"
               className="bg-background border border-border rounded px-2 py-0.5 text-xs"
               value={chat.provider ?? ""}
-              onChange={(e) =>
-                chat.onProviderChange?.(e.target.value || null)
-              }
+              onChange={(e) => chat.onProviderChange?.(e.target.value || null)}
             >
               <option value="">Auto</option>
               {availableProviders.map((p) => (
@@ -407,7 +410,7 @@ export function ChatPage({
         planPendingApproval={
           (planPendingLocal || chat.planPendingApproval) &&
           activeArtifact?.id === planArtifactIdRef.current &&
-          activeArtifact?.type === 'text'
+          activeArtifact?.type === "text"
         }
         onApprovePlan={handleApprovePlan}
         onRequestPlanChanges={handleRequestPlanChanges}
@@ -419,6 +422,7 @@ export function ChatPage({
         projectId={projectId}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
+        onViewSession={chat.viewSession}
         chatSessionId={chat.dbSessionId}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}

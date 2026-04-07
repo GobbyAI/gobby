@@ -1,7 +1,16 @@
 """Codex CLI-backed web chat session via app-server protocol.
 
-Mirrors CLIChatSession but wraps the Codex CLI subprocess for web chat.
-Normalizes Codex app-server events to ChatEvent.
+Spawns ``codex app-server`` and communicates via JSON-RPC 2.0 over stdio.
+The protocol requires an initialize handshake, thread creation via
+thread/start, and turn execution via turn/start. Streaming content arrives
+as agent/messageDelta notifications.
+
+Protocol lifecycle:
+  1. initialize  →  handshake with client info
+  2. thread/start  →  create a conversation thread
+  3. turn/start  →  send user input, receive streaming notifications
+  4. agent/messageDelta  →  streaming text content
+  5. turn/completed  →  turn finished with usage data
 """
 
 from __future__ import annotations
@@ -10,7 +19,6 @@ import asyncio
 import json
 import logging
 import shutil
-import signal
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +30,15 @@ from gobby.llm.claude_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# JSON-RPC request ID counter
+_next_id = 0
+
+
+def _make_id() -> int:
+    global _next_id
+    _next_id += 1
+    return _next_id
 
 
 def _extract_text(content: str | list[dict[str, Any]]) -> str:
@@ -38,8 +55,9 @@ def _extract_text(content: str | list[dict[str, Any]]) -> str:
 class CodexCLIChatSession:
     """Codex CLI-backed web chat session implementing ChatSessionProtocol.
 
-    Wraps the Codex CLI subprocess. Lifecycle hooks and approvals are
-    handled via PendingInteractionManager, not in this class.
+    Spawns ``codex app-server`` and communicates via JSON-RPC 2.0 over stdio.
+    Lifecycle hooks and approvals are handled via PendingInteractionManager,
+    not in this class.
     """
 
     provider: str = "codex"
@@ -110,17 +128,80 @@ class CodexCLIChatSession:
     def model(self) -> str | None:
         return self._model
 
+    async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Send a JSON-RPC request and wait for the response.
+
+        Skips any notifications (no "id" field) received before the response.
+
+        Args:
+            method: The JSON-RPC method name.
+            params: The request parameters.
+
+        Returns:
+            The result dict from the JSON-RPC response.
+
+        Raises:
+            RuntimeError: If the process is not running or returns an error.
+        """
+        if not self._process or not self._process.stdin or not self._process.stdout:
+            raise RuntimeError("CodexCLIChatSession process not available")
+
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": _make_id(),
+        }
+
+        request_line = json.dumps(request) + "\n"
+        self._process.stdin.write(request_line.encode())
+        await self._process.stdin.drain()
+        logger.debug(f"Sent Codex request: {method}")
+
+        # Read lines until we get a JSON-RPC response (has "id" field)
+        while True:
+            line = await self._process.stdout.readline()
+            if not line:
+                raise RuntimeError(f"EOF while waiting for {method} response")
+
+            line_str = line.decode().strip()
+            if not line_str:
+                continue
+
+            try:
+                data = json.loads(line_str)
+            except json.JSONDecodeError:
+                logger.warning(f"Non-JSON line during {method}: {line_str[:200]}")
+                continue
+
+            # JSON-RPC response has "id" field
+            if "id" in data:
+                if "error" in data:
+                    err = data["error"]
+                    raise RuntimeError(f"Codex {method} error: {err.get('message', err)}")
+                return data.get("result", {})
+
+            # Skip notifications during handshake
+            logger.debug(f"Skipping notification during {method}: {data.get('method', 'unknown')}")
+
     async def start(self, model: str | None = None) -> None:
-        """Spawn Codex CLI subprocess."""
+        """Spawn ``codex app-server``, perform initialize handshake, and create thread.
+
+        Args:
+            model: Optional model override.
+
+        Raises:
+            FileNotFoundError: If Codex CLI is not found.
+            RuntimeError: If handshake or thread creation fails.
+        """
         path = shutil.which("codex")
         if not path:
             raise FileNotFoundError("Codex CLI not found")
 
-        cmd = [path]
-        if model or self._model:
-            cmd.extend(["--model", model or self._model or ""])
-        if self._thread_id:
-            cmd.extend(["resume", self._thread_id])
+        if model:
+            self._model = model
+
+        cmd = [path, "app-server"]
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -128,20 +209,83 @@ class CodexCLIChatSession:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        logger.debug(f"Codex app-server started (pid={self._process.pid})")
+
+        # Initialize handshake
+        init_result = await self._send_request(
+            "initialize",
+            {
+                "clientInfo": {
+                    "name": "gobby",
+                    "version": "1.0.0",
+                },
+            },
+        )
+        logger.debug(f"Codex initialize response: {init_result}")
+
+        # Create or resume thread
+        if self._thread_id:
+            # Resume existing thread
+            await self._send_request(
+                "thread/resume",
+                {"threadId": self._thread_id},
+            )
+        else:
+            thread_params: dict[str, Any] = {
+                "cwd": self.project_path or ".",
+            }
+            if self._model:
+                thread_params["model"] = self._model
+
+            thread_result = await self._send_request("thread/start", thread_params)
+            self._thread_id = thread_result.get("threadId")
+            logger.debug(f"Codex thread ID: {self._thread_id}")
+
         self._connected = True
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
-        """Send message to Codex CLI and stream responses."""
+        """Send a message via turn/start and stream responses.
+
+        Sends a turn/start JSON-RPC request, then reads notifications:
+        - agent/messageDelta: streaming text → TextChunk
+        - turn/completed: turn finished → DoneEvent
+
+        Args:
+            content: Plain text or content block list.
+
+        Yields:
+            ChatEvent instances (TextChunk, DoneEvent).
+
+        Raises:
+            RuntimeError: If session is not started.
+        """
         text = _extract_text(content)
         if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError("CodexCLIChatSession not started")
 
-        self._process.stdin.write((text + "\n").encode())
+        # Send turn/start request
+        turn_params: dict[str, Any] = {
+            "threadId": self._thread_id,
+            "input": [{"type": "text", "text": text}],
+        }
+        if self._model:
+            turn_params["model"] = self._model
+
+        request = {
+            "jsonrpc": "2.0",
+            "method": "turn/start",
+            "params": turn_params,
+            "id": _make_id(),
+        }
+
+        request_line = json.dumps(request) + "\n"
+        self._process.stdin.write(request_line.encode())
         await self._process.stdin.drain()
         self.message_index += 1
         self.last_activity = datetime.now(UTC)
+        logger.debug(f"Sent turn/start to Codex: {text[:80]!r}")
 
-        # Read NDJSON lines from stdout and normalize to ChatEvent
+        # Read streaming notifications until turn/completed or response
         while True:
             raw_line = await self._process.stdout.readline()
             if not raw_line:
@@ -154,14 +298,29 @@ class CodexCLIChatSession:
             except json.JSONDecodeError:
                 continue
 
-            event_type = data.get("type", "")
+            # JSON-RPC response (has "id") = turn/start acknowledgment or final
+            if "id" in data:
+                if "error" in data:
+                    err = data["error"]
+                    yield TextChunk(content=f"Error: {err.get('message', err)}")
+                    yield DoneEvent(tool_calls_count=0)
+                    break
+                # turn/start response just acknowledges — keep reading notifications
+                continue
 
-            if "delta" in event_type:
-                text_content = data.get("delta", {}).get("content", "") or data.get("content", "")
-                if text_content:
-                    yield TextChunk(content=text_content)
-            elif event_type == "turn.completed":
-                usage = data.get("usage", {})
+            # JSON-RPC notification (no "id")
+            method = data.get("method", "")
+            params = data.get("params", {})
+
+            if method == "agent/messageDelta":
+                # Streaming text content
+                delta = params.get("delta", "")
+                if delta:
+                    yield TextChunk(content=delta)
+
+            elif method == "turn/completed":
+                # Turn finished — extract usage data
+                usage = params.get("usage", {})
                 yield DoneEvent(
                     tool_calls_count=0,
                     cost_usd=float(usage.get("cost_usd", 0.0)),
@@ -170,20 +329,62 @@ class CodexCLIChatSession:
                 )
                 break
 
+            elif method == "turn/started":
+                # Turn started notification — informational, skip
+                logger.debug(f"Codex turn started: {params.get('turnId', 'unknown')}")
+
+            elif method == "item/started" or method == "item/completed":
+                # Item lifecycle — skip for now
+                logger.debug(f"Codex {method}: {params.get('itemId', 'unknown')}")
+
+            elif method == "thread/closed":
+                # Thread closed unexpectedly
+                yield DoneEvent(tool_calls_count=0)
+                break
+
     async def interrupt(self) -> None:
-        """Send interrupt signal to Codex process."""
-        if self._process:
-            self._process.send_signal(signal.SIGINT)
+        """Send cancel request to interrupt current turn."""
+        if self._process and self._process.stdin and self._thread_id:
+            try:
+                cancel_request = {
+                    "jsonrpc": "2.0",
+                    "method": "turn/cancel",
+                    "params": {"threadId": self._thread_id},
+                    "id": _make_id(),
+                }
+                line = json.dumps(cancel_request) + "\n"
+                self._process.stdin.write(line.encode())
+                await self._process.stdin.drain()
+            except Exception as e:
+                logger.debug(f"Codex interrupt error: {e}")
 
     async def drain_pending_response(self) -> None:
         pass
 
     async def stop(self) -> None:
-        """Terminate Codex CLI process."""
+        """Terminate Codex app-server process."""
         if self._process:
-            self._process.terminate()
-            await self._process.wait()
-            self._connected = False
+            try:
+                if self._process.returncode is None:
+                    if self._process.stdin:
+                        try:
+                            self._process.stdin.close()
+                        except Exception:
+                            pass
+                    self._process.terminate()
+                    try:
+                        await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                    except TimeoutError:
+                        self._process.kill()
+                        await self._process.wait()
+            except ProcessLookupError:
+                pass
+            except Exception as e:
+                logger.debug(f"Codex stop error: {e}")
+            finally:
+                self._process = None
+                self._connected = False
+                self._thread_id = None
 
     async def switch_model(self, new_model: str) -> None:
         self._model = new_model

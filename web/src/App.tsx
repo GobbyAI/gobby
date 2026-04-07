@@ -497,10 +497,7 @@ export default function App() {
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
-  const agentDefs = useAgentDefinitions(
-    effectiveProjectId,
-    "claude",
-  );
+  const agentDefs = useAgentDefinitions(effectiveProjectId, "claude");
 
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {
@@ -877,7 +874,12 @@ export default function App() {
   useEffect(() => {
     handleVoiceMessageRef.current = voice.handleVoiceMessage;
     handleBinaryMessageRef.current = voice.handleBinaryMessage;
-  }, [voice.handleVoiceMessage, voice.handleBinaryMessage, handleVoiceMessageRef, handleBinaryMessageRef]);
+  }, [
+    voice.handleVoiceMessage,
+    voice.handleBinaryMessage,
+    handleVoiceMessageRef,
+    handleBinaryMessageRef,
+  ]);
 
   // Wire backend-initiated mode changes (e.g. agent EnterPlanMode/ExitPlanMode)
   // to update the settings slider
@@ -1093,7 +1095,12 @@ export default function App() {
   const navItems = [
     { id: "chat", label: "Chat", icon: <ChatIcon /> },
     { id: "sessions", label: "Sessions", icon: <SessionsIcon /> },
-    { id: "dashboard", label: "Dashboard", icon: <DashboardIcon />, separator: true },
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      icon: <DashboardIcon />,
+      separator: true,
+    },
     { id: "projects", label: "Project", icon: <ProjectsIcon /> },
     { id: "tasks", label: "Tasks", icon: <TasksIcon /> },
     { id: "workflows", label: "Workflows", icon: <WorkflowsIcon /> },
@@ -1232,6 +1239,7 @@ export default function App() {
                   attachedSessionMeta,
                   onAttachToViewed: attachToViewed,
                   onDetachFromSession: detachFromSession,
+                  viewSession,
                   activeAgent,
                   onAgentChange: sendAgentChange,
                   provider: selectedProvider,

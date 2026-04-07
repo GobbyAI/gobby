@@ -1,4 +1,10 @@
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import {
   TooltipProvider,
   Tooltip,
@@ -116,7 +122,7 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
   },
 ];
 
-const noopFetchDiff = async (): Promise<string> => '';
+const noopFetchDiff = async (): Promise<string> => "";
 
 const STORAGE_KEY_PINNED = "gobby-activity-panel-pinned";
 const STORAGE_KEY_WIDTH = "gobby-activity-panel-width";
@@ -154,6 +160,7 @@ interface ActivityPanelProps {
   // Sessions tab
   onKillAgent?: (runId: string) => void;
   onExpireSession?: (sessionId: string) => void;
+  onViewSession?: (sessionId: string) => void;
   chatSessionId?: string | null;
   isMobile?: boolean;
 }
@@ -183,6 +190,7 @@ export function ActivityPanel({
   onAddFileToChat,
   onKillAgent,
   onExpireSession,
+  onViewSession,
   chatSessionId,
   isMobile = false,
 }: ActivityPanelProps) {
@@ -199,6 +207,7 @@ export function ActivityPanel({
             projectId={projectId}
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
+            onViewSession={onViewSession}
             chatSessionId={chatSessionId ?? undefined}
             isMobile={useOverlay}
           />
@@ -231,7 +240,13 @@ export function ActivityPanel({
           />
         );
       case "canvas":
-        return <CanvasTab state={canvasState} onClose={onCloseCanvas} onClearAll={onClearCanvas} />;
+        return (
+          <CanvasTab
+            state={canvasState}
+            onClose={onCloseCanvas}
+            onClearAll={onClearCanvas}
+          />
+        );
       default:
         return null;
     }
