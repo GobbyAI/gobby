@@ -91,9 +91,11 @@ def _classify_event(data: dict[str, Any]) -> StreamEvent:
         )
 
     if event_type == "assistant":
+        message = data.get("message", {})
+        content_blocks = message.get("content", data.get("content", []))
+
         if data.get("delta"):
             # Delta event -- extract first content block info
-            content_blocks = data.get("content", [])
             block_type = ""
             text = ""
             tool_name: str | None = None
@@ -119,8 +121,8 @@ def _classify_event(data: dict[str, Any]) -> StreamEvent:
         # Full message complete
         return MessageComplete(
             raw=data,
-            content=data.get("content", []),
-            stop_reason=data.get("stop_reason", ""),
+            content=content_blocks,
+            stop_reason=message.get("stop_reason", data.get("stop_reason", "")),
         )
 
     if event_type == "rate_limit_event":
@@ -130,12 +132,13 @@ def _classify_event(data: dict[str, Any]) -> StreamEvent:
         )
 
     if event_type == "result":
+        # Tokens may be at top level or nested under usage
         usage = data.get("usage", {})
         return ResultEvent(
             raw=data,
             cost_usd=float(data.get("cost_usd", 0.0)),
-            input_tokens=int(usage.get("input_tokens", 0)),
-            output_tokens=int(usage.get("output_tokens", 0)),
+            input_tokens=int(data.get("input_tokens", usage.get("input_tokens", 0))),
+            output_tokens=int(data.get("output_tokens", usage.get("output_tokens", 0))),
             session_id=data.get("session_id", ""),
         )
 
