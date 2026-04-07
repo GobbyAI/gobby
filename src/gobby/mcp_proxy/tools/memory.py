@@ -158,6 +158,7 @@ def create_memory_registry(
     async def search_memories(
         query: str | None = None,
         limit: int = 10,
+        min_score: float = 0.0,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
@@ -168,6 +169,7 @@ def create_memory_registry(
         Args:
             query: Search query string
             limit: Maximum number of memories to return
+            min_score: Minimum similarity score (0.0-1.0). Memories below this are excluded.
             tags_all: Memory must have ALL of these tags
             tags_any: Memory must have at least ONE of these tags
             tags_none: Memory must have NONE of these tags
@@ -177,6 +179,7 @@ def create_memory_registry(
                 query=query,
                 project_id=get_current_project_id(),
                 limit=limit,
+                min_score=min_score if min_score > 0 else memory_manager.config.min_recall_score,
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,

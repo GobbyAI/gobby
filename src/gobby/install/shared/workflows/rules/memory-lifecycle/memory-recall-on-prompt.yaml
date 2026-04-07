@@ -11,6 +11,7 @@ rules:
         server: gobby-memory
         tool: search_memories
         arguments:
-          limit: 5
+          limit: 2
+          min_score: 0.35
         background: false
         inject_result: true

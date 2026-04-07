@@ -513,6 +513,7 @@ class MemoryManager:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        min_score: float | None = None,
     ) -> list[Memory]:
         """
         Retrieve memories via VectorStore + optional Neo4j graph search.
@@ -535,6 +536,7 @@ class MemoryManager:
         if query and self._vector_store and self._embed_fn:
             query_embedding = await self._embed_fn(query, is_query=True)
             half_life = getattr(self.config, "temporal_decay_half_life_days", 30.0)
+            effective_min_score = min_score if min_score is not None else 0.0
 
             # Build filters for VectorStore
             filters: dict[str, Any] = {}
@@ -580,6 +582,14 @@ class MemoryManager:
                 else:
                     graph_ranked = graph_result
 
+                # Pre-filter Qdrant results by minimum score threshold
+                if effective_min_score > 0:
+                    qdrant_results = [
+                        (mid, score)
+                        for mid, score in qdrant_results
+                        if score >= effective_min_score
+                    ]
+
                 # Build Qdrant ranked list (by score)
                 qdrant_ranked = [mid for mid, _ in qdrant_results]
 
@@ -616,7 +626,9 @@ class MemoryManager:
                     scored.append((mem, base_score))
 
                 scored.sort(key=lambda x: x[1], reverse=True)
-                memories = [m for m, _ in scored[:limit]]
+                for mem, score in scored[:limit]:
+                    mem.similarity = score
+                memories = [mem for mem, _ in scored[:limit]]
             else:
                 # Qdrant-only path (no graph search)
                 results = await self._vector_store.search(
@@ -642,10 +654,13 @@ class MemoryManager:
 
                     boosted = score * _USER_SOURCE_BOOST if mem.source_type == "user" else score
                     boosted *= temporal_decay(mem.updated_at, half_life)
-                    scored.append((mem, boosted))
+                    if boosted >= effective_min_score:
+                        scored.append((mem, boosted))
 
                 scored.sort(key=lambda x: x[1], reverse=True)
-                memories = [m for m, _ in scored[:limit]]
+                for mem, s in scored[:limit]:
+                    mem.similarity = s
+                memories = [mem for mem, _ in scored[:limit]]
         else:
             # No query or no VectorStore: list from SQLite
             memories = self.storage.list_memories(
