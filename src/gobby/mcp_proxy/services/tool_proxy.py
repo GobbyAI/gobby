@@ -1,6 +1,5 @@
 """Tool proxy service."""
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -328,12 +327,29 @@ class ToolProxyService:
         server_name = self._resolve_server_name(server_name)
         arguments = arguments or {}
         if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except (json.JSONDecodeError, TypeError):
+            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
+
+            parsed = coerce_string_arguments(arguments)
+            if parsed is not None:
+                arguments = parsed
+            else:
+                # Provide a more specific error when the JSON is valid but
+                # not a dict (e.g. a list or scalar).
+                import json as _json
+
+                try:
+                    val = _json.loads(arguments)
+                    type_name = type(val).__name__
+                except (ValueError, TypeError):
+                    type_name = None
+
+                if type_name:
+                    error_msg = f"Invalid arguments: expected dict, got {type_name}"
+                else:
+                    error_msg = "Invalid arguments: expected dict, got string that isn't valid JSON"
                 return {
                     "success": False,
-                    "error": "Invalid arguments: expected dict, got string that isn't valid JSON",
+                    "error": error_msg,
                     "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
                 }
         # Strip call_tool's own parameters that LLMs sometimes flatten into

@@ -221,11 +221,15 @@ class GobbyDaemonTools:
             session_token = set_session_context(
                 SessionContext(session_id=session_id, conversation_id=conversation_id)
             )
-        # Coerce string arguments to dict (agents often stringify JSON)
+        # Coerce string arguments to dict (agents often stringify JSON,
+        # sometimes with literal \" escapes instead of proper quotes)
         if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except (json.JSONDecodeError, TypeError):
+            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
+
+            parsed = coerce_string_arguments(arguments)
+            if parsed is not None:
+                arguments = parsed
+            else:
                 return CallToolResult(
                     content=[
                         TextContent(

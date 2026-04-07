@@ -448,13 +448,15 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dictionary with success status and tool execution result
         """
-        # Coerce string arguments to dict (agents often stringify JSON)
+        # Coerce string arguments to dict (agents often stringify JSON,
+        # sometimes with literal \" escapes instead of proper quotes)
         if isinstance(arguments, str):
-            import json as _json
+            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 
-            try:
-                arguments = _json.loads(arguments)
-            except (ValueError, TypeError):
+            parsed = coerce_string_arguments(arguments)
+            if parsed is not None:
+                arguments = parsed
+            else:
                 return {
                     "success": False,
                     "error": f"Invalid JSON in 'arguments' parameter: {str(arguments)[:200]}",
@@ -466,11 +468,12 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             if isinstance(args, dict):
                 effective_args = args
             elif isinstance(args, str):
-                import json as _json
+                from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 
-                try:
-                    effective_args = _json.loads(args)
-                except (ValueError, TypeError):
+                parsed = coerce_string_arguments(args)
+                if parsed is not None:
+                    effective_args = parsed
+                else:
                     return {
                         "success": False,
                         "error": f"Invalid JSON in 'args' parameter: {args[:200]}",
