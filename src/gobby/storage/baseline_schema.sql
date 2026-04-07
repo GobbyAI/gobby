@@ -204,6 +204,7 @@ CREATE TABLE sessions (
     last_assistant_content TEXT,
     pending_plan_path TEXT,
     approved_tools_json TEXT,
+    session_type TEXT NOT NULL DEFAULT 'terminal',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -219,7 +220,7 @@ CREATE INDEX idx_sessions_spawned_by ON sessions(spawned_by_agent_id);
 CREATE INDEX idx_sessions_workflow ON sessions(workflow_name);
 CREATE INDEX idx_sessions_agent_run ON sessions(agent_run_id);
 CREATE UNIQUE INDEX idx_sessions_seq_num ON sessions(project_id, seq_num);
-CREATE UNIQUE INDEX idx_sessions_unique ON sessions(external_id, machine_id, source, project_id);
+CREATE UNIQUE INDEX idx_sessions_unique ON sessions(external_id, machine_id, source, project_id, session_type);
 
 -- System session: static root for pipelines and cron jobs with no caller session
 INSERT INTO sessions (id, external_id, machine_id, source, project_id, title, status, agent_depth, created_at, updated_at)

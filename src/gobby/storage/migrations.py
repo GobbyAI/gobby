@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 199
+BASELINE_VERSION = 200
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -694,6 +694,21 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         ALTER TABLE code_indexed_projects DROP COLUMN total_eligible_files;
 
         ALTER TABLE completion_subscribers DROP COLUMN subscribed_at;
+        """,
+    ),
+    (
+        200,
+        "Add session_type column and update unique index",
+        """
+        ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'terminal';
+
+        UPDATE sessions SET session_type = 'web_chat' WHERE source LIKE '%web_chat%';
+        UPDATE sessions SET source = 'claude' WHERE source IN ('claude_sdk', 'claude_sdk_web_chat');
+        UPDATE sessions SET source = 'codex' WHERE source = 'codex_web_chat';
+
+        DROP INDEX IF EXISTS idx_sessions_unique;
+        CREATE UNIQUE INDEX idx_sessions_unique
+            ON sessions(external_id, machine_id, source, project_id, session_type);
         """,
     ),
 ]
