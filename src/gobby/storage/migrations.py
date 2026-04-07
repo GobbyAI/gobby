@@ -201,6 +201,62 @@ def _setup_skills_fts(db: LocalDatabase) -> None:
     """)
 
 
+def _setup_memories_fts(db: LocalDatabase) -> None:
+    """Create FTS5 virtual table and triggers for memory search.
+
+    Content-synced with the memories table — triggers keep FTS5 in sync
+    automatically on INSERT/UPDATE/DELETE.  Tags are stripped of JSON
+    formatting so FTS5 indexes clean tokens (e.g. ``codex hooks`` instead
+    of ``["codex","hooks"]``).
+    """
+    conn = db.connection
+    conn.executescript("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+            content, tags, memory_type, source_type,
+            content='memories', content_rowid='rowid'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
+            INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+            VALUES (
+                new.rowid, new.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(new.tags, ''), '"', ''), '[', ''), ']', ''),
+                new.memory_type, COALESCE(new.source_type, '')
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, tags, memory_type, source_type)
+            VALUES (
+                'delete', old.rowid, old.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(old.tags, ''), '"', ''), '[', ''), ']', ''),
+                old.memory_type, COALESCE(old.source_type, '')
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, tags, memory_type, source_type)
+            VALUES (
+                'delete', old.rowid, old.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(old.tags, ''), '"', ''), '[', ''), ']', ''),
+                old.memory_type, COALESCE(old.source_type, '')
+            );
+            INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+            VALUES (
+                new.rowid, new.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(new.tags, ''), '"', ''), '[', ''), ']', ''),
+                new.memory_type, COALESCE(new.source_type, '')
+            );
+        END;
+
+        INSERT OR IGNORE INTO memories_fts(rowid, content, tags, memory_type, source_type)
+        SELECT rowid, content,
+               REPLACE(REPLACE(REPLACE(COALESCE(tags, ''), '"', ''), '[', ''), ']', ''),
+               memory_type, COALESCE(source_type, '')
+        FROM memories;
+    """)
+
+
 def _setup_fts_tables(db: LocalDatabase) -> None:
     """Set up FTS5 tables for both tasks and skills."""
     _setup_tasks_fts(db)
@@ -711,6 +767,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
             ON sessions(external_id, machine_id, source, project_id, session_type);
         """,
     ),
+    (
+        201,
+        "Add FTS5 search table for memories",
+        _setup_memories_fts,
+    ),
 ]
 
 
@@ -745,6 +806,7 @@ def _apply_baseline(db: LocalDatabase) -> None:
     _setup_code_content_fts(db)
     _setup_tasks_fts(db)
     _setup_skills_fts(db)
+    _setup_memories_fts(db)
 
     logger.info(f"Baseline schema applied, now at version {BASELINE_VERSION}")
 
