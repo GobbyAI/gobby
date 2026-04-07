@@ -5,8 +5,7 @@ category: core
 triggers: canvas, ui, interface, form, a2ui, interactive
 injectionFormat: content
 metadata:
-  gobby:
-    audience: all
+  gobby: {}
 ---
 
 # Canvas Frontend Integration
