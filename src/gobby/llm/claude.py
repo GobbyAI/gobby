@@ -525,6 +525,7 @@ class ClaudeLLMProvider(LLMProvider):
 
         text = await self._execute_sdk_query("generate_json", _run_query, options, max_retries=3)
         text = str(text).strip()
+        self.logger.debug("generate_json raw response (%d chars): %s", len(text), text[:500])
         if not text:
             raise ValueError("Claude SDK returned empty response for JSON generation")
 
@@ -533,10 +534,14 @@ class ClaudeLLMProvider(LLMProvider):
             return result
         except json.JSONDecodeError as e:
             # Fallback: extract JSON from markdown fences or mixed content
+            self.logger.debug("Direct JSON parse failed, trying extract_json_from_text fallback")
             extracted = extract_json_from_text(text)
             if extracted:
                 try:
                     result = json.loads(extracted)
+                    self.logger.debug(
+                        "Fallback extracted JSON (%d chars): %s", len(extracted), extracted[:200]
+                    )
                     return result
                 except json.JSONDecodeError:
                     pass

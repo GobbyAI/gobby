@@ -71,6 +71,11 @@ def extract_json_from_text(text: str) -> str | None:
         positions_to_try.append(first_brace)
 
     # Try each position until we find valid JSON
+    logger.debug(
+        "extract_json_from_text: trying %d positions in %d-char text",
+        len(positions_to_try),
+        len(text),
+    )
     for pos in positions_to_try:
         try:
             # raw_decode returns (obj, end_idx) where end_idx is absolute position
@@ -79,6 +84,7 @@ def extract_json_from_text(text: str) -> str | None:
         except json.JSONDecodeError:
             continue
 
+    logger.debug("extract_json_from_text: no valid JSON found in text: %s", text[:300])
     return None
 
 

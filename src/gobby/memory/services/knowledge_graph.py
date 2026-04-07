@@ -193,11 +193,24 @@ class KnowledgeGraphService:
         )
         response = await self._llm.generate_json(prompt, model=self._model)
         raw_entities = response.get("entities", [])
-        return [
+        logger.debug(
+            "Entity extraction response keys: %s, raw_entities count: %d",
+            list(response.keys()),
+            len(raw_entities),
+        )
+        entities = [
             Entity(name=e["entity"], entity_type=e["entity_type"])
             for e in raw_entities
             if isinstance(e, dict) and "entity" in e and "entity_type" in e
         ]
+        dropped = len(raw_entities) - len(entities)
+        if dropped:
+            logger.warning(
+                "Entity extraction dropped %d malformed entries from %d raw entities",
+                dropped,
+                len(raw_entities),
+            )
+        return entities
 
     async def _extract_relationships(
         self, content: str, entities: list[Entity]
