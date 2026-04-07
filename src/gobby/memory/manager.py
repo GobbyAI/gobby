@@ -604,6 +604,10 @@ class MemoryManager:
                 else:
                     merged_ids = qdrant_ranked
 
+                # Lookup sets for provenance tracking
+                qdrant_set = set(qdrant_ranked)
+                graph_set = set(graph_ranked)
+
                 # Resolve memories and apply filters
                 scored: list[tuple[Memory, float]] = []
                 for rank, memory_id in enumerate(merged_ids):
@@ -625,9 +629,21 @@ class MemoryManager:
 
                     # Use RRF rank as primary ordering; apply user source boost to break ties
                     base_score = 1.0 / (rank + 1)
+                    in_qdrant = memory_id in qdrant_set
+                    in_graph = memory_id in graph_set
+                    via = (
+                        "semantic+graph"
+                        if in_qdrant and in_graph
+                        else "semantic"
+                        if in_qdrant
+                        else "graph"
+                    )
                     if mem.source_type == "user":
                         base_score *= _USER_SOURCE_BOOST
+                        via += "+user_boost"
                     base_score *= temporal_decay(mem.updated_at, half_life)
+                    via += "+temporal_decay"
+                    mem.search_via = via
                     scored.append((mem, base_score))
 
                 scored.sort(key=lambda x: x[1], reverse=True)
@@ -657,8 +673,13 @@ class MemoryManager:
                     if tags_none and any(t in (mem.tags or []) for t in tags_none):
                         continue
 
+                    via = "semantic"
                     boosted = score * _USER_SOURCE_BOOST if mem.source_type == "user" else score
+                    if mem.source_type == "user":
+                        via += "+user_boost"
                     boosted *= temporal_decay(mem.updated_at, half_life)
+                    via += "+temporal_decay"
+                    mem.search_via = via
                     if boosted >= effective_min_score:
                         scored.append((mem, boosted))
 
@@ -736,6 +757,7 @@ class MemoryManager:
             if tags_none and any(t in (mem.tags or []) for t in tags_none):
                 continue
             mem.similarity = score
+            mem.search_via = "fts5"
             memories.append(mem)
             if len(memories) >= limit:
                 break

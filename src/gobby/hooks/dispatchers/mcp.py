@@ -136,7 +136,16 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         for m in memories:
             content = m.get("content", "").strip()
             if content:
-                lines.append(f"- {content}")
+                score = m.get("similarity")
+                via = m.get("search_via")
+                if score is not None:
+                    suffix = f" (score: {score:.4f}"
+                    if via:
+                        suffix += f", via: {via}"
+                    suffix += ")"
+                else:
+                    suffix = ""
+                lines.append(f"- {content}{suffix}")
         lines.append("</project-memory>")
         return "\n".join(lines)
 

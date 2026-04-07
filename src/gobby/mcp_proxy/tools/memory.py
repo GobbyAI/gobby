@@ -210,6 +210,7 @@ def create_memory_registry(
                             "created_at": m.created_at,
                             "tags": m.tags,
                             "similarity": score,
+                            "search_via": getattr(m, "search_via", None),
                         }
                     )
 

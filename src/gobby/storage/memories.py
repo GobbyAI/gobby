@@ -64,6 +64,7 @@ class Memory:
     tags: list[str] | None = None
     media: str | None = None  # JSON-serialized MediaAttachment data
     similarity: float | None = None  # Set at search time, not persisted
+    search_via: str | None = None  # Set at search time, not persisted
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Memory":
