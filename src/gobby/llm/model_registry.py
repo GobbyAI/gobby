@@ -130,7 +130,7 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
         models.append(
             ModelInfo(
                 id=model_id,
-                name=entry.get("name", model_id),
+                name=str(entry.get("name", model_id)),
                 provider=provider,
                 context_length=context_length,
                 max_completion_tokens=max_completion,

@@ -286,7 +286,7 @@ class MemoryRecord:
             project_id=data.get("project_id"),
             user_id=data.get("user_id"),
             tags=data.get("tags", []),
-            source_type=data.get("source_type"),
+            source_type=data.get("source_type", "agent"),
             source_session_id=data.get("source_session_id"),
             access_count=data.get("access_count", 0),
             last_accessed_at=last_accessed_at,
