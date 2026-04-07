@@ -2,8 +2,8 @@
 
 Covers:
 - Construction and defaults
-- start (subprocess launch, resume, CLI not found)
-- send (JSON-RPC request, NDJSON stream parsing, event normalization)
+- start (subprocess launch, initialize handshake, session creation)
+- send (JSON-RPC session/prompt request, notification parsing, event normalization)
 - stop (terminate, cleanup)
 """
 
@@ -68,6 +68,24 @@ def _mock_process(
     return proc
 
 
+def _handshake_lines(session_id: str = "sess-1") -> list[str]:
+    """Return the stdout lines for a successful initialize + newSession handshake."""
+    return [
+        # initialize response
+        json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}) + "\n",
+        # newSession response
+        json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"sessionId": session_id}}) + "\n",
+    ]
+
+
+def _resume_handshake_lines(session_id: str = "prev-123") -> list[str]:
+    """Return the stdout lines for initialize + loadSession handshake."""
+    return [
+        json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}) + "\n",
+        json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"sessionId": session_id}}) + "\n",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -78,6 +96,7 @@ class TestConstruction:
         client = GeminiACPClient()
         assert not client.is_started
         assert client._cli_path is None
+        assert client.session_id is None
 
     def test_custom_cli_path(self) -> None:
         client = GeminiACPClient(cli_path="/usr/local/bin/gemini")
@@ -91,8 +110,8 @@ class TestConstruction:
 
 class TestStart:
     @pytest.mark.asyncio
-    async def test_start_launches_subprocess(self) -> None:
-        proc = _mock_process()
+    async def test_start_launches_subprocess_and_handshakes(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
@@ -103,27 +122,41 @@ class TestStart:
                 await client.start()
 
                 assert client.is_started
+                assert client.session_id == "sess-1"
                 mock_exec.assert_awaited_once()
                 # Verify command includes --acp
                 call_args = mock_exec.call_args
                 assert call_args[0][0] == "/usr/bin/gemini"
                 assert "--acp" in call_args[0]
 
+        # Verify initialize and newSession requests were sent
+        assert proc.stdin.write.call_count == 2
+        init_req = json.loads(proc.stdin.write.call_args_list[0][0][0].decode())
+        assert init_req["method"] == "initialize"
+        assert init_req["params"]["protocolVersion"] == 1
+        assert init_req["params"]["clientInfo"]["name"] == "gobby"
+
+        session_req = json.loads(proc.stdin.write.call_args_list[1][0][0].decode())
+        assert session_req["method"] == "newSession"
+
     @pytest.mark.asyncio
-    async def test_start_with_resume_session(self) -> None:
-        proc = _mock_process()
+    async def test_start_with_resume_uses_load_session(self) -> None:
+        proc = _mock_process(stdout_lines=_resume_handshake_lines("prev-123"))
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
                 return_value=proc,
-            ) as mock_exec:
+            ):
                 client = GeminiACPClient()
-                await client.start(session_id="prev-session-123")
+                await client.start(session_id="prev-123")
 
-                call_args = mock_exec.call_args
-                assert "--resume" in call_args[0]
-                assert "prev-session-123" in call_args[0]
+                assert client.session_id == "prev-123"
+
+        # Verify loadSession (not newSession) was called
+        session_req = json.loads(proc.stdin.write.call_args_list[1][0][0].decode())
+        assert session_req["method"] == "loadSession"
+        assert session_req["params"]["sessionId"] == "prev-123"
 
     @pytest.mark.asyncio
     async def test_start_raises_when_cli_not_found(self) -> None:
@@ -134,7 +167,7 @@ class TestStart:
 
     @pytest.mark.asyncio
     async def test_start_raises_when_already_started(self) -> None:
-        proc = _mock_process()
+        proc = _mock_process(stdout_lines=_handshake_lines())
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
                 "asyncio.create_subprocess_exec",
@@ -148,7 +181,7 @@ class TestStart:
 
     @pytest.mark.asyncio
     async def test_start_uses_custom_cli_path(self) -> None:
-        proc = _mock_process()
+        proc = _mock_process(stdout_lines=_handshake_lines())
         with patch(
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
@@ -162,15 +195,16 @@ class TestStart:
 
 
 # ---------------------------------------------------------------------------
-# Send -- stream parsing
+# Send -- session/prompt + notification parsing
 # ---------------------------------------------------------------------------
 
 
 class TestSend:
     @pytest.mark.asyncio
-    async def test_send_writes_jsonrpc_request(self) -> None:
-        result_line = json.dumps({"type": "result", "stats": {}}) + "\n"
-        proc = _mock_process(stdout_lines=[result_line])
+    async def test_send_writes_session_prompt_request(self) -> None:
+        # Handshake lines + prompt response
+        prompt_response = json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {}}}) + "\n"
+        proc = _mock_process(stdout_lines=_handshake_lines() + [prompt_response])
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -182,50 +216,34 @@ class TestSend:
                 await client.start()
                 events = [e async for e in client.send("hello")]
 
-        # Verify stdin write
-        proc.stdin.write.assert_called_once()
-        written = proc.stdin.write.call_args[0][0].decode()
-        parsed = json.loads(written)
-        assert parsed["jsonrpc"] == "2.0"
-        assert parsed["method"] == "send"
-        assert parsed["params"]["message"] == "hello"
+        # Third write = the prompt request (after initialize + newSession)
+        assert proc.stdin.write.call_count == 3
+        prompt_req = json.loads(proc.stdin.write.call_args_list[2][0][0].decode())
+        assert prompt_req["method"] == "session/prompt"
+        assert prompt_req["params"]["sessionId"] == "sess-1"
+        assert prompt_req["params"]["prompt"] == [{"type": "text", "text": "hello"}]
 
-        # Should have a result event
+        # Should have a result event from the response
         assert len(events) == 1
         assert events[0].event_type == "result"
 
     @pytest.mark.asyncio
-    async def test_send_yields_init_event(self) -> None:
-        lines = [
-            json.dumps({"type": "init", "session_id": "s1"}) + "\n",
-            json.dumps({"type": "result", "stats": {}}) + "\n",
+    async def test_send_yields_content_delta_from_notifications(self) -> None:
+        # Notifications followed by final response
+        notification_lines = [
+            json.dumps({
+                "jsonrpc": "2.0",
+                "method": "session/message",
+                "params": {"role": "assistant", "delta": True, "content": "Hello "},
+            }) + "\n",
+            json.dumps({
+                "jsonrpc": "2.0",
+                "method": "session/message",
+                "params": {"role": "assistant", "delta": True, "content": "world!"},
+            }) + "\n",
+            json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {"tokens": 10}}}) + "\n",
         ]
-        proc = _mock_process(stdout_lines=lines)
-
-        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
-            with patch(
-                "asyncio.create_subprocess_exec",
-                new_callable=AsyncMock,
-                return_value=proc,
-            ):
-                client = GeminiACPClient()
-                await client.start()
-                events = [e async for e in client.send("hi")]
-
-        assert len(events) == 2
-        assert events[0].event_type == "init"
-        assert events[0].data["session_id"] == "s1"
-
-    @pytest.mark.asyncio
-    async def test_send_yields_content_delta(self) -> None:
-        lines = [
-            json.dumps({"type": "message", "role": "assistant", "delta": True, "content": "Hello "})
-            + "\n",
-            json.dumps({"type": "message", "role": "assistant", "delta": True, "content": "world!"})
-            + "\n",
-            json.dumps({"type": "result", "stats": {"tokens": 10}}) + "\n",
-        ]
-        proc = _mock_process(stdout_lines=lines)
+        proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -243,11 +261,13 @@ class TestSend:
         assert deltas[1].data["content"] == "world!"
 
     @pytest.mark.asyncio
-    async def test_send_yields_error_event(self) -> None:
-        lines = [
-            json.dumps({"type": "error", "message": "rate limited"}) + "\n",
-        ]
-        proc = _mock_process(stdout_lines=lines)
+    async def test_send_yields_error_from_response(self) -> None:
+        error_response = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "error": {"code": 429, "message": "rate limited"},
+        }) + "\n"
+        proc = _mock_process(stdout_lines=_handshake_lines() + [error_response])
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -262,6 +282,7 @@ class TestSend:
         assert len(events) == 1
         assert events[0].event_type == "error"
         assert events[0].data["message"] == "rate limited"
+        assert events[0].data["code"] == 429
 
     @pytest.mark.asyncio
     async def test_send_raises_when_not_started(self) -> None:
@@ -272,7 +293,7 @@ class TestSend:
 
     @pytest.mark.asyncio
     async def test_send_raises_when_process_exited(self) -> None:
-        proc = _mock_process(returncode=1)
+        proc = _mock_process(stdout_lines=_handshake_lines(), returncode=None)
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -292,9 +313,9 @@ class TestSend:
     async def test_send_skips_non_json_lines(self) -> None:
         lines = [
             "not json at all\n",
-            json.dumps({"type": "result", "stats": {}}) + "\n",
+            json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {}}}) + "\n",
         ]
-        proc = _mock_process(stdout_lines=lines)
+        proc = _mock_process(stdout_lines=_handshake_lines() + lines)
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -310,6 +331,32 @@ class TestSend:
         assert len(events) == 1
         assert events[0].event_type == "result"
 
+    @pytest.mark.asyncio
+    async def test_send_handles_init_notification(self) -> None:
+        """Verify session/init notification during prompt is captured."""
+        notification_lines = [
+            json.dumps({
+                "jsonrpc": "2.0",
+                "method": "session/init",
+                "params": {"session_id": "s1", "model": "gemini-2.5-pro"},
+            }) + "\n",
+            json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {}}}) + "\n",
+        ]
+        proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
+
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                await client.start()
+                events = [e async for e in client.send("hi")]
+
+        assert events[0].event_type == "init"
+        assert events[0].data["session_id"] == "s1"
+
 
 # ---------------------------------------------------------------------------
 # Stop
@@ -319,7 +366,7 @@ class TestSend:
 class TestStop:
     @pytest.mark.asyncio
     async def test_stop_terminates_process(self) -> None:
-        proc = _mock_process()
+        proc = _mock_process(stdout_lines=_handshake_lines())
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -334,6 +381,7 @@ class TestStop:
                 await client.stop()
 
         assert not client.is_started
+        assert client.session_id is None
         proc.terminate.assert_called_once()
 
     @pytest.mark.asyncio
@@ -344,7 +392,7 @@ class TestStop:
 
     @pytest.mark.asyncio
     async def test_stop_when_process_already_exited(self) -> None:
-        proc = _mock_process(returncode=0)
+        proc = _mock_process(stdout_lines=_handshake_lines(), returncode=None)
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -362,47 +410,74 @@ class TestStop:
 
 
 # ---------------------------------------------------------------------------
-# Event normalization
+# Event normalization -- notifications
 # ---------------------------------------------------------------------------
 
 
-class TestNormalizeEvent:
-    def test_init_event(self) -> None:
-        event = GeminiACPClient._normalize_event(
-            {"type": "init", "session_id": "abc", "version": "1.0"}
+class TestNormalizeNotification:
+    def test_session_init_notification(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {"method": "session/init", "params": {"session_id": "abc", "version": "1.0"}}
         )
         assert event.event_type == "init"
         assert event.data["session_id"] == "abc"
-        assert "type" not in event.data
 
-    def test_content_delta(self) -> None:
-        event = GeminiACPClient._normalize_event(
-            {"type": "message", "role": "assistant", "delta": True, "content": "hi"}
+    def test_session_message_delta(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {
+                "method": "session/message",
+                "params": {"role": "assistant", "delta": True, "content": "hi"},
+            }
         )
         assert event.event_type == "content_delta"
         assert event.data["content"] == "hi"
 
-    def test_non_delta_message(self) -> None:
-        event = GeminiACPClient._normalize_event(
-            {"type": "message", "role": "assistant", "content": "full response"}
+    def test_session_message_non_delta(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {
+                "method": "session/message",
+                "params": {"role": "assistant", "content": "full response"},
+            }
         )
         assert event.event_type == "message"
         assert event.data["content"] == "full response"
 
-    def test_result_event(self) -> None:
-        event = GeminiACPClient._normalize_event({"type": "result", "stats": {"tokens": 42}})
-        assert event.event_type == "result"
-        assert event.data["stats"]["tokens"] == 42
-
-    def test_error_event(self) -> None:
-        event = GeminiACPClient._normalize_event(
-            {"type": "error", "message": "bad request", "code": 400}
+    def test_session_error_notification(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {
+                "method": "session/error",
+                "params": {"message": "bad request", "code": 400},
+            }
         )
         assert event.event_type == "error"
         assert event.data["message"] == "bad request"
         assert event.data["code"] == 400
 
-    def test_unknown_event_passes_through(self) -> None:
-        event = GeminiACPClient._normalize_event({"type": "custom", "foo": "bar"})
-        assert event.event_type == "custom"
+    def test_legacy_type_based_init(self) -> None:
+        """Legacy format with 'type' field instead of 'method'."""
+        event = GeminiACPClient._normalize_notification(
+            {"type": "init", "session_id": "abc"}
+        )
+        assert event.event_type == "init"
+        assert event.data["session_id"] == "abc"
+
+    def test_legacy_type_based_content_delta(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {"type": "message", "role": "assistant", "delta": True, "content": "hi"}
+        )
+        assert event.event_type == "content_delta"
+        assert event.data["content"] == "hi"
+
+    def test_legacy_type_based_error(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {"type": "error", "message": "bad request", "code": 400}
+        )
+        assert event.event_type == "error"
+        assert event.data["message"] == "bad request"
+
+    def test_unknown_notification_passes_through(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {"method": "custom/event", "params": {"foo": "bar"}}
+        )
+        assert event.event_type == "custom/event"
         assert event.data["foo"] == "bar"
