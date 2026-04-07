@@ -24,6 +24,7 @@ from claude_agent_sdk import (
 
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import LLMProvider
+from gobby.utils.json_helpers import extract_json_from_text
 
 # Type alias for auth mode
 AuthMode = Literal["subscription", "api_key"]
@@ -522,7 +523,7 @@ class ClaudeLLMProvider(LLMProvider):
                             result_text += block.text
             return result_text
 
-        text = await self._execute_sdk_query("generate_json", _run_query, options)
+        text = await self._execute_sdk_query("generate_json", _run_query, options, max_retries=3)
         text = str(text).strip()
         if not text:
             raise ValueError("Claude SDK returned empty response for JSON generation")
@@ -531,7 +532,15 @@ class ClaudeLLMProvider(LLMProvider):
             result: dict[str, Any] = json.loads(text)
             return result
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse Claude response as JSON: {e}") from e
+            # Fallback: extract JSON from markdown fences or mixed content
+            extracted = extract_json_from_text(text)
+            if extracted:
+                try:
+                    result = json.loads(extracted)
+                    return result
+                except json.JSONDecodeError:
+                    pass
+            raise ValueError(f"Failed to parse Claude response as JSON: {text[:200]}") from e
 
     async def describe_image(
         self,
