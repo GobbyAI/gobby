@@ -516,11 +516,23 @@ class ClaudeLLMProvider(LLMProvider):
 
         async def _run_query() -> str:
             result_text = ""
+            message_count = 0
             async for message in query(prompt=prompt, options=options):
+                message_count += 1
+                self.logger.debug(
+                    "generate_json message %d: %s", message_count, type(message).__name__
+                )
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             result_text += block.text
+                elif isinstance(message, ResultMessage):
+                    if message.result:
+                        result_text = message.result
+            if message_count == 0:
+                self.logger.warning("generate_json: No messages received from Claude SDK")
+            elif not result_text:
+                self.logger.warning("generate_json: %d messages but no text content", message_count)
             return result_text
 
         text = await self._execute_sdk_query("generate_json", _run_query, options, max_retries=3)
