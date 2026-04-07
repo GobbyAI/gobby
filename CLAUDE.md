@@ -13,7 +13,7 @@ These are enforced by hooks, rules and workflows.
 5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
 6. **NEVER stop while you have a claimed task in progress.** Task must be closed before stopping. If you claim a task, you close a task.
 7. **NEVER mark a task as needs_review if you don't genuinely need the user to review your work.** Do not use it as a workaround to not committing/closing. Escalate to the user if you are genuinely stuck or need guidance.
-8. **ALWAYS triage errors and issues you find.** Create bug tasks for unrelated errors or issues you discover WHEN YOU ENCOUNTER THEM, then continue with your current task. Every error is your error, even if you didn't cause it.
+8. **You found it, you own it.** Every error, test failure, lint warning, or type error you encounter is yours to fix — even if it's pre-existing, even if it's unrelated to your task. Fix it before closing your task. The only exception is something that genuinely requires multi-session architectural planning; even then, investigate thoroughly and attempt the fix before filing a task to defer it.
 9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
 10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, voice your concerns and provide alternative solutions.
 11. **NEVER leave options in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
