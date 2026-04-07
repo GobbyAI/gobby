@@ -114,6 +114,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None = field(
         default=None, repr=False
     )
+    _config: Any | None = field(default=None, repr=False)
     _tool_approval_config: Any | None = field(default=None, repr=False)
     _tool_approval_callback: Any | None = field(default=None, repr=False)
     _on_approved_tools_persist: Callable[[set[str]], None] | None = field(default=None, repr=False)
@@ -207,6 +208,16 @@ class ChatSession(ChatSessionPermissionsMixin):
             env["GOBBY_SOURCE"] = "claude"
         if self.project_id:
             env["GOBBY_PROJECT_ID"] = self.project_id
+
+        # Route through local LLM endpoint when configured
+        if self._config and hasattr(self._config, "local_llm") and self._config.local_llm.enabled:
+            local_llm = self._config.local_llm
+            if local_llm.endpoint and "claude" in local_llm.providers:
+                env["ANTHROPIC_BASE_URL"] = local_llm.endpoint
+                logger.info(
+                    f"ChatSession {self.conversation_id} using local LLM endpoint: "
+                    f"{local_llm.endpoint}"
+                )
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,

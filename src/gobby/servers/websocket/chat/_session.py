@@ -305,6 +305,7 @@ class ChatSessionMixin:
         # Wire config from daemon
         daemon_cfg = getattr(self, "daemon_config", None)
         if daemon_cfg is not None:
+            session._config = daemon_cfg
             tool_approval_cfg = getattr(daemon_cfg, "tool_approval", None)
             if tool_approval_cfg is not None and tool_approval_cfg.enabled:
                 session._tool_approval_config = tool_approval_cfg

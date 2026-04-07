@@ -78,6 +78,25 @@ class LocalConfig(BaseModel):
     )
 
 
+class LocalLLMConfig(BaseModel):
+    """Configuration for routing providers through a local LLM endpoint.
+
+    When enabled, sets ANTHROPIC_BASE_URL for the specified providers so that
+    Claude Code (or other tools) routes API traffic through the local endpoint
+    (e.g., LMStudio, Ollama, llama.cpp server).
+    """
+
+    enabled: bool = Field(default=False, description="Enable local LLM endpoint override")
+    endpoint: str = Field(
+        default="",
+        description="Base URL for the local LLM (e.g., http://localhost:1234/v1)",
+    )
+    providers: list[str] = Field(
+        default_factory=lambda: ["claude"],
+        description="Providers to route through the local endpoint",
+    )
+
+
 class ToolApprovalPolicy(BaseModel):
     """A single tool approval policy matching server/tool glob patterns."""
 
@@ -496,6 +515,10 @@ class DaemonConfig(BaseModel):
         default=None,
         description="Local model endpoint configuration (e.g., LMStudio). "
         "When configured, agents with model='local' resolve endpoint and model from here.",
+    )
+    local_llm: LocalLLMConfig = Field(
+        default_factory=LocalLLMConfig,
+        description="Route providers through a local LLM endpoint via ANTHROPIC_BASE_URL.",
     )
     codex_app_server: bool = Field(
         default=False,

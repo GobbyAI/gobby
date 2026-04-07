@@ -259,6 +259,7 @@ export default function App() {
     requestPlanChanges,
     switchConversation,
     startNewChat,
+    switchProvider,
     continueSessionInChat,
     setOnModeChanged,
     setOnPlanReady,
@@ -1235,6 +1236,7 @@ export default function App() {
                   onAgentChange: sendAgentChange,
                   provider: selectedProvider,
                   onProviderChange: setSelectedProvider,
+                  onSwitchProvider: switchProvider,
                   conversationSwitchKey,
                 }}
                 conversations={{

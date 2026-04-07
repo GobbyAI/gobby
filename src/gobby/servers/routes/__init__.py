@@ -22,6 +22,7 @@ from gobby.servers.routes.memory import create_memory_router
 from gobby.servers.routes.metrics import create_metrics_router
 from gobby.servers.routes.pipelines import create_pipelines_router
 from gobby.servers.routes.projects import create_projects_router
+from gobby.servers.routes.providers import create_providers_router
 from gobby.servers.routes.rules import create_rules_router
 from gobby.servers.routes.sessions import create_sessions_router
 from gobby.servers.routes.skills import create_skills_router
@@ -47,6 +48,7 @@ __all__ = [
     "create_metrics_router",
     "create_pipelines_router",
     "create_projects_router",
+    "create_providers_router",
     "create_rules_router",
     "create_sessions_router",
     "create_skills_router",

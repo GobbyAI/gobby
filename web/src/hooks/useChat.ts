@@ -1890,6 +1890,63 @@ export function useChat() {
     }
   }, []);
 
+  // Switch to a different provider by stopping the current stream and starting
+  // a new conversation keyed to the new provider.
+  const switchProvider = useCallback(
+    (newProvider: string) => {
+      // 1. Stop any active streaming
+      if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "chat_stop",
+            conversation_id: conversationIdRef.current,
+          }),
+        );
+      }
+
+      // 2. Create a new conversation
+      const newId = uuid();
+      conversationIdRef.current = newId;
+      setConversationId(newId);
+      setConversationSwitchKey((k) => k + 1);
+      saveConversationId(newId);
+      setMessages([]);
+      setSessionRef(null);
+      setSessionTitle(null);
+      setDbSessionId(null);
+      setCurrentBranch(null);
+      setWorktreePath(null);
+      setCanvasSurfaces(new Map());
+      setCanvasPanel(null);
+      setPlanPendingApproval(false);
+      planContentRef.current = null;
+      setContextUsage({
+        totalInputTokens: 0,
+        outputTokens: 0,
+        contextWindow: null,
+        uncachedInputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      });
+      activeRequestIdRef.current = null;
+      setIsStreaming(false);
+      setIsThinking(false);
+      setIsLoadingMessages(false);
+
+      // 3. Tell the backend which provider to use for this conversation
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "set_provider",
+            conversation_id: newId,
+            provider: newProvider,
+          }),
+        );
+      }
+    },
+    [isStreaming], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
   // Resume a CLI session (e.g., Claude) — sets the conversation ID
   // so the next message triggers server-side resume
   const resumeSession = useCallback((externalId: string) => {
@@ -2724,6 +2781,7 @@ export function useChat() {
     requestPlanChanges,
     switchConversation,
     startNewChat,
+    switchProvider,
     resumeSession,
     continueSessionInChat,
     setOnModeChanged,

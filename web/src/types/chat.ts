@@ -186,6 +186,7 @@ export interface ChatState {
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
   activeAgent?: string;
   onAgentChange?: (agentName: string) => void;
+  onSwitchProvider?: (provider: string) => void;
   planPendingApproval: boolean;
   onApprovePlan: () => void;
   onRequestPlanChanges: (feedback: string) => void;
