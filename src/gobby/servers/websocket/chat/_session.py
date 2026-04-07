@@ -320,6 +320,7 @@ class ChatSessionMixin:
                     machine_id=get_machine_id(),
                     source="claude",
                     project_id=project_id or PERSONAL_PROJECT_ID,
+                    session_type="web_chat",
                 )
                 session.db_session_id = db_session.id
                 session.seq_num = db_session.seq_num
