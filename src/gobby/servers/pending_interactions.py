@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.database import LocalDatabase
+from gobby.storage.database import DatabaseProtocol, LocalDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class PendingInteractionManager:
     - expire_all_pending() marks all pending rows expired (called on startup)
     """
 
-    def __init__(self, db: LocalDatabase) -> None:
+    def __init__(self, db: LocalDatabase | DatabaseProtocol) -> None:
         self._db = db
         self._waiters: dict[str, asyncio.Event] = {}
         self._results: dict[str, dict[str, Any]] = {}

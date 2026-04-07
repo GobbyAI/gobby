@@ -12,7 +12,7 @@ import logging
 import os
 import shutil
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from urllib.parse import urlparse
 
 from gobby.llm.stream_json_parser import StreamEvent, parse_stream
@@ -141,7 +141,7 @@ class CLISession:
 
     def __init__(
         self,
-        cli_path_resolver: object,
+        cli_path_resolver: Callable[[], Awaitable[str]],
         session_id: str | None,
         model: str | None,
         env_overrides: dict[str, str] | None,
@@ -179,7 +179,7 @@ class CLISession:
 
     async def send(self, message: str) -> AsyncIterator[StreamEvent]:
         """Send a message and stream responses."""
-        if not self._process or not self._process.stdin:
+        if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError("CLISession not started — call start() first")
         payload = json.dumps({"type": "user", "content": message}) + "\n"
         self._process.stdin.write(payload.encode())

@@ -227,7 +227,7 @@ class ChatSessionMixin:
                 from gobby.servers.gemini_cli_chat_session import GeminiCLIChatSession
 
                 session: ChatSessionProtocol = GeminiCLIChatSession(
-                    conversation_id=conversation_id, model=model
+                    conversation_id=conversation_id, _model=model
                 )
             case "codex":
                 from gobby.servers.codex_cli_chat_session import CodexCLIChatSession

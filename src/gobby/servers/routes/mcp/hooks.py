@@ -78,7 +78,7 @@ async def _maybe_hold_open(
 
     hook_manager = request.app.state.hook_manager
     session_store = LocalSessionManager(hook_manager._db)
-    db_session = session_store.find_by_id(session_id)
+    db_session = session_store.get(session_id)
 
     if not db_session:
         return None

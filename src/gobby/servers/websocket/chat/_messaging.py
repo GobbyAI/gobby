@@ -37,6 +37,7 @@ class ChatMessagingMixin:
             model: str | None = None,
             project_id: str | None = None,
             resume_session_id: str | None = None,
+            provider: str | None = None,
         ) -> ChatSessionProtocol: ...
 
         async def _send_error(

@@ -89,6 +89,7 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
     _needs_history_injection: bool = field(default=False, repr=False)
     _message_manager: Any | None = field(default=None, repr=False)
+    _config: Any | None = field(default=None, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
 
     # Lifecycle callbacks -- set by ChatMixin to bridge hooks to workflow engine

@@ -180,7 +180,8 @@ class GeminiACPClient:
                 if "error" in data:
                     err = data["error"]
                     raise RuntimeError(f"ACP {method} error: {err.get('message', err)}")
-                return data.get("result", {})
+                result: dict[str, Any] = data.get("result", {})
+                return result
 
             # Skip notifications during handshake
             logger.debug(f"Skipping notification during {method}: {data.get('method', 'unknown')}")

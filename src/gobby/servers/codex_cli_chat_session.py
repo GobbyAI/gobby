@@ -113,6 +113,7 @@ class CodexCLIChatSession:
         self._message_manager_source_session_id: str | None = None
         self._needs_history_injection: bool = False
         self._message_manager: Any = None
+        self._config: Any = None
 
         # Codex internals
         self._model = model
@@ -179,7 +180,8 @@ class CodexCLIChatSession:
                 if "error" in data:
                     err = data["error"]
                     raise RuntimeError(f"Codex {method} error: {err.get('message', err)}")
-                return data.get("result", {})
+                result: dict[str, Any] = data.get("result", {})
+                return result
 
             # Skip notifications during handshake
             logger.debug(f"Skipping notification during {method}: {data.get('method', 'unknown')}")
@@ -392,7 +394,19 @@ class CodexCLIChatSession:
     def set_chat_mode(self, mode: str) -> None:
         self.chat_mode = mode
 
-    def provide_answer(self, answers: dict[str, str]) -> None:
+    @property
+    def has_pending_plan(self) -> bool:
+        return False
+
+    @property
+    def has_pending_question(self) -> bool:
+        return False
+
+    @property
+    def has_pending_approval(self) -> bool:
+        return False
+
+    def provide_answer(self, answers: dict[str, Any]) -> None:
         pass
 
     def provide_approval(self, decision: str) -> None:
