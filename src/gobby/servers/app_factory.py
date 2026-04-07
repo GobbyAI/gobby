@@ -93,10 +93,12 @@ def create_app(server: "HTTPServer") -> FastAPI:
         logger.debug("HookManager initialized in daemon")
 
         # Initialize PendingInteractionManager for web chat approval flows
-        if server.services.db:
+        if server.services.database:
             from gobby.servers.pending_interactions import PendingInteractionManager
 
-            app.state.pending_interaction_manager = PendingInteractionManager(server.services.db)
+            app.state.pending_interaction_manager = PendingInteractionManager(
+                server.services.database
+            )
             try:
                 await app.state.pending_interaction_manager.expire_all_pending()
             except Exception as e:
