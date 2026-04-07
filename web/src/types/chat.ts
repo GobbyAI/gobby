@@ -198,6 +198,8 @@ export interface ChatState {
       title?: string,
     ) => void,
   ) => void;
+  provider?: string | null;
+  onProviderChange?: (provider: string | null) => void;
   dbSessionId?: string | null;
   conversationSwitchKey?: number;
   viewingSessionId?: string | null;

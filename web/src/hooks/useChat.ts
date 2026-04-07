@@ -575,6 +575,9 @@ export function useChat() {
   // Session title — stored from switchConversation to survive filtered list race
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
+  // LLM provider selection (null = server default)
+  const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+
   // Session viewing tracking (read-only observation of CLI sessions via REST)
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(null);
   const viewingSessionIdRef = useRef<string | null>(null);
@@ -2244,6 +2247,10 @@ export function useChat() {
         payload.inject_context = injectContext;
       }
 
+      if (selectedProvider) {
+        payload.provider = selectedProvider;
+      }
+
       if (files && files.length > 0) {
         const contentBlocks: Array<Record<string, unknown>> = [];
         for (const qf of files) {
@@ -2737,5 +2744,7 @@ export function useChat() {
     handleBinaryMessageRef,
     setOnChatDeleted,
     setOnChatCleared,
+    selectedProvider,
+    setSelectedProvider,
   };
 }

@@ -280,6 +280,8 @@ export default function App() {
     setOnChatDeleted,
     activeAgent,
     sendAgentChange,
+    selectedProvider,
+    setSelectedProvider,
   } = useChat();
   const voice = useVoice(wsRef, conversationId);
   const {
@@ -1231,6 +1233,8 @@ export default function App() {
                   onDetachFromSession: detachFromSession,
                   activeAgent,
                   onAgentChange: sendAgentChange,
+                  provider: selectedProvider,
+                  onProviderChange: setSelectedProvider,
                   conversationSwitchKey,
                 }}
                 conversations={{
