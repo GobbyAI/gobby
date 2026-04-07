@@ -12,11 +12,8 @@ logger = logging.getLogger(__name__)
 # Map SessionSource values to canonical provider names
 _SOURCE_TO_PROVIDER: dict[str, str] = {
     "claude": "claude",
-    "claude_sdk": "claude",
-    "claude_sdk_web_chat": "claude",
     "gemini": "gemini",
     "codex": "codex",
-    "codex_web_chat": "codex",
 }
 
 

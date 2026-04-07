@@ -21,7 +21,7 @@ def _inject_agent_skills(
     agent_body: AgentDefinitionBody,
     db: DatabaseProtocol,
     project_id: str,
-    cli_source: str = "claude_sdk_web_chat",
+    cli_source: str = "claude",
 ) -> str | None:
     """Run audience-aware skill injection for an agent definition."""
     from gobby.hooks.event_handlers._session import select_and_format_agent_skills
@@ -107,8 +107,8 @@ class ChatLifecycleMixin:
 
             data = normalize_tool_fields(data)
 
-        # Temporarily hardcode source — cleaned up in 0.4 when SessionSource collapses
-        source = SessionSource.CLAUDE_SDK_WEB_CHAT
+        # Source is determined by session's provider (default claude)
+        source = SessionSource(getattr(session, "provider", "claude"))
 
         event = HookEvent(
             event_type=event_type,
@@ -231,7 +231,7 @@ class ChatLifecycleMixin:
                         session_ref=session_ref,
                         project_id=getattr(session, "project_id", None),
                         cwd=project_path,
-                        source="claude_sdk_web_chat",
+                        source="claude",
                     )
                 else:
                     enrichment = f"Gobby Session ID: {session_ref}"

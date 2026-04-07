@@ -115,29 +115,22 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
             from gobby.adapters.gemini import GeminiAdapter
-            from gobby.hooks.events import SessionSource
 
             if source == "claude":
                 adapter: BaseAdapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-            elif source == "claude_sdk":
-                adapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-                adapter.source = SessionSource.CLAUDE_SDK
-            elif source == "claude_sdk_web_chat":
-                adapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-                adapter.source = SessionSource.CLAUDE_SDK_WEB_CHAT
             elif source == "gemini":
                 adapter = GeminiAdapter(hook_manager=hook_manager)
             elif source == "codex":
-                # Use bidirectional adapter when app-server is connected
                 codex_adapter = getattr(request.app.state, "codex_adapter", None)
-                if codex_adapter is not None:
-                    adapter = codex_adapter
-                else:
-                    adapter = CodexHooksAdapter(hook_manager=hook_manager)
+                adapter = (
+                    codex_adapter
+                    if codex_adapter is not None
+                    else CodexHooksAdapter(hook_manager=hook_manager)
+                )
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported source: {source}. Supported: claude, claude_sdk, claude_sdk_web_chat, gemini, codex",
+                    detail=f"Unsupported source: {source}. Supported: claude, gemini, codex",
                 )
 
             # Execute hook via adapter

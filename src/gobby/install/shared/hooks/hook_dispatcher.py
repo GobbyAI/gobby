@@ -239,7 +239,7 @@ def _detect_source(config: CLIConfig) -> str:
     if gobby_source:
         return gobby_source
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-py":
-        return "claude_sdk"
+        return "claude"
     return config.source
 
 

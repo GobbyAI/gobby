@@ -405,7 +405,7 @@ class LocalSessionManager:
         rows = self.db.fetchall(
             """SELECT * FROM sessions
             WHERE status = 'active'
-            AND source IN ('claude_sdk_web_chat', 'codex_web_chat')
+            AND session_type = 'web_chat'
             AND pending_plan_path IS NOT NULL""",
         )
         return [Session.from_row(r) for r in rows]

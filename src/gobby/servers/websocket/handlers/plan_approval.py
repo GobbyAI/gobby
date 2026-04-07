@@ -136,7 +136,7 @@ async def handle_recovered_plan_approval(
 
     # Look up DB session by external_id (= conversation_id for web-chat)
     db_session = None
-    for source in ("claude_sdk_web_chat", "codex_web_chat"):
+    for source in ("claude", "gemini", "codex"):
         try:
             db_session = await asyncio.to_thread(
                 session_manager.find_active_by_external_id, conversation_id, source

@@ -205,7 +205,7 @@ class ChatSessionMixin:
                     resolve_agent,
                     agent_name,
                     session_manager.db,
-                    cli_source="claude_sdk_web_chat",
+                    cli_source="claude",
                     project_id=project_id or PERSONAL_PROJECT_ID,
                 )
             except Exception as e:

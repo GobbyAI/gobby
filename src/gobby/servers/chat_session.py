@@ -203,7 +203,7 @@ class ChatSession(ChatSessionPermissionsMixin):
         env: dict[str, str] = {}
         if self.db_session_id:
             env["GOBBY_SESSION_ID"] = self.db_session_id
-            env["GOBBY_SOURCE"] = "claude_sdk_web_chat"
+            env["GOBBY_SOURCE"] = "claude"
         if self.project_id:
             env["GOBBY_PROJECT_ID"] = self.project_id
 
@@ -270,7 +270,7 @@ class ChatSession(ChatSessionPermissionsMixin):
                         except Exception as e:
                             logger.warning(f"Failed to capture transcript_path: {e}")
 
-                data = {"prompt": inp.get("prompt", ""), "source": "claude_sdk_web_chat"}
+                data = {"prompt": inp.get("prompt", ""), "source": "claude"}
                 resp = await cb(data)
                 output = _response_to_prompt_output(resp)
 
@@ -418,7 +418,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             ) -> SyncHookJSONOutput:
                 data = {
                     "session_id": inp.get("session_id", ""),
-                    "source": "claude_sdk_web_chat",
+                    "source": "claude",
                 }
                 resp = await cb_sub_start(data)
                 return _response_to_subagent_output(resp, "SubagentStart")
@@ -435,7 +435,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             ) -> SyncHookJSONOutput:
                 data = {
                     "session_id": inp.get("session_id", ""),
-                    "source": "claude_sdk_web_chat",
+                    "source": "claude",
                 }
                 resp = await cb_sub_stop(data)
                 return _response_to_subagent_output(resp, "SubagentStop")
