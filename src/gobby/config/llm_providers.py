@@ -21,6 +21,11 @@ class LLMProviderConfig(BaseModel):
     models: str = Field(
         description="Comma-separated list of available models for this provider",
     )
+    default_model: str | None = Field(
+        default=None,
+        description="Default model for this provider when callers don't specify one. "
+        "Falls back to LLMProvidersConfig.default_model if not set.",
+    )
     auth_mode: Literal["subscription", "api_key", "adc"] = Field(
         default="subscription",
         description="Authentication mode: 'subscription' (CLI-based), 'api_key' (BYOK), 'adc' (Google ADC)",

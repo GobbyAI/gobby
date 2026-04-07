@@ -159,6 +159,13 @@ class ChatSession(ChatSessionPermissionsMixin):
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None = field(default=None, repr=False)
     _on_mode_persist: Callable[[str], None] | None = field(default=None, repr=False)
 
+    @property
+    def _default_model(self) -> str | None:
+        """Resolve default model from config."""
+        if self._config and hasattr(self._config, "llm_providers"):
+            return self._config.llm_providers.default_model
+        return None
+
     async def start(self, model: str | None = None) -> None:
         """Connect the ClaudeSDKClient with configured options."""
         cli_path = _find_cli_path()
@@ -222,7 +229,7 @@ class ChatSession(ChatSessionPermissionsMixin):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=None,
-            model=model or "opus",
+            model=model or self._default_model,
             permission_mode=self._to_sdk_permission_mode(self.chat_mode),
             allowed_tools=["mcp__gobby__*"],
             can_use_tool=self._can_use_tool,

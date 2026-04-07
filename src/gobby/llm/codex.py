@@ -58,6 +58,16 @@ class CodexProvider(LLMProvider):
         self.logger = logger
         self._client = None
 
+        # Resolve default model from provider config → global config.
+        # Pydantic defaults guarantee llm_providers.default_model is never None.
+        providers = getattr(config, "llm_providers", None)
+        codex_cfg = getattr(providers, "codex", None) if providers else None
+        self._default_model: str = (
+            getattr(codex_cfg, "default_model", None)
+            or getattr(providers, "default_model", None)
+            or config.llm_providers.default_model
+        )
+
         # Determine auth mode from config or parameter
         self._auth_mode: AuthMode = "subscription"  # Default
         if auth_mode:
@@ -134,9 +144,9 @@ class CodexProvider(LLMProvider):
             Model name string
         """
         if task == "summary":
-            return self.config.session_summary.model or "gpt-4o"
+            return self.config.session_summary.model or self._default_model
         else:
-            return "gpt-4o"
+            return self._default_model
 
     async def generate_summary(
         self, context: dict[str, Any], prompt_template: str | None = None
@@ -211,7 +221,7 @@ class CodexProvider(LLMProvider):
 
         try:
             response = await self._client.chat.completions.create(
-                model=model or "gpt-4o",
+                model=model or self._default_model,
                 messages=[
                     {
                         "role": "system",
@@ -244,7 +254,7 @@ class CodexProvider(LLMProvider):
 
         try:
             response = await self._client.chat.completions.create(
-                model=model or "gpt-4o",
+                model=model or self._default_model,
                 messages=[
                     {
                         "role": "system",
@@ -268,11 +278,10 @@ class CodexProvider(LLMProvider):
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Generate a text description of an image using OpenAI's vision capabilities.
-
-        Uses GPT-4o for vision tasks.
 
         Args:
             image_path: Path to the image file
@@ -309,9 +318,8 @@ class CodexProvider(LLMProvider):
             if context:
                 prompt = f"{context}\n\n{prompt}"
 
-            # Use GPT-4o for vision
             response = await self._client.chat.completions.create(
-                model="gpt-4o",
+                model=model or self._default_model,
                 messages=[
                     {
                         "role": "user",

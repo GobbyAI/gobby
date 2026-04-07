@@ -116,6 +116,7 @@ class LLMProvider(ABC):
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Generate a text description of an image.

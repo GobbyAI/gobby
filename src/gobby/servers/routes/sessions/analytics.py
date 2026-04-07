@@ -152,10 +152,10 @@ def register_analytics_routes(
                     provider, model, _ = server.llm_service.get_provider_for_feature(title_config)
                 except Exception:
                     provider = server.llm_service.get_default_provider()
-                    model = "haiku"
+                    model = None
             else:
                 provider = server.llm_service.get_default_provider()
-                model = "haiku"
+                model = None
             title = await asyncio.wait_for(
                 provider.generate_text(
                     llm_prompt,

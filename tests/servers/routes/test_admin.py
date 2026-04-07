@@ -294,7 +294,7 @@ class TestModelsEndpoint:
 
     @patch("gobby.servers.routes.admin._config._discover_models")
     def test_models_default_model_fallback(self, mock_discover) -> None:
-        """When no config default_model is set, falls back to 'opus'."""
+        """When no config default_model is set, returns None."""
         server = MagicMock()
         server.test_mode = False
         server.services.config.llm_providers.default_model = None
@@ -309,7 +309,7 @@ class TestModelsEndpoint:
         mock_discover.return_value = {}
         response = client.get("/api/admin/models")
         data = response.json()
-        assert data["default_model"] == "opus"
+        assert data["default_model"] is None
 
 
 class TestDiscoverModels:

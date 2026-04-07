@@ -61,7 +61,7 @@ class KnowledgeGraphService:
         code_link_min_score: float = 0.82,
         code_symbol_collection_prefix: str = "code_symbols_",
         embedding_dim: int = 768,
-        model: str = "haiku",
+        model: str | None = None,
     ):
         self._neo4j = neo4j_client
         self._llm = llm_provider

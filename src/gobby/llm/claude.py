@@ -78,6 +78,16 @@ class ClaudeLLMProvider(LLMProvider):
         self._auth_mode: AuthMode = "subscription"
         self._claude_cli_path = self._find_cli_path()
 
+        # Resolve default model from provider config → global config.
+        # Pydantic defaults guarantee llm_providers.default_model is never None.
+        providers = getattr(config, "llm_providers", None)
+        claude_cfg = getattr(providers, "claude", None) if providers else None
+        self._default_model: str = (
+            getattr(claude_cfg, "default_model", None)
+            or getattr(providers, "default_model", None)
+            or config.llm_providers.default_model
+        )
+
     def _find_cli_path(self) -> str | None:
         """Find Claude CLI path. Delegates to claude_cli.find_cli_path()."""
         from gobby.llm.claude_cli import find_cli_path
@@ -387,7 +397,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt or "You are a helpful assistant.",
             max_turns=1,
-            model=model or "opus",
+            model=model or self._default_model,
             tools=[],  # Explicitly disable all tools
             allowed_tools=[],
             mcp_servers={},
@@ -450,7 +460,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=max_turns,
-            model=model or "opus",
+            model=model or self._default_model,
             allowed_tools=allowed_tools,
             mcp_servers={},
             permission_mode="default",
@@ -505,7 +515,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt or "You are a helpful assistant.",
             max_turns=1,
-            model=model or "opus",
+            model=model or self._default_model,
             tools=[],
             allowed_tools=[],
             mcp_servers={},
@@ -563,6 +573,7 @@ class ClaudeLLMProvider(LLMProvider):
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Generate a text description of an image using Claude's vision capabilities.
@@ -570,11 +581,12 @@ class ClaudeLLMProvider(LLMProvider):
         Args:
             image_path: Path to the image file to describe
             context: Optional context to guide the description
+            model: Optional model override
 
         Returns:
             Text description of the image
         """
-        return await self._describe_image_sdk(image_path, context)
+        return await self._describe_image_sdk(image_path, context, model)
 
     def _prepare_image_data(self, image_path: str) -> tuple[str, str] | str:
         """
@@ -614,6 +626,7 @@ class ClaudeLLMProvider(LLMProvider):
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Describe image using Claude Agent SDK (subscription mode)."""
         cli_path = await self._verify_cli_path()
@@ -635,7 +648,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt="You are a vision assistant that describes images in detail.",
             max_turns=1,
-            model="haiku",
+            model=model or self._default_model,
             tools=[],
             allowed_tools=[],
             mcp_servers={},
