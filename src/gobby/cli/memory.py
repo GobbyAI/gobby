@@ -642,6 +642,85 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None) -> None:
     )
 
 
+@memory.command("invalidate")
+@click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
+    """Wipe and rebuild ALL memory indices (embeddings, crossrefs, graph, FTS5).
+
+    Clears Qdrant vectors and Neo4j graph for the project, then rebuilds
+    everything from the SQLite source of truth.
+
+    Examples:
+
+        gobby memory invalidate
+
+        gobby memory invalidate -p myproject
+
+        gobby memory invalidate --yes
+    """
+    client = _get_daemon_client(ctx)
+    is_healthy, err = client.check_health()
+    if not is_healthy:
+        raise click.ClickException(f"Daemon not running: {err}")
+
+    project_id = resolve_project_ref(project_ref)
+    if not project_id:
+        raise click.ClickException("No project found. Use -p to specify a project.")
+
+    if not yes:
+        click.confirm(
+            "This will wipe and rebuild all memory indices for this project. Continue?",
+            abort=True,
+        )
+
+    params = f"?project_id={urllib.parse.quote(str(project_id))}"
+    click.echo("Invalidating all memory indices (this may take several minutes)...")
+    try:
+        response = client.call_http_api(
+            f"/api/memories/invalidate{params}", method="POST", timeout=1200.0
+        )
+    except (httpx.HTTPError, ConnectionError, OSError, ValueError) as e:
+        click.echo(f"Error: Could not reach daemon — is it running? ({e})")
+        raise SystemExit(1) from e
+
+    if not response.ok:
+        raise click.ClickException(
+            f"Invalidate failed (HTTP {response.status_code}): {response.text}"
+        )
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise click.ClickException(f"Invalid response from daemon: {e}") from e
+
+    embed = data.get("embeddings", {})
+    crossrefs = data.get("crossrefs", {})
+    graph_cleared = data.get("graph_cleared", {})
+    graph_rebuilt = data.get("graph_rebuilt", {})
+    fts5 = data.get("fts5", {})
+
+    if graph_cleared:
+        click.echo(
+            f"Graph cleared: {graph_cleared.get('memories_deleted', 0)} memory nodes, "
+            f"{graph_cleared.get('entities_deleted', 0)} orphaned entities"
+        )
+    click.echo(
+        f"Embeddings: {embed.get('embeddings_generated', '?')}/{embed.get('total_memories', '?')}"
+    )
+    click.echo(
+        f"Crossrefs: {crossrefs.get('crossrefs_created', '?')} created "
+        f"for {crossrefs.get('memories_processed', '?')} memories"
+    )
+    if graph_rebuilt:
+        click.echo(
+            f"Graph rebuilt: {graph_rebuilt.get('extracted', '?')} extracted, "
+            f"{graph_rebuilt.get('errors', '?')} errors"
+        )
+    click.echo(f"FTS5: {fts5.get('indexed', '?')} memories indexed")
+    click.echo("Done.")
+
+
 def resolve_memory_id(
     manager: MemoryManager, memory_ref: str, project_id: str | None = None
 ) -> str:

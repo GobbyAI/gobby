@@ -390,6 +390,36 @@ class KnowledgeGraphService:
             logger.warning(f"Failed to remove orphaned entities: {e}")
             return 0
 
+    async def clear_project_graph(self, project_id: str) -> dict[str, int]:
+        """Delete all Memory nodes (and relationships) for a project, then clean orphaned entities.
+
+        Args:
+            project_id: Required — scopes the clear to a single project.
+
+        Returns:
+            Dict with memories_deleted and entities_deleted counts.
+        """
+        try:
+            records = await self._neo4j.query(
+                "MATCH (m:Memory {project_id: $project_id}) "
+                "WITH count(m) AS total, collect(m) AS nodes "
+                "UNWIND nodes AS n DETACH DELETE n "
+                "RETURN total AS deleted",
+                {"project_id": project_id},
+            )
+            memories_deleted = int(records[0]["deleted"]) if records else 0
+            entities_deleted = await self.remove_orphaned_entities()
+            return {
+                "memories_deleted": memories_deleted,
+                "entities_deleted": entities_deleted,
+            }
+        except Neo4jConnectionError as e:
+            logger.warning(f"Neo4j unreachable during clear_project_graph: {e}")
+            return {"memories_deleted": 0, "entities_deleted": 0}
+        except Exception as e:
+            logger.warning(f"Failed to clear project graph: {e}")
+            return {"memories_deleted": 0, "entities_deleted": 0}
+
     async def _link_entities_to_code(
         self,
         entities: list[Entity],

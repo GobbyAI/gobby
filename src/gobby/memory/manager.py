@@ -1072,6 +1072,77 @@ class MemoryManager:
 
         return {"success": True, "total_memories": total, "embeddings_generated": generated}
 
+    async def invalidate_all(self, project_id: str) -> dict[str, Any]:
+        """Wipe and rebuild all memory indices for a project.
+
+        Order: clear KG → rebuild embeddings → rebuild crossrefs → rebuild KG → reindex FTS5.
+
+        Args:
+            project_id: Required — scopes the invalidation to a single project.
+        """
+        report: dict[str, Any] = {}
+
+        # 1. Clear Neo4j graph
+        if self._kg_service:
+            report["graph_cleared"] = await self._kg_service.clear_project_graph(project_id)
+
+        # 2. Rebuild embeddings (wipes and recreates Qdrant collection)
+        report["embeddings"] = await self.reindex_embeddings()
+
+        # 3. Fetch all memories for crossref + KG rebuild
+        all_memories = self._fetch_all_project_memories(project_id)
+        total = len(all_memories)
+
+        # 4. Rebuild crossrefs
+        crossrefs_created = 0
+        for memory in all_memories:
+            try:
+                crossrefs_created += await self.rebuild_crossrefs_for_memory(memory)
+            except Exception as e:
+                logger.warning(f"Crossref failed for {memory.id}: {e}")
+        report["crossrefs"] = {
+            "memories_processed": total,
+            "crossrefs_created": crossrefs_created,
+        }
+
+        # 5. Rebuild knowledge graph
+        if self._kg_service:
+            extracted = errors = 0
+            for memory in all_memories:
+                try:
+                    await self._kg_service.add_to_graph(
+                        memory.content,
+                        memory_id=memory.id,
+                        project_id=memory.project_id,
+                    )
+                    extracted += 1
+                except Exception as e:
+                    logger.warning(f"KG extraction failed for {memory.id}: {e}")
+                    errors += 1
+            report["graph_rebuilt"] = {"extracted": extracted, "errors": errors}
+
+        # 6. Reindex FTS5
+        report["fts5"] = self._fts_searcher.reindex()
+
+        return report
+
+    def _fetch_all_project_memories(self, project_id: str) -> list[Memory]:
+        """Fetch all memories for a project using pagination."""
+        all_memories: list[Memory] = []
+        offset = 0
+        batch_size = 500
+        while True:
+            batch = self.storage.list_memories(
+                project_id=project_id, limit=batch_size, offset=offset
+            )
+            if not batch:
+                break
+            all_memories.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+        return all_memories
+
     # =========================================================================
     # Cross-references (using VectorStore for similarity search)
     # =========================================================================

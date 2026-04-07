@@ -15,6 +15,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BATCH_SIZE = 500
+
+
+def _fetch_all_memories(server: "HTTPServer", project_id: str | None = None) -> list[Any]:
+    """Fetch all memories using pagination (no hardcoded limit)."""
+    from gobby.storage.memories import Memory
+
+    all_memories: list[Memory] = []
+    offset = 0
+    while True:
+        batch = server.memory_manager.list_memories(
+            project_id=project_id, limit=_BATCH_SIZE, offset=offset
+        )
+        if not batch:
+            break
+        all_memories.extend(batch)
+        if len(batch) < _BATCH_SIZE:
+            break
+        offset += _BATCH_SIZE
+    return all_memories
+
 
 # =============================================================================
 # Request/Response models
@@ -201,7 +222,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Rebuild crossrefs for all existing memories."""
         try:
-            memories = server.memory_manager.list_memories(project_id=project_id, limit=500)
+            memories = _fetch_all_memories(server, project_id)
             total_created = 0
             for memory in memories:
                 try:
@@ -229,7 +250,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                     status_code=400,
                     detail="KnowledgeGraphService not initialized (requires Neo4j + LLM)",
                 )
-            memories = server.memory_manager.list_memories(project_id=project_id, limit=500)
+            memories = _fetch_all_memories(server, project_id)
             successful_count = 0
             errors = 0
             for memory in memories:
@@ -271,6 +292,21 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             return cast(dict[str, Any], result)
         except Exception as e:
             logger.error(f"Failed to reindex embeddings: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/invalidate")
+    async def invalidate_memories(
+        project_id: str = Query(..., description="Project ID (required)"),
+    ) -> dict[str, Any]:
+        """Wipe and rebuild all memory indices for a project.
+
+        Order: clear KG → rebuild embeddings → rebuild crossrefs → rebuild KG → reindex FTS5.
+        """
+        try:
+            result = await server.memory_manager.invalidate_all(project_id=project_id)
+            return cast(dict[str, Any], result)
+        except Exception as e:
+            logger.error(f"Failed to invalidate memory indices: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/{memory_id}")
