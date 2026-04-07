@@ -1,44 +1,21 @@
-# Migrating from Lobster to Gobby Pipelines
+# Importing External Pipeline Formats
 
-This guide helps you migrate workflows from Lobster (OpenClaw's workflow engine) to Gobby's pipeline system. Gobby provides full Lobster compatibility plus additional features.
+This guide covers importing pipeline definitions from external formats (e.g., `.lobster` files) into Gobby's native pipeline system.
 
 ## Overview
 
-Gobby's pipeline system offers **feature parity+ with Lobster**:
+Gobby's pipeline system supports importing simpler pipeline formats and converting them to native Gobby definitions, which offer additional capabilities:
 
-| Feature | Lobster | Gobby | Notes |
-|---------|---------|-------|-------|
-| Typed pipelines (JSON data flow) | Yes | Yes | Same `$step.output` syntax |
-| Approval gates with resume tokens | Yes | Yes | Same token-based approval |
-| Deterministic execution | Yes | Yes | Sequential step execution |
-| Local-first execution | Yes | Yes | SQLite persistence |
-| YAML workflow files | Yes | Yes | `.gobby/workflows/*.yaml` |
-| CLI run/approve/reject | Yes | Yes | `gobby pipelines run/approve/reject` |
-| `.lobster` file format | Native | Import + direct execution | Full compatibility |
-| **LLM-powered steps** | No | Yes | `prompt` field with tool restrictions |
-| **Webhook notifications** | No | Yes | Configurable webhooks on events |
-| **MCP tool exposure** | No | Yes | `expose_as_tool: true` |
-| **Composable pipelines** | No | Yes | `invoke_pipeline` step type |
-| **Run from workflows** | No | Yes | `run_pipeline` action |
-| **MCP tool steps** | No | Yes | `mcp` step type for direct tool calls |
-| **Session spawning** | No | Yes | `spawn_session` step type |
-| **Workflow activation** | No | Yes | `activate_workflow` step type |
+- LLM-powered steps (`prompt` field with tool restrictions)
+- Webhook notifications on pipeline events
+- MCP tool exposure (`expose_as_tool: true`)
+- Composable pipelines (`invoke_pipeline` step type)
+- MCP tool steps for direct tool calls
+- Session spawning and workflow activation
 
-## Quick Migration Options
+## Importing Pipeline Files
 
-### Option 1: Run Lobster Files Directly
-
-Run `.lobster` files without conversion:
-
-```bash
-gobby pipelines run --lobster my-pipeline.lobster
-```
-
-This imports the file on-the-fly and executes it without saving.
-
-### Option 2: Import and Convert
-
-Convert `.lobster` files to Gobby format:
+Convert external pipeline files to Gobby format:
 
 ```bash
 # Import to .gobby/workflows/
@@ -58,8 +35,8 @@ gobby pipelines run my-pipeline
 
 ### Field Conversions
 
-| Lobster | Gobby | Example |
-|---------|-------|---------|
+| External Format | Gobby | Example |
+|-----------------|-------|---------|
 | `command` | `exec` | `exec: npm run build` |
 | `stdin: $step.stdout` | `input: $step.output` | `input: $build.output` |
 | `approval: true` | `approval: {required: true}` | See below |
@@ -68,7 +45,7 @@ gobby pipelines run my-pipeline
 
 ### Before/After: Basic Pipeline
 
-**Lobster (`ci.lobster`):**
+**External format (`ci.lobster`):**
 ```yaml
 name: ci-pipeline
 description: CI/CD pipeline
@@ -114,7 +91,7 @@ steps:
 
 ### Before/After: Approval with Message
 
-**Lobster:**
+**External format:**
 ```yaml
 - id: deploy
   command: deploy-prod
@@ -134,7 +111,7 @@ steps:
 
 ### Before/After: Conditional Steps
 
-**Lobster:**
+**External format:**
 ```yaml
 - id: notify
   command: send-notification
@@ -295,7 +272,7 @@ triggers:
 
 ## Step-by-Step Conversion Example
 
-### 1. Start with Lobster File
+### 1. Start with External Pipeline File
 
 ```yaml
 # deploy.lobster
@@ -448,17 +425,16 @@ gobby pipelines run deploy -i env=production -i version=v2.1.0
 
 ## CLI Command Mapping
 
-| Lobster | Gobby | Notes |
-|---------|-------|-------|
-| `lobster run <name>` | `gobby pipelines run <name>` | Same functionality |
-| `lobster run <file.lobster>` | `gobby pipelines run --lobster <file>` | Direct file execution |
-| `lobster approve <token>` | `gobby pipelines approve <token>` | Same functionality |
-| `lobster reject <token>` | `gobby pipelines reject <token>` | Same functionality |
-| `lobster status <id>` | `gobby pipelines status <id>` | Same functionality |
-| N/A | `gobby pipelines import <file>` | Convert and save |
-| N/A | `gobby pipelines list` | Discover pipelines |
-| N/A | `gobby pipelines show <name>` | View definition |
-| N/A | `gobby pipelines history <name>` | Execution history |
+| Command | Description |
+|---------|-------------|
+| `gobby pipelines import <file>` | Import and convert external pipeline file |
+| `gobby pipelines run <name>` | Run an imported pipeline by name |
+| `gobby pipelines approve <token>` | Approve a waiting pipeline step |
+| `gobby pipelines reject <token>` | Reject a waiting pipeline step |
+| `gobby pipelines status <id>` | Check execution status |
+| `gobby pipelines list` | Discover available pipelines |
+| `gobby pipelines show <name>` | View pipeline definition |
+| `gobby pipelines history <name>` | View execution history |
 
 ## Troubleshooting
 

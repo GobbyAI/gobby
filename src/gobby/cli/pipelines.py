@@ -230,55 +230,33 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
     multiple=True,
     help="Input values as key=value (can be repeated)",
 )
-@click.option(
-    "--lobster",
-    "lobster_path",
-    type=click.Path(exists=True),
-    help="Run a Lobster file directly without saving",
-)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 @click.pass_context
 def run_pipeline(
     ctx: click.Context,
     name: str | None,
     inputs: tuple[str, ...],
-    lobster_path: str | None,
     json_format: bool,
 ) -> None:
-    """Run a pipeline by name or Lobster file.
+    """Run a pipeline by name.
 
     Examples:
 
         gobby pipelines run deploy
 
         gobby pipelines run deploy -i env=prod -i version=1.0
-
-        gobby pipelines run --lobster ci.lobster
     """
-    # Handle --lobster flag: import and run directly without saving
     pipeline: Any = None  # Will be PipelineDefinition after loading
-    if lobster_path:
-        importer = LobsterImporter()
-        try:
-            pipeline = importer.import_file(lobster_path)
-        except FileNotFoundError:
-            click.echo(f"File not found: {lobster_path}", err=True)
-            raise SystemExit(1) from None
-        except Exception as e:
-            click.echo(f"Failed to import Lobster file: {e}", err=True)
-            raise SystemExit(1) from None
-    else:
-        # Standard mode: load by name
-        if not name:
-            click.echo("Pipeline name is required (or use --lobster).", err=True)
-            raise SystemExit(1)
+    if not name:
+        click.echo("Pipeline name is required.", err=True)
+        raise SystemExit(1)
 
-        loader = get_workflow_loader()
-        project_path = get_project_path()
-        pipeline = loader.load_pipeline_sync(name, project_path=project_path)
-        if not pipeline:
-            click.echo(f"Pipeline '{name}' not found.", err=True)
-            raise SystemExit(1)
+    loader = get_workflow_loader()
+    project_path = get_project_path()
+    pipeline = loader.load_pipeline_sync(name, project_path=project_path)
+    if not pipeline:
+        click.echo(f"Pipeline '{name}' not found.", err=True)
+        raise SystemExit(1)
 
     # Parse inputs
     input_dict: dict[str, str] = {}
@@ -294,7 +272,7 @@ def run_pipeline(
     display_name = name or (pipeline.name if pipeline else None) or "pipeline"
 
     # Try daemon first (has MCP tool access and LLM service)
-    if name and not lobster_path:
+    if name:
         daemon_result = _try_daemon_run(name, input_dict, project_id)
         if daemon_result is not None:
             status = daemon_result.get("status", "")
@@ -780,9 +758,9 @@ def search_executions(
 )
 @click.pass_context
 def import_pipeline(ctx: click.Context, path: str, output_path: str | None) -> None:
-    """Import a Lobster pipeline and convert to Gobby format.
+    """Import an external pipeline definition and convert to Gobby format.
 
-    Reads a .lobster file, converts it to Gobby's pipeline format,
+    Reads a pipeline file, converts it to Gobby's native format,
     and saves it to .gobby/workflows/ in the current project.
 
     Examples:
@@ -798,7 +776,6 @@ def import_pipeline(ctx: click.Context, path: str, output_path: str | None) -> N
         click.echo("Not in a Gobby project. Use --output to specify destination.", err=True)
         raise SystemExit(1)
 
-    # Import the Lobster file
     importer = LobsterImporter()
     try:
         pipeline = importer.import_file(path)
@@ -863,5 +840,5 @@ def import_pipeline(ctx: click.Context, path: str, output_path: str | None) -> N
     # Write YAML file
     dest_path.write_text(yaml.dump(pipeline_dict, default_flow_style=False, sort_keys=False))
 
-    click.echo(f"✓ Imported '{pipeline.name}' from Lobster format")
+    click.echo(f"✓ Imported '{pipeline.name}'")
     click.echo(f"  Saved to: {dest_path}")

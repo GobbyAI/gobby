@@ -12,7 +12,7 @@ Documentation guides for using Gobby's features.
 | [workflows-overview.md](workflows-overview.md) | How rules, agents, and pipelines fit together |
 | [rules.md](rules.md) | Rule engine — events, effects, conditions, enforcement |
 | [pipelines.md](pipelines.md) | Pipeline workflows with data flow and approval gates |
-| [lobster-migration.md](lobster-migration.md) | Migrating from Lobster to Gobby pipelines |
+| [pipeline-format-migration.md](pipeline-format-migration.md) | Importing external pipeline formats into Gobby |
 | [search.md](search.md) | Unified search with TF-IDF, embeddings, and hybrid modes |
 | [code-index.md](code-index.md) | AST-based symbol indexing with `gobby-code` MCP tools |
 | [tool-compression.md](tool-compression.md) | Output compression and code index compression for token savings |

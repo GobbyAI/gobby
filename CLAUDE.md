@@ -80,11 +80,10 @@ uv run pytest tests/path/ --cov=gobby --cov-report=term-missing  # Add coverage 
 # Pipeline management
 uv run gobby pipelines list            # List available pipelines
 uv run gobby pipelines run <name>      # Run a pipeline
-uv run gobby pipelines run --lobster <file>  # Run Lobster file directly
 uv run gobby pipelines status <id>     # Check execution status
 uv run gobby pipelines approve <token> # Approve waiting pipeline
 uv run gobby pipelines reject <token>  # Reject waiting pipeline
-uv run gobby pipelines import <file>   # Import Lobster file
+uv run gobby pipelines import <file>   # Import external pipeline file
 ```
 
 **Coverage threshold**: 80% (enforced in CI and pre-push)

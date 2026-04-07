@@ -93,7 +93,7 @@ resume_on_restart: false  # Optional. Resume after daemon restart (steps must be
 | `activate_workflow` | object | Activate step workflow: `{name, session_id, variables?}` |
 | `wait` | object | Block until completion: `{completion_id, timeout?}` |
 | `condition` | string | Expression; step skipped if false |
-| `input` | string | Explicit input reference (Lobster compat) |
+| `input` | string | Explicit input reference (legacy format compat) |
 | `approval` | object | Approval gate: `{required, message?, timeout_seconds?}` |
 | `tools` | list | Tool restrictions for prompt steps |
 
@@ -622,12 +622,12 @@ call_tool("gobby-workflows", "pipeline:run-tests", {"test_filter": "test_api"})
 
 ---
 
-## Lobster Compatibility
+## Importing External Pipelines
 
-The `LobsterImporter` converts Lobster-format pipeline YAML to Gobby format.
+Gobby can import pipeline definitions from external formats and convert them to native Gobby format.
 
-| Lobster | Gobby |
-|---------|-------|
+| External Format | Gobby |
+|-----------------|-------|
 | `command` | `exec` |
 | `stdin: $step.stdout` | `input: $step.output` |
 | `approval: true` | `approval: {required: true}` |
@@ -635,7 +635,6 @@ The `LobsterImporter` converts Lobster-format pipeline YAML to Gobby format.
 
 ```bash
 gobby pipelines import ci.lobster       # Import and convert
-gobby pipelines run --lobster ci.lobster  # Run directly
 ```
 
 **Source**: `src/gobby/workflows/lobster_compat.py` — `LobsterImporter`
@@ -654,7 +653,6 @@ gobby pipelines show <name> [--json]
 # Run pipeline
 gobby pipelines run <name>                    # Run by name
 gobby pipelines run <name> -i key=value       # With inputs
-gobby pipelines run --lobster <file>          # Run Lobster file
 gobby pipelines run <name> --json             # JSON output
 
 # Check execution status
@@ -667,7 +665,7 @@ gobby pipelines reject <token>
 # Execution history
 gobby pipelines history <name> [--limit N] [--json]
 
-# Import Lobster file
+# Import external pipeline file
 gobby pipelines import <file> [-o output.yaml]
 ```
 
@@ -711,7 +709,7 @@ The CLI tries the daemon HTTP API first (full-featured). If daemon is unavailabl
 | `src/gobby/workflows/pipeline/gatekeeper.py` | Approval gate management |
 | `src/gobby/workflows/pipeline_webhooks.py` | Webhook notifications |
 | `src/gobby/workflows/definitions.py` | Pipeline definition models |
-| `src/gobby/workflows/lobster_compat.py` | Lobster format importer |
+| `src/gobby/workflows/lobster_compat.py` | External format importer |
 | `src/gobby/install/shared/workflows/` | Bundled pipeline templates |
 | `src/gobby/cli/pipelines.py` | CLI commands |
 | `src/gobby/servers/routes/pipelines.py` | HTTP API routes |
@@ -723,4 +721,4 @@ The CLI tries the daemon HTTP API first (full-featured). If daemon is unavailabl
 - [Orchestrator](./orchestrator.md) — The orchestrator pipeline pattern in depth
 - [Task Expansion](./task-expansion.md) — The expand-task pipeline explained
 - [Rules](./rules.md) — Rule enforcement (separate system, complements pipelines)
-- [Lobster Migration](./lobster-migration.md) — Migrating from Lobster format
+- [Pipeline Format Migration](./pipeline-format-migration.md) — Importing external pipeline formats

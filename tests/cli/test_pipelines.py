@@ -1036,7 +1036,7 @@ class TestPipelinesImport:
         lobster_file = tmp_path / "test.lobster"
         lobster_file.write_text("""
 name: imported-pipeline
-description: Imported from Lobster
+description: Imported pipeline
 steps:
   - id: build
     command: npm run build
@@ -1084,11 +1084,11 @@ steps:
             assert saved_file.exists()
 
     @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_import_converts_lobster_format(self, runner, tmp_path) -> None:
-        """Verify import converts Lobster format to Gobby format."""
+    def test_import_converts_external_format(self, runner, tmp_path) -> None:
+        """Verify import converts external format to Gobby format."""
         import yaml
 
-        # Create a test .lobster file with Lobster-specific fields
+        # Create a test .lobster file with external format fields
         lobster_file = tmp_path / "convert.lobster"
         lobster_file.write_text("""
 name: convert-test
@@ -1210,179 +1210,3 @@ steps:
             assert custom_output.exists()
 
 
-class TestPipelinesRunLobster:
-    """Tests for gobby pipelines run --lobster flag."""
-
-    @pytest.fixture
-    def mock_execution(self):
-        """Create a mock pipeline execution."""
-        from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
-
-        return PipelineExecution(
-            id="pe-lobster-123",
-            pipeline_name="lobster-pipeline",
-            project_id="proj-1",
-            status=ExecutionStatus.COMPLETED,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:01:00Z",
-            outputs_json='{"result": "success"}',
-        )
-
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_run_lobster_flag_exists(self, runner) -> None:
-        """Verify 'run' command has --lobster flag."""
-        result = runner.invoke(cli, ["pipelines", "run", "--help"])
-        assert "--lobster" in result.output
-
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_run_lobster_imports_and_executes(self, runner, tmp_path, mock_execution) -> None:
-        """Verify 'gobby pipelines run --lobster path.lobster' imports and executes."""
-        from unittest.mock import AsyncMock
-
-        # Create a test .lobster file
-        lobster_file = tmp_path / "test.lobster"
-        lobster_file.write_text("""
-name: lobster-pipeline
-description: Test Lobster pipeline
-steps:
-  - id: build
-    command: npm run build
-""")
-
-        mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(return_value=mock_execution)
-
-        with patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor):
-            result = runner.invoke(cli, ["pipelines", "run", "--lobster", str(lobster_file)])
-
-            assert result.exit_code == 0
-            mock_executor.execute.assert_called_once()
-            # Verify pipeline passed to executor
-            call_kwargs = mock_executor.execute.call_args
-            pipeline = call_kwargs.kwargs.get("pipeline")
-            assert pipeline.name == "lobster-pipeline"
-
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_run_lobster_does_not_save_file(self, runner, tmp_path, mock_execution) -> None:
-        """Verify --lobster does not save converted pipeline to disk."""
-        from unittest.mock import AsyncMock
-
-        # Create a test .lobster file
-        lobster_file = tmp_path / "test.lobster"
-        lobster_file.write_text("""
-name: no-save-pipeline
-description: Should not be saved
-steps:
-  - id: step1
-    command: echo test
-""")
-
-        # Create project directory to check nothing is saved
-        gobby_dir = tmp_path / ".gobby"
-        gobby_dir.mkdir()
-        workflows_dir = gobby_dir / "workflows"
-        workflows_dir.mkdir()
-
-        mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(return_value=mock_execution)
-
-        with (
-            patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),
-            patch("gobby.cli.pipelines.get_project_path", return_value=tmp_path),
-        ):
-            result = runner.invoke(cli, ["pipelines", "run", "--lobster", str(lobster_file)])
-
-            assert result.exit_code == 0
-            # Verify no file was saved
-            saved_files = list(workflows_dir.glob("*.yaml"))
-            assert len(saved_files) == 0
-
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_run_lobster_outputs_execution_result(self, runner, tmp_path, mock_execution) -> None:
-        """Verify --lobster outputs execution result."""
-        from unittest.mock import AsyncMock
-
-        # Create a test .lobster file
-        lobster_file = tmp_path / "test.lobster"
-        lobster_file.write_text("""
-name: result-pipeline
-description: Test result output
-steps:
-  - id: step1
-    command: echo test
-""")
-
-        mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(return_value=mock_execution)
-
-        with patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor):
-            result = runner.invoke(cli, ["pipelines", "run", "--lobster", str(lobster_file)])
-
-            assert result.exit_code == 0
-            assert "pe-lobster-123" in result.output
-            assert "completed" in result.output.lower()
-
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_run_lobster_with_inputs(self, runner, tmp_path, mock_execution) -> None:
-        """Verify --lobster supports -i input flags."""
-        from unittest.mock import AsyncMock
-
-        # Create a test .lobster file
-        lobster_file = tmp_path / "test.lobster"
-        lobster_file.write_text("""
-name: input-pipeline
-description: Test inputs
-steps:
-  - id: deploy
-    command: deploy --env $env
-""")
-
-        mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(return_value=mock_execution)
-
-        with patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor):
-            result = runner.invoke(
-                cli,
-                ["pipelines", "run", "--lobster", str(lobster_file), "-i", "env=prod"],
-            )
-
-            assert result.exit_code == 0
-            call_kwargs = mock_executor.execute.call_args
-            inputs = call_kwargs.kwargs.get("inputs", {})
-            assert inputs.get("env") == "prod"
-
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_run_lobster_file_not_found(self, runner) -> None:
-        """Verify --lobster handles file not found."""
-        result = runner.invoke(cli, ["pipelines", "run", "--lobster", "/nonexistent.lobster"])
-
-        assert result.exit_code != 0 or "not found" in result.output.lower()
-
-    @pytest.mark.skipif(not pipelines_available(), reason="pipelines CLI not yet implemented")
-    def test_run_lobster_json_output(self, runner, tmp_path, mock_execution) -> None:
-        """Verify --lobster supports --json output."""
-        import json
-        from unittest.mock import AsyncMock
-
-        # Create a test .lobster file
-        lobster_file = tmp_path / "test.lobster"
-        lobster_file.write_text("""
-name: json-pipeline
-description: Test JSON output
-steps:
-  - id: step1
-    command: echo test
-""")
-
-        mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(return_value=mock_execution)
-
-        with patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor):
-            result = runner.invoke(
-                cli, ["pipelines", "run", "--lobster", str(lobster_file), "--json"]
-            )
-
-            assert result.exit_code == 0
-            data = json.loads(result.output)
-            assert data["execution_id"] == "pe-lobster-123"
-            assert data["status"] == "completed"
