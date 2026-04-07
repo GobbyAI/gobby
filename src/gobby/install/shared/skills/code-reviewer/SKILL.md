@@ -1,52 +1,47 @@
 ---
-name: codex-review
-description: How to run Codex code reviews and adversarial reviews. Use when asked to review code with Codex, run adversarial review, or when the codex review gate blocks.
-category: integration
+name: code-reviewer
+description: How to run code reviews and adversarial reviews. Use when asked to review code, run adversarial review, or when the code review gate blocks.
+category: engineering
 tags:
   - gobby
 metadata:
   gobby:
-    audience: interactive
+    audience: all
     depth: 0
 ---
 
-# Codex Review
+# Code Reviewer
 
-Run code reviews using the Codex CLI. Supports standard review and adversarial review modes.
+Run code reviews against local git state. Supports standard review and adversarial review modes.
 
 ## Standard Review
 
-Use `codex review` for straightforward code review against local git state.
+Review uncommitted changes or branch diffs:
 
 ```bash
-# Review uncommitted changes (staged + unstaged + untracked)
-codex review --uncommitted
+# Review uncommitted changes (staged + unstaged)
+git diff
+git diff --cached
 
 # Review changes against a base branch
-codex review --base main
+git diff main...HEAD
 
 # Review a specific commit
-codex review --commit <sha>
+git show <sha>
 
-# With custom review instructions
-codex review --uncommitted "Focus on error handling and edge cases"
+# List changed files
+git diff --name-only main...HEAD
 ```
 
 ## Adversarial Review
 
-Use `codex exec` with the adversarial review prompt for deeper, skeptical analysis that challenges the change rather than validating it.
-
-```bash
-codex exec -s read-only "<adversarial review prompt>"
-```
+Use this prompt template for deeper, skeptical analysis that challenges the change rather than validating it.
 
 ### Adversarial Review Prompt Template
 
-Pipe the diff context and use this prompt structure:
-
 ```xml
 <role>
-You are Codex performing an adversarial software review.
+You are performing an adversarial software review.
 Your job is to break confidence in the change, not to validate it.
 </role>
 
@@ -104,13 +99,7 @@ If the change looks safe, say so directly and return no findings.
 
 ## Stop Review Gate Prompt
 
-When the codex review gate blocks your stop, use this prompt to run the gate review:
-
-```bash
-codex exec -s read-only "<stop gate prompt with diff context>"
-```
-
-The stop gate prompt reviews only the immediately previous turn's work:
+When the code review gate blocks your stop, review only the immediately previous turn's work:
 
 ```xml
 <task>
@@ -148,13 +137,14 @@ Before running a review, estimate the size:
 
 1. Check `git status --short --untracked-files=all` and `git diff --shortstat`
 2. For branch review: `git diff --shortstat <base>...HEAD`
-3. Small (1-2 files): run in foreground
-4. Larger or unclear: run in background via `Bash(command="...", run_in_background=true)`
+3. Small (1-2 files): review inline
+4. Larger or unclear: use a subagent for the review
 
 ## After Review
 
-Follow the `codex-result-handling` skill guidelines:
 - Present findings verbatim, ordered by severity
+- Preserve file paths and line numbers exactly as reported
 - **Do NOT auto-fix issues** — ask the user which findings to address
+- Don't generate substitute findings if the review tool or process fails
 - If the review passes clean, set the gate variable if applicable:
   `set_variable(name="codex_review_gate_passed", value=true)`
