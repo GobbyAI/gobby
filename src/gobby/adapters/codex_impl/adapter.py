@@ -649,8 +649,9 @@ class CodexHooksAdapter(BaseAdapter):
         "Stop": HookEventType.STOP,
     }
 
-    # Hook events that only accept systemMessage (not additionalContext)
-    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {"PreToolUse"}
+    # Hook events that only accept systemMessage (not additionalContext).
+    # Codex rejects/ignores additionalContext for these event types.
+    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {"PreToolUse", "Stop"}
 
     def __init__(self, hook_manager: HookManager | None = None):
         self._hook_manager = hook_manager
@@ -725,14 +726,7 @@ class CodexHooksAdapter(BaseAdapter):
                 result["reason"] = response.reason
             return result
 
-        # Stop: no context injection needed — session ID already known
         hook_event_name = hook_type or "Unknown"
-        if hook_event_name == "Stop":
-            return result
-
-        # System message
-        if response.system_message:
-            result["systemMessage"] = response.system_message
 
         # Build additionalContext from all context sources
         context_parts: list[str] = []
@@ -740,6 +734,20 @@ class CodexHooksAdapter(BaseAdapter):
         # Workflow-injected context (inject_context action)
         if response.context:
             context_parts.append(response.context)
+
+        # Route system_message by event type:
+        # - systemMessage-only events (PreToolUse, Stop): visible systemMessage
+        # - SessionStart: BOTH systemMessage (visible banner) AND additionalContext (model-facing)
+        # - UserPromptSubmit, PostToolUse: additionalContext only (hidden from user)
+        if response.system_message:
+            if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
+                result["systemMessage"] = response.system_message
+            else:
+                # Always feed to model via additionalContext
+                context_parts.insert(0, response.system_message)
+                # SessionStart banner should also be visible to the user
+                if hook_event_name == "SessionStart":
+                    result["systemMessage"] = response.system_message
 
         # Session metadata (Gobby session ID, terminal context, etc.)
         if response.metadata:
@@ -796,14 +804,17 @@ class CodexHooksAdapter(BaseAdapter):
                             context_lines.append(f"{friendly_name}: {response.metadata[key]}")
                     context_parts.append("\n".join(context_lines))
 
-        # Build hookSpecificOutput with required hookEventName
-        # PreToolUse only accepts systemMessage — not additionalContext
-        # (Stop returns early above before reaching this code)
-        hook_event_name = hook_type or "Unknown"
+        # Build hookSpecificOutput or systemMessage based on event type.
+        # PreToolUse/Stop only accept systemMessage — additionalContext is rejected.
         if context_parts:
             combined_context = truncate_additional_context("\n\n".join(context_parts))
             if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
-                result["systemMessage"] = combined_context
+                # Append to existing systemMessage (from system_message routing above)
+                # instead of overwriting it.
+                if "systemMessage" in result:
+                    result["systemMessage"] += "\n\n" + combined_context
+                else:
+                    result["systemMessage"] = combined_context
             else:
                 result["hookSpecificOutput"] = {
                     "hookEventName": hook_event_name,

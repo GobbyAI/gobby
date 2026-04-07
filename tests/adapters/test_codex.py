@@ -1535,25 +1535,78 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "hookSpecificOutput" not in result
         assert "Rule injected context" in result["systemMessage"]
 
-    def test_stop_returns_bare_continue(self) -> None:
-        """Stop returns bare {continue: true} with no context injection."""
+    def test_stop_routes_context_to_system_message(self) -> None:
+        """Stop routes context to systemMessage (only accepted field for Stop)."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", context="Stop context")
         result = adapter.translate_from_hook_response(response, hook_type="Stop")
 
-        assert result == {"continue": True}
+        assert result["continue"] is True
+        assert "hookSpecificOutput" not in result
+        assert "Stop context" in result["systemMessage"]
 
-    def test_system_message_in_result(self) -> None:
-        """System message appears as systemMessage field."""
+    def test_stop_combines_system_message_and_context(self) -> None:
+        """Stop combines system_message and context in systemMessage without overwrite."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
-        response = HookResponse(decision="allow", system_message="System note")
-        result = adapter.translate_from_hook_response(response)
+        response = HookResponse(
+            decision="allow",
+            system_message="System note",
+            context="Rule context",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="Stop")
 
-        assert result["systemMessage"] == "System note"
+        assert "System note" in result["systemMessage"]
+        assert "Rule context" in result["systemMessage"]
+
+    def test_system_message_routes_to_additional_context_for_user_prompt(self) -> None:
+        """UserPromptSubmit routes system_message to additionalContext, not systemMessage."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", system_message="Session info")
+        result = adapter.translate_from_hook_response(
+            response, hook_type="UserPromptSubmit"
+        )
+
+        assert "systemMessage" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "UserPromptSubmit"
+        assert "Session info" in hso["additionalContext"]
+
+    def test_system_message_both_visible_and_model_facing_for_session_start(self) -> None:
+        """SessionStart puts system_message in both systemMessage and additionalContext."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", system_message="Session banner")
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        # Visible to user
+        assert result["systemMessage"] == "Session banner"
+        # Also fed to model
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "SessionStart"
+        assert "Session banner" in hso["additionalContext"]
+
+    def test_pre_tool_use_combines_system_message_and_context(self) -> None:
+        """PreToolUse combines system_message and context_parts in systemMessage."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            system_message="Gate note",
+            context="Rule constraint",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert "hookSpecificOutput" not in result
+        assert "Gate note" in result["systemMessage"]
+        assert "Rule constraint" in result["systemMessage"]
 
     def test_session_metadata_first_hook(self) -> None:
         """First hook includes full session metadata in additionalContext."""
