@@ -55,12 +55,21 @@ call_tool("gobby-tasks", "close_task", {
 
 ## Gate 3: Errors, Warnings, and Failures Resolved
 
-Run lint and tests on files you touched:
+Run the verification commands defined in `.gobby/project.json` on the files you touched. The `verification` key contains named commands — run the ones relevant to your changes:
 
 ```bash
-uv run ruff check <files>
-uv run pytest <relevant-test-files> -v --tb=short
+# Read the project's verification config
+cat .gobby/project.json | jq '.verification'
+
+# Run relevant checks (examples — use the actual commands from project.json)
+# verification.lint → linting
+# verification.format → format checking
+# verification.type_check → type checking
+# verification.unit_tests → tests (scope to relevant files, not the full suite)
+# verification.custom.* → project-specific checks (frontend, etc.)
 ```
+
+Scope test runs to relevant files — do NOT run the full test suite unless explicitly asked.
 
 Fix ALL errors, warnings, and failures — including pre-existing ones.
 
@@ -92,7 +101,7 @@ Do NOT create memories for bugs or errors — create tasks instead.
 
 ```
 1. git add + git commit (with [project-#N] in message)
-2. Run lint + tests on touched files → fix everything
+2. Run verification commands from .gobby/project.json on touched files → fix everything
 3. set_variable(errors_resolved=true)
 4. Review memories → save/delete/clear gate
 5. set_variable(memory_review_completed=true)
