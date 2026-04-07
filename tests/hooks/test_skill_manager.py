@@ -177,12 +177,12 @@ class TestDbSkillToParsed:
         from gobby.hooks.skill_manager import _db_skill_to_parsed
 
         skill = _make_mock_skill(
-            metadata={"gobby": {"sources": ["claude_sdk_web_chat", "gemini_sdk_web_chat"]}}
+            metadata={"gobby": {"sources": ["claude", "gemini"]}}
         )
         parsed = _db_skill_to_parsed(skill)
 
         assert parsed.audience_config is not None
-        assert parsed.audience_config.sources == ["claude_sdk_web_chat", "gemini_sdk_web_chat"]
+        assert parsed.audience_config.sources == ["claude", "gemini"]
 
     def test_no_gobby_meta_returns_none(self) -> None:
         """audience_config is None when metadata lacks gobby key."""

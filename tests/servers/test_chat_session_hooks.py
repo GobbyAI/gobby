@@ -45,7 +45,7 @@ class TestChatSessionHooks:
 
         # Assert callback was invoked
         mock_cb.assert_awaited_once_with(
-            {"prompt": "testing auth", "source": "claude_sdk_web_chat"}
+            {"prompt": "testing auth", "source": "claude"}
         )
         assert isinstance(res, dict)  # SyncHookJSONOutput from _response_to_prompt_output
 
@@ -148,6 +148,6 @@ class TestChatSessionHooks:
         await stop_fn({"session_id": "sid_1"}, None, ctx)
 
         mock_start.assert_awaited_once_with(
-            {"session_id": "sid_1", "source": "claude_sdk_web_chat"}
+            {"session_id": "sid_1", "source": "claude"}
         )
-        mock_stop.assert_awaited_once_with({"session_id": "sid_1", "source": "claude_sdk_web_chat"})
+        mock_stop.assert_awaited_once_with({"session_id": "sid_1", "source": "claude"})
