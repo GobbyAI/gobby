@@ -209,7 +209,6 @@ export interface ChatState {
   attachedSessionMeta?: SessionObservationMeta | null;
   onAttachToViewed?: () => void;
   onDetachFromSession?: () => void;
-  viewSession?: (sessionId: string) => void;
 }
 
 export interface ConversationState {

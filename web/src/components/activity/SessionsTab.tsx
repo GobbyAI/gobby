@@ -25,7 +25,6 @@ interface SessionsTabProps {
   projectId?: string | null;
   onKillAgent?: (runId: string) => void;
   onExpireSession?: (sessionId: string) => void;
-  onViewSession?: (sessionId: string) => void;
   chatSessionId?: string;
   isMobile?: boolean;
 }
@@ -56,7 +55,6 @@ export const SessionsTab = memo(function SessionsTab({
   projectId,
   onKillAgent,
   onExpireSession,
-  onViewSession,
   chatSessionId,
   isMobile = false,
 }: SessionsTabProps) {
@@ -229,13 +227,9 @@ export const SessionsTab = memo(function SessionsTab({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages.length]);
 
-  const handleSelect = useCallback(
-    (id: string) => {
-      setSelectedSessionId((prev) => (prev === id ? null : id));
-      onViewSession?.(id);
-    },
-    [onViewSession],
-  );
+  const handleSelect = useCallback((id: string) => {
+    setSelectedSessionId((prev) => (prev === id ? null : id));
+  }, []);
 
   const handleExpire = useCallback(
     async (entry: SessionEntry) => {

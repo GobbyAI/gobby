@@ -160,7 +160,6 @@ interface ActivityPanelProps {
   // Sessions tab
   onKillAgent?: (runId: string) => void;
   onExpireSession?: (sessionId: string) => void;
-  onViewSession?: (sessionId: string) => void;
   chatSessionId?: string | null;
   isMobile?: boolean;
 }
@@ -190,7 +189,6 @@ export function ActivityPanel({
   onAddFileToChat,
   onKillAgent,
   onExpireSession,
-  onViewSession,
   chatSessionId,
   isMobile = false,
 }: ActivityPanelProps) {
@@ -207,7 +205,6 @@ export function ActivityPanel({
             projectId={projectId}
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
-            onViewSession={onViewSession}
             chatSessionId={chatSessionId ?? undefined}
             isMobile={useOverlay}
           />

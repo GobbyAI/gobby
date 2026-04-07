@@ -1239,7 +1239,6 @@ export default function App() {
                   attachedSessionMeta,
                   onAttachToViewed: attachToViewed,
                   onDetachFromSession: detachFromSession,
-                  viewSession,
                   activeAgent,
                   onAgentChange: sendAgentChange,
                   provider: selectedProvider,
