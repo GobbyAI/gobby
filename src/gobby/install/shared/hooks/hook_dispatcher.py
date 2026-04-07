@@ -685,7 +685,7 @@ async def main() -> int:
                     "-d",
                     "@-",
                     "--max-time",
-                    "90",
+                    "600",
                 ],
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
@@ -713,7 +713,7 @@ async def main() -> int:
                     "source": _detect_source(config),
                 },
                 headers=_context_headers,
-                timeout=90.0,  # LLM-powered hooks (pre-compact summary) need more time
+                timeout=httpx.Timeout(10.0, read=600.0),
             )
 
         if response.status_code == 200:
