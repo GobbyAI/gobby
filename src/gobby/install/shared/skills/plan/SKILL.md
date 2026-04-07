@@ -226,13 +226,81 @@ Plan approved! To create tasks from this plan, run:
 /gobby expand <plan-file-path>
 
 This will:
-1. Create a root epic from the plan
-2. Analyze the codebase for context
-3. Generate subtasks with TDD instructions and validation criteria
-4. Wire up dependencies
+1. Create a root epic from the plan title
+2. Create phase sub-epics under the root (one per ## Phase section)
+3. For each phase, create feature tasks with TDD sandwiches
+4. Wire up intra-phase and cross-phase dependencies
 ```
 
 **This skill ends here.** Task creation is handled by `/gobby expand`.
+
+## Task Hierarchy (IMPORTANT)
+
+Plans with multiple phases **must** produce a hierarchical task tree, not a flat list.
+`/gobby expand` creates this hierarchy automatically from the plan's `## Phase` headings.
+
+### Required Structure
+
+```
+L1: Root Epic (from plan title)
+└── L2: Phase Sub-Epic (from each ## Phase section)
+    └── L3: Feature Task (from each ### N.N task heading)
+        ├── [TEST] Write failing tests    ← TDD sandwich (auto-generated)
+        ├── [IMPL] Implement feature      ← TDD sandwich (auto-generated)
+        └── [REF] Refactor with green tests ← TDD sandwich (auto-generated)
+```
+
+### Why Phases Must Be Sub-Epics
+
+- **TDD sandwiches are per-phase**, not per-epic — each phase gets its own [TEST]/[REF] wrapper
+- **Parallel dispatch**: phases with no cross-dependencies can be dispatched independently
+- **Progress tracking**: phase completion is visible without scanning 30+ flat tasks
+- **Dependency scoping**: intra-phase deps are local, cross-phase deps are explicit
+
+### How /gobby expand Handles Phases
+
+When expand processes a plan file:
+
+1. Creates root epic from `# Title`
+2. For each `## Phase N: Name` section:
+   - Creates a sub-epic under the root
+   - Saves an expansion spec with that phase's `### N.N` tasks
+   - Executes expansion with `tdd=true` — adds [TEST] and [REF] wrappers per phase
+3. Wires cross-phase dependencies (e.g., `depends: Phase N` becomes dependency on phase sub-epic)
+
+### Manual Hierarchy Creation (when expand pipeline is unavailable)
+
+If the expand pipeline fails, create the hierarchy manually:
+
+```python
+# 1. Create root epic
+epic = call_tool("gobby-tasks", "create_task", {
+    "title": "Plan Title", "task_type": "epic", "category": "code"
+})
+
+# 2. For each phase, create sub-epic
+phase1 = call_tool("gobby-tasks", "create_task", {
+    "title": "Phase 1: Foundation",
+    "task_type": "epic", "category": "code",
+    "parent_task_id": epic["ref"]
+})
+
+# 3. Save expansion spec per phase (only that phase's tasks)
+call_tool("gobby-tasks-ops", "save_expansion_spec", {
+    "task_id": phase1["ref"],
+    "spec": {"plan_file": "path/to/plan.md", "subtasks": [/* phase 1 tasks only */]}
+})
+
+# 4. Execute expansion per phase with TDD
+call_tool("gobby-tasks-ops", "execute_expansion", {
+    "parent_task_id": phase1["ref"], "tdd": true
+})
+
+# 5. Wire cross-phase dependencies
+call_tool("gobby-tasks", "add_dependency", {
+    "task_id": phase2_first_task, "depends_on": phase1["ref"]
+})
+```
 
 ---
 
@@ -301,20 +369,24 @@ Valid categories (from `src/gobby/storage/tasks.py`):
 Input: .gobby/plans/memory-v3.md
 
 Output task tree:
-#100 [epic] Memory V3 Backend                      L1 (from plan title)
-├── #101 [task] Create protocol.py                 L2 (from plan section 1.1)
-│   └─ validation: Protocol class exists with required methods
-│   └─ description: (47 lines — TDD header + full plan section content)
-├── #102 [task] Create backends/__init__.py        L2 (from plan section 1.2)
-│   └─ validation: Factory function works
-│   └─ description: (32 lines — TDD header + full plan section content)
-└── #103 [task] Add config schema                  L2 (from plan section 2.1)
-    └─ validation: Config loads and validates
-    └─ description: (28 lines — TDD header + full plan section content)
+#100 [epic] Memory V3 Backend                           L1 (root epic)
+├── #101 [epic] Phase 1: Protocol Layer                  L2 (phase sub-epic)
+│   ├── [TEST] Phase 1: Write failing tests              L3 (TDD sandwich)
+│   ├── #102 [task] Create protocol.py                   L3 (from plan § 1.1)
+│   │   └─ validation: Protocol class exists with required methods
+│   ├── #103 [task] Create backends/__init__.py          L3 (from plan § 1.2)
+│   │   └─ validation: Factory function works
+│   └── [REF] Phase 1: Refactor with green tests         L3 (TDD sandwich)
+├── #104 [epic] Phase 2: Configuration                   L2 (phase sub-epic)
+│   ├── [TEST] Phase 2: Write failing tests              L3 (TDD sandwich)
+│   ├── #105 [task] Add config schema                    L3 (from plan § 2.1)
+│   │   └─ validation: Config loads and validates
+│   └── [REF] Phase 2: Refactor with green tests         L3 (TDD sandwich)
 ```
 
-**NOTE**: `/gobby expand` adds a TDD header and preserves the full plan section content.
-Rich descriptions (code examples, schemas, configs) flow through to subtasks unchanged.
+**NOTE**: Each phase gets its own TDD [TEST]/[REF] sandwich. `/gobby expand` preserves
+the full plan section content in each task description. Cross-phase dependencies are wired
+between phase sub-epics (e.g., Phase 2 depends on Phase 1 sub-epic).
 
 ## Example Usage
 
@@ -331,8 +403,8 @@ Agent: "Plan approved! To create tasks, run:
         /gobby expand .gobby/plans/dark-mode.md"
 
 User: /gobby expand .gobby/plans/dark-mode.md
-Agent: [Creates epic, analyzes codebase, generates subtasks with TDD]
-Agent: "Created 12 tasks under epic #47 with validation criteria."
+Agent: [Creates root epic, phase sub-epics, feature tasks with TDD sandwiches per phase]
+Agent: "Created 3 phases, 12 feature tasks under epic #47 with TDD and validation criteria."
 ```
 
 ## Optional: Workflow-Enforced Planning

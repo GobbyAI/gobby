@@ -50,125 +50,171 @@ If `pending=True`, skip to **Phase 3** immediately.
 
 1. **Parse input**: Task ref (`#N`) or file path (`plan.md`)
 
-2. **If file path**: Read file content, create root task, and preserve the path:
+2. **If file path**: Read file content, create root epic, and detect phases:
    ```python
    content = Read(file_path)
-   plan_file_path = file_path  # Preserve for pipeline input
+   plan_file_path = file_path
+
    # Extract first heading as title
    result = call_tool("gobby-tasks", "create_task", {
        "title": "<first_heading>",
-       "description": content,
-       "task_type": "epic"
+       "description": "<overview section>",
+       "task_type": "epic",
+       "category": "code"
    })
-   task_id = result["task"]["id"]
+   root_id = result["ref"]
+
+   # Detect phases: look for ## Phase headings in the plan
+   # Each ## Phase N: Name section becomes a sub-epic
+   phases = extract_phases(content)  # List of {name, goal, tasks: [{title, category, ...}]}
    ```
 
-3. **Get task details**:
+3. **If task ref**: Get task details and check for existing children:
    ```python
    task = call_tool("gobby-tasks", "get_task", {"task_id": "<ref>"})
-   ```
-
-4. **Check for existing children** and handle re-expansion:
-   ```python
    children = call_tool("gobby-tasks", "list_tasks", {"parent_task_id": task_id})
    if children["tasks"]:
-       # IMPORTANT: Re-expansion will delete all existing subtasks.
-       backup = call_tool("gobby-tasks", "get_task", {"task_id": task_id})
-
-       # Prompt user for confirmation
-       print(f"Task #{task_id} has {len(children['tasks'])} existing subtasks.")
-       print("Re-expansion will delete all subtasks and their descendants.")
-       # Use AskUserQuestion for confirmation
-
-       # Delete parent cascades to children
-       call_tool("gobby-tasks", "delete_task", {"task_id": task_id, "cascade": True})
-
-       # Re-create the parent task with ALL preserved fields
-       result = call_tool("gobby-tasks", "create_task", {
-           "title": backup["title"],
-           "description": backup["description"],
-           "task_type": backup["type"],
-           "priority": backup.get("priority"),
-           "labels": backup.get("labels", []),
-           "validation_criteria": backup.get("validation_criteria"),
-           "category": backup.get("category")
-       })
-       task_id = result["task"]["id"]
+       # Prompt user for confirmation before re-expansion
+       # Delete + recreate if confirmed (see re-expansion handling below)
    ```
 
-### Phase 2: Invoke Pipeline
+### Phase 2: Create Phase Hierarchy
 
-Delegate to the `expand-task` pipeline. This spawns a researcher agent that explores
-the codebase and produces a spec, then validates and executes it mechanically.
+**Plans with multiple phases MUST create phase sub-epics.** Each `## Phase` section
+becomes a sub-epic under the root. Single-phase plans skip this step.
 
 ```python
-inputs = {
-    "task_id": "<task_ref>"
-}
-# If expansion originated from a plan file, pass the path so it gets
-# injected as a reference into each subtask description
-if plan_file_path:
-    inputs["plan_file"] = plan_file_path
+phase_refs = {}
+for phase in phases:
+    phase_epic = call_tool("gobby-tasks", "create_task", {
+        "title": f"Phase {phase['number']}: {phase['name']}",
+        "task_type": "epic",
+        "category": "code",
+        "parent_task_id": root_id,
+        "description": phase["goal"]
+    })
+    phase_refs[phase["number"]] = phase_epic["ref"]
+```
 
-result = call_tool("gobby-workflows", "run_pipeline", {
-    "name": "expand-task",
-    "inputs": inputs,
-    "wait": True,
-    "wait_timeout": 600
+**Wire cross-phase dependencies** — if Phase 2 depends on Phase 1:
+```python
+call_tool("gobby-tasks", "add_dependency", {
+    "task_id": phase_refs[2],
+    "depends_on": phase_refs[1]
 })
 ```
 
-If the pipeline completes successfully, skip to **Phase 4**.
+### Phase 3: Expand Each Phase
 
-If the pipeline fails at the validation step, report the validation errors
-and ask the user how to proceed.
+For each phase sub-epic, build an expansion spec with only that phase's tasks,
+then execute with TDD.
 
-### Phase 3: Manual Execution (Resume Path)
-
-If resuming from a pending spec (Phase 0) or the pipeline is not available,
-execute the expansion directly:
-
+**Option A: Via pipeline** (preferred — spawns researcher for codebase analysis):
 ```python
-# Validate first
-validation = call_tool("gobby-tasks", "validate_expansion_spec", {
-    "task_id": "<ref>"
-})
-if not validation["valid"]:
-    print(f"Spec validation failed: {validation['errors']}")
-    # Ask user to fix or re-run expansion
-    return
+for phase_num, phase_ref in phase_refs.items():
+    result = call_tool("gobby-workflows", "run_pipeline", {
+        "name": "expand-task",
+        "inputs": {"task_id": phase_ref, "plan_file": plan_file_path}
+    })
+```
 
-# Execute
-result = call_tool("gobby-tasks", "execute_expansion", {
-    "task_id": "<ref>"
-})
+**Option B: Direct spec** (when pipeline is unavailable or researcher fails):
+```python
+for phase in phases:
+    phase_ref = phase_refs[phase["number"]]
 
-# Wire affected files
-call_tool("gobby-tasks", "wire_affected_files_from_spec", {
-    "parent_task_id": "<ref>"
+    # Build spec with only this phase's tasks
+    # depends_on indices are LOCAL to this phase's subtask array
+    spec = {
+        "plan_file": plan_file_path,
+        "subtasks": [
+            {
+                "title": task["title"],
+                "category": task["category"],
+                "description": task["description"],
+                "validation": task["validation"],
+                "depends_on": task["local_depends_on"],  # Indices within THIS phase
+                "affected_files": task["affected_files"],
+                "priority": task.get("priority", 2)
+            }
+            for task in phase["tasks"]
+        ]
+    }
+
+    call_tool("gobby-tasks-ops", "save_expansion_spec", {
+        "task_id": phase_ref, "spec": spec
+    })
+
+    validation = call_tool("gobby-tasks-ops", "validate_expansion_spec", {
+        "task_id": phase_ref
+    })
+    if not validation["valid"]:
+        print(f"Phase {phase['number']} spec invalid: {validation['errors']}")
+        continue
+
+    call_tool("gobby-tasks-ops", "execute_expansion", {
+        "parent_task_id": phase_ref, "tdd": true
+    })
+
+    call_tool("gobby-tasks-ops", "wire_affected_files_from_spec", {
+        "parent_task_id": phase_ref
+    })
+```
+
+**Wire cross-phase task dependencies** — after all phases are expanded, wire
+dependencies between tasks in different phases (e.g., task 2.1 depends on task 1.2):
+```python
+call_tool("gobby-tasks", "add_dependency", {
+    "task_id": "<task_in_phase_2>",
+    "depends_on": "<task_in_phase_1>"
 })
 ```
 
 ### Phase 4: Report
 
-Show the created task tree with refs, dependencies, and description sizes:
+Show the hierarchical task tree:
 
 ```
-Created 3 subtasks for #42 "Implement user authentication":
+Created 3 phases, 12 tasks for #100 "Implement dark mode":
 
-#43 [code] Add User model with password hashing
-    dep: none
-    validation: Tests pass. User model exists with hash_password method.
+Phase 1: Theme Foundation (#101)
+  [TEST] Phase 1: Write failing tests
+  #102 [code] Add ThemeProvider component
+  #103 [code] Create color token system
+  [REF] Phase 1: Refactor with green tests
 
-#44 [code] Implement login endpoint (depends on #43)
-    dep: #43
-    validation: Tests pass. POST /login returns JWT on valid credentials.
-
-#45 [code] Add logout endpoint (depends on #44)
-    dep: #44
-    validation: Tests pass. POST /logout invalidates session.
+Phase 2: Component Migration (#104, depends: Phase 1)
+  [TEST] Phase 2: Write failing tests
+  #105 [code] Migrate Button component (depends: #103)
+  #106 [code] Migrate Card component (depends: #103)
+  [REF] Phase 2: Refactor with green tests
 
 Use `suggest_next_task` to get the first ready task.
+```
+
+### Single-Task Expansion (no phases)
+
+When expanding a single task ref (`#N`) instead of a plan file, skip Phase 2.
+Invoke the pipeline directly on the task:
+
+```python
+result = call_tool("gobby-workflows", "run_pipeline", {
+    "name": "expand-task",
+    "inputs": {"task_id": "<task_ref>"}
+})
+```
+
+Or fall back to direct spec if pipeline is unavailable.
+
+### Re-expansion Handling
+
+If the root epic already has children:
+```python
+backup = call_tool("gobby-tasks", "get_task", {"task_id": task_id})
+print(f"Task has {len(children)} existing subtasks. Re-expansion deletes all.")
+# Use AskUserQuestion for confirmation
+call_tool("gobby-tasks", "delete_task", {"task_id": task_id, "cascade": True})
+# Re-create root with preserved fields, then proceed with Phase 1
 ```
 
 ## Error Handling
