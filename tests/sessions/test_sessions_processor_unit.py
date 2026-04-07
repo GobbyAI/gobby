@@ -100,7 +100,7 @@ class TestSessionRegistration:
         assert processor._parsers["session-1"] is original_parser  # Not replaced
 
     def test_register_session_transcript_not_found(self, mock_db, tmp_path, caplog) -> None:
-        """Register should mark processed and skip if transcript file doesn't exist."""
+        """Register should skip monitoring but NOT overwrite transcript_path."""
         mock_session_manager = MagicMock()
         processor = SessionMessageProcessor(
             mock_db, poll_interval=0.1, session_manager=mock_session_manager
@@ -110,14 +110,13 @@ class TestSessionRegistration:
         with caplog.at_level("DEBUG"):
             processor.register_session("session-1", str(nonexistent))
 
-        # Should NOT be registered
+        # Should NOT be registered for active monitoring
         assert "session-1" not in processor._active_sessions
         assert "session-1" not in processor._parsers
-        # Should mark as missing and processed
-        mock_session_manager.update.assert_called_once_with(
-            "session-1", transcript_path="missing_transcript"
-        )
-        mock_session_manager.mark_transcript_processed.assert_called_once_with("session-1")
+        # Should NOT overwrite transcript_path or mark processed —
+        # TranscriptReader will re-derive the path at read time
+        mock_session_manager.update.assert_not_called()
+        mock_session_manager.mark_transcript_processed.assert_not_called()
 
     def test_register_session_with_different_sources(self, processor, tmp_path) -> None:
         """Register should use appropriate parser for each source."""

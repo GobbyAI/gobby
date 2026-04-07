@@ -28,9 +28,71 @@ if TYPE_CHECKING:
 
     TranscriptParser = ClaudeTranscriptParser | GeminiTranscriptParser | CodexTranscriptParser
 
+from pathlib import Path
+
 from gobby.sessions.transcript_renderer import render_transcript
 
 logger = logging.getLogger(__name__)
+
+
+def _find_transcript_on_disk(
+    source: str, external_id: str, project_path: str | None = None
+) -> str | None:
+    """Try to find a transcript file on disk by CLI source and external_id.
+
+    Called when transcript_path is missing or invalid. Each CLI stores
+    transcripts in a predictable location keyed by session/external ID.
+
+    Returns:
+        Absolute path to transcript file, or None if not found.
+    """
+    if not external_id:
+        return None
+
+    if source == "claude":
+        # Claude: ~/.claude/projects/{project-path-slug}/{external_id}.jsonl
+        projects_dir = Path.home() / ".claude" / "projects"
+        if projects_dir.exists():
+            for proj_dir in projects_dir.iterdir():
+                if not proj_dir.is_dir():
+                    continue
+                candidate = proj_dir / f"{external_id}.jsonl"
+                if candidate.is_file():
+                    return str(candidate)
+
+    elif source == "codex":
+        # Codex: ~/.codex/sessions/YYYY/MM/DD/rollout-{datetime}-{external_id}.jsonl
+        sessions_dir = Path.home() / ".codex" / "sessions"
+        if sessions_dir.exists():
+            # Search recent date dirs (walk backwards to find quickly)
+            for year_dir in sorted(sessions_dir.iterdir(), reverse=True):
+                if not year_dir.is_dir():
+                    continue
+                for month_dir in sorted(year_dir.iterdir(), reverse=True):
+                    if not month_dir.is_dir():
+                        continue
+                    for day_dir in sorted(month_dir.iterdir(), reverse=True):
+                        if not day_dir.is_dir():
+                            continue
+                        matches = list(day_dir.glob(f"*{external_id}*"))
+                        if matches:
+                            return str(matches[0])
+
+    elif source == "gemini":
+        # Gemini: ~/.gemini/tmp/{hash}/chats/session-{date}-{id[:8]}.json
+        gemini_tmp = Path.home() / ".gemini" / "tmp"
+        prefix = external_id[:8] if external_id else ""
+        if gemini_tmp.exists() and prefix:
+            for proj_dir in gemini_tmp.iterdir():
+                chats_dir = proj_dir / "chats"
+                if not chats_dir.is_dir():
+                    continue
+                matches = sorted(chats_dir.glob(f"session-*-{prefix}.json"), reverse=True)
+                if matches:
+                    return str(matches[0])
+
+    return None
+
 
 # LRU-cached decompression to avoid repeated gzip reads within a session
 _ARCHIVE_CACHE_SIZE = 32
@@ -277,16 +339,32 @@ class TranscriptReader:
         """Read and parse ParsedMessages from live transcript file.
 
         Handles both JSONL (Claude, Codex) and native JSON (Gemini) formats.
+        If transcript_path is missing, tries to re-derive it.
         """
         session = self._session_manager.get(session_id)
         if not session:
             return []
 
         transcript_path = getattr(session, "transcript_path", None)
-        if not transcript_path or not os.path.isfile(transcript_path):
-            return []
-
         source = session.source or "claude"
+
+        # Re-derive transcript path if missing or invalid
+        if (
+            not transcript_path
+            or transcript_path == "missing_transcript"
+            or not os.path.isfile(transcript_path)
+        ):
+            external_id = getattr(session, "external_id", None)
+            derived = _find_transcript_on_disk(source, external_id or "")
+            if derived:
+                transcript_path = derived
+                try:
+                    self._session_manager.update(session_id, transcript_path=derived)
+                    logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
+                except Exception as e:
+                    logger.debug(f"Failed to persist re-derived transcript path: {e}")
+            else:
+                return []
 
         try:
             if _is_json_session_file(transcript_path):
@@ -347,16 +425,34 @@ class TranscriptReader:
         """Read messages from a live transcript file on disk.
 
         Handles both JSONL and native JSON formats.
+        If transcript_path is missing or invalid, tries to re-derive it
+        from the CLI's known transcript directory.
         """
         session = self._session_manager.get(session_id)
         if not session:
             return []
 
         transcript_path = getattr(session, "transcript_path", None)
-        if not transcript_path or not os.path.isfile(transcript_path):
-            return []
-
         source = session.source or "claude"
+
+        # Re-derive transcript path if missing or invalid
+        if (
+            not transcript_path
+            or transcript_path == "missing_transcript"
+            or not os.path.isfile(transcript_path)
+        ):
+            external_id = getattr(session, "external_id", None)
+            derived = _find_transcript_on_disk(source, external_id or "")
+            if derived:
+                transcript_path = derived
+                # Persist the fix so we don't re-derive every time
+                try:
+                    self._session_manager.update(session_id, transcript_path=derived)
+                    logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
+                except Exception as e:
+                    logger.debug(f"Failed to persist re-derived transcript path: {e}")
+            else:
+                return []
 
         try:
             if _is_json_session_file(transcript_path):

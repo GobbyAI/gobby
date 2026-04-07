@@ -132,10 +132,14 @@ class SessionMessageProcessor:
             return
 
         if not os.path.exists(transcript_path):
-            logger.debug(f"Transcript missing for session {session_id}, marking processed")
-            if self.session_manager:
-                self.session_manager.update(session_id, transcript_path="missing_transcript")
-                self.session_manager.mark_transcript_processed(session_id)
+            # File doesn't exist yet — skip monitoring but DON'T overwrite
+            # transcript_path in the DB. The file may appear moments later
+            # (race between hook registration and first CLI write).
+            # TranscriptReader will find it at read time via re-derivation.
+            logger.debug(
+                f"Transcript not yet on disk for session {session_id}, "
+                f"skipping monitoring (path preserved): {transcript_path}"
+            )
             return
 
         self._active_sessions[session_id] = transcript_path
