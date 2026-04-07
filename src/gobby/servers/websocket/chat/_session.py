@@ -219,15 +219,24 @@ class ChatSessionMixin:
             effective_provider = getattr(agent_body, "provider", None)
 
         # Route to appropriate session implementation
-        if effective_provider == "claude":
-            from gobby.servers.cli_chat_session import CLIChatSession
+        match effective_provider:
+            case "claude":
+                from gobby.servers.cli_chat_session import CLIChatSession
 
-            session: ChatSessionProtocol = CLIChatSession(
-                conversation_id=conversation_id, model=model
-            )
-        else:
-            # Default: existing SDK path (backwards compat during transition)
-            session = ChatSession(conversation_id=conversation_id)
+                session: ChatSessionProtocol = CLIChatSession(
+                    conversation_id=conversation_id, model=model
+                )
+            case "gemini":
+                from gobby.servers.gemini_cli_chat_session import GeminiCLIChatSession
+
+                session = GeminiCLIChatSession(conversation_id=conversation_id, model=model)
+            case "codex":
+                from gobby.servers.codex_cli_chat_session import CodexCLIChatSession
+
+                session = CodexCLIChatSession(conversation_id=conversation_id, model=model)
+            case _:
+                # Default: existing SDK path (backwards compat during transition)
+                session = ChatSession(conversation_id=conversation_id)
 
         if resume_session_id:
             session.resume_session_id = resume_session_id
