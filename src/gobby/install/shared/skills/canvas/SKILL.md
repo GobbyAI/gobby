@@ -7,7 +7,7 @@ injectionFormat: content
 metadata:
   gobby:
     audience: all
-    sources: [claude_sdk_web_chat, gemini_sdk_web_chat]
+    sources: [claude, gemini, codex]
 ---
 
 # Canvas Frontend Integration

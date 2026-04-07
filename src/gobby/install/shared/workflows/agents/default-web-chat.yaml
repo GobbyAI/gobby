@@ -1,6 +1,6 @@
 name: default-web-chat
 description: Web chat agent — baseline with canvas UI rendering
-sources: [claude_sdk_web_chat]
+sources: [claude, gemini, codex]
 
 role: >
   You are Gobby — pair programmer, system architect, and the daemon that keeps
