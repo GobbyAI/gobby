@@ -41,6 +41,7 @@ class LocalSessionManager:
         spawned_by_agent_id: str | None = None,
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
+        session_type: str = "terminal",
     ) -> Session:
         """
         Register a new session or return existing one.
@@ -67,7 +68,9 @@ class LocalSessionManager:
         now = datetime.now(UTC).isoformat()
 
         # Check if this exact session already exists (daemon restart case)
-        existing = self.find_by_external_id(external_id, machine_id, project_id, source)
+        existing = self.find_by_external_id(
+            external_id, machine_id, project_id, source, session_type=session_type
+        )
         if existing:
             # Session exists - update metadata and return it
             self.db.execute(
@@ -116,10 +119,10 @@ class LocalSessionManager:
                         id, external_id, machine_id, source, project_id, title,
                         transcript_path, git_branch, parent_session_id,
                         agent_depth, spawned_by_agent_id, terminal_context,
-                        workflow_name, status, created_at, updated_at, seq_num, had_edits,
-                        message_count, turn_count, tool_call_count, last_assistant_content
+                        workflow_name, session_type, status, created_at, updated_at, seq_num,
+                        had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
                     """,
                     (
                         session_id,
@@ -135,6 +138,7 @@ class LocalSessionManager:
                         spawned_by_agent_id,
                         json.dumps(terminal_context) if terminal_context else None,
                         workflow_name,
+                        session_type,
                         now,
                         now,
                         next_seq_num,
@@ -181,6 +185,7 @@ class LocalSessionManager:
         machine_id: str,
         project_id: str | None,
         source: str,
+        session_type: str | None = None,
     ) -> Session | None:
         """
         Find session by external_id, machine_id, project_id, and source.
@@ -194,17 +199,20 @@ class LocalSessionManager:
             machine_id: Machine identifier
             project_id: Project identifier
             source: CLI source (claude, gemini, codex)
+            session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:
             Session if found, None otherwise.
         """
-        row = self.db.fetchone(
-            """
+        query = """
             SELECT * FROM sessions
             WHERE external_id = ? AND machine_id = ? AND project_id = ? AND source = ?
-            """,
-            (external_id, machine_id, project_id, source),
-        )
+        """
+        params: list[str | None] = [external_id, machine_id, project_id, source]
+        if session_type is not None:
+            query += " AND session_type = ?"
+            params.append(session_type)
+        row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
 
     def find_active_by_external_id(

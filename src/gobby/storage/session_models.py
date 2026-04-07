@@ -71,6 +71,8 @@ class Session:
     pending_plan_path: str | None = None
     # JSON array of user-approved tool names (approve_always)
     approved_tools_json: str | None = None
+    # Session type: 'terminal' (CLI) or 'web_chat' (browser UI)
+    session_type: str = "terminal"
 
     @classmethod
     def from_row(cls, row: Any) -> Session:
@@ -126,6 +128,7 @@ class Session:
             approved_tools_json=row["approved_tools_json"]
             if "approved_tools_json" in row.keys()
             else None,
+            session_type=row["session_type"] if "session_type" in row.keys() else "terminal",
         )
 
     @classmethod
@@ -207,6 +210,7 @@ class Session:
             "last_assistant_content": self.last_assistant_content,
             "pending_plan_path": self.pending_plan_path,
             "approved_tools_json": self.approved_tools_json,
+            "session_type": self.session_type,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
@@ -228,6 +232,7 @@ class Session:
             "message_count": self.message_count,
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,
+            "session_type": self.session_type,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
