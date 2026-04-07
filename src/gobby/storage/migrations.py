@@ -290,6 +290,15 @@ def _add_summary_column(db: LocalDatabase) -> None:
     _setup_code_symbols_fts(db, include_summary=True)
 
 
+def _drop_column_if_exists(db: LocalDatabase, table: str, column: str) -> None:
+    """Drop a column if it exists (no-op on fresh databases where baseline omits it)."""
+    row = db.fetchone(
+        f"SELECT COUNT(*) as cnt FROM pragma_table_info('{table}') WHERE name = ?", (column,)
+    )
+    if row and row["cnt"] > 0:
+        db.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+
 def _drop_agent_runs_mode(db: LocalDatabase) -> None:
     """Drop the mode column from agent_runs via table rebuild.
 
@@ -802,7 +811,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         203,
         "Remove pending_plan_path from sessions table",
-        "ALTER TABLE sessions DROP COLUMN pending_plan_path;",
+        lambda db: _drop_column_if_exists(db, "sessions", "pending_plan_path"),
     ),
 ]
 
