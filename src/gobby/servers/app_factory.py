@@ -93,11 +93,15 @@ def create_app(server: "HTTPServer") -> FastAPI:
         logger.debug("HookManager initialized in daemon")
 
         # Initialize PendingInteractionManager for web chat approval flows
-        from gobby.servers.pending_interactions import PendingInteractionManager
+        if server.services.db:
+            from gobby.servers.pending_interactions import PendingInteractionManager
 
-        app.state.pending_interaction_manager = PendingInteractionManager(server.services.db)
-        await app.state.pending_interaction_manager.expire_all_pending()
-        logger.debug("PendingInteractionManager initialized (all pending expired on startup)")
+            app.state.pending_interaction_manager = PendingInteractionManager(server.services.db)
+            try:
+                await app.state.pending_interaction_manager.expire_all_pending()
+            except Exception as e:
+                logger.warning(f"Failed to expire pending interactions on startup: {e}")
+            logger.debug("PendingInteractionManager initialized")
 
         # Wire up stop_registry to WebSocket server for stop_request handling
         # Check both services container and direct attribute (runner sets both)
