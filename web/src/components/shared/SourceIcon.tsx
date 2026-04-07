@@ -1,12 +1,9 @@
-export type SourceType = 'claude' | 'gemini' | 'codex' | 'claude_sdk_web_chat' | 'copilot' | 'windsurf' | (string & {})
+export type SourceType = 'claude' | 'gemini' | 'codex' | (string & {})
 
 const SOURCE_COLORS: Record<string, string> = {
   claude: '#f97316',
   gemini: '#3b82f6',
   codex: '#a855f7',
-  claude_sdk_web_chat: '#4ade80',
-  copilot: '#22d3ee',
-  windsurf: '#10b981',
   default: '#737373',
 }
 
@@ -40,31 +37,6 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
           <title id={titleId}>Codex</title>
           <polyline points="7 8 3 12 7 16" />
           <polyline points="17 8 21 12 17 16" />
-        </svg>
-      )
-    case 'claude_sdk_web_chat':
-      return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className="source-icon source-icon-web-chat" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-labelledby={titleId}>
-          <title id={titleId}>Web Chat</title>
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-      )
-    case 'copilot':
-      return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className="source-icon source-icon-copilot" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-labelledby={titleId}>
-          <title id={titleId}>Copilot</title>
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
-          <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-          <circle cx="9" cy="10" r="1" fill={color} />
-          <circle cx="15" cy="10" r="1" fill={color} />
-        </svg>
-      )
-    case 'windsurf':
-      return (
-        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className="source-icon source-icon-windsurf" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-labelledby={titleId}>
-          <title id={titleId}>Windsurf</title>
-          <path d="M3 20L12 4l9 16" />
-          <path d="M7.5 14h9" />
         </svg>
       )
     default:

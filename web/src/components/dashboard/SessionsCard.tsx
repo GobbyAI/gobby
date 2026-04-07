@@ -3,11 +3,7 @@ import { useTimeStats } from '../../hooks/useTimeStats'
 const SOURCE_COLORS: Record<string, string> = {
   claude: '#f97316',
   gemini: '#3b82f6',
-  cursor: '#06b6d4',
-  windsurf: '#10b981',
-  copilot: '#8b5cf6',
-  claude_sdk: '#f59e0b',
-  claude_sdk_web_chat: '#ec4899',
+  codex: '#a855f7',
   pipeline: '#737373',
   cron: '#a3a3a3',
 }
@@ -15,11 +11,7 @@ const SOURCE_COLORS: Record<string, string> = {
 const SOURCE_LABELS: Record<string, string> = {
   claude: 'Claude',
   gemini: 'Gemini',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  copilot: 'Copilot',
-  claude_sdk: 'Claude SDK',
-  claude_sdk_web_chat: 'Web Chat',
+  codex: 'Codex',
   pipeline: 'Pipeline',
   cron: 'Cron',
 }

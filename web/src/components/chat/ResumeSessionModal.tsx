@@ -4,27 +4,15 @@ import type { GobbySession } from "../../hooks/useSessions";
 import { formatRelativeTime } from "../../utils/formatTime";
 
 const SOURCE_LABELS: Record<string, string> = {
-  claude_sdk_web_chat: "Web Chat",
-  claude_code: "Claude Code",
   claude: "Claude",
-  gemini_cli: "Gemini CLI",
   gemini: "Gemini",
   codex: "Codex",
-  cursor: "Cursor",
-  windsurf: "Windsurf",
-  copilot: "Copilot",
 };
 
 const SOURCE_COLORS: Record<string, string> = {
-  claude_sdk_web_chat: "#c084fc",
-  claude_code: "#c084fc",
   claude: "#c084fc",
-  gemini_cli: "#4ade80",
   gemini: "#4ade80",
   codex: "#3b82f6",
-  cursor: "#f472b6",
-  windsurf: "#38bdf8",
-  copilot: "#818cf8",
 };
 
 interface ResumeSessionModalProps {

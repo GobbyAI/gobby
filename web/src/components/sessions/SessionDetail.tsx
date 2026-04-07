@@ -234,7 +234,7 @@ function SessionActions({
   }, [dropdownOpen])
 
   const hasMessages = (session.message_count ?? 0) > 0
-  const isActiveTerminal = session.status === 'active' && session.source !== 'claude_sdk_web_chat'
+  const isActiveTerminal = session.status === 'active' && session.session_type === 'terminal'
 
   return (
     <div className="session-detail-actions" ref={dropdownRef}>
@@ -247,7 +247,7 @@ function SessionActions({
       </button>
       {dropdownOpen && (
         <div className="session-detail-dropdown">
-          {onWatchInChat && session.source !== 'claude_sdk_web_chat' && (
+          {onWatchInChat && session.session_type === 'terminal' && (
             <button
               className="session-detail-dropdown-item"
               disabled={!hasMessages}

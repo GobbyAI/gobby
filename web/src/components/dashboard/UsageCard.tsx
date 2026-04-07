@@ -16,13 +16,8 @@ function formatUsd(value: number): string {
 
 const SOURCE_LABELS: Record<string, string> = {
   claude: 'Claude',
-  claude_code: 'Claude Code',
-  claude_sdk: 'Claude SDK',
-  claude_sdk_web_chat: 'Web Chat',
   gemini: 'Gemini',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  copilot: 'Copilot',
+  codex: 'Codex',
 }
 
 interface Props {

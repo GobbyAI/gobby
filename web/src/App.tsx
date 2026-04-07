@@ -496,7 +496,7 @@ export default function App() {
     "Personal";
   const agentDefs = useAgentDefinitions(
     effectiveProjectId,
-    "claude_sdk_web_chat",
+    "claude",
   );
 
   // On mount: fetch persisted project from API (DB is source of truth)
@@ -587,7 +587,7 @@ export default function App() {
   const webChatSessions = useMemo(
     () =>
       sessionsHook.filteredSessions.filter(
-        (s) => s.source === "claude_sdk_web_chat",
+        (s) => s.session_type === "web_chat",
       ),
     [sessionsHook.filteredSessions],
   );

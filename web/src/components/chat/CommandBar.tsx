@@ -34,12 +34,9 @@ interface CommandBarProps {
 }
 
 const SOURCE_CONFIG: Record<string, { label: string; dot: string }> = {
-  claude_code: { label: 'Claude Code', dot: 'bg-purple-400' },
-  gemini_cli: { label: 'Gemini CLI', dot: 'bg-green-400' },
+  claude: { label: 'Claude', dot: 'bg-purple-400' },
+  gemini: { label: 'Gemini', dot: 'bg-green-400' },
   codex: { label: 'Codex', dot: 'bg-blue-400' },
-  windsurf: { label: 'Windsurf', dot: 'bg-sky-400' },
-  cursor: { label: 'Cursor', dot: 'bg-pink-400' },
-  copilot: { label: 'Copilot', dot: 'bg-indigo-400' },
 }
 
 export function CommandBar({

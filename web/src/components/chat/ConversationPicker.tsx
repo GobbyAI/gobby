@@ -46,12 +46,9 @@ const PROVIDER_COLORS: Record<string, string> = {
 };
 
 const SOURCE_COLORS: Record<string, string> = {
-  claude_code: "#c084fc",
-  gemini_cli: "#4ade80",
+  claude: "#c084fc",
+  gemini: "#4ade80",
   codex: "#3b82f6",
-  windsurf: "#38bdf8",
-  cursor: "#f472b6",
-  copilot: "#818cf8",
   unknown: "#737373",
 };
 

@@ -1,21 +1,15 @@
 import type { SessionObservationMeta } from '../../types/chat'
 
 const SOURCE_LABELS: Record<string, string> = {
-  claude_code: 'Claude Code',
-  gemini_cli: 'Gemini CLI',
+  claude: 'Claude',
+  gemini: 'Gemini',
   codex: 'Codex',
-  windsurf: 'Windsurf',
-  cursor: 'Cursor',
-  copilot: 'Copilot',
 }
 
 const SOURCE_COLORS: Record<string, string> = {
-  claude_code: 'bg-purple-400',
-  gemini_cli: 'bg-green-400',
+  claude: 'bg-purple-400',
+  gemini: 'bg-green-400',
   codex: 'bg-blue-400',
-  windsurf: 'bg-sky-400',
-  cursor: 'bg-pink-400',
-  copilot: 'bg-indigo-400',
 }
 
 interface SessionStatusBarProps {

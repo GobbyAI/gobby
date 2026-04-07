@@ -29,7 +29,6 @@ function formatRelativeTime(dateStr: string): string {
 
 function sourceLabel(source: string): string {
   switch (source) {
-    case 'claude_sdk_web_chat': return 'Web'
     case 'claude': return 'Claude'
     case 'gemini': return 'Gemini'
     case 'codex': return 'Codex'
@@ -39,7 +38,6 @@ function sourceLabel(source: string): string {
 
 function sourceDotClass(source: string): string {
   switch (source) {
-    case 'claude_sdk_web_chat': return 'session-source-dot web-chat'
     case 'claude': return 'session-source-dot claude'
     case 'gemini': return 'session-source-dot gemini'
     case 'codex': return 'session-source-dot codex'
@@ -59,8 +57,8 @@ export function SessionSidebar({
   isOpen,
   onToggle,
 }: SessionSidebarProps) {
-  const webSessions = sessions.filter((s) => s.source === 'claude_sdk_web_chat')
-  const cliSessions = sessions.filter((s) => s.source !== 'claude_sdk_web_chat')
+  const webSessions = sessions.filter((s) => s.session_type === 'web_chat')
+  const cliSessions = sessions.filter((s) => s.session_type !== 'web_chat')
 
   // Unique sources for the filter dropdown
   const sources = [...new Set(sessions.map((s) => s.source))].sort()
@@ -203,7 +201,7 @@ function SessionItem({
   isActive: boolean
   onSelect: (session: GobbySession) => void
 }) {
-  const isResumable = session.source === 'claude_sdk_web_chat' || session.source === 'claude'
+  const isResumable = session.source === 'claude'
   const title = session.title || `Untitled #${session.ref}`
 
   return (

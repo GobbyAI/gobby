@@ -23,18 +23,14 @@ export interface GobbySession {
   agent_depth: number;
   chat_mode: string | null;
   parent_session_id: string | null;
+  session_type: string;
   terminal_context: Record<string, unknown> | null;
   tasks_closed?: number;
   memories_created?: number;
   commit_count?: number;
 }
 
-export const KNOWN_SOURCES = [
-  "claude",
-  "gemini",
-  "codex",
-  "claude_sdk_web_chat",
-] as const;
+export const KNOWN_SOURCES = ["claude", "gemini", "codex"] as const;
 
 export interface SessionFilters {
   source: string | null;
