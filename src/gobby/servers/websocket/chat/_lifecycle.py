@@ -107,13 +107,8 @@ class ChatLifecycleMixin:
 
             data = normalize_tool_fields(data)
 
-        # Detect session type for source
-        from gobby.servers.codex_chat_session import CodexChatSession
-
-        if isinstance(session, CodexChatSession):
-            source = SessionSource.CODEX_WEB_CHAT
-        else:
-            source = SessionSource.CLAUDE_SDK_WEB_CHAT
+        # Temporarily hardcode source — cleaned up in 0.4 when SessionSource collapses
+        source = SessionSource.CLAUDE_SDK_WEB_CHAT
 
         event = HookEvent(
             event_type=event_type,

@@ -1,9 +1,9 @@
 """
 Protocol definition for polymorphic chat sessions.
 
-Both ChatSession (Claude SDK) and CodexChatSession implement this
-protocol, allowing the WebSocket layer to work with either type
-without isinstance checks in most code paths.
+ChatSession (Claude SDK) implements this protocol, allowing the
+WebSocket layer to work polymorphically with future session types
+(e.g. CLIChatSession) without isinstance checks.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from gobby.llm.claude_models import ChatEvent
 
 @runtime_checkable
 class ChatSessionProtocol(Protocol):
-    """Shared interface for ChatSession and CodexChatSession."""
+    """Shared interface for chat session implementations."""
 
     # Identity
     conversation_id: str
