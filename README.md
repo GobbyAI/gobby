@@ -18,7 +18,7 @@
 
 ---
 
-Gobby runs as a long-lived local daemon that unifies AI coding CLIs like Claude Code, Gemini CLI, and Codex, giving them shared sessions, memory, workflows, and guardrails instead of yet another one-off helper script. Optional local model providers such as LM Studio and Ollama plug in through OpenAI-compatible HTTP endpoints, so the same workflows can target both cloud and local models without changing your editor setup.
+Gobby runs as a long-lived local daemon that unifies AI coding CLIs like Claude Code, Gemini CLI, and Codex, giving them shared sessions, memory, workflows, and guardrails instead of yet another one-off helper script. Because Claude Code natively supports OpenAI-compatible endpoints, local model providers like LM Studio and Ollama work out of the box — the same Gobby workflows run against both cloud and local models without changing your setup.
 
 **Gobby is built with Gobby.** Most of this codebase was written by AI agents running through Gobby's own task system and workflows — over 10,000 tasks tracked and counting.
 
@@ -48,7 +48,7 @@ Gobby runs as a local daemon with HTTP, WebSocket, and MCP endpoints and never r
 - **Hooks**: lightweight adapters for Claude Code, Gemini CLI, and Codex that send structured events ("user executed this command", "assistant applied this edit", "session compacted context"), enabling deterministic, testable workflows around otherwise opaque sessions.
 - **MCP server**: a stdio-based FastMCP endpoint exposing Gobby's task, session, memory, workflow, and orchestration APIs as tools your assistants can call directly from within the editor.
 
-Because LM Studio and Ollama expose OpenAI-compatible APIs on localhost, Gobby can route workflows to local models using the same patterns that would normally hit remote providers. That makes it possible to prototype pipelines on local models and later swap in cloud providers without rewriting the orchestration layer.
+Because Claude Code natively supports OpenAI-compatible endpoints, local model providers like LM Studio and Ollama work through the same hooks and MCP tools as cloud providers. You can prototype workflows on local models and later swap in cloud providers without rewriting anything.
 
 ### Workflow engine and pipelines
 
@@ -129,12 +129,12 @@ All three CLIs talk to the same daemon, so a task started in Claude Code can be 
 
 ### Local model providers
 
-Local models are treated as **just another provider** behind the same orchestration layer.
+Claude Code supports OpenAI-compatible endpoints, which means local model providers work seamlessly through Gobby's hooks and MCP layer:
 
-- **LM Studio** exposes an OpenAI-compatible API on `localhost`, so you can point workflows at LM Studio for completely local execution while reusing existing OpenAI-style clients.
-- **Ollama** does the same for models pulled via `ollama serve`, exposing OpenAI-compatible chat and responses endpoints on `localhost:11434`.
+- **LM Studio** exposes an OpenAI-compatible API on `localhost` — point Claude Code at it for completely local execution.
+- **Ollama** does the same via `ollama serve` on `localhost:11434`.
 
-By leaning on these compatibility layers, Gobby can swap between local and remote models without bespoke adapters in most pipelines.
+Because Gobby orchestrates at the session and workflow level rather than the model level, the same tasks, rules, memory, and pipelines apply regardless of whether the underlying model is local or cloud-hosted.
 
 ---
 
