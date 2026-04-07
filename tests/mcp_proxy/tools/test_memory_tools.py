@@ -69,6 +69,8 @@ def mock_memory_manager():
     manager.get_stats = MagicMock(return_value={"total": 10, "by_type": {"fact": 5}})
     manager.db = MagicMock()
     manager.content_exists = MagicMock(return_value=False)
+    manager.config = MagicMock()
+    manager.config.min_recall_score = 0.0
     return manager
 
 

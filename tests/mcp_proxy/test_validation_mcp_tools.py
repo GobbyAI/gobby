@@ -506,9 +506,14 @@ class TestDeEscalateTaskTool:
             "de_escalate_task", {"task_id": "t1", "reason": "Fixed manually"}
         )
 
-        assert result["status"] == "open"
-        assert result["escalated_at"] is None
-        assert result["escalation_reason"] is None
+        # Lifecycle version returns empty dict on success
+        assert "error" not in result
+        # Verify update_task was called with correct status
+        mock_task_manager.update_task.assert_called_once()
+        call_kwargs = mock_task_manager.update_task.call_args
+        assert call_kwargs[1]["status"] == "open"
+        assert call_kwargs[1]["escalated_at"] is None
+        assert call_kwargs[1]["escalation_reason"] is None
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -635,8 +640,9 @@ class TestDeEscalateTaskTool:
             "de_escalate_task", {"task_id": "t1", "reason": "Human fixed the issue"}
         )
 
-        # Result should include the reason
-        assert "de_escalation_reason" in result or "reason" in result
+        # Lifecycle version returns empty dict on success; verify the call went through
+        assert "error" not in result
+        mock_task_manager.update_task.assert_called_once()
 
     @pytest.mark.integration
     @pytest.mark.asyncio

@@ -487,12 +487,12 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             for leaked_key in ("server_name", "tool_name"):
                 final_args.pop(leaked_key, None)
 
-        # Inject session_id into args so _request() sniffing picks it up
-        # and sets the X-Gobby-Session-Id header for the daemon.
-        if session_id:
-            if final_args is None:
-                final_args = {}
-            final_args["session_id"] = session_id
+        # Set session_id on proxy directly so _request() sends it via
+        # X-Gobby-Session-Id header. Don't inject into tool arguments —
+        # that collides with tools that accept session_id as a parameter
+        # (get_session, get_handoff_context, etc.).
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
 
         return await proxy.call_tool(server_name, tool_name, final_args)
 
