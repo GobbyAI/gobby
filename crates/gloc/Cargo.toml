@@ -1,0 +1,24 @@
+[package]
+name = "gobby-local"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Josh Wilhelmi <hello@gobby.ai>"]
+description = "Auto-detect local LLM backends and launch AI CLI tools"
+license = "Apache-2.0"
+repository = "https://github.com/GobbyAI/gobby-cli"
+homepage = "https://gobby.ai"
+keywords = ["cli", "llm", "local-ai", "ollama", "lmstudio"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "gloc"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+ureq = { version = "2", features = ["json"] }

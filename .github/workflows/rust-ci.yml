@@ -41,6 +41,13 @@ jobs:
       - name: Test (gsqz)
         run: cargo test -p gobby-squeeze
 
+      # gloc: full clippy + tests
+      - name: Clippy (gloc)
+        run: cargo clippy -p gobby-local -- -D warnings
+
+      - name: Test (gloc)
+        run: cargo test -p gobby-local
+
       # gcode: clippy + tests without embeddings (Linux CI has no cmake/Metal)
       - name: Clippy (gcode, no embeddings)
         run: cargo clippy -p gobby-code --no-default-features -- -D warnings

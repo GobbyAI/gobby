@@ -1,0 +1,56 @@
+# gloc — default configuration
+#
+# Auto-detect local LLM backends and launch AI CLI tools.
+#
+# Config layers (first found wins, no merging):
+#   1. --config PATH (explicit override)
+#   2. .gobby/gloc.yaml (project)
+#   3. ~/.gobby/gloc.yaml (global)
+#   4. built-in defaults (this file)
+
+settings:
+  probe_timeout_ms: 500
+  auto_load: true       # load model into backend before exec
+  auto_pull: false      # (ollama) pull model if not downloaded
+
+# Backends — probed in order, first responding wins.
+# Rearrange to change priority.
+backends:
+  - name: lmstudio
+    url: "http://localhost:1234"
+    probe: "/v1/models"
+    auth_token: "lmstudio"
+
+  - name: ollama
+    url: "http://localhost:11434"
+    probe: "/api/tags"
+    auth_token: "ollama"
+
+# Clients — the AI CLI tool to exec into.
+# First alphabetically is the default (claude < codex).
+clients:
+  claude:
+    binary: "claude"
+    env:
+      ANTHROPIC_BASE_URL: "{backend.url}"
+      ANTHROPIC_AUTH_TOKEN: "{backend.auth_token}"
+      ANTHROPIC_API_KEY: ""
+    model_flag: "--model"
+    default_model: "qwen3-coder"
+    default_args: []
+    default_env: {}
+
+  codex:
+    binary: "codex"
+    env:
+      OPENAI_BASE_URL: "{backend.url}/v1"
+      OPENAI_API_KEY: "{backend.auth_token}"
+    model_flag: "--model"
+    default_model: "qwen3-coder"
+    default_args: ["--provider", "openai"]
+    default_env: {}
+
+# Shorthand aliases (resolved before passing to backend)
+aliases:
+  qwen: "qwen3-coder"
+  glm: "glm-4.7:cloud"
