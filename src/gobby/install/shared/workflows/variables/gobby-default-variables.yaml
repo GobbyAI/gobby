@@ -80,6 +80,9 @@ variables:
   injected_skills:
     value: []
     description: "Set of skill names fully injected into context this session (dedup for JIT skill loading)"
+  memory_nudge_fired:
+    value: false
+    description: "True after memory-capture-nudge has fired once this session"
   edit_write_pending:
     value: false
     description: "True when an Edit/Write tool call is pending (pre-tool fired, post-tool not yet succeeded)"

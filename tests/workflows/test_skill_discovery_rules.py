@@ -1,8 +1,7 @@
 """Tests for skill-discovery rules.
 
-Verifies inject-python-skill, inject-rust-skill, reset-skill-injection,
-and suggest-skills-on-prompt rules sync correctly, have valid structure,
-and evaluate conditions properly.
+Verifies inject-python-skill, inject-rust-skill, and reset-skill-injection
+rules sync correctly, have valid structure, and evaluate conditions properly.
 """
 
 from __future__ import annotations
@@ -54,7 +53,6 @@ SKILL_DISCOVERY_RULES = {
     "inject-python-skill",
     "inject-rust-skill",
     "reset-skill-injection",
-    "suggest-skills-on-prompt",
 }
 
 

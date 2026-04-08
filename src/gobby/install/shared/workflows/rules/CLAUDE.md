@@ -19,7 +19,7 @@ This directory contains 15 bundled rule groups. These are **templates** — they
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
-| `skill-discovery` | `skill-discovery/` | 4 | Auto-search installed skills on prompt, inject language skills on first file read, reset injection tracking on context loss |
+| `skill-discovery` | `skill-discovery/` | 3 | Inject language skills on first file read, reset injection tracking on context loss |
 | `deprecated/` | `deprecated/` | — | Old rules excluded from sync |
 
 ## File Convention
