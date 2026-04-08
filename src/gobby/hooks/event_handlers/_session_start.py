@@ -829,18 +829,19 @@ class SessionStartMixin(EventHandlersBase):
         _ta_vars = time.monotonic()
         sv_mgr.merge_variables(session_id, changes)
 
-        # Build injection context
+        # Build injection context — identity only (role + personality).
+        # Instructions, skills, and code-index are deferred to first before_agent.
         _ta_format = time.monotonic()
-        context_parts: list[str] = []
-        preamble = agent_body.build_prompt_preamble()
-        if preamble:
-            context_parts.append(preamble)
+        identity_parts: list[str] = []
+        if agent_body.role:
+            identity_parts.append(f"## Role\n{agent_body.role}")
+        if agent_body.personality:
+            identity_parts.append(f"## Personality\n{agent_body.personality}")
 
-        formatted, skills_count, injected_names = select_and_format_agent_skills(
-            agent_body, all_skills, active_skills, cli_source
-        )
-        if formatted:
-            context_parts.append(formatted)
+        # Skills count is no longer needed at SessionStart (agent tree removed).
+        # Selection + formatting deferred to _inject_agent_instructions_if_needed().
+        skills_count = 0
+        injected_names: list[str] = []
 
         def _ms(a: float, b: float) -> int:
             return int((b - a) * 1000)
@@ -851,7 +852,7 @@ class SessionStartMixin(EventHandlersBase):
         )
 
         return AgentActivationResult(
-            context="\n\n".join(context_parts) if context_parts else None,
+            context="\n\n".join(identity_parts) if identity_parts else None,
             agent_name=agent_body.name,
             description=agent_body.description,
             role=agent_body.role,

@@ -501,7 +501,10 @@ class TestSessionMoreCoverage:
             assert result.agent_name == "test-agent"
             assert result.rules_count == 1
             assert result.variables_count == 1
-            assert "Preamble\n\nformatted" == result.context
+            # Context now contains identity only (role + personality),
+            # instructions and skills are deferred to first before_agent
+            assert "## Role\nRole" in result.context
+            assert "## Personality" in result.context
 
     def test_handle_session_start_gemini_terminal(self) -> None:
         handler = _TestHandler()
@@ -635,8 +638,9 @@ class TestComposeSessionResponse:
             machine_id="m-1",
             session_source="clear",
         )
-        assert "Parent Session ID" in result.system_message
-        assert "Handoff" in result.system_message
+        # system_message is now session ID banner only — parent info in metadata
+        assert "#42" in result.system_message
+        assert result.metadata["parent_session_id"] == "parent-1"
 
     def test_with_agent_info(self) -> None:
         handler = _TestHandler()
@@ -661,9 +665,9 @@ class TestComposeSessionResponse:
             machine_id="m-1",
             agent_info=agent_info,
         )
-        assert "Agent: default" in result.system_message
-        assert "Role: developer" in result.system_message
-        assert "Injected: commit" in result.system_message
+        # Agent tree removed from system_message — just session ID banner
+        assert "#42" in result.system_message
+        assert "Agent:" not in result.system_message
 
     def test_with_terminal_context(self) -> None:
         handler = _TestHandler()
@@ -696,7 +700,8 @@ class TestComposeSessionResponse:
         )
         assert "sess-uuid-1" in result.system_message
 
-    def test_claimed_tasks_rendered_in_system_message(self) -> None:
+    def test_claimed_tasks_not_in_system_message(self) -> None:
+        """Claimed tasks are in additional_context, not system_message."""
         handler = _TestHandler()
         session = _make_session()
 
@@ -712,42 +717,8 @@ class TestComposeSessionResponse:
             machine_id="m-1",
             claimed_tasks_info=claimed,
         )
-        assert "Claimed Tasks: 2" in result.system_message
-        assert "#42 [in_progress] Fix auth bug" in result.system_message
-        assert "#43 [open] Write tests" in result.system_message
-        # First item uses ├─, last uses └─
-        assert "├─ #42" in result.system_message
-        assert "└─ #43" in result.system_message
-
-    def test_claimed_tasks_none_omits_section(self) -> None:
-        handler = _TestHandler()
-        session = _make_session()
-
-        result = handler._compose_session_response(
-            session=session,
-            session_id="sess-uuid-1",
-            external_id="ext-1",
-            parent_session_id=None,
-            machine_id="m-1",
-            claimed_tasks_info=None,
-        )
+        # Claimed tasks removed from system_message (handled by build_claimed_task_context)
         assert "Claimed Tasks" not in result.system_message
-
-    def test_single_claimed_task_uses_last_connector(self) -> None:
-        handler = _TestHandler()
-        session = _make_session()
-
-        claimed = [("#99", "in_progress", "Solo task")]
-        result = handler._compose_session_response(
-            session=session,
-            session_id="sess-uuid-1",
-            external_id="ext-1",
-            parent_session_id=None,
-            machine_id="m-1",
-            claimed_tasks_info=claimed,
-        )
-        assert "Claimed Tasks: 1" in result.system_message
-        assert "└─ #99 [in_progress] Solo task" in result.system_message
 
 
 # ---------------------------------------------------------------------------

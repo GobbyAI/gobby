@@ -13,7 +13,7 @@ This directory contains 15 bundled rule groups. These are **templates** — they
 | `stop-gates` | `stop-gates/` | 2 | Require task close and epic tree close before stop |
 | `plan-mode` | `plan-mode/` | 3 | Detect enter/exit plan mode, reset on session start |
 | `memory-lifecycle` | `memory-lifecycle/` | 6 | Memory recall, digest, capture, title generation, tracking reset |
-| `context-handoff` | `context-handoff/` | 8 | Session summary injection (clear/compact/resume), error triage, task context, baseline dirty files |
+| `context-handoff` | `context-handoff/` | 7 | Session summary injection (clear/compact/resume), task context, baseline dirty files |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `messaging` | `messaging/` | 4 | P2P messaging: deliver pending, activate commands, tool restrictions, exit conditions |
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
