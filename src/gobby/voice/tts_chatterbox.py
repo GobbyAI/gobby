@@ -93,6 +93,14 @@ class ChatterboxTurboProvider:
             ref_path = str(self._reference_audio) if self._reference_audio.exists() else None
 
             def _generate() -> Any:
+                import torch
+
+                # MPS doesn't support float64. Chatterbox's s3tokenizer
+                # moves loaded audio tensors to the device without casting,
+                # which crashes on MPS if torchaudio returns float64.
+                # Setting the default dtype ensures all tensors stay float32.
+                torch.set_default_dtype(torch.float32)
+
                 kwargs: dict[str, Any] = {
                     "temperature": self._config.tts_temperature,
                 }
