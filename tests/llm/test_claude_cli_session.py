@@ -131,6 +131,7 @@ class TestCLISession:
     @pytest.mark.asyncio
     async def test_send_writes_to_stdin_and_streams(self) -> None:
         mock_process = AsyncMock()
+        mock_process.returncode = None
         mock_stdin = AsyncMock()
         mock_process.stdin = mock_stdin
 

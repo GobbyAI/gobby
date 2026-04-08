@@ -101,6 +101,14 @@ def test_pending_interactions_unique_partial_index(fresh_db: LocalDatabase) -> N
     import sqlite3
 
     with fresh_db.transaction() as conn:
+        # Create stub project and session to satisfy FK constraints
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) VALUES ('proj-1', 'test', datetime('now'))"
+        )
+        conn.execute(
+            "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at) "
+            "VALUES ('sess-1', 'ext-1', 'machine-1', 'claude', 'proj-1', datetime('now'), datetime('now'))"
+        )
         # First insert should succeed
         conn.execute(
             """
@@ -125,6 +133,14 @@ def test_pending_interactions_unique_partial_index(fresh_db: LocalDatabase) -> N
 def test_pending_interactions_allows_resolved_duplicates(fresh_db: LocalDatabase) -> None:
     """Multiple resolved rows with same (session_id, kind) should be allowed."""
     with fresh_db.transaction() as conn:
+        # Create stub project and session to satisfy FK constraints
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) VALUES ('proj-1', 'test', datetime('now'))"
+        )
+        conn.execute(
+            "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at) "
+            "VALUES ('sess-1', 'ext-1', 'machine-1', 'claude', 'proj-1', datetime('now'), datetime('now'))"
+        )
         for i in range(3):
             conn.execute(
                 """

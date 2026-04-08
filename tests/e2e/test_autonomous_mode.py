@@ -162,7 +162,6 @@ class TestAutonomousSpawningGate:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)
@@ -182,7 +181,6 @@ class TestAutonomousSpawningGate:
                     "parent_task_id": epic_id,
                     "category": "code",
                     "validation_criteria": "Tests pass and task is functional",
-                    "session_id": session_id,
                 },
             )
             result = unwrap_result(raw_result)
@@ -260,7 +258,6 @@ class TestAutonomousSpawningGate:
                 "task_type": "task",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)

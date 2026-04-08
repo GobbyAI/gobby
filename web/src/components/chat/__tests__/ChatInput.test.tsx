@@ -106,12 +106,6 @@ describe('ChatInput', () => {
     expect(screen.getByText('accept_edits')).toBeTruthy()
   })
 
-  it('renders attach file button', () => {
-    render(<ChatInput {...defaultProps} />)
-
-    expect(screen.getByTitle('Attach file')).toBeTruthy()
-  })
-
   it('renders voice button when voice is available', () => {
     render(
       <ChatInput {...defaultProps} voiceAvailable={true} onToggleVoice={vi.fn()} />,

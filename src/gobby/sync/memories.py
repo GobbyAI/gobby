@@ -255,13 +255,17 @@ class MemoryBackupManager:
 
             raw_source = data.get("source", "agent")
             source_type = raw_source if raw_source in ("user", "agent") else "agent"
-            self.memory_manager.storage.create_memory(
-                content=content,
-                memory_type=data.get("type", "fact"),
-                tags=data.get("tags", []),
-                source_type=source_type,
-            )
-            count += 1
+            try:
+                self.memory_manager.storage.create_memory(
+                    content=content,
+                    memory_type=data.get("type", "fact"),
+                    tags=data.get("tags", []),
+                    source_type=source_type,
+                )
+                count += 1
+            except Exception as e:
+                logger.warning(f"Failed to import memory: {e}")
+                continue
 
         if skipped > 0:
             logger.debug(f"Skipped {skipped} duplicate memories during import")
@@ -302,7 +306,13 @@ class MemoryBackupManager:
         return True
 
     def _deduplicate_records_by_id(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Keep a single canonical record per id, preferring the latest updated_at."""
+        """Keep a single canonical record per id, preferring the latest updated_at.
+
+        Two-pass dedup: first by ID, then by content. This ensures that records
+        with different IDs but identical content (e.g., a file-version and a
+        DB-version of the same memory) are merged, keeping the latest.
+        """
+        # Pass 1: dedup by ID
         canonical_by_key: dict[str, dict[str, Any]] = {}
         for record in records:
             record_id = str(record.get("id", "")).strip()
@@ -316,7 +326,21 @@ class MemoryBackupManager:
             ):
                 canonical_by_key[key] = record
 
-        return list(canonical_by_key.values())
+        # Pass 2: dedup by content (merges records with different IDs but same content)
+        canonical_by_content: dict[str, dict[str, Any]] = {}
+        for record in canonical_by_key.values():
+            content = record.get("content", "").strip()
+            if not content:
+                canonical_by_content[record.get("id", "")] = record
+                continue
+
+            existing = canonical_by_content.get(content)
+            if existing is None or _parse_updated_at(record.get("updated_at")) >= _parse_updated_at(
+                existing.get("updated_at")
+            ):
+                canonical_by_content[content] = record
+
+        return list(canonical_by_content.values())
 
     def _sanitize_content(self, content: str) -> str:
         """Replace user home directories with ~ for privacy.

@@ -80,7 +80,6 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)
@@ -100,7 +99,6 @@ class TestSequentialReviewLoopE2E:
                     "parent_task_id": epic_id,
                     "category": "code",
                     "validation_criteria": "Tests pass and task is functional",
-                    "session_id": session_id,
                 },
             )
             result = unwrap_result(raw_result)
@@ -262,7 +260,6 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         epic_result = unwrap_result(raw_result)
@@ -278,7 +275,6 @@ class TestSequentialReviewLoopE2E:
                 "parent_task_id": epic_id,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         subtask1_result = unwrap_result(raw_result)
@@ -295,7 +291,6 @@ class TestSequentialReviewLoopE2E:
                 "parent_task_id": epic_id,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         subtask2_result = unwrap_result(raw_result)
@@ -414,7 +409,6 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         epic_result = unwrap_result(raw_result)
@@ -431,7 +425,6 @@ class TestSequentialReviewLoopE2E:
                 "priority": 1,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         task1_result = unwrap_result(raw_result)
@@ -448,7 +441,6 @@ class TestSequentialReviewLoopE2E:
                 "priority": 3,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         unwrap_result(raw_result)  # task2_id not needed - we only verify task1 is suggested first
@@ -508,7 +500,6 @@ class TestReviewStepE2E:
                 "task_type": "task",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)
@@ -578,7 +569,6 @@ class TestReviewStepE2E:
                 "task_type": "task",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)

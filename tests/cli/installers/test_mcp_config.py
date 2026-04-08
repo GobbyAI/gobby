@@ -502,6 +502,7 @@ class TestInstallDefaultMCPServers:
                     "servers": [
                         {"name": "github", "transport": "stdio", "command": "npx"},
                         {"name": "linear", "transport": "stdio", "command": "npx"},
+                        {"name": "brave-search", "transport": "stdio", "command": "npx"},
                         {"name": "context7", "transport": "stdio", "command": "npx"},
                     ]
                 }
@@ -521,7 +522,7 @@ class TestInstallDefaultMCPServers:
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 0
             result = install_default_mcp_servers()
         assert result["success"] is True
-        assert len(result["servers_skipped"]) == 3
+        assert len(result["servers_skipped"]) == 4
         assert len(result["servers_added"]) == 0
 
     def test_read_error(self, tmp_path: Path) -> None:

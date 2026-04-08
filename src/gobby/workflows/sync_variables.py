@@ -180,15 +180,9 @@ def _sync_single_variable(
             result["skipped"] += 1
             return
 
-        if existing.source == "installed" and existing.definition_json != definition_json:
-            manager.update(
-                existing.id,
-                definition_json=definition_json,
-                description=description,
-            )
-            result["updated"] += 1
-            return
-
+        # Row exists and is active — skip (no overwrite).
+        # Drift between the on-disk template and the DB row is detected
+        # via hash comparison at runtime, not corrected during sync.
         result["skipped"] += 1
         return
 
