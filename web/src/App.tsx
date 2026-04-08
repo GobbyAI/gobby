@@ -1244,6 +1244,7 @@ export default function App() {
                   provider: selectedProvider,
                   onProviderChange: setSelectedProvider,
                   onSwitchProvider: switchProvider,
+                  dbSessionId,
                   conversationSwitchKey,
                 }}
                 conversations={{
