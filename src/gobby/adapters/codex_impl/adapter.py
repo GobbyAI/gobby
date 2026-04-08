@@ -712,7 +712,7 @@ class CodexHooksAdapter(BaseAdapter):
         - ``hookSpecificOutput``: ``{hookEventName, additionalContext}``
         - ``systemMessage``: system-level message injection
         """
-        from gobby.llm.sdk_utils import truncate_additional_context
+        from gobby.llm.sdk_utils import compress_and_truncate
 
         should_continue = response.decision not in ("deny", "block")
 
@@ -807,7 +807,7 @@ class CodexHooksAdapter(BaseAdapter):
         # Build hookSpecificOutput or systemMessage based on event type.
         # PreToolUse/Stop only accept systemMessage — additionalContext is rejected.
         if context_parts:
-            combined_context = truncate_additional_context("\n\n".join(context_parts))
+            combined_context = compress_and_truncate("\n\n".join(context_parts))[0]
             if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
                 # Append to existing systemMessage (from system_message routing above)
                 # instead of overwriting it.

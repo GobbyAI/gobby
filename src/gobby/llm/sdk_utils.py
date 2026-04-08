@@ -142,3 +142,50 @@ def compress_context(
             }
 
     return compressed, stats
+
+
+def _get_compression_config() -> tuple[bool, str]:
+    """Read compression config from app context. Returns (enabled, level)."""
+    try:
+        from gobby.app_context import get_app_context
+
+        ctx = get_app_context()
+        if ctx is not None:
+            cc = getattr(ctx.config, "context_compression", None)
+            if cc is not None:
+                return cc.enabled, cc.level
+    except Exception:
+        pass
+    return True, "standard"
+
+
+def compress_and_truncate(text: str) -> tuple[str, dict[str, Any] | None]:
+    """Compress prose content via gsqz input, then truncate to the SDK limit.
+
+    Reads compression config from the app context (fail-open defaults if
+    unavailable).  Records savings via :func:`gobby.savings.record.record_savings`.
+
+    This is the standard chokepoint for all adapters — call this instead of
+    ``truncate_additional_context`` directly to get compression for free.
+
+    Returns:
+        ``(truncated_text, stats_or_none)``
+    """
+    enabled, level = _get_compression_config()
+    compressed, stats = compress_context(text, level=level, enabled=enabled)
+
+    # Record savings (best-effort, never raises)
+    if stats:
+        try:
+            from gobby.savings.record import record_savings
+
+            record_savings(
+                category="compression",
+                original_chars=stats.get("original_chars", 0),
+                actual_chars=stats.get("compressed_chars", 0),
+                metadata={"strategy": stats.get("strategy", "prose")},
+            )
+        except Exception:
+            pass
+
+    return truncate_additional_context(compressed), stats

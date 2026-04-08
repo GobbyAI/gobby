@@ -7,6 +7,7 @@ import pytest
 from gobby.llm.sdk_utils import (
     ADDITIONAL_CONTEXT_LIMIT,
     _STATS_RE,
+    compress_and_truncate,
     compress_context,
     format_exception_group,
     parse_server_name,
@@ -217,3 +218,68 @@ class TestCompressContext:
 
         assert result == "compressed output"
         assert stats is None
+
+
+class TestCompressAndTruncate:
+    """Tests for compress_and_truncate — unified compress + truncate."""
+
+    def test_reads_config_from_app_context(self) -> None:
+        text = "x" * 1000
+        with patch(
+            "gobby.llm.sdk_utils._get_compression_config", return_value=(True, "aggressive")
+        ):
+            with patch("gobby.llm.sdk_utils.compress_context") as mock_compress:
+                mock_compress.return_value = ("compressed", None)
+                result, stats = compress_and_truncate(text)
+
+        mock_compress.assert_called_once_with(text, level="aggressive", enabled=True)
+
+    def test_falls_back_when_no_app_context(self) -> None:
+        text = "x" * 1000
+        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
+            with patch("gobby.llm.sdk_utils.compress_context") as mock_compress:
+                mock_compress.return_value = ("compressed", None)
+                result, stats = compress_and_truncate(text)
+
+        mock_compress.assert_called_once_with(text, level="standard", enabled=True)
+        assert result == "compressed"
+
+    def test_truncates_after_compression(self) -> None:
+        big_text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 500)
+        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
+            with patch("gobby.llm.sdk_utils.compress_context") as mock_compress:
+                # Compression doesn't shrink enough — still over limit
+                mock_compress.return_value = (big_text, None)
+                result, stats = compress_and_truncate(big_text)
+
+        assert len(result) == ADDITIONAL_CONTEXT_LIMIT
+        assert result.endswith("[truncated]")
+
+    def test_records_savings_when_stats_present(self) -> None:
+        text = "x" * 1000
+        stats = {
+            "strategy": "prose:standard",
+            "original_chars": 1000,
+            "compressed_chars": 600,
+            "savings_pct": 40.0,
+        }
+        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
+            with patch("gobby.llm.sdk_utils.compress_context", return_value=("compressed", stats)):
+                with patch("gobby.savings.record.record_savings") as mock_record:
+                    compress_and_truncate(text)
+
+        mock_record.assert_called_once_with(
+            category="compression",
+            original_chars=1000,
+            actual_chars=600,
+            metadata={"strategy": "prose:standard"},
+        )
+
+    def test_no_savings_recorded_when_no_stats(self) -> None:
+        text = "x" * 1000
+        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
+            with patch("gobby.llm.sdk_utils.compress_context", return_value=("compressed", None)):
+                with patch("gobby.savings.record.record_savings") as mock_record:
+                    compress_and_truncate(text)
+
+        mock_record.assert_not_called()
