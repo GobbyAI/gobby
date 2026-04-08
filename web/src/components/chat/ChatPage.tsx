@@ -323,28 +323,6 @@ export function ChatPage({
           isPanelPinned={activity.isPinned}
         />
 
-        {/* Provider picker — only visible when multiple providers available */}
-        {availableProviders.length >= 2 && (
-          <div className="flex items-center gap-2 px-3 py-1 border-b border-border text-xs shrink-0">
-            <label htmlFor="provider-select" className="text-muted-foreground">
-              Provider
-            </label>
-            <select
-              id="provider-select"
-              className="bg-background border border-border rounded px-2 py-0.5 text-xs"
-              value={chat.provider ?? ""}
-              onChange={(e) => chat.onProviderChange?.(e.target.value || null)}
-            >
-              <option value="">Auto</option>
-              {availableProviders.map((p) => (
-                <option key={p} value={p}>
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
         <ArtifactContext.Provider
           value={{ openCodeAsArtifact, openFileAsArtifact }}
         >
@@ -407,6 +385,9 @@ export function ChatPage({
             onToggleVoice={voice.onToggleVoice}
             isMobile={isMobile}
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
+            provider={chat.provider}
+            availableProviders={availableProviders}
+            onProviderChange={chat.onProviderChange}
           />
         </ArtifactContext.Provider>
       </div>

@@ -42,6 +42,9 @@ interface ChatInputProps {
   agentHasProject?: boolean
   isMobile?: boolean
   onScrollToBottom?: () => void
+  provider?: string | null
+  availableProviders?: string[]
+  onProviderChange?: (provider: string | null) => void
 }
 
 export function ChatInput({
@@ -77,6 +80,9 @@ export function ChatInput({
   agentHasProject = false,
   isMobile = false,
   onScrollToBottom,
+  provider,
+  availableProviders = [],
+  onProviderChange,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -279,15 +285,23 @@ export function ChatInput({
           {onModeChange && (
             <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
           )}
-          <button
-            className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={disabled}
-            title="Attach file"
-            aria-label="Attach file"
-          >
-            <PaperclipIcon />
-          </button>
+          {availableProviders.length >= 2 && onProviderChange && (
+            <select
+              className="bg-background border border-border rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              value={provider ?? ""}
+              onChange={(e) => onProviderChange(e.target.value || null)}
+              disabled={disabled}
+              title="Select provider"
+              aria-label="Select provider"
+            >
+              <option value="">Auto</option>
+              {availableProviders.map((p) => (
+                <option key={p} value={p}>
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </option>
+              ))}
+            </select>
+          )}
           {onAgentChange && agentName && agentDefinitions.length > 0 && (
             <ActiveAgentIndicator
               agentName={agentName}
