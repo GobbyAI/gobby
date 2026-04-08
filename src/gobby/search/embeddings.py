@@ -97,6 +97,29 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+def _needs_nomic_prefix(model: str) -> bool:
+    """Check if a model requires nomic-style task prefixes."""
+    return "nomic" in model.lower()
+
+
+def _apply_prefix(text: str, is_query: bool, model: str) -> str:
+    """Prepend nomic task prefix when applicable.
+
+    nomic-embed-text was trained with task-specific prefixes:
+    - 'search_query: ' for queries
+    - 'search_document: ' for documents
+
+    Phase 1: Only apply query prefix. Document prefix deferred until
+    stored vectors are re-embedded.
+    """
+    if not _needs_nomic_prefix(model):
+        return text
+    if is_query:
+        return f"search_query: {text}"
+    # Phase 2 (future): return f"search_document: {text}"
+    return text
+
+
 async def generate_embeddings(
     texts: list[str],
     model: str = "nomic-embed-text",
@@ -122,7 +145,7 @@ async def generate_embeddings(
         api_key: Optional API key (uses env var OPENAI_API_KEY if not set)
         max_retries: Maximum retry attempts for rate limit errors (default: 5)
         base_delay: Initial backoff delay in seconds (default: 1.0)
-        is_query: Whether this is a query embedding (unused, kept for compat)
+        is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
 
     Returns:
         List of embedding vectors (one per input text). Returns an empty
@@ -134,6 +157,10 @@ async def generate_embeddings(
     if not texts:
         return []
 
+    # Apply nomic task prefix before cache lookup so prefixed/unprefixed
+    # texts cache separately.
+    prefixed_texts = [_apply_prefix(t, is_query, model) for t in texts]
+
     lock = _get_lock()
 
     # --- Phase 1: Check cache for each text ---
@@ -144,7 +171,7 @@ async def generate_embeddings(
         miss_texts: list[str] = []
         seen_in_batch: dict[str, int] = {}  # key -> first index in results
 
-        for i, text in enumerate(texts):
+        for i, text in enumerate(prefixed_texts):
             key = _cache_key(text, model, api_base)
             entry = _cache.get(key)
             if entry is not None:
@@ -186,7 +213,7 @@ async def generate_embeddings(
 
         # Fill in the None slots
         for i in miss_indices:
-            text = texts[i]
+            text = prefixed_texts[i]
             results[i] = text_to_embedding.get(text)
 
     # All slots should be filled now
@@ -260,7 +287,7 @@ async def generate_embedding(
         api_key: Optional API key
         max_retries: Maximum retry attempts for rate limit errors
         base_delay: Initial backoff delay in seconds
-        is_query: Whether this is a query embedding
+        is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
 
     Returns:
         Embedding vector as list of floats
