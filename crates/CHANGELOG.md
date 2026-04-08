@@ -7,6 +7,26 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3]
+
+### Fixed
+
+#### gcode
+
+- **Release workflow** — remove stale `--features embeddings` and `--no-default-features` flags from release-gcode.yml. Embeddings feature was removed in 0.5.2 but the workflow wasn't updated (#106)
+
+#### CI/CD
+
+- **gcode release** — remove cmake install step and per-platform feature matrix, now builds identically on all targets
+
+## [0.1.1] — gloc
+
+### Fixed
+
+#### gloc
+
+- **Windows build** — add `#[cfg(unix)]` / `#[cfg(not(unix))]` gate on `exec_client()`. Unix uses `exec()` (replaces process), Windows falls back to `Command::status()` (spawns child, exits with its code) (#106)
+
 ## [0.1.0] — gloc
 
 ### Added

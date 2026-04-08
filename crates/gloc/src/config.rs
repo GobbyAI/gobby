@@ -164,6 +164,12 @@ impl Config {
 
         out
     }
+
+    /// Load the compiled-in default config directly, bypassing file resolution.
+    #[cfg(test)]
+    pub fn load_builtin() -> Self {
+        serde_yaml::from_str(DEFAULT_CONFIG).expect("built-in config.yaml is invalid")
+    }
 }
 
 /// Resolve template variables in a string.
@@ -182,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_load_default_config() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         assert_eq!(config.settings.probe_timeout_ms, 500);
         assert!(config.settings.auto_load);
         assert!(!config.settings.auto_pull);
@@ -190,7 +196,7 @@ mod tests {
 
     #[test]
     fn test_default_config_has_backends() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         assert_eq!(config.backends.len(), 2);
         assert_eq!(config.backends[0].name, "lmstudio");
         assert_eq!(config.backends[1].name, "ollama");
@@ -198,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_backend_fields() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         let lms = &config.backends[0];
         assert_eq!(lms.url, "http://localhost:1234");
         assert_eq!(lms.probe, "/v1/models");
@@ -212,14 +218,14 @@ mod tests {
 
     #[test]
     fn test_default_config_has_clients() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         assert!(config.clients.contains_key("claude"));
         assert!(config.clients.contains_key("codex"));
     }
 
     #[test]
     fn test_claude_client_env() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         let claude = config.clients.get("claude").unwrap();
         assert_eq!(claude.binary, "claude");
         assert_eq!(
@@ -237,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_codex_client_env() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         let codex = config.clients.get("codex").unwrap();
         assert_eq!(codex.binary, "codex");
         assert_eq!(
@@ -249,20 +255,20 @@ mod tests {
 
     #[test]
     fn test_default_config_has_aliases() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         assert_eq!(config.aliases.get("qwen").unwrap(), "qwen3-coder");
         assert_eq!(config.aliases.get("glm").unwrap(), "glm-4.7:cloud");
     }
 
     #[test]
     fn test_resolve_alias_hit() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         assert_eq!(config.resolve_alias("qwen"), "qwen3-coder");
     }
 
     #[test]
     fn test_resolve_alias_miss() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         assert_eq!(config.resolve_alias("unknown-model"), "unknown-model");
     }
 
@@ -337,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_dump_contains_key_sections() {
-        let config = Config::load(None);
+        let config = Config::load_builtin();
         let dump = config.dump();
         assert!(dump.contains("probe_timeout_ms: 500"));
         assert!(dump.contains("backends: 2 configured"));

@@ -45,9 +45,10 @@ pub fn which_binary(name: &str) -> Option<PathBuf> {
 }
 
 /// Exec into the client binary. Does not return on success.
+///
+/// On Unix: replaces the current process via exec() (no wrapper overhead).
+/// On Windows: spawns a child process and exits with its status code.
 pub fn exec_client(client: &Client, backend: &Backend, model: &str, passthrough: &[String]) -> ! {
-    use std::os::unix::process::CommandExt;
-
     let env = build_env(client, backend, model);
     let args = build_args(client, model, passthrough);
 
@@ -58,9 +59,24 @@ pub fn exec_client(client: &Client, backend: &Backend, model: &str, passthrough:
         cmd.env(key, val);
     }
 
-    let err = cmd.exec();
-    eprintln!("gloc: failed to exec {}: {}", client.binary, err);
-    std::process::exit(1);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = cmd.exec();
+        eprintln!("gloc: failed to exec {}: {}", client.binary, err);
+        std::process::exit(1);
+    }
+
+    #[cfg(not(unix))]
+    {
+        match cmd.status() {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(e) => {
+                eprintln!("gloc: failed to run {}: {}", client.binary, e);
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "base64",
@@ -580,7 +580,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-local"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "dirs",
