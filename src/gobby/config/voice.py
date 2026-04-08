@@ -22,6 +22,25 @@ class VoiceConfig(BaseModel):
         default=True,
         description="Enable text-to-speech output in voice mode (requires enabled=True).",
     )
+    tts_provider: str = Field(
+        default="chatterbox",
+        description="TTS provider: 'chatterbox' (voice cloning) or 'kokoro' (fixed voices).",
+    )
+    tts_reference_audio: str = Field(
+        default="~/.gobby/voice/reference.wav",
+        description="Path to voice clone reference audio (10-20s WAV, for Chatterbox).",
+    )
+    tts_temperature: float = Field(
+        default=0.8,
+        ge=0.1,
+        le=1.0,
+        description="TTS sampling randomness (0.1–1.0, Chatterbox).",
+    )
+    tts_device: str = Field(
+        default="auto",
+        description="TTS compute device: 'auto', 'cuda', 'mps', 'cpu'.",
+    )
+    # --- Kokoro-specific settings (legacy) ---
     tts_voice: str = Field(
         default="af_heart",
         description="Kokoro voice name (e.g. af_heart, af_bella, am_adam, bf_emma).",
@@ -30,7 +49,7 @@ class VoiceConfig(BaseModel):
         default=1.0,
         ge=0.5,
         le=2.0,
-        description="TTS playback speed multiplier (0.5–2.0).",
+        description="TTS playback speed multiplier (0.5–2.0, Kokoro).",
     )
     tts_language: str = Field(
         default="en-us",

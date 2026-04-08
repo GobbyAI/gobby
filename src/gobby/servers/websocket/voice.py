@@ -137,6 +137,10 @@ class VoiceMixin:
         self._whisper_stt: Any = None
         self._kokoro_tts: KokoroTTS | None = None
 
+        # Dep auto-install tracking (run once per daemon lifecycle)
+        self._stt_deps_checked = False
+        self._tts_deps_checked = False
+
         # Active TTS pipelines per conversation (for cancellation)
         self._active_tts_pipelines: dict[str, TTSPipeline] = {}
 
@@ -157,13 +161,18 @@ class VoiceMixin:
         if not voice_config or not voice_config.enabled or not voice_config.stt_enabled:
             return None
 
+        # Auto-install STT deps if missing (fire-and-forget on first call)
+        if not self._stt_deps_checked:
+            self._stt_deps_checked = True
+            asyncio.create_task(self._ensure_stt_deps(voice_config))
+
         from gobby.voice.stt import WhisperSTT
 
         self._whisper_stt = WhisperSTT(voice_config)
         return self._whisper_stt
 
     def _get_tts(self) -> KokoroTTS | None:
-        """Get or create the KokoroTTS singleton."""
+        """Get or create the TTS singleton (routes by provider config)."""
         if self._kokoro_tts is not None:
             return self._kokoro_tts
 
@@ -171,14 +180,44 @@ class VoiceMixin:
         if not voice_config or not voice_config.enabled or not voice_config.tts_enabled:
             return None
 
-        from gobby.voice.tts import KokoroTTS as _KokoroTTS
+        # Auto-install TTS deps if missing
+        if not self._tts_deps_checked:
+            self._tts_deps_checked = True
+            asyncio.create_task(self._ensure_tts_deps(voice_config))
 
-        tts = _KokoroTTS(voice_config)
+        provider = getattr(voice_config, "tts_provider", "kokoro")
+        if provider == "chatterbox":
+            from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+            tts = ChatterboxTurboProvider(voice_config)
+        else:
+            from gobby.voice.tts import KokoroTTS as _KokoroTTS
+
+            tts = _KokoroTTS(voice_config)
+
         if not tts.is_available:
             return None
 
         self._kokoro_tts = tts
         return self._kokoro_tts
+
+    async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> None:
+        """Auto-install STT dependencies if missing."""
+        try:
+            from gobby.voice.dep_check import ensure_stt_deps
+
+            await ensure_stt_deps(voice_config)
+        except Exception:
+            logger.debug("STT dep check failed", exc_info=True)
+
+    async def _ensure_tts_deps(self, voice_config: VoiceConfig) -> None:
+        """Auto-install TTS dependencies if missing."""
+        try:
+            from gobby.voice.dep_check import ensure_tts_deps
+
+            await ensure_tts_deps(voice_config)
+        except Exception:
+            logger.debug("TTS dep check failed", exc_info=True)
 
     def _is_voice_mode(self, conversation_id: str) -> bool:
         """Check if voice mode is active for a conversation."""

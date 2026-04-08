@@ -49,10 +49,7 @@ dependencies = [
     "protobuf>=5.29.6,<6.0.0",
     # cryptography <46.0.6 has CVE-2026-26007, CVE-2026-34073
     "cryptography>=46.0.6",
-    # faster-whisper for voice STT
-    "faster-whisper>=1.0.0",
-    # kokoro-onnx for local TTS (82M params, Apache 2.0, async streaming)
-    "kokoro-onnx>=0.5.0",
+    # Voice deps moved to [project.optional-dependencies] voice
     "cisco-ai-skill-scanner>=0.1.1",
     # pyjwt <2.12.0 has CVE-2026-32597 (transitive via mcp)
     "pyjwt>=2.12.0",
@@ -80,6 +77,11 @@ dependencies = [
 
 [project.optional-dependencies]
 email = ["aiosmtplib>=2.0", "aioimaplib>=1.0"]
+voice = [
+    "faster-whisper>=1.0.0",
+    "kokoro-onnx>=0.5.0",
+    "chatterbox-tts",
+]
 
 [project.scripts]
 gobby = "gobby.cli:cli"
@@ -89,6 +91,11 @@ Homepage = "https://github.com/GobbyAI/gobby"
 Repository = "https://github.com/GobbyAI/gobby"
 Documentation = "https://github.com/GobbyAI/gobby#readme"
 Issues = "https://github.com/GobbyAI/gobby/issues"
+
+[tool.uv]
+# tokenizers 0.20.3 fails to build from sdist on Python 3.14
+# (missing project.version in pyproject.toml). Force >=0.21.
+constraint-dependencies = ["tokenizers>=0.21"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

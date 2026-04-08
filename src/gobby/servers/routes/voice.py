@@ -36,6 +36,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             }
 
         voice_config = config.voice
+        tts_provider = getattr(voice_config, "tts_provider", "kokoro")
 
         # Check STT availability
         stt_available = False
@@ -50,7 +51,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
 
                 stt_available = True
             except ImportError:
-                stt_reason = "faster-whisper not installed (pip install faster-whisper)"
+                stt_reason = "faster-whisper not installed (uv sync --extra voice)"
 
         # Check TTS availability
         tts_available = False
@@ -59,25 +60,58 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             tts_reason = "Voice not enabled in config"
         elif not voice_config.tts_enabled:
             tts_reason = "TTS disabled in config"
-        else:
+        elif tts_provider == "chatterbox":
             try:
-                import kokoro_onnx  # noqa: F401
+                import chatterbox  # noqa: F401
 
                 tts_available = True
             except ImportError:
-                tts_reason = "kokoro-onnx not installed (pip install kokoro-onnx)"
+                tts_reason = "chatterbox not installed (uv sync --extra voice)"
 
-        return {
+            if tts_available:
+                from pathlib import Path
+
+                ref = Path(voice_config.tts_reference_audio).expanduser()
+                if not ref.exists():
+                    tts_reason = f"Reference audio not found: {ref}"
+        else:
+            try:
+                import kokoro_onnx  # noqa: F401
+            except ImportError:
+                tts_reason = "kokoro-onnx not installed (uv sync --extra voice)"
+            else:
+                from pathlib import Path
+
+                model_path = Path(voice_config.tts_model_path).expanduser()
+                voices_path = Path(voice_config.tts_voices_path).expanduser()
+                if model_path.exists() and voices_path.exists():
+                    tts_available = True
+                else:
+                    tts_reason = "Kokoro model files not found"
+
+        result: dict[str, Any] = {
             "enabled": voice_config.enabled,
             "stt_enabled": voice_config.stt_enabled,
             "stt_available": stt_available,
             "stt_reason": stt_reason,
             "whisper_model": voice_config.whisper_model_size,
             "tts_enabled": voice_config.tts_enabled,
+            "tts_provider": tts_provider,
             "tts_available": tts_available,
             "tts_reason": tts_reason,
-            "tts_voice": voice_config.tts_voice,
         }
+
+        if tts_provider == "chatterbox":
+            from pathlib import Path
+
+            ref = Path(voice_config.tts_reference_audio).expanduser()
+            result["tts_reference_audio"] = str(ref)
+            result["tts_reference_audio_exists"] = ref.exists()
+            result["tts_device"] = voice_config.tts_device
+        else:
+            result["tts_voice"] = voice_config.tts_voice
+
+        return result
 
     @router.post("/transcribe")
     async def transcribe_audio(file: UploadFile = File(...)) -> dict[str, Any]:

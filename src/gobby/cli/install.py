@@ -31,6 +31,7 @@ from ._install_prompts import (
     _run_qdrant_install,
     _run_standard_cli_install,
     _run_standard_cli_uninstall,
+    _run_voice_install,
 )
 from .install_setup import ensure_daemon_config, run_daemon_setup
 from .installers import (
@@ -120,6 +121,12 @@ __all__ = [
     help="Install hooks per-project instead of globally (legacy behavior)",
 )
 @click.option(
+    "--voice",
+    "voice_flag",
+    is_flag=True,
+    help="Install voice chat dependencies (STT + TTS with voice cloning)",
+)
+@click.option(
     "--no-interactive",
     "no_interactive_flag",
     is_flag=True,
@@ -141,6 +148,7 @@ def install(
     all_flag: bool,
     no_ext_services_flag: bool,
     neo4j_password: str | None,
+    voice_flag: bool,
     project_flag: bool,
     no_interactive_flag: bool,
     working_dir: Path | None,
@@ -243,6 +251,9 @@ def install(
     embedding_provider = _run_embedding_install(
         install_embedding, results, no_interactive=no_interactive_flag
     )
+
+    # Voice chat (optional — installs ~500MB of deps including PyTorch)
+    _run_voice_install(results, voice_flag=voice_flag, no_interactive=no_interactive_flag)
 
     # Docker services (Qdrant + Neo4j, installed by default if Docker available)
     # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)

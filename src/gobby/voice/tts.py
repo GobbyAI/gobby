@@ -121,13 +121,17 @@ class KokoroTTS:
 
     @property
     def is_available(self) -> bool:
-        """Check if kokoro-onnx is installed."""
+        """Check if kokoro-onnx is installed and model files exist."""
         try:
             import kokoro_onnx  # noqa: F401
-
-            return True
         except ImportError:
             return False
+
+        from pathlib import Path
+
+        model_path = Path(self._config.tts_model_path).expanduser()
+        voices_path = Path(self._config.tts_voices_path).expanduser()
+        return model_path.exists() and voices_path.exists()
 
     @property
     def sample_rate(self) -> int:
