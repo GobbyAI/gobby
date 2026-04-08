@@ -32,6 +32,9 @@ interface ChatPageProps {
   agentShowScopeToggle?: boolean;
   agentHasGlobal?: boolean;
   agentHasProject?: boolean;
+  // Model selection
+  currentModel?: string;
+  onModelChange?: (model: string) => void;
   // Command palette actions from App.tsx
   paletteActions?: CommandPaletteAction[];
   // Active sessions modal
@@ -54,6 +57,8 @@ export function ChatPage({
   agentShowScopeToggle = false,
   agentHasGlobal = false,
   agentHasProject = false,
+  currentModel = "opus",
+  onModelChange,
   paletteActions = [],
   onViewAgent,
 }: ChatPageProps) {
@@ -387,7 +392,10 @@ export function ChatPage({
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
             provider={chat.provider}
             availableProviders={availableProviders}
-            onProviderChange={chat.onProviderChange}
+            currentModel={currentModel}
+            onModelChange={onModelChange}
+            onSwitchProvider={chat.onSwitchProvider}
+            hasMessages={chat.messages.length > 0}
           />
         </ArtifactContext.Provider>
       </div>

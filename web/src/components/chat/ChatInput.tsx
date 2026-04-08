@@ -8,6 +8,8 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
+import { ProviderPicker } from './ProviderPicker'
+import { SourceIcon } from '../shared/SourceIcon'
 
 interface ChatInputProps {
   onSend: (message: string, files?: QueuedFile[]) => void
@@ -44,7 +46,10 @@ interface ChatInputProps {
   onScrollToBottom?: () => void
   provider?: string | null
   availableProviders?: string[]
-  onProviderChange?: (provider: string | null) => void
+  currentModel?: string
+  onModelChange?: (model: string) => void
+  onSwitchProvider?: (provider: string) => void
+  hasMessages?: boolean
 }
 
 export function ChatInput({
@@ -82,10 +87,14 @@ export function ChatInput({
   onScrollToBottom,
   provider,
   availableProviders = [],
-  onProviderChange,
+  currentModel = 'opus',
+  onModelChange,
+  onSwitchProvider,
+  hasMessages = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -285,22 +294,31 @@ export function ChatInput({
           {onModeChange && (
             <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
           )}
-          {availableProviders.length >= 2 && onProviderChange && (
-            <select
-              className="bg-background border border-border rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              value={provider ?? ""}
-              onChange={(e) => onProviderChange(e.target.value || null)}
-              disabled={disabled}
-              title="Select provider"
-              aria-label="Select provider"
-            >
-              <option value="">Auto</option>
-              {availableProviders.map((p) => (
-                <option key={p} value={p}>
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </option>
-              ))}
-            </select>
+          {availableProviders.length >= 2 && onSwitchProvider && (
+            <>
+              <button
+                className="flex items-center gap-1 p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                onClick={() => setPickerOpen(true)}
+                disabled={disabled}
+                title="Select provider & model"
+                aria-label="Select provider and model"
+              >
+                <SourceIcon source={provider || 'claude'} size={14} />
+                <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className="opacity-60">
+                  <path d="M1 3l3 3 3-3z" />
+                </svg>
+              </button>
+              <ProviderPicker
+                open={pickerOpen}
+                onClose={() => setPickerOpen(false)}
+                currentProvider={provider ?? null}
+                currentModel={currentModel}
+                availableProviders={availableProviders}
+                onModelChange={onModelChange ?? (() => {})}
+                onProviderChange={onSwitchProvider}
+                hasMessages={hasMessages}
+              />
+            </>
           )}
           {onAgentChange && agentName && agentDefinitions.length > 0 && (
             <ActiveAgentIndicator

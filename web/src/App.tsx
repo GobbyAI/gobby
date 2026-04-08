@@ -1266,6 +1266,8 @@ export default function App() {
                   onViewCliSession: handleViewCliSession,
                   onDetachFromSession: handleClearViewing,
                 }}
+                currentModel={settings.model}
+                onModelChange={updateModel}
                 agentDefinitions={agentDefs.definitions}
                 agentGlobalDefs={agentDefs.globalDefs}
                 agentProjectDefs={agentDefs.projectDefs}
