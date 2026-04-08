@@ -443,6 +443,9 @@ export function ChatInput({
           />
 
           <div className="flex gap-1 shrink-0">
+            <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
+              <PaperclipIcon />
+            </Button>
             <Button size="icon" variant="primary" onClick={handleSubmit} disabled={!isStreaming && (disabled || !hasInput)}>
               <SendIcon />
             </Button>
