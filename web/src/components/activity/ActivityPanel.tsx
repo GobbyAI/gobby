@@ -161,6 +161,8 @@ interface ActivityPanelProps {
   onKillAgent?: (runId: string) => void;
   onExpireSession?: (sessionId: string) => void;
   chatSessionId?: string | null;
+  focusSessionId?: string | null;
+  onFocusSessionHandled?: () => void;
   isMobile?: boolean;
 }
 
@@ -190,6 +192,8 @@ export function ActivityPanel({
   onKillAgent,
   onExpireSession,
   chatSessionId,
+  focusSessionId,
+  onFocusSessionHandled,
   isMobile = false,
 }: ActivityPanelProps) {
   if (!isPinned) return null;
@@ -206,6 +210,8 @@ export function ActivityPanel({
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
             chatSessionId={chatSessionId ?? undefined}
+            focusSessionId={focusSessionId}
+            onFocusHandled={onFocusSessionHandled}
             isMobile={useOverlay}
           />
         );

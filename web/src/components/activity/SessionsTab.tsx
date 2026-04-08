@@ -27,6 +27,8 @@ interface SessionsTabProps {
   onExpireSession?: (sessionId: string) => void;
   chatSessionId?: string;
   isMobile?: boolean;
+  focusSessionId?: string | null;
+  onFocusHandled?: () => void;
 }
 
 interface SessionEntry {
@@ -57,6 +59,8 @@ export const SessionsTab = memo(function SessionsTab({
   onExpireSession,
   chatSessionId,
   isMobile = false,
+  focusSessionId,
+  onFocusHandled,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
   const [cliSessions, setCliSessions] = useState<GobbySession[]>([]);
@@ -186,6 +190,14 @@ export const SessionsTab = memo(function SessionsTab({
       }
     }
   }, [entries, selectedSessionId, loading]);
+
+  // Programmatic focus: select a session when requested from outside
+  useEffect(() => {
+    if (focusSessionId && !loading) {
+      setSelectedSessionId(focusSessionId);
+      onFocusHandled?.();
+    }
+  }, [focusSessionId, loading, onFocusHandled]);
 
   // Fetch selected session messages
   const { messages, isLoading } = useSessionDetail(selectedSessionId);

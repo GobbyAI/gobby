@@ -82,6 +82,19 @@ export function ChatPage({
   const activity = useActivityPanel();
   const fileChanges = useFileChanges(chat.messages, projectId ?? null);
 
+  // Session browsing via activity panel instead of Observing mode
+  const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
+  const handleViewCliSession = useCallback(
+    (session: { id: string }) => {
+      setFocusSessionId(session.id);
+      activity.showTab("sessions");
+    },
+    [activity],
+  );
+  const handleFocusSessionHandled = useCallback(() => {
+    setFocusSessionId(null);
+  }, []);
+
   // Available LLM providers — fetched from daemon API
   const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   useEffect(() => {
@@ -428,6 +441,8 @@ export function ChatPage({
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
         chatSessionId={chat.dbSessionId}
+        focusSessionId={focusSessionId}
+        onFocusSessionHandled={handleFocusSessionHandled}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
       />
@@ -455,7 +470,7 @@ export function ChatPage({
           setShowActiveSessions(false);
         }}
         onKillAgent={conversations.onKillAgent}
-        onViewCliSession={conversations.onViewCliSession}
+        onViewCliSession={handleViewCliSession}
       />
     </div>
   );
