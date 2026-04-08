@@ -109,6 +109,7 @@ impl Compressor {
 
         if !matched {
             lines = apply_steps(lines, &self.fallback_steps);
+            lines.insert(0, "[gsqz:passthrough]\n".to_string());
         }
 
         // Apply max_lines cap
@@ -140,13 +141,15 @@ impl Compressor {
             };
         }
 
-        // If compression didn't help much, return original
-        if compressed_chars >= (original_chars * 95) / 100 {
+        // Named pipeline with low savings gets [gsqz:low-savings] marker.
+        // Fallback path already has [gsqz:passthrough] marker, so just falls through.
+        if compressed_chars >= (original_chars * 95) / 100 && matched {
+            let marked = format!("[gsqz:low-savings]\n{}", compressed);
             return CompressionResult {
-                compressed: output.to_string(),
+                compressed: marked.clone(),
                 original_chars,
-                compressed_chars: original_chars,
-                strategy_name: "passthrough".into(),
+                compressed_chars: marked.len(),
+                strategy_name: format!("{}/low-savings", strategy_name),
             };
         }
 
@@ -243,6 +246,7 @@ mod tests {
             .collect::<String>();
         let result = compressor.compress("some-unknown-command --flag", &output);
         assert_eq!(result.strategy_name, "fallback");
+        assert!(result.compressed.starts_with("[gsqz:passthrough]\n"));
     }
 
     #[test]
@@ -264,18 +268,16 @@ mod tests {
     }
 
     #[test]
-    fn test_low_savings_returns_passthrough() {
+    fn test_low_savings_fallback_keeps_passthrough_marker() {
         let compressor = Compressor::new(&test_config());
-        // Generate output just over min_length but with all unique lines —
-        // the fallback truncation needs to barely compress it (< 5% savings)
-        // to trigger passthrough. We'll use a small number of long unique lines.
+        // 25 unique long lines — fallback head=20+tail=20 won't truncate,
+        // so savings < 5%. Fallback path keeps [gsqz:passthrough] marker.
         let output = (0..25)
             .map(|i| format!("unique line {} {}\n", i, "x".repeat(50)))
             .collect::<String>();
         let result = compressor.compress("some-unknown-command", &output);
-        // With 25 lines and head=20+tail=20 fallback, no truncation happens,
-        // so savings < 5% and we get passthrough
-        assert_eq!(result.strategy_name, "passthrough");
+        assert_eq!(result.strategy_name, "fallback");
+        assert!(result.compressed.starts_with("[gsqz:passthrough]\n"));
     }
 
     #[test]
@@ -399,5 +401,39 @@ mod tests {
             .collect::<String>();
         let result = compressor.compress("some-unknown-command", &output);
         assert!(!result.compressed.contains("Should not appear."));
+    }
+
+    #[test]
+    fn test_low_savings_pipeline_gets_marker() {
+        // A named pipeline that barely compresses should get [gsqz:low-savings]
+        let mut config = test_config();
+        config.settings.min_output_length = 0;
+        config.pipelines.insert(
+            "noop-pipeline".into(),
+            crate::config::Pipeline {
+                match_pattern: r"\bnoop\b".into(),
+                steps: vec![], // no steps = no compression
+                on_empty: None,
+            },
+        );
+        let compressor = Compressor::new(&config);
+        let output = (0..20)
+            .map(|i| format!("unique line {}\n", i))
+            .collect::<String>();
+        let result = compressor.compress("noop", &output);
+        assert!(result.strategy_name.contains("low-savings"));
+        assert!(result.compressed.starts_with("[gsqz:low-savings]\n"));
+    }
+
+    #[test]
+    fn test_good_compression_has_no_marker() {
+        let compressor = Compressor::new(&test_config());
+        let mut lines: Vec<String> = (0..100)
+            .map(|i| format!("test test_{} ... ok\n", i))
+            .collect();
+        lines.push("test result: ok. 100 passed; 0 failed\n".into());
+        let output = lines.join("");
+        let result = compressor.compress("cargo test", &output);
+        assert!(!result.compressed.contains("[gsqz:"));
     }
 }
