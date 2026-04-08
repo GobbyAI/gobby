@@ -1,6 +1,6 @@
 # Rule Templates Reference
 
-This directory contains 15 bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing DB rows are never overwritten; drift is detected via hash comparison. See `../CLAUDE.md` for the template vs active enforcement distinction.
+This directory contains 16 bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing DB rows are never overwritten; drift is detected via hash comparison. See `../CLAUDE.md` for the template vs active enforcement distinction.
 
 ## Rule Groups
 
@@ -20,6 +20,7 @@ This directory contains 15 bundled rule groups. These are **templates** — they
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
 | `skill-discovery` | `skill-discovery/` | 3 | Inject language skills on first file read, reset injection tracking on context loss |
+| `context7` | `context7/` | 1 | Block first code file write/edit, inject context7 docs skill |
 | `deprecated/` | `deprecated/` | — | Old rules excluded from sync |
 
 ## File Convention

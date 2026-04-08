@@ -1,0 +1,32 @@
+tags: [context7, documentation, gobby, default]
+
+rules:
+  block-and-teach-context7:
+    description: "Block first code file write/edit, inject context7 skill to teach library doc lookup"
+    event: before_tool
+    enabled: true
+    priority: 31
+    when: >
+      not variables.get('context7_loaded')
+      and event.data.get('tool_name') in ('Write', 'Edit')
+      and tool_input.get('file_path', '').rpartition('.')[2]
+          in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
+              'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala')
+    conditions:
+      - "variables.get('context7_available', False)"
+    effects:
+      - type: block
+        reason: >
+          Before writing code, check context7 for up-to-date library documentation.
+          Use the context7 MCP server to look up docs for any libraries or frameworks
+          used in this file. This prevents hallucinated APIs and outdated patterns.
+          See the context7 skill injected below for usage.
+      - type: mcp_call
+        server: gobby-skills
+        tool: get_skill
+        arguments:
+          name: context7
+        inject_result: true
+      - type: set_variable
+        variable: context7_loaded
+        value: true

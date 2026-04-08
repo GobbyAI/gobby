@@ -92,3 +92,9 @@ variables:
   edit_write_stop_blocks:
     value: 0
     description: "Circuit breaker counter for edit-write stop gate"
+  context7_available:
+    value: false
+    description: "True when context7 MCP server is configured and available"
+  context7_loaded:
+    value: false
+    description: "True after context7 skill has been injected this session"
