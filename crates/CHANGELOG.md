@@ -7,6 +7,35 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] — gloc
+
+### Added
+
+#### gloc
+
+- **Initial release** — local LLM launcher for AI CLI tools (#102)
+- **Backend auto-detection** — probes LM Studio (`localhost:1234`) and Ollama (`localhost:11434`) in config order, first responding wins
+- **Ollama model management** — checks downloaded models via `/api/tags`, pulls missing models via `/api/pull` (when `auto_pull: true`), warms up models via `/api/generate` (when `auto_load: true`)
+- **LM Studio JIT support** — no explicit model loading needed, LM Studio loads on first request
+- **Multi-client support** — Claude Code and Codex CLI out of the box, extensible via config
+- **Template env vars** — `{backend.url}`, `{backend.auth_token}`, `{backend.name}`, `{model}` resolved per client
+- **Model aliases** — shorthand names mapped to full model identifiers (e.g. `qwen` -> `qwen3-coder`)
+- **Layered YAML config** — `--config` > `.gobby/gloc.yaml` > `~/.gobby/gloc.yaml` > built-in default (same pattern as gsqz)
+- **`--init` flag** — writes default config to `.gobby/gloc.yaml` with backup of existing
+- **`--status` mode** — displays detected backend, client, model, env vars, and resolved binary path without launching
+- **`--dump-config`** — prints resolved config summary
+- **`exec()` semantics** — replaces the gloc process with the client binary (no wrapper overhead)
+- CLI flags: `--client`, `--backend`, `--model`, `--url`, `--config`
+
+## [0.3.2]
+
+### Fixed
+
+#### gsqz
+
+- **Config resolution order** — fixed config search to check project (`.gobby/gsqz.yaml`) then global (`~/.gobby/gsqz.yaml`) correctly (#93)
+- **Auto-export location** — auto-export writes to `~/.gobby/gsqz.yaml` (global), `--init` writes to `.gobby/gsqz.yaml` (project) (#94)
+
 ## [0.5.2]
 
 ### Fixed
