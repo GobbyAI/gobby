@@ -248,6 +248,124 @@ class TestFailClosedOnCriticalHooks:
         assert exit_code == 0
 
 
+CODEX_CONFIG = hook_dispatcher.CLI_CONFIGS["codex"]
+
+
+class TestCodexStopHookBlocking:
+    """Codex Stop hook must use exit code 2 to block, not JSON body with exit 0."""
+
+    @pytest.mark.asyncio
+    async def test_codex_stop_block_returns_exit_2(
+        self, _patch_daemon_running, _patch_stdin
+    ) -> None:
+        """Block decision on Codex Stop hook -> exit code 2 (not 0)."""
+        args = MagicMock()
+        args.type = "Stop"
+        args.debug = False
+        args.cli = "codex"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "decision": "block",
+            "reason": "Task still in_progress",
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(hook_dispatcher, "parse_arguments", return_value=args):
+            with patch.object(hook_dispatcher, "detect_cli", return_value=CODEX_CONFIG):
+                with patch("httpx.AsyncClient", return_value=mock_client):
+                    with patch.object(
+                        hook_dispatcher,
+                        "get_daemon_url",
+                        new_callable=AsyncMock,
+                        return_value="http://localhost:60887",
+                    ):
+                        exit_code = await hook_dispatcher.main()
+
+        assert exit_code == 2
+
+    @pytest.mark.asyncio
+    async def test_codex_pretooluse_block_returns_exit_0(
+        self, _patch_daemon_running, _patch_stdin, capsys
+    ) -> None:
+        """Block decision on Codex PreToolUse -> exit code 0 with JSON body."""
+        args = MagicMock()
+        args.type = "PreToolUse"
+        args.debug = False
+        args.cli = "codex"
+
+        block_result = {
+            "decision": "block",
+            "reason": "Tool not allowed",
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = block_result
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(hook_dispatcher, "parse_arguments", return_value=args):
+            with patch.object(hook_dispatcher, "detect_cli", return_value=CODEX_CONFIG):
+                with patch("httpx.AsyncClient", return_value=mock_client):
+                    with patch.object(
+                        hook_dispatcher,
+                        "get_daemon_url",
+                        new_callable=AsyncMock,
+                        return_value="http://localhost:60887",
+                    ):
+                        exit_code = await hook_dispatcher.main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        import json
+
+        output = json.loads(captured.out)
+        assert output["decision"] == "block"
+
+    @pytest.mark.asyncio
+    async def test_codex_stop_allow_returns_exit_0(
+        self, _patch_daemon_running, _patch_stdin
+    ) -> None:
+        """Allow decision on Codex Stop hook -> exit code 0 (stop proceeds)."""
+        args = MagicMock()
+        args.type = "Stop"
+        args.debug = False
+        args.cli = "codex"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "decision": "allow",
+            "continue": True,
+        }
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(hook_dispatcher, "parse_arguments", return_value=args):
+            with patch.object(hook_dispatcher, "detect_cli", return_value=CODEX_CONFIG):
+                with patch("httpx.AsyncClient", return_value=mock_client):
+                    with patch.object(
+                        hook_dispatcher,
+                        "get_daemon_url",
+                        new_callable=AsyncMock,
+                        return_value="http://localhost:60887",
+                    ):
+                        exit_code = await hook_dispatcher.main()
+
+        assert exit_code == 0
+
+
 class TestAgentDaemonFailureTracking:
     """Spawned agents force-kill after consecutive daemon-down detections."""
 

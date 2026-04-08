@@ -724,10 +724,12 @@ async def main() -> int:
 
             # Check for block/deny decision
             if is_blocked(result):
-                # Gemini and Codex read block decisions from JSON body
-                # (non-zero exit codes are treated as "hook failed", not
-                # "tool blocked"). Output the formatted JSON and exit 0.
-                if config.source in ("gemini", "codex"):
+                # Gemini and Codex read block decisions from JSON body for
+                # tool hooks (non-zero exit codes are treated as "hook
+                # failed", not "tool blocked"). Stop hooks are the
+                # exception — they use exit code 2 to block, same as
+                # Claude. Exit 0 would allow the stop.
+                if config.source in ("gemini", "codex") and hook_type != "Stop":
                     print(json.dumps(result))
                     return 0
 
