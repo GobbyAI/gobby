@@ -36,22 +36,22 @@ test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ## How It Works
 
 ```text
-command → match pipeline regex → apply steps → compressed output
-                                    │
-                    ┌───────────────┼───────────────┐
-                    │               │               │
-                 filter          group           truncate
-              (remove noise)  (aggregate)     (head + tail)
-                                    │
-                                  dedup
-                            (collapse repeats)
+command → split compound (&&, ||, ;) → match pipeline regex → apply steps → output
+                                              │
+              ┌──────────┬──────────┬─────────┼─────────┬──────────┐
+              │          │          │         │         │          │
+         match_output  filter    replace   group    truncate    dedup
+         (short-circuit) (noise) (normalize) (aggregate) (cap)  (collapse)
 ```
 
-1. **Match** — First pipeline whose regex matches the command wins
-2. **Filter** — Strip lines matching patterns (blank lines, hints, boilerplate)
-3. **Group** — Aggregate by mode: `git_status`, `lint_by_rule`, `errors_warnings`, `by_file`, etc.
-4. **Truncate** — Keep head + tail, omit the middle (with per-section support for diffs)
-5. **Dedup** — Collapse consecutive identical/near-identical lines
+1. **Split** — Compound commands (`&&`, `||`, `;`) are split; last segment gets priority for matching
+2. **Match** — First pipeline whose regex matches the command wins
+3. **Match Output** — Optional short-circuit: if output matches a success pattern, return a short message immediately
+4. **Filter** — Strip lines matching patterns (blank lines, hints, boilerplate)
+5. **Replace** — Regex substitution with backreferences for normalizing paths, versions, etc.
+6. **Group** — Aggregate by mode: `git_status`, `lint_by_rule`, `errors_warnings`, `by_file`, etc.
+7. **Truncate** — Keep head + tail, omit the middle (with per-section support for diffs)
+8. **Dedup** — Collapse consecutive identical/near-identical lines
 
 ## Installation
 
@@ -90,10 +90,20 @@ gsqz is installed automatically as part of the [Gobby](https://github.com/GobbyA
 ## Usage
 
 ```bash
-# Wrap any command
+# Compress command output (backward-compatible form)
 gsqz -- git status
 gsqz -- cargo test
 gsqz -- npm run lint
+
+# Explicit output subcommand (same behavior)
+gsqz output -- cargo build
+
+# Compress prose/text from stdin
+echo "In order to fix this..." | gsqz input
+echo "verbose text" | gsqz input --level aggressive
+
+# Compound commands — last segment matched for pipeline selection
+gsqz -- "cargo build && cargo test"
 
 # Show compression stats
 gsqz --stats -- pytest tests/
@@ -173,10 +183,13 @@ pipelines:
 
 | Step | Parameters | Description |
 |------|-----------|-------------|
+| `match_output` | `rules: [{pattern, message, unless?}]` | Short-circuit: return message if output matches pattern |
 | `filter_lines` | `patterns: [regex...]` | Remove lines matching any pattern |
+| `replace` | `rules: [{pattern, replacement}]` | Regex substitution with backreferences ($1, $2) |
 | `group_lines` | `mode: <mode>` | Aggregate lines by mode |
 | `truncate` | `head`, `tail`, `per_file_lines`, `file_marker` | Keep head + tail, omit middle |
 | `dedup` | (none) | Collapse consecutive similar lines |
+| `compress_prose` | `level: lite\|standard\|aggressive` | Prose compression with protected regions |
 
 **Group modes:** `git_status`, `pytest_failures`, `test_failures`, `lint_by_rule`, `by_extension`, `by_directory`, `by_file`, `errors_warnings`
 

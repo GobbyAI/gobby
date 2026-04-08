@@ -7,6 +7,22 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — gsqz
+
+### Added
+
+#### gsqz
+
+- **`replace` step** — line-by-line regex substitution with backreference support (`$1`, `$2`). Rules chain sequentially. Useful for normalizing paths, version strings, timestamps before other steps run (#97)
+- **`match_output` step** — short-circuit step that checks the full output blob against regex rules. If a pattern matches (and optional `unless` doesn't), returns a short message immediately, skipping remaining steps. Used in test pipelines to return "All tests passed." when no failures detected (#98)
+- **`on_empty` fallback** — per-pipeline and global `on_empty` message when steps produce empty output. Pipeline-level overrides global. Prevents confusing empty responses (#100)
+- **Degradation markers** — `[gsqz:passthrough]` prepended when no pipeline matched (fallback used), `[gsqz:low-savings]` when a named pipeline achieves less than 5% savings. Tells the LLM about output quality (#99)
+- **Compound command splitting** — splits `&&`, `||`, `;` while respecting quotes and parentheses. Tries segments in reverse (last command's output is most relevant) for pipeline matching. Pipes (`|`) are not split (#101)
+- **`gsqz input` subcommand** — prose compression from stdin with `--level lite|standard|aggressive`. Strips filler phrases (24 rules) and filler words while preserving code blocks, YAML frontmatter, inline code, URLs, XML tags, file paths, and headings (#108)
+- **`gsqz output` subcommand** — explicit form of existing `gsqz -- <command>` behavior. Bare `gsqz -- <command>` preserved for backward compatibility (#108)
+- **`compress_prose` pipeline step** — use prose compression as a pipeline step in YAML config (`compress_prose: { level: standard }`)
+- **`Config::builtin()`** — test helper for deterministic config loading (avoids `~/.gobby/gsqz.yaml` override)
+
 ## [0.5.3]
 
 ### Fixed
