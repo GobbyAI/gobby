@@ -121,6 +121,9 @@ class WebSocketServer(
         # Pending agent name overrides queued before session creation
         self._pending_agents: dict[str, str] = {}
 
+        # Pending project overrides queued before session creation
+        self._pending_projects: dict[str, str] = {}
+
         # Dispatch table for message routing (lazily populated in _handle_message)
         self._dispatch_table: dict[str, Callable[..., Coroutine[Any, Any, None]]] = {}
 

@@ -120,6 +120,9 @@ async def handle_set_project(
         await session.stop()
         mixin._chat_sessions.pop(conversation_id, None)
 
+    # Store project for next session creation (works whether or not session existed)
+    mixin._pending_projects[conversation_id] = new_project_id
+
     await websocket.send(
         json.dumps(
             {

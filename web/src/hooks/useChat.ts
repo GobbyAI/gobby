@@ -694,7 +694,14 @@ export function useChat() {
 
   // Stable ref to sendMessage for use inside WS handlers / callbacks
   // defined before sendMessage itself. Updated after sendMessage is created.
-  const sendMessageRef = useRef<((content: string) => boolean) | null>(null);
+  const sendMessageRef = useRef<
+    ((
+      content: string,
+      model?: string | null,
+      files?: QueuedFile[],
+      projectId?: string | null,
+    ) => boolean) | null
+  >(null);
 
   // Context usage tracking — accumulated across turns.
   // totalInputTokens = uncached + cacheRead + cacheCreation (the real context size).
@@ -727,7 +734,7 @@ export function useChat() {
   const lastSeqRef = useRef<number>(0);
 
   // Queue for messages sent while disconnected — flushed on reconnect
-  const pendingMessagesRef = useRef<string[]>([]);
+  const pendingMessagesRef = useRef<{ content: string; projectId?: string | null }[]>([]);
 
   /** Returns true if the chunk belongs to the currently active request. */
   function isActiveRequest(requestId?: string): boolean {
@@ -779,7 +786,7 @@ export function useChat() {
         // Send each queued message after a brief delay to let WS fully initialize
         setTimeout(() => {
           for (const msg of queued) {
-            sendMessageRef.current?.(msg);
+            sendMessageRef.current?.(msg.content, null, undefined, msg.projectId);
           }
         }, 500);
       }
@@ -2250,7 +2257,7 @@ export function useChat() {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         // Queue the message to send on reconnect
         console.warn("WebSocket disconnected — queuing message for reconnect");
-        pendingMessagesRef.current.push(content);
+        pendingMessagesRef.current.push({ content, projectId });
         // Still add the user message to the UI so it's visible
         const queuedId = `user-${uuid()}`;
         setMessages((prev) => [

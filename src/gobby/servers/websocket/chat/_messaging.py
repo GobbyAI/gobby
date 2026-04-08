@@ -28,6 +28,7 @@ class ChatMessagingMixin:
     _pending_modes: dict[str, str]
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
+    _pending_projects: dict[str, str]
 
     if TYPE_CHECKING:
 

@@ -71,6 +71,21 @@ class LocalSessionManager:
         existing = self.find_by_external_id(
             external_id, machine_id, project_id, source, session_type=session_type
         )
+        if not existing and project_id:
+            # Relaxed fallback: same session, possibly different project (e.g.,
+            # daemon restart where the caller defaulted to the wrong project_id).
+            existing = self.find_by_external_id_any_project(
+                external_id, machine_id, source, session_type=session_type
+            )
+            if existing and existing.project_id != project_id:
+                self.db.execute(
+                    "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
+                    (project_id, now, existing.id),
+                )
+                logger.info(
+                    f"Recovered session {existing.id}: "
+                    f"project_id {existing.project_id} -> {project_id}"
+                )
         if existing:
             # Session exists - update metadata and return it
             self.db.execute(
@@ -244,6 +259,41 @@ class LocalSessionManager:
             """,
             (external_id, source),
         )
+        return Session.from_row(row) if row else None
+
+    def find_by_external_id_any_project(
+        self,
+        external_id: str,
+        machine_id: str,
+        source: str,
+        session_type: str | None = None,
+    ) -> Session | None:
+        """Find session by external_id, machine_id, source — ignoring project_id.
+
+        Fallback lookup for daemon restart recovery when the caller may not
+        know the correct project_id.  Returns the most recently updated match.
+
+        Args:
+            external_id: External session identifier
+            machine_id: Machine identifier
+            source: CLI source (claude, gemini, codex)
+            session_type: Optional session type filter ('terminal' or 'web_chat')
+
+        Returns:
+            Most recently updated matching session, or None.
+        """
+        query = """
+            SELECT * FROM sessions
+            WHERE external_id = ?
+              AND machine_id = ?
+              AND source = ?
+        """
+        params: list[str | None] = [external_id, machine_id, source]
+        if session_type is not None:
+            query += " AND session_type = ?"
+            params.append(session_type)
+        query += " ORDER BY updated_at DESC LIMIT 1"
+        row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
 
     def find_parent(

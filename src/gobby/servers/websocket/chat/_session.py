@@ -70,6 +70,7 @@ class ChatSessionMixin:
     _pending_modes: dict[str, str]
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
+    _pending_projects: dict[str, str]
     _session_create_locks: dict[str, asyncio.Lock]
 
     def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock:
@@ -320,7 +321,10 @@ class ChatSessionMixin:
 
         # Set project context on session BEFORE start() so env vars and CWD
         # are correctly configured for the CLI subprocess.
-        effective_pid = project_id or PERSONAL_PROJECT_ID
+        # Precedence: explicit message project_id > pending from set_project > fallback
+        pending_projects = getattr(self, "_pending_projects", {})
+        pending_project = pending_projects.pop(conversation_id, None)
+        effective_pid = project_id or pending_project or PERSONAL_PROJECT_ID
         session.project_id = effective_pid
 
         # Register in database BEFORE start() so that db_session_id is available
