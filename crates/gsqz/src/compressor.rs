@@ -1,7 +1,7 @@
 use regex::Regex;
 
 use crate::config::{Config, Step};
-use crate::primitives::{dedup, filter, group, truncate};
+use crate::primitives::{dedup, filter, group, replace, truncate};
 
 pub struct CompressionResult {
     pub compressed: String,
@@ -157,6 +157,7 @@ fn apply_steps(mut lines: Vec<String>, steps: &[Step]) -> Vec<String> {
                 &args.file_marker,
             ),
             Step::Dedup(_) => dedup::dedup(lines),
+            Step::Replace(args) => replace::replace(lines, &args.rules),
         };
     }
     lines

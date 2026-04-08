@@ -63,6 +63,7 @@ pub enum Step {
     GroupLines(GroupLinesArgs),
     Truncate(TruncateArgs),
     Dedup(DedupArgs),
+    Replace(ReplaceArgs),
 }
 
 // Custom deserializer: each step is a YAML map with a single key like
@@ -79,7 +80,7 @@ impl<'de> Deserialize<'de> for Step {
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str(
-                    "a map with a single key: filter_lines, group_lines, truncate, or dedup",
+                    "a map with a single key: filter_lines, group_lines, truncate, dedup, or replace",
                 )
             }
 
@@ -108,10 +109,14 @@ impl<'de> Deserialize<'de> for Step {
                         let _: serde_yaml::Value = map.next_value()?;
                         Step::Dedup(DedupArgs {})
                     }
+                    "replace" => {
+                        let args: ReplaceArgs = map.next_value()?;
+                        Step::Replace(args)
+                    }
                     other => {
                         return Err(de::Error::unknown_variant(
                             other,
-                            &["filter_lines", "group_lines", "truncate", "dedup"],
+                            &["filter_lines", "group_lines", "truncate", "dedup", "replace"],
                         ));
                     }
                 };
@@ -157,6 +162,17 @@ fn default_tail() -> usize {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DedupArgs {}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplaceArgs {
+    pub rules: Vec<ReplaceRule>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplaceRule {
+    pub pattern: String,
+    pub replacement: String,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Fallback {
@@ -370,6 +386,20 @@ mod tests {
         let yaml = "dedup: {}";
         let step: Step = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(step, Step::Dedup(_)));
+    }
+
+    #[test]
+    fn test_step_deserialization_replace() {
+        let yaml = "replace:\n  rules:\n    - pattern: 'v\\d+'\n      replacement: 'vX'";
+        let step: Step = serde_yaml::from_str(yaml).unwrap();
+        match step {
+            Step::Replace(args) => {
+                assert_eq!(args.rules.len(), 1);
+                assert_eq!(args.rules[0].pattern, r"v\d+");
+                assert_eq!(args.rules[0].replacement, "vX");
+            }
+            _ => panic!("expected Replace"),
+        }
     }
 
     #[test]

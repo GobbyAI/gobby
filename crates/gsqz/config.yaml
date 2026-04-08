@@ -175,6 +175,10 @@ pipelines:
   build:
     match: '\b(?:cargo\s+build|go\s+build|next\s+build|webpack|make)\b'
     steps:
+      - replace:
+          rules:
+            - pattern: '/[^\s]+/(\w+\.(?:rs|go|js|ts|c|cpp|java))'
+              replacement: '$1'
       - filter_lines:
           patterns:
             - '^\s*Compiling '
