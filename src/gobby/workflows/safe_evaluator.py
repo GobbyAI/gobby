@@ -190,7 +190,18 @@ class SafeExpressionEvaluator(ast.NodeVisitor):
     # Safe method calls allowed on specific types
     SAFE_METHODS: dict[type, set[str]] = {
         dict: {"get", "keys", "values", "items"},
-        str: {"strip", "lstrip", "rstrip", "startswith", "endswith", "lower", "upper", "split"},
+        str: {
+            "strip",
+            "lstrip",
+            "rstrip",
+            "startswith",
+            "endswith",
+            "lower",
+            "upper",
+            "split",
+            "partition",
+            "rpartition",
+        },
         list: {"count", "index"},
     }
 

@@ -411,6 +411,23 @@ class TestCombinedExpressions:
         ev2 = SafeExpressionEvaluator(ctx2, {})
         assert ev2.evaluate("prompt.startswith('/')") is False
 
+    def test_string_rpartition_method(self) -> None:
+        """Test .rpartition() — used in code-index and context7 rules for file extension matching."""
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+
+        ctx: dict[str, Any] = {"path": "src/foo/bar.py"}
+        ev = SafeExpressionEvaluator(ctx, {})
+        assert ev.evaluate("path.rpartition('.')[2] in ('py', 'ts', 'js')") is True
+
+        ctx2: dict[str, Any] = {"path": "README.md"}
+        ev2 = SafeExpressionEvaluator(ctx2, {})
+        assert ev2.evaluate("path.rpartition('.')[2] in ('py', 'ts', 'js')") is False
+
+        # No extension
+        ctx3: dict[str, Any] = {"path": "Makefile"}
+        ev3 = SafeExpressionEvaluator(ctx3, {})
+        assert ev3.evaluate("path.rpartition('.')[2] in ('py', 'ts', 'js')") is False
+
     def test_lifecycle_title_synthesis_expression(self) -> None:
         """Test the exact expression from session-lifecycle.yaml for title synthesis."""
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
