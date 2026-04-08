@@ -93,7 +93,7 @@ variables:
     value: 0
     description: "Circuit breaker counter for edit-write stop gate"
   context7_available:
-    value: false
+    value: true
     description: "True when context7 MCP server is configured and available"
   context7_loaded:
     value: false
