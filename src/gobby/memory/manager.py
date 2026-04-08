@@ -491,19 +491,17 @@ class MemoryManager:
 
     @staticmethod
     def _rrf_merge(
-        qdrant_ranked: list[str],
-        graph_ranked: list[str],
+        *ranked_lists: list[str],
         k: int = 60,
     ) -> list[str]:
-        """Merge two ranked lists using Reciprocal Rank Fusion.
+        """Merge ranked lists using Reciprocal Rank Fusion.
 
         RRF score: score(d) = Σ 1/(k + rank_i) across all sources.
-        Memories appearing in both lists get scores from both, naturally
+        Memories appearing in multiple lists get scores from each, naturally
         ranking higher. k=60 is the standard constant.
 
         Args:
-            qdrant_ranked: Memory IDs ranked by Qdrant cosine similarity
-            graph_ranked: Memory IDs ranked by graph search
+            *ranked_lists: Variable number of ranked ID lists (Qdrant, graph, FTS5, etc.)
             k: RRF constant (higher = more uniform weighting)
 
         Returns:
@@ -511,11 +509,9 @@ class MemoryManager:
         """
         scores: dict[str, float] = {}
 
-        for rank, mid in enumerate(qdrant_ranked):
-            scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
-
-        for rank, mid in enumerate(graph_ranked):
-            scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
+        for ranked in ranked_lists:
+            for rank, mid in enumerate(ranked):
+                scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
 
         return sorted(scores, key=lambda mid: scores[mid], reverse=True)
 
@@ -579,9 +575,10 @@ class MemoryManager:
                     min_score=graph_min_score,
                     project_id=project_id,
                 )
+                fts_coro = self._fts5_ranked(query, limit * 2, project_id)
 
-                qdrant_result, graph_result = await asyncio.gather(
-                    qdrant_coro, graph_coro, return_exceptions=True
+                qdrant_result, graph_result, fts_result = await asyncio.gather(
+                    qdrant_coro, graph_coro, fts_coro, return_exceptions=True
                 )
 
                 # Handle Qdrant results (or fallback to empty)
@@ -598,6 +595,13 @@ class MemoryManager:
                 else:
                     graph_ranked = graph_result
 
+                # Handle FTS5 results (graceful degradation)
+                if isinstance(fts_result, BaseException):
+                    logger.debug(f"FTS5 search failed: {fts_result}")
+                    fts_ranked: list[str] = []
+                else:
+                    fts_ranked = fts_result
+
                 # Pre-filter Qdrant results by minimum score threshold
                 if effective_min_score > 0:
                     qdrant_results = [
@@ -609,15 +613,19 @@ class MemoryManager:
                 # Build Qdrant ranked list (by score)
                 qdrant_ranked = [mid for mid, _ in qdrant_results]
 
-                # Merge via RRF
-                if graph_ranked:
-                    merged_ids = self._rrf_merge(qdrant_ranked, graph_ranked, k=rrf_k)
+                # Merge all sources via RRF
+                rrf_lists = [rl for rl in (qdrant_ranked, graph_ranked, fts_ranked) if rl]
+                if len(rrf_lists) > 1:
+                    merged_ids = self._rrf_merge(*rrf_lists, k=rrf_k)
+                elif rrf_lists:
+                    merged_ids = rrf_lists[0]
                 else:
-                    merged_ids = qdrant_ranked
+                    merged_ids = []
 
                 # Lookup sets for provenance tracking
                 qdrant_set = set(qdrant_ranked)
                 graph_set = set(graph_ranked)
+                fts_set = set(fts_ranked)
 
                 # Resolve memories and apply filters
                 scored: list[tuple[Memory, float]] = []
@@ -642,13 +650,15 @@ class MemoryManager:
                     base_score = 1.0 / (rank + 1)
                     in_qdrant = memory_id in qdrant_set
                     in_graph = memory_id in graph_set
-                    via = (
-                        "semantic+graph"
-                        if in_qdrant and in_graph
-                        else "semantic"
-                        if in_qdrant
-                        else "graph"
-                    )
+                    in_fts = memory_id in fts_set
+                    sources = []
+                    if in_qdrant:
+                        sources.append("semantic")
+                    if in_graph:
+                        sources.append("graph")
+                    if in_fts:
+                        sources.append("fts5")
+                    via = "+".join(sources) or "unknown"
                     if mem.source_type == "user":
                         base_score *= _USER_SOURCE_BOOST
                         via += "+user_boost"
@@ -662,15 +672,59 @@ class MemoryManager:
                     mem.similarity = score
                 memories = [mem for mem, _ in scored[:limit]]
             else:
-                # Qdrant-only path (no graph search)
-                results = await self._vector_store.search(
+                # Qdrant + FTS5 path (no graph search)
+                rrf_k = getattr(self.config, "neo4j_rrf_k", 60)
+
+                qdrant_coro = self._vector_store.search(
                     query_embedding,
                     limit=limit * 2,
                     filters=filters or None,
                 )
+                fts_coro = self._fts5_ranked(query, limit * 2, project_id)
+
+                qdrant_result, fts_result = await asyncio.gather(
+                    qdrant_coro, fts_coro, return_exceptions=True
+                )
+
+                if isinstance(qdrant_result, BaseException):
+                    logger.warning(f"Qdrant search failed: {qdrant_result}")
+                    qdrant_results = []
+                else:
+                    qdrant_results = qdrant_result
+
+                if isinstance(fts_result, BaseException):
+                    logger.debug(f"FTS5 search failed: {fts_result}")
+                    fts_ranked = []
+                else:
+                    fts_ranked = fts_result
+
+                # Pre-filter Qdrant by min score
+                if effective_min_score > 0:
+                    qdrant_results = [
+                        (mid, score)
+                        for mid, score in qdrant_results
+                        if score >= effective_min_score
+                    ]
+
+                qdrant_ranked = [mid for mid, _ in qdrant_results]
+                qdrant_score_map = dict(qdrant_results)
+                fts_set = set(fts_ranked)
+                qdrant_set = set(qdrant_ranked)
+                use_rrf = bool(qdrant_ranked and fts_ranked)
+
+                # Merge via RRF when both sources return results;
+                # otherwise use the single source directly
+                if use_rrf:
+                    merged_ids = self._rrf_merge(qdrant_ranked, fts_ranked, k=rrf_k)
+                elif qdrant_ranked:
+                    merged_ids = qdrant_ranked
+                elif fts_ranked:
+                    merged_ids = fts_ranked
+                else:
+                    merged_ids = []
 
                 scored = []
-                for memory_id, score in results:
+                for rank, memory_id in enumerate(merged_ids):
                     try:
                         mem = self.storage.get_memory(memory_id)
                     except ValueError:
@@ -684,15 +738,25 @@ class MemoryManager:
                     if tags_none and any(t in (mem.tags or []) for t in tags_none):
                         continue
 
-                    via = "semantic"
-                    boosted = score * _USER_SOURCE_BOOST if mem.source_type == "user" else score
+                    # Use cosine similarity when Qdrant is the sole source
+                    # (preserves score-based ranking); use RRF rank otherwise
+                    if use_rrf:
+                        base_score = 1.0 / (rank + 1)
+                    else:
+                        base_score = qdrant_score_map.get(memory_id, 1.0 / (rank + 1))
+                    sources = []
+                    if memory_id in qdrant_set:
+                        sources.append("semantic")
+                    if memory_id in fts_set:
+                        sources.append("fts5")
+                    via = "+".join(sources) or "unknown"
                     if mem.source_type == "user":
+                        base_score *= _USER_SOURCE_BOOST
                         via += "+user_boost"
-                    boosted *= temporal_decay(mem.updated_at, half_life)
+                    base_score *= temporal_decay(mem.updated_at, half_life)
                     via += "+temporal_decay"
                     mem.search_via = via
-                    if boosted >= effective_min_score:
-                        scored.append((mem, boosted))
+                    scored.append((mem, base_score))
 
                 scored.sort(key=lambda x: x[1], reverse=True)
                 for mem, s in scored[:limit]:
@@ -721,22 +785,25 @@ class MemoryManager:
                     tags_none=tags_none,
                 )
 
-        # FTS5 fallback: if vector+graph returned nothing above threshold
-        if not memories and query:
-            memories = await self._fts5_fallback(
-                query,
-                limit,
-                project_id,
-                memory_type,
-                tags_all,
-                tags_any,
-                tags_none,
-            )
-
         # Update access stats for retrieved memories
         self._update_access_stats(memories)
 
         return memories
+
+    async def _fts5_ranked(
+        self,
+        query: str,
+        limit: int,
+        project_id: str | None,
+    ) -> list[str]:
+        """Run FTS5 keyword search and return ranked memory IDs for RRF merge."""
+        fts_results = await asyncio.to_thread(
+            self._get_fts_searcher().search,
+            query,
+            limit,
+            project_id,
+        )
+        return [mem_id for mem_id, _ in fts_results]
 
     async def _fts5_fallback(
         self,
