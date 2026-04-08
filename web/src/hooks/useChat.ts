@@ -575,8 +575,28 @@ export function useChat() {
   // Session title — stored from switchConversation to survive filtered list race
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
 
-  // LLM provider selection (null = server default)
-  const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+  // LLM provider selection (null = server default), persisted to localStorage
+  const [selectedProvider, setSelectedProviderRaw] = useState<string | null>(
+    () => {
+      try {
+        return localStorage.getItem("gobby-selected-provider") || null;
+      } catch {
+        return null;
+      }
+    },
+  );
+  const setSelectedProvider = useCallback((provider: string | null) => {
+    setSelectedProviderRaw(provider);
+    try {
+      if (provider) {
+        localStorage.setItem("gobby-selected-provider", provider);
+      } else {
+        localStorage.removeItem("gobby-selected-provider");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Session viewing tracking (read-only observation of CLI sessions via REST)
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(null);
