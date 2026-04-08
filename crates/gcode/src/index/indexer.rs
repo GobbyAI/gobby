@@ -1,5 +1,8 @@
 //! Full and incremental indexing orchestrator.
-//! Ports logic from src/gobby/code_index/indexer.py.
+//!
+//! Writes symbols, files, and content chunks to SQLite. External sync
+//! (Qdrant vectors, Neo4j graph) is handled by the Gobby daemon's sync worker,
+//! which polls for files with `vectors_synced=0` / `graph_synced=0`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -7,25 +10,13 @@ use std::time::Instant;
 
 use rusqlite::Connection;
 
-use crate::config::QdrantConfig;
 use crate::index::chunker;
 use crate::index::hasher;
 use crate::index::languages;
 use crate::index::parser;
 use crate::index::walker;
 use crate::models::{IndexResult, IndexedFile, IndexedProject};
-use crate::neo4j::Neo4jClient;
 use crate::progress::ProgressBar;
-use crate::search::semantic;
-
-/// Why a file needs re-indexing.
-#[derive(Debug)]
-enum StaleReason {
-    /// Content hash changed — full reindex needed.
-    ContentChanged,
-    /// Hash matches but graph_synced=0 — retry external writes only.
-    GraphSyncPending,
-}
 
 /// Default exclude patterns (matching Python CodeIndexConfig defaults).
 const DEFAULT_EXCLUDES: &[&str] = &[
@@ -48,16 +39,12 @@ const DEFAULT_EXCLUDES: &[&str] = &[
 ];
 
 /// Index a directory (full or incremental).
-#[allow(clippy::too_many_arguments)]
 pub fn index_directory(
     conn: &Connection,
     root_path: &Path,
     project_id: &str,
     incremental: bool,
-    neo4j: Option<&Neo4jClient>,
-    qdrant: Option<&QdrantConfig>,
     quiet: bool,
-    daemon_url: Option<&str>,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -72,12 +59,9 @@ pub fn index_directory(
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
 
-    // Detect whether gobby-hub.db has the graph_synced column
-    let has_graph_synced = has_graph_synced_column(conn);
-
     // Build current hash map for incremental detection
     let mut current_hashes: HashMap<String, String> = HashMap::new();
-    let stale: Option<HashMap<String, StaleReason>> = if incremental {
+    let stale: Option<HashMap<String, ()>> = if incremental {
         for path in &candidates {
             if let Ok(rel) = relative_path(path, root_path)
                 && let Ok(h) = hasher::file_content_hash(path)
@@ -85,41 +69,16 @@ pub fn index_directory(
                 current_hashes.insert(rel, h);
             }
         }
-        Some(get_stale_files(
-            conn,
-            project_id,
-            &current_hashes,
-            has_graph_synced,
-        ))
+        Some(get_stale_files(conn, project_id, &current_hashes))
     } else {
         None
     };
 
-    // When daemon is available, it handles external sync — defer orphan cleanup
-    let defer_external = daemon_url.is_some() && has_graph_synced;
-
-    // Clean orphans
+    // Clean orphans (SQLite only — daemon handles Neo4j/Qdrant cleanup)
     if incremental && !current_hashes.is_empty() {
         let orphans = get_orphan_files(conn, project_id, &current_hashes);
-        let (orphan_neo4j, orphan_qdrant) = if defer_external {
-            (None, None)
-        } else {
-            (neo4j, qdrant)
-        };
         for orphan in &orphans {
-            delete_file_data(conn, project_id, orphan, orphan_neo4j, orphan_qdrant);
-        }
-    }
-
-    // Ensure Qdrant collection exists (skip when daemon handles external sync)
-    if !defer_external {
-        if let Some(config) = qdrant {
-            let collection = format!("{}{}", config.collection_prefix, project_id);
-            if let Err(e) = crate::search::semantic::ensure_collection(config, &collection) {
-                if !quiet {
-                    eprintln!("Warning: failed to ensure Qdrant collection: {e}");
-                }
-            }
+            delete_file_sqlite_data(conn, project_id, orphan);
         }
     }
 
@@ -135,35 +94,14 @@ pub fn index_directory(
 
         progress.tick(&rel);
 
-        let graph_sync_only = match &stale {
-            Some(stale_map) => match stale_map.get(&rel) {
-                None => {
-                    result.files_skipped += 1;
-                    continue;
-                }
-                Some(StaleReason::GraphSyncPending) if defer_external => {
-                    // Daemon worker handles graph sync retries
-                    result.files_skipped += 1;
-                    continue;
-                }
-                Some(StaleReason::GraphSyncPending) => true,
-                Some(StaleReason::ContentChanged) => false,
-            },
-            None => false, // full reindex
-        };
+        if let Some(ref stale_map) = stale {
+            if !stale_map.contains_key(&rel) {
+                result.files_skipped += 1;
+                continue;
+            }
+        }
 
-        match index_file(
-            conn,
-            path,
-            project_id,
-            root_path,
-            &excludes,
-            neo4j,
-            qdrant,
-            graph_sync_only,
-            has_graph_synced,
-            daemon_url,
-        ) {
+        match index_file(conn, path, project_id, root_path, &excludes) {
             Some(count) => {
                 result.files_indexed += 1;
                 result.symbols_found += count;
@@ -212,9 +150,6 @@ pub fn index_files(
     root_path: &Path,
     project_id: &str,
     file_paths: &[String],
-    neo4j: Option<&Neo4jClient>,
-    qdrant: Option<&QdrantConfig>,
-    daemon_url: Option<&str>,
 ) -> anyhow::Result<IndexResult> {
     let start = Instant::now();
     let mut result = IndexResult {
@@ -227,8 +162,6 @@ pub fn index_files(
     };
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-    let has_graph_synced = has_graph_synced_column(conn);
-    let defer_external = daemon_url.is_some() && has_graph_synced;
 
     for fp in file_paths {
         let abs = if Path::new(fp).is_absolute() {
@@ -238,28 +171,12 @@ pub fn index_files(
         };
 
         if !abs.exists() {
-            // File deleted — clean up (defer external if daemon available)
-            let (del_neo4j, del_qdrant) = if defer_external {
-                (None, None)
-            } else {
-                (neo4j, qdrant)
-            };
-            delete_file_data(conn, project_id, fp, del_neo4j, del_qdrant);
+            // File deleted — clean up SQLite (daemon handles external cleanup)
+            delete_file_sqlite_data(conn, project_id, fp);
             continue;
         }
 
-        if let Some(count) = index_file(
-            conn,
-            &abs,
-            project_id,
-            root_path,
-            &excludes,
-            neo4j,
-            qdrant,
-            false, // always full reindex for targeted files
-            has_graph_synced,
-            daemon_url,
-        ) {
+        if let Some(count) = index_file(conn, &abs, project_id, root_path, &excludes) {
             result.files_indexed += 1;
             result.symbols_found += count;
         }
@@ -270,21 +187,12 @@ pub fn index_files(
 }
 
 /// Index a single file. Returns symbol count or None if skipped.
-///
-/// When `graph_sync_only` is true, SQLite data is assumed correct — only
-/// external writes (Neo4j/Qdrant) are retried and `graph_synced` is flipped.
-#[allow(clippy::too_many_arguments)]
 fn index_file(
     conn: &Connection,
     file_path: &Path,
     project_id: &str,
     root_path: &Path,
     exclude_patterns: &[String],
-    neo4j: Option<&Neo4jClient>,
-    qdrant: Option<&QdrantConfig>,
-    graph_sync_only: bool,
-    has_graph_synced: bool,
-    daemon_url: Option<&str>,
 ) -> Option<usize> {
     let rel = relative_path(file_path, root_path).ok()?;
 
@@ -296,126 +204,53 @@ fn index_file(
 
     let count = parse_result.symbols.len();
 
-    // Detect optional tables for import/call storage (daemon migration v183)
+    // Detect optional columns/tables (daemon migration)
     let has_imports_table = has_table(conn, "code_imports");
     let has_calls_table = has_table(conn, "code_calls");
+    let has_graph_synced = has_graph_synced_column(conn);
     let has_vectors_synced = has_vectors_synced_column(conn);
 
-    // Phase 1: SQLite writes (transactional) — skip if graph_sync_only
-    if !graph_sync_only {
-        let tx = conn.unchecked_transaction().ok()?;
+    // SQLite writes (transactional)
+    let tx = conn.unchecked_transaction().ok()?;
 
-        delete_file_sqlite_data(&tx, project_id, &rel);
-        upsert_symbols(&tx, &parse_result.symbols);
+    delete_file_sqlite_data(&tx, project_id, &rel);
+    upsert_symbols(&tx, &parse_result.symbols);
 
-        let language =
-            languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
-        let h = hasher::file_content_hash(file_path).unwrap_or_default();
-        let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
+    let language = languages::detect_language(&file_path.to_string_lossy()).unwrap_or("unknown");
+    let h = hasher::file_content_hash(file_path).unwrap_or_default();
+    let size = file_path.metadata().map(|m| m.len()).unwrap_or(0);
 
-        upsert_file(
-            &tx,
-            &IndexedFile {
-                id: IndexedFile::make_id(project_id, &rel),
-                project_id: project_id.to_string(),
-                file_path: rel.clone(),
-                language: language.to_string(),
-                content_hash: h,
-                symbol_count: count,
-                byte_size: size as usize,
-                indexed_at: epoch_secs_str(),
-            },
-            has_graph_synced,
-            has_vectors_synced,
-        );
+    upsert_file(
+        &tx,
+        &IndexedFile {
+            id: IndexedFile::make_id(project_id, &rel),
+            project_id: project_id.to_string(),
+            file_path: rel.clone(),
+            language: language.to_string(),
+            content_hash: h,
+            symbol_count: count,
+            byte_size: size as usize,
+            indexed_at: epoch_secs_str(),
+        },
+        has_graph_synced,
+        has_vectors_synced,
+    );
 
-        // Write import/call relations to SQLite (if daemon migration v183 applied)
-        if has_imports_table {
-            upsert_imports(&tx, project_id, &rel, &parse_result.imports);
-        }
-        if has_calls_table {
-            upsert_calls(&tx, project_id, &rel, &parse_result.calls);
-        }
-
-        let chunks =
-            chunker::chunk_file_content(&parse_result.source, &rel, project_id, Some(language));
-        if !chunks.is_empty() {
-            upsert_content_chunks(&tx, &chunks);
-        }
-
-        tx.commit().ok()?;
+    // Write import/call relations to SQLite (if daemon migration v183 applied)
+    if has_imports_table {
+        upsert_imports(&tx, project_id, &rel, &parse_result.imports);
+    }
+    if has_calls_table {
+        upsert_calls(&tx, project_id, &rel, &parse_result.calls);
     }
 
-    // When daemon is available, defer external writes — flags stay 0 for daemon worker
-    if has_graph_synced && daemon_url.is_some() {
-        return Some(count);
+    let chunks =
+        chunker::chunk_file_content(&parse_result.source, &rel, project_id, Some(language));
+    if !chunks.is_empty() {
+        upsert_content_chunks(&tx, &chunks);
     }
 
-    // Phase 2: External writes (Neo4j/Qdrant) — outside transaction
-    let mut external_ok = true;
-
-    // Delete old external data (only on full reindex)
-    if !graph_sync_only {
-        if let Some(client) = neo4j {
-            if crate::neo4j::delete_file_graph(client, project_id, &rel).is_err() {
-                external_ok = false;
-            }
-        }
-        if let Some(config) = qdrant {
-            if let Ok(mut stmt) =
-                conn.prepare("SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2")
-            {
-                let ids: Vec<String> = stmt
-                    .query_map(rusqlite::params![project_id, &rel], |row| row.get(0))
-                    .ok()
-                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                    .unwrap_or_default();
-                if !ids.is_empty() {
-                    let collection = format!("{}{}", config.collection_prefix, project_id);
-                    if semantic::delete_vectors(config, &collection, &ids).is_err() {
-                        external_ok = false;
-                    }
-                }
-            }
-        }
-    }
-
-    // Write new Qdrant vectors
-    if let Some(config) = qdrant {
-        let collection = format!("{}{}", config.collection_prefix, project_id);
-        let texts: Vec<String> = parse_result
-            .symbols
-            .iter()
-            .map(|sym| semantic::symbol_embed_text_with_source(sym, &parse_result.source))
-            .collect();
-        let embeddings = semantic::embed_texts(&texts, false);
-        let points: Vec<(String, Vec<f32>)> = parse_result
-            .symbols
-            .iter()
-            .zip(embeddings)
-            .filter_map(|(sym, emb)| Some((sym.id.clone(), emb?)))
-            .collect();
-        if !points.is_empty() && semantic::upsert_vectors(config, &collection, &points).is_err() {
-            external_ok = false;
-        }
-    }
-
-    // Write new Neo4j graph edges (attempt all independently)
-    if let Some(client) = neo4j {
-        let defines_ok =
-            crate::neo4j::write_defines(client, project_id, &rel, &parse_result.symbols).is_ok();
-        let calls_ok = crate::neo4j::write_calls(client, project_id, &parse_result.calls).is_ok();
-        let imports_ok =
-            crate::neo4j::write_imports(client, project_id, &parse_result.imports).is_ok();
-        if !defines_ok || !calls_ok || !imports_ok {
-            external_ok = false;
-        }
-    }
-
-    // Flip graph_synced based on external write success
-    if has_graph_synced {
-        set_graph_synced(conn, project_id, &rel, external_ok);
-    }
+    tx.commit().ok()?;
 
     Some(count)
 }
@@ -691,41 +526,7 @@ fn upsert_project_stats(conn: &Connection, project: &IndexedProject) {
     );
 }
 
-/// Delete all data for a file from all stores (SQLite, Neo4j, Qdrant).
-/// Used for orphan cleanup where we want everything gone.
-fn delete_file_data(
-    conn: &Connection,
-    project_id: &str,
-    file_path: &str,
-    neo4j: Option<&Neo4jClient>,
-    qdrant: Option<&QdrantConfig>,
-) {
-    // Delete graph data first
-    if let Some(client) = neo4j {
-        let _ = crate::neo4j::delete_file_graph(client, project_id, file_path);
-    }
-
-    // Delete Qdrant vectors for this file's symbols (must query IDs before deleting from SQLite)
-    if let Some(config) = qdrant {
-        if let Ok(mut stmt) =
-            conn.prepare("SELECT id FROM code_symbols WHERE project_id = ?1 AND file_path = ?2")
-        {
-            let ids: Vec<String> = stmt
-                .query_map(rusqlite::params![project_id, file_path], |row| row.get(0))
-                .ok()
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                .unwrap_or_default();
-            if !ids.is_empty() {
-                let collection = format!("{}{}", config.collection_prefix, project_id);
-                let _ = semantic::delete_vectors(config, &collection, &ids);
-            }
-        }
-    }
-
-    delete_file_sqlite_data(conn, project_id, file_path);
-}
-
-/// Delete only SQLite data for a file. Safe to call inside a transaction.
+/// Delete SQLite data for a file.
 fn delete_file_sqlite_data(conn: &Connection, project_id: &str, file_path: &str) {
     let _ = conn.execute(
         "DELETE FROM code_symbols WHERE project_id = ?1 AND file_path = ?2",
@@ -835,21 +636,11 @@ fn has_table(conn: &Connection, table: &str) -> bool {
         > 0
 }
 
-/// Set graph_synced flag for a file after external writes complete.
-fn set_graph_synced(conn: &Connection, project_id: &str, file_path: &str, synced: bool) {
-    let _ = conn.execute(
-        "UPDATE code_indexed_files SET graph_synced = ?3 \
-         WHERE project_id = ?1 AND file_path = ?2",
-        rusqlite::params![project_id, file_path, synced as i32],
-    );
-}
-
 fn get_stale_files(
     conn: &Connection,
     project_id: &str,
     current_hashes: &HashMap<String, String>,
-    has_graph_synced: bool,
-) -> HashMap<String, StaleReason> {
+) -> HashMap<String, ()> {
     let mut stale = HashMap::new();
 
     // Create temp table for comparison
@@ -876,25 +667,7 @@ fn get_stale_files(
         stmt.query_map(rusqlite::params![project_id], |row| row.get::<_, String>(0))
     {
         for row in rows.flatten() {
-            stale.insert(row, StaleReason::ContentChanged);
-        }
-    }
-
-    // Files where hash matches but graph_synced=0 (external writes pending)
-    if has_graph_synced
-        && let Ok(mut stmt) = conn.prepare(
-            "SELECT cf.file_path FROM code_indexed_files cf \
-             JOIN _current_hashes ch ON cf.file_path = ch.file_path \
-             WHERE cf.project_id = ?1 \
-               AND cf.content_hash = ch.content_hash \
-               AND cf.graph_synced = 0",
-        )
-        && let Ok(rows) =
-            stmt.query_map(rusqlite::params![project_id], |row| row.get::<_, String>(0))
-    {
-        for row in rows.flatten() {
-            // ContentChanged takes priority if already present
-            stale.entry(row).or_insert(StaleReason::GraphSyncPending);
+            stale.insert(row, ());
         }
     }
 

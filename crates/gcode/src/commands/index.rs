@@ -1,7 +1,6 @@
 use crate::config::Context;
 use crate::db;
 use crate::index::indexer;
-use crate::neo4j::Neo4jClient;
 
 pub fn run(
     ctx: &Context,
@@ -46,21 +45,8 @@ pub fn run(
     // Auto-init: ensure identity file exists before indexing
     crate::project::ensure_gcode_json(&root)?;
 
-    // Create Neo4j client if configured
-    let neo4j_client = ctx.neo4j.as_ref().map(Neo4jClient::from_config);
-    let neo4j_ref = neo4j_client.as_ref();
-    let qdrant_ref = ctx.qdrant.as_ref();
-
     if let Some(file_list) = files {
-        let result = indexer::index_files(
-            &conn,
-            &root,
-            &project_id,
-            &file_list,
-            neo4j_ref,
-            qdrant_ref,
-            ctx.daemon_url.as_deref(),
-        )?;
+        let result = indexer::index_files(&conn, &root, &project_id, &file_list)?;
         if !ctx.quiet {
             eprintln!(
                 "Indexed {} files, {} symbols in {}ms",
@@ -68,16 +54,7 @@ pub fn run(
             );
         }
     } else {
-        let result = indexer::index_directory(
-            &conn,
-            &root,
-            &project_id,
-            !full,
-            neo4j_ref,
-            qdrant_ref,
-            ctx.quiet,
-            ctx.daemon_url.as_deref(),
-        )?;
+        let result = indexer::index_directory(&conn, &root, &project_id, !full, ctx.quiet)?;
         if !ctx.quiet {
             eprintln!(
                 "Indexed {} files ({} skipped), {} symbols in {}ms",

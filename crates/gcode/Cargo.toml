@@ -16,13 +16,6 @@ categories = ["command-line-utilities", "development-tools"]
 name = "gcode"
 path = "src/main.rs"
 
-[features]
-default = ["embeddings"]
-embeddings = ["dep:llama-cpp-2", "dep:libc"]
-cuda = ["embeddings", "llama-cpp-2/cuda"]
-vulkan = ["embeddings", "llama-cpp-2/vulkan"]
-rocm = ["embeddings", "llama-cpp-2/rocm"]
-
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -81,19 +74,8 @@ openssl = { version = "0.10", features = ["vendored"] }
 pbkdf2 = { version = "0.12", features = ["simple"] }
 hmac = "0.12"
 
-# Embeddings (GGUF model loading for semantic search)
-# macOS gets Metal automatically. Linux/Windows: CPU by default,
-# opt-in GPU via --features cuda/vulkan/rocm
-libc = { version = "0.2", optional = true }
-
 # Temp files (for tests)
 tempfile = "3"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-llama-cpp-2 = { version = "0.1", optional = true }
 
 [dev-dependencies]
 serial_test = "3"

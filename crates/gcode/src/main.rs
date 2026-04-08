@@ -30,7 +30,7 @@ struct Cli {
     #[arg(long, global = true)]
     quiet: bool,
 
-    /// Enable GGML/llama.cpp debug output (suppressed by default)
+    /// Enable verbose output
     #[arg(long, global = true)]
     verbose: bool,
 
@@ -43,7 +43,7 @@ enum Command {
     // ── Project Setup ────────────────────────────────────────────────
     /// Initialize project context (.gobby/gcode.json)
     Init,
-    /// Index a directory (full or incremental). SQLite-only when Gobby daemon is running
+    /// Index a directory (full or incremental). Writes symbols, files, and chunks to SQLite
     Index {
         /// Path to index (default: project root)
         path: Option<String>,
@@ -159,16 +159,7 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Force-enable Metal tensor API on all Apple Silicon. Must be set BEFORE
-    // any threads are spawned to avoid Undefined Behavior (segfaults) when
-    // other threads read the environment concurrently.
-    #[cfg(target_os = "macos")]
-    unsafe {
-        std::env::set_var("GGML_METAL_TENSOR_ENABLE", "1")
-    };
-
     let cli = Cli::parse();
-    search::semantic::configure_logging(cli.verbose);
 
     // Commands that must run before Context::resolve() (work on uninitialized projects)
     match &cli.command {
@@ -190,9 +181,7 @@ fn main() -> anyhow::Result<()> {
 
     let ctx = config::Context::resolve(cli.project.as_deref(), cli.quiet)?;
 
-    // Drop embedding model before exit to avoid Metal residency set assertion
-    // crash during static destructor teardown (ggml-metal-device.m:612).
-    let result = match cli.command {
+    match cli.command {
         Command::Init | Command::Projects | Command::Prune { .. } => unreachable!(),
         Command::Index { path, files, full } => commands::index::run(&ctx, path, files, full),
         Command::Status => commands::status::run(&ctx, cli.format),
@@ -259,8 +248,5 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::RepoOutline => commands::status::repo_outline(&ctx, cli.format),
-    };
-
-    search::semantic::shutdown();
-    result
+    }
 }

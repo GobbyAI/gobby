@@ -27,6 +27,14 @@ pub struct QdrantConfig {
     pub collection_prefix: String,
 }
 
+/// Embedding API configuration (OpenAI-compatible endpoint).
+#[derive(Debug, Clone)]
+pub struct EmbeddingConfig {
+    pub api_base: String,
+    pub model: String,
+    pub api_key: Option<String>,
+}
+
 /// Resolved runtime context for gcode commands.
 pub struct Context {
     /// Path to gobby-hub.db
@@ -41,6 +49,8 @@ pub struct Context {
     pub neo4j: Option<Neo4jConfig>,
     /// Qdrant config (None if unavailable)
     pub qdrant: Option<QdrantConfig>,
+    /// Embedding API config (None if unavailable → no semantic search)
+    pub embedding: Option<EmbeddingConfig>,
     /// Gobby daemon base URL (e.g. http://localhost:60887)
     pub daemon_url: Option<String>,
 }
@@ -67,6 +77,7 @@ impl Context {
         // Resolve service configs from config_store (best-effort)
         let neo4j = resolve_neo4j_config(&db_path, quiet);
         let qdrant = resolve_qdrant_config(&db_path, quiet);
+        let embedding = resolve_embedding_config(&db_path, quiet);
 
         let daemon_url = resolve_daemon_url();
 
@@ -77,6 +88,7 @@ impl Context {
             quiet,
             neo4j,
             qdrant,
+            embedding,
             daemon_url,
         })
     }
@@ -375,6 +387,64 @@ fn resolve_qdrant_config(db_path: &Path, quiet: bool) -> Option<QdrantConfig> {
         url,
         api_key,
         collection_prefix,
+    })
+}
+
+/// Resolve embedding API configuration from config_store + env vars.
+///
+/// Returns None if no api_base is found (→ no semantic search, FTS5 only).
+fn resolve_embedding_config(db_path: &Path, quiet: bool) -> Option<EmbeddingConfig> {
+    // Env var overrides
+    let api_base = std::env::var("GOBBY_EMBEDDING_URL").ok();
+
+    let api_base = api_base.or_else(|| {
+        let conn = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .ok()?;
+        conn.busy_timeout(std::time::Duration::from_millis(5000))
+            .ok()?;
+        read_config_value(&conn, "embeddings.api_base")
+    })?;
+
+    // Model (env override → config_store → default)
+    let model = std::env::var("GOBBY_EMBEDDING_MODEL")
+        .ok()
+        .or_else(|| {
+            let conn = rusqlite::Connection::open_with_flags(
+                db_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .ok()?;
+            read_config_value(&conn, "embeddings.model")
+        })
+        .unwrap_or_else(|| "nomic-embed-text".to_string());
+
+    // API key (env override → config_store with secret resolution)
+    let api_key = std::env::var("GOBBY_EMBEDDING_API_KEY").ok().or_else(|| {
+        let conn = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .ok()?;
+        let raw = read_config_value(&conn, "embeddings.api_key")?;
+        match secrets::resolve_config_value(&raw, db_path) {
+            Ok(resolved) => Some(resolved),
+            Err(e) => {
+                if !quiet {
+                    eprintln!("Warning: failed to resolve embedding API key: {e}");
+                }
+                None
+            }
+        }
+    });
+
+    Some(EmbeddingConfig {
+        api_base,
+        model,
+        api_key,
     })
 }
 

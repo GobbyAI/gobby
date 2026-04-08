@@ -43,16 +43,7 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
     // Auto-index the project (resolve DB path directly — Context::resolve() can't run yet)
     let db_path = config::resolve_db_path(project_root)?;
     let conn = db::open_readwrite(&db_path)?;
-    let index_result = indexer::index_directory(
-        &conn,
-        project_root,
-        &project_id,
-        true,
-        None,
-        None,
-        quiet,
-        None,
-    )?;
+    let index_result = indexer::index_directory(&conn, project_root, &project_id, true, quiet)?;
     if !quiet {
         eprintln!(
             "Indexed {} files, {} symbols in {}ms",

@@ -67,6 +67,7 @@ mod tests {
             quiet: true,
             neo4j: None,
             qdrant: None,
+            embedding: None,
             daemon_url: None,
         }
     }
