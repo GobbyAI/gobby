@@ -175,7 +175,13 @@ class MemoryManager:
     @property
     def llm_service(self) -> LLMService | None:
         """Get the LLM service for image description."""
-        return self._ingestion_service.llm_service
+        return self._llm_service
+
+    @llm_service.setter
+    def llm_service(self, service: LLMService | None) -> None:
+        """Set the LLM service for image description."""
+        self._llm_service = service
+        self._ingestion_service.llm_service = service
 
     def _get_fts_searcher(self) -> MemoryFTS5Searcher:
         """Lazily initialize the SQLite FTS5 searcher."""
@@ -184,12 +190,6 @@ class MemoryManager:
 
             self._fts_searcher = MemoryFTS5Searcher(self.db)
         return self._fts_searcher
-
-    @llm_service.setter
-    def llm_service(self, service: LLMService | None) -> None:
-        """Set the LLM service for image description."""
-        self._llm_service = service
-        self._ingestion_service.llm_service = service
 
     @staticmethod
     def _record_to_memory(record: MemoryRecord) -> Memory:
@@ -702,7 +702,7 @@ class MemoryManager:
             # No query or no VectorStore — try FTS5 keyword search if we
             # have a query, otherwise fall back to recency-ordered SQLite list.
             if query:
-                memories = self._fts5_fallback(
+                memories = await self._fts5_fallback(
                     query,
                     limit,
                     project_id,

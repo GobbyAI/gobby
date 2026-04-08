@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.memory.protocol import MediaAttachment
 from gobby.storage.database import DatabaseProtocol
@@ -74,7 +74,10 @@ class Memory:
         # Handle media column (may not exist in older databases)
         media = row["media"] if "media" in row.keys() else None
         raw_source_type = row["source_type"]
-        source_type = raw_source_type if raw_source_type in ("user", "agent") else "agent"
+        source_type = cast(
+            Literal["user", "agent"],
+            raw_source_type if raw_source_type in ("user", "agent") else "agent",
+        )
 
         return cls(
             id=row["id"],
