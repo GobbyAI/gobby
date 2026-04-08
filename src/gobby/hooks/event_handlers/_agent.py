@@ -153,12 +153,22 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return
 
         agent_name = variables.get("_agent_type", "default")
-        active_skills = variables.get("_active_skill_names")
+        active_skills_raw = variables.get("_active_skill_names")
+        active_skills = set(active_skills_raw) if active_skills_raw is not None else None
         cli_source = event.source.value
+
+        # Get project_id for project-specific agent resolution
+        project_id = None
+        try:
+            session_row = self._session_storage.get(session_id)
+            if session_row:
+                project_id = session_row.project_id
+        except Exception:
+            pass
 
         from gobby.workflows.agent_resolver import resolve_agent
 
-        agent_body = resolve_agent(agent_name, self._session_storage.db)
+        agent_body = resolve_agent(agent_name, self._session_storage.db, project_id=project_id)
         if not agent_body:
             return
 

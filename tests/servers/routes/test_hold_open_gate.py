@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.servers.routes.mcp.hooks import _maybe_hold_open
+from gobby.servers.routes.mcp.hooks import MAX_PENDING_PER_SESSION, _maybe_hold_open
 
 pytestmark = pytest.mark.unit
 
@@ -139,7 +139,7 @@ async def test_web_chat_rate_limit_deny() -> None:
     db = MagicMock()
     session = _make_session(session_id="sess-web-1", session_type="web_chat")
     manager = AsyncMock()
-    manager.count_pending.return_value = 3  # MAX_PENDING_PER_SESSION
+    manager.count_pending.return_value = MAX_PENDING_PER_SESSION
 
     request = _make_request(db=db, pending_manager=manager)
     payload = {"input_data": {"tool_name": "bash", "arguments": {}}}

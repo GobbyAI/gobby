@@ -485,6 +485,7 @@ class TestSessionMoreCoverage:
             mock_agent.name = "test-agent"
             mock_agent.description = "Test"
             mock_agent.role = "Role"
+            mock_agent.personality = "Sharp and opinionated"
             mock_agent.goal = "Goal"
             mock_agent.build_prompt_preamble.return_value = "Preamble"
             mock_resolve.return_value = mock_agent

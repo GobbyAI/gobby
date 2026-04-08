@@ -4,7 +4,7 @@
 
 Gobby's Python daemon is ~184K LOC across 670 files. gsqz and gcode are already ported to Rust in the gobby-cli monorepo (~5.8K LOC, 2 crates). This plan covers the first wave of Rust extraction: shared foundation, storage layer (tasks + memory + config), and the rule engine as a standalone crate.
 
-The hook dispatcher stays in Python — it's an orchestrator (session lookup, event enrichment, webhooks, broadcasting) that calls into the rule engine. The rule engine is the standalone logic layer worth extracting.
+The hook dispatcher (`hook_dispatcher.py`) is initially Python but is replaced by a compiled Rust binary (`gobby-hook`, Crate 4) in this phase — it's a hot path invoked on every hook event, so eliminating Python cold-start is high-value. The *daemon-side* hook orchestrator (session lookup, event enrichment, webhooks, broadcasting) stays in Python; only the CLI-invoked dispatcher binary moves to Rust.
 
 Docker-based Kùzu+Qdrant coexists with this work — the Rust crates talk to them over HTTP, not embedded.
 
@@ -107,10 +107,10 @@ src/
 
 ### Key Implementation Details
 
-- **seq_num allocation:** Must use `transaction_immediate` (BEGIN IMMEDIATE) to prevent TOCTOU race on MAX(seq_num). Python does this at `_crud.py:64-70`.
+- **seq_num allocation:** Must use `transaction_immediate` (BEGIN IMMEDIATE) to prevent TOCTOU race on MAX(seq_num). Python does this at `_crud.py:64-70`. Note: BEGIN IMMEDIATE acquires a RESERVED lock immediately, preventing concurrent writers from interleaving but allowing readers. Contention is low (single-user daemon, task creation is infrequent). Configure `busy_timeout` (5000ms matches Python default) and use a simple retry loop (3 attempts, 100ms backoff) for `SQLITE_BUSY` — this matches the Python behavior where SQLite's internal busy handler retries transparently.
 - **FTS5 triggers:** Created by baseline schema SQL. Integration tests must verify triggers fire on INSERT/UPDATE/DELETE.
 - **Path cache:** Parent chain traversal with depth limit (100). Cascade updates on reparenting affect multiple rows.
-- **Cycle detection:** DFS with visited/in-stack sets. `would_create_cycle()` checks before insert.
+- **Cycle detection:** Iterative DFS with explicit stack and visited set. `would_create_cycle()` checks before insert. Note: the Python implementation (`task_dependencies.py:114-138`) is already iterative — port it directly, do not introduce recursion.
 - **JSON columns:** labels, commits, tags stored as JSON strings. Use serde_json for ser/deser.
 - **Task model from_row:** Handle optional columns gracefully (migration-safe column reading).
 
@@ -146,7 +146,7 @@ src/
 ### Key Decisions
 
 - **minijinja** for template rendering (not tera — closer to Jinja2 syntax, supports `trim_blocks`/`lstrip_blocks`, designed for embedding)
-- **Custom expression parser** for SafeExpressionEvaluator (Pratt/precedence-climbing parser — the expression language is small enough, no existing crate handles this exact subset)
+- **Custom expression parser** for SafeExpressionEvaluator — Pratt/precedence-climbing parser is the primary approach (~300-400 LOC). Consider prototyping with **winnow** (`combinator::expression`) first; if its error recovery and list-comprehension support are adequate, prefer it over hand-rolling. Keep Pratt as fallback if the combinator approach fights the grammar (especially YAML normalization and dunder-blocking). Actual LOC will be higher than the base parser: budget ~150 LOC for error recovery/source locations, ~100 for list-comprehension parsing, ~50 for YAML whitespace normalization, ~50 for method whitelist/dunder checks
 - **`Box<dyn Trait>`** for dependency injection (not generics — the engine is called per-event not per-token, dynamic dispatch simplifies the API enormously)
 
 ### Module Layout
@@ -298,7 +298,9 @@ The Python version piggybacks on `ast.parse()`. Rust needs a hand-written parser
 - **serde_json** for stdin/stdout JSON
 - Fire-and-forget: `Command::new("curl")` with `pre_exec(|| { libc::setsid(); Ok(()) })` or spawn detached ureq request in forked process
 - Agent kill: `libc::killpg()` / tmux kill-pane via `Command`
-- Failure tracking: simple counter files in `/tmp/gobby-agent-failures/`
+- Failure tracking: counter files in `std::env::temp_dir()/gobby-agent-failures/`. Cleanup policy: the hook binary itself prunes files older than 24h on each invocation (cheap `metadata().modified()` check). Cap at 100 files with LRU removal. No external cleanup daemon needed — the hook runs frequently enough to self-maintain.
+
+**Platform scope:** gobby-hook targets Unix (macOS, Linux) only. `pre_exec`, `libc::setsid`, and `libc::killpg` are Unix-specific. Windows support is not planned for Phase 1. If needed later: replace `pre_exec` with `CREATE_NEW_PROCESS_GROUP` creation flag, replace `killpg` with `TerminateProcess` on job objects, and use `std::env::temp_dir()` (already portable) for failure tracking.
 
 ### CLI Config Registry
 
@@ -376,3 +378,42 @@ resolver = "3"
 | gobby-storage | gobby-core, rusqlite, deadpool-sqlite, tokio, serde_json, thiserror, uuid |
 | gobby-rules | gobby-core, minijinja, serde_json, tokio, thiserror, async-trait |
 | gobby-hook | gobby-core (daemon, bootstrap, project), serde_json, clap, libc |
+
+---
+
+## Operational Concerns
+
+### Migration Phasing
+
+Rust crates integrate with the Python daemon via HTTP — no FFI/pyo3. The daemon remains the orchestrator; Rust crates are either:
+- **Libraries** consumed by Rust binaries (gobby-hook) or Rust CLIs (gcode, gsqz), or
+- **Standalone binaries** that talk to the daemon over its existing HTTP API.
+
+The rule engine (`gobby-rules`) is consumed as a library by `gobby-hook` and eventually by a Rust HTTP shell (`gobby-daemon`, not in this phase). During transition, the Python rule engine and Rust rule engine coexist — the Python daemon uses its own, gobby-hook uses the Rust one. Parity is verified by running the same test vectors against both.
+
+The storage layer (`gobby-storage`) reads/writes the same SQLite DB as the Python daemon. Schema is shared (embedded baseline). No migration needed — both sides see the same tables. Concurrent access is safe via WAL mode + busy_timeout.
+
+### Rollback
+
+Each crate ships independently. Rollback = revert to previous binary:
+- **gobby-hook:** `gobby install` re-copies the Python `hook_dispatcher.py` if the Rust binary is removed or renamed. Feature flag: `GOBBY_HOOK_PYTHON=1` env var forces the Python dispatcher.
+- **gobby-storage / gobby-rules:** Library crates, no separate deployment. Rollback = revert the consuming binary.
+- **Schema:** No new migrations in this phase — Rust embeds the existing baseline. No backwards-compatibility risk.
+
+### Success Criteria
+
+| Metric | Target |
+|--------|--------|
+| gobby-hook cold start | <5ms (vs Python ~200-400ms) |
+| Rule engine evaluate() P95 | <2ms for typical 10-rule session |
+| gobby-storage task CRUD P95 | <1ms per operation |
+| Test parity | All Python test vectors pass against Rust implementations |
+| `cargo clippy --workspace` | Zero warnings |
+| Coverage | >80% per crate |
+
+### Observability
+
+- Use the `tracing` crate with `tracing-subscriber` (JSON output, `RUST_LOG` env filter).
+- gobby-hook logs to stderr (captured by the daemon's hook executor). Structured JSON lines match the Python dispatcher's log format so existing log parsers work unchanged.
+- gobby-storage and gobby-rules are libraries — they use `tracing` spans/events, the consumer configures the subscriber.
+- No separate metrics exporter in Phase 1. The daemon's existing `/api/admin/metrics` endpoint covers rule eval timing via the Python path; Rust metrics integrate when `gobby-daemon` ships.

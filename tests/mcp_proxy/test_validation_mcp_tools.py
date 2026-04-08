@@ -510,10 +510,10 @@ class TestDeEscalateTaskTool:
         assert "error" not in result
         # Verify update_task was called with correct status
         mock_task_manager.update_task.assert_called_once()
-        call_kwargs = mock_task_manager.update_task.call_args
-        assert call_kwargs[1]["status"] == "open"
-        assert call_kwargs[1]["escalated_at"] is None
-        assert call_kwargs[1]["escalation_reason"] is None
+        call_kwargs = mock_task_manager.update_task.call_args.kwargs
+        assert call_kwargs["status"] == "open"
+        assert call_kwargs["escalated_at"] is None
+        assert call_kwargs["escalation_reason"] is None
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -606,10 +606,10 @@ class TestDeEscalateTaskTool:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_de_escalate_task_records_de_escalation_reason(
+    async def test_de_escalate_task_succeeds_with_reason_param(
         self, mock_task_manager, task_registry_with_patches
     ):
-        """Test that de-escalation reason is recorded somewhere."""
+        """Test that de_escalate_task succeeds when given a reason."""
         escalated_task = Task(
             id="t1",
             title="Escalated task",
