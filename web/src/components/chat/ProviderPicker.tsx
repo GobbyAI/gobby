@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,8 +8,8 @@ import {
 import { SourceIcon } from "../shared/SourceIcon";
 import { cn } from "../../lib/utils";
 
-/** Static model catalog per provider. */
-const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
+/** Static fallback catalog used when the daemon API is unavailable. */
+const STATIC_MODELS: Record<string, { value: string; label: string }[]> = {
   claude: [
     { value: "opus", label: "Opus" },
     { value: "sonnet", label: "Sonnet" },
@@ -21,6 +21,44 @@ const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
   ],
   codex: [{ value: "default", label: "Default" }],
 };
+
+interface ProviderModelEntry {
+  provider: string;
+  available: boolean;
+  models: { value: string; label: string }[];
+  source: "static" | "dynamic";
+}
+
+/** Fetch model catalog from daemon, falling back to static catalog. */
+let _cachedModels: ProviderModelEntry[] | null = null;
+
+async function fetchModelCatalog(): Promise<ProviderModelEntry[]> {
+  if (_cachedModels) return _cachedModels;
+  try {
+    const res = await fetch("/api/providers/models");
+    if (res.ok) {
+      const data = await res.json();
+      _cachedModels = data.providers ?? [];
+      return _cachedModels!;
+    }
+  } catch {
+    // Fall through to static
+  }
+  return Object.entries(STATIC_MODELS).map(([provider, models]) => ({
+    provider,
+    available: true,
+    models,
+    source: "static" as const,
+  }));
+}
+
+function getModelsForProvider(
+  catalog: ProviderModelEntry[],
+  provider: string,
+): { value: string; label: string }[] {
+  const entry = catalog.find((e) => e.provider === provider);
+  return entry?.models ?? STATIC_MODELS[provider] ?? [{ value: "default", label: "Default" }];
+}
 
 interface ProviderPickerProps {
   open: boolean;
@@ -47,6 +85,13 @@ export function ProviderPicker({
     provider: string;
     model: string;
   } | null>(null);
+  const [catalog, setCatalog] = useState<ProviderModelEntry[]>([]);
+
+  useEffect(() => {
+    if (open) {
+      fetchModelCatalog().then(setCatalog);
+    }
+  }, [open]);
 
   const effectiveProvider = currentProvider || "claude";
 
@@ -148,9 +193,7 @@ export function ProviderPicker({
             </div>
             <div className="px-2 pb-2 max-h-[60vh] overflow-y-auto">
               {availableProviders.map((provider) => {
-                const models = PROVIDER_MODELS[provider] ?? [
-                  { value: "default", label: "Default" },
-                ];
+                const models = getModelsForProvider(catalog, provider);
                 const isActive =
                   provider === effectiveProvider ||
                   (!currentProvider && provider === "claude");
