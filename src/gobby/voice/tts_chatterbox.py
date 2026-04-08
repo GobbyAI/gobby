@@ -83,6 +83,35 @@ def _float32_conditioning_tokenizer(model: Any) -> Iterator[None]:
         tokenizer.forward = original_forward
 
 
+@contextmanager
+def _float32_conditioning_resample(model: Any) -> Iterator[None]:
+    """Wrap librosa.resample so Chatterbox conditioning audio stays float32 on MPS."""
+    if getattr(model, "device", None) != "mps":
+        yield
+        return
+
+    import librosa
+
+    original_resample = librosa.resample
+
+    def _wrapped_resample(y: Any, *args: Any, **kwargs: Any) -> Any:
+        return _coerce_conditioning_audio(original_resample(y, *args, **kwargs))
+
+    librosa.resample = _wrapped_resample
+    try:
+        yield
+    finally:
+        librosa.resample = original_resample
+
+
+@contextmanager
+def _float32_conditioning_workarounds(model: Any) -> Iterator[None]:
+    """Apply all Chatterbox MPS reference-audio float32 workarounds."""
+    with _float32_conditioning_resample(model):
+        with _float32_conditioning_tokenizer(model):
+            yield
+
+
 class ChatterboxTurboProvider:
     """Local TTS via Chatterbox Turbo. Lazy-loads model on first use.
 
@@ -147,7 +176,7 @@ class ChatterboxTurboProvider:
                 }
                 if ref_path:
                     kwargs["audio_prompt_path"] = ref_path
-                with _float32_conditioning_tokenizer(model):
+                with _float32_conditioning_workarounds(model):
                     return model.generate(text, **kwargs)
 
             wav = await asyncio.to_thread(_generate)

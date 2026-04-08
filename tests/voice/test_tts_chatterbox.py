@@ -143,7 +143,7 @@ class TestChatterboxTurboProvider:
     async def test_synthesize_stream_casts_reference_audio_to_float32_on_mps(
         self, tmp_path: Path
     ) -> None:
-        """Reference-audio conditioning should be cast to float32 before MPS use."""
+        """Reference-audio conditioning should stay float32 across the MPS path."""
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
         ref = tmp_path / "reference.wav"
@@ -159,6 +159,7 @@ class TestChatterboxTurboProvider:
         )
 
         seen_dtype: np.dtype[Any] | None = None
+        seen_resample_dtype: np.dtype[Any] | None = None
 
         def tokenizer_forward(wavs: list[np.ndarray], max_len: int | None = None) -> tuple[np.ndarray, None]:
             nonlocal seen_dtype
@@ -180,11 +181,17 @@ class TestChatterboxTurboProvider:
         mock_model.s3gen.tokenizer = tokenizer
 
         def generate_side_effect(text: str, **kwargs: object) -> MagicMock:
+            import librosa
+
+            nonlocal seen_resample_dtype
             assert kwargs["audio_prompt_path"] == str(ref)
-            mock_model.s3gen.tokenizer.forward(
-                [np.array([0.1, -0.1], dtype=np.float64)],
-                max_len=1,
+            resampled = librosa.resample(
+                np.array([0.1, -0.1], dtype=np.float64),
+                orig_sr=24000,
+                target_sr=16000,
             )
+            seen_resample_dtype = resampled.dtype
+            mock_model.s3gen.tokenizer.forward([resampled], max_len=1)
             return mock_wav
 
         mock_model.generate.side_effect = generate_side_effect
@@ -195,6 +202,7 @@ class TestChatterboxTurboProvider:
             chunks.append(chunk)
 
         assert len(chunks) == 1
+        assert seen_resample_dtype == np.float32
         assert seen_dtype == np.float32
         assert mock_model.s3gen.tokenizer.forward is original_forward
 
