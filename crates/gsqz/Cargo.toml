@@ -22,6 +22,7 @@ gobby = ["ureq", "serde_json"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+dirs = "6"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"

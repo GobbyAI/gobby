@@ -30,7 +30,7 @@ struct Cli {
     #[arg(long)]
     dump_config: bool,
 
-    /// Write the default config to ./gsqz.yaml and exit
+    /// Write the default config to .gobby/gsqz.yaml and exit
     #[arg(long)]
     init: bool,
 
@@ -52,30 +52,39 @@ fn main() {
     // Load config
     let config = Config::load(cli.config.as_deref());
 
-    // Auto-export default config if no gsqz.yaml exists and no CLI override was given
+    // Auto-export default config to .gobby/gsqz.yaml if .gobby/ exists but no config is found
+    let gobby_dir = std::path::Path::new(".gobby");
+    let project_config = gobby_dir.join("gsqz.yaml");
     if cli.config.is_none()
-        && !std::path::Path::new("gsqz.yaml").exists()
         && !cli.init
-        && std::fs::write("gsqz.yaml", config::DEFAULT_CONFIG_YAML).is_ok()
+        && gobby_dir.is_dir()
+        && !project_config.exists()
     {
-        eprintln!("Created ./gsqz.yaml with default config.");
+        if let Err(e) = std::fs::write(&project_config, config::DEFAULT_CONFIG_YAML) {
+            eprintln!("Warning: failed to write {}: {e}", project_config.display());
+        } else {
+            eprintln!("Created .gobby/gsqz.yaml with default config.");
+        }
     }
 
     if cli.init {
-        let dest = std::path::Path::new("gsqz.yaml");
-        if dest.exists() {
-            let bak = std::path::Path::new("gsqz.yaml.bak");
-            if let Err(e) = std::fs::rename(dest, bak) {
-                eprintln!("Failed to backup gsqz.yaml: {e}");
-                return;
-            }
-            eprintln!("Backed up ./gsqz.yaml → ./gsqz.yaml.bak");
-        }
-        if let Err(e) = std::fs::write(dest, config::DEFAULT_CONFIG_YAML) {
-            eprintln!("Failed to write gsqz.yaml: {e}");
+        if !gobby_dir.is_dir() {
+            eprintln!("Error: .gobby/ directory not found. Run from a Gobby project root.");
             return;
         }
-        eprintln!("Created ./gsqz.yaml");
+        if project_config.exists() {
+            let bak = gobby_dir.join("gsqz.yaml.bak");
+            if let Err(e) = std::fs::rename(&project_config, &bak) {
+                eprintln!("Failed to backup .gobby/gsqz.yaml: {e}");
+                return;
+            }
+            eprintln!("Backed up .gobby/gsqz.yaml → .gobby/gsqz.yaml.bak");
+        }
+        if let Err(e) = std::fs::write(&project_config, config::DEFAULT_CONFIG_YAML) {
+            eprintln!("Failed to write .gobby/gsqz.yaml: {e}");
+            return;
+        }
+        eprintln!("Created .gobby/gsqz.yaml");
         return;
     }
 

@@ -3,7 +3,11 @@
 # Pipelines are matched against the command string in order.
 # First match wins. Steps run sequentially, each feeding the next.
 #
-# Config resolution: built-in config.yaml → ~/.gobby/gsqz.yaml → .gobby/gsqz.yaml
+# Config layers (each overrides the previous):
+#   1. built-in defaults (this file)
+#   2. ~/.gobby/gsqz.yaml (global)
+#   3. .gobby/gsqz.yaml (project)
+#   4. --config PATH (explicit override)
 
 settings:
   min_output_length: 1000
