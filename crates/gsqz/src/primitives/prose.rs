@@ -39,6 +39,13 @@ static CODE_BLOCK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)```[^\n]*\n.*?```").unwrap());
 static FRONTMATTER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)\A---\n.*?\n---\n?").unwrap());
+// Inline protections: inline code, URLs, file paths, XML/HTML tags
+static INLINE_CODE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`[^`]+`").unwrap());
+static URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://\S+|www\.\S+").unwrap());
+static XML_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"</?[a-zA-Z][a-zA-Z0-9_-]*(?:\s[^>]*)?>").unwrap());
+static FILE_PATH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|[\s(])((?:\./|/|~/)[\w./-]+)").unwrap());
 
 fn extract_protected(input: &str) -> (String, Vec<String>) {
     let mut text = input.to_string();
@@ -60,6 +67,34 @@ fn extract_protected(input: &str) -> (String, Vec<String>) {
             &text[m.end()..]
         );
     }
+
+    // Inline protections (applied after block-level to avoid conflicts)
+    for re in [&*INLINE_CODE_RE, &*URL_RE, &*XML_TAG_RE] {
+        let mut new_text = String::new();
+        let mut last = 0;
+        for m in re.find_iter(&text) {
+            new_text.push_str(&text[last..m.start()]);
+            protected.push(m.as_str().to_string());
+            new_text.push_str(&format!("__GSQZ_P{}__", protected.len() - 1));
+            last = m.end();
+        }
+        new_text.push_str(&text[last..]);
+        text = new_text;
+    }
+
+    // File paths (capture group 1 is the path)
+    let mut new_text = String::new();
+    let mut last = 0;
+    for caps in FILE_PATH_RE.captures_iter(&text) {
+        if let Some(path_match) = caps.get(1) {
+            new_text.push_str(&text[last..path_match.start()]);
+            protected.push(path_match.as_str().to_string());
+            new_text.push_str(&format!("__GSQZ_P{}__", protected.len() - 1));
+            last = path_match.end();
+        }
+    }
+    new_text.push_str(&text[last..]);
+    text = new_text;
 
     (text, protected)
 }
@@ -380,5 +415,33 @@ mod tests {
         let result = compress_prose(&input, Level::Aggressive);
         assert!(result.contains("1. item 1"));
         assert!(result.contains("[... 3 more items]"));
+    }
+
+    #[test]
+    fn test_preserves_inline_code() {
+        let input = "Use `basically_important_func()` to basically fix things.";
+        let result = compress_prose(input, Level::Standard);
+        assert!(result.contains("`basically_important_func()`"));
+    }
+
+    #[test]
+    fn test_preserves_urls() {
+        let input = "Visit https://example.com/basically/path for info.";
+        let result = compress_prose(input, Level::Standard);
+        assert!(result.contains("https://example.com/basically/path"));
+    }
+
+    #[test]
+    fn test_preserves_xml_tags() {
+        let input = "Use <basically-tag attr=\"val\"> in the template.";
+        let result = compress_prose(input, Level::Standard);
+        assert!(result.contains("<basically-tag attr=\"val\">"));
+    }
+
+    #[test]
+    fn test_preserves_file_paths() {
+        let input = "Edit the file at ./src/basically/main.rs to fix this.";
+        let result = compress_prose(input, Level::Standard);
+        assert!(result.contains("./src/basically/main.rs"));
     }
 }
