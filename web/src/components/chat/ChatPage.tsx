@@ -100,6 +100,33 @@ export function ChatPage({
     setFocusSessionId(null);
   }, []);
 
+  // Watching: parked web chats visible in Sessions tab
+  const [watchingSessionIds, setWatchingSessionIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const handleUnwatch = useCallback((sessionId: string) => {
+    setWatchingSessionIds((prev) => {
+      const next = new Set(prev);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
+
+  // Wrap onNewChat to park the current session as Watching
+  const handleNewChat = useCallback(
+    (agentName?: string) => {
+      const currentDbId = chat.dbSessionId;
+      if (currentDbId && chat.messages.length > 0) {
+        setWatchingSessionIds((prev) => new Set(prev).add(currentDbId));
+        // Auto-select the parked session in the Sessions tab
+        setFocusSessionId(currentDbId);
+        activity.showTab("sessions");
+      }
+      conversations.onNewChat(agentName);
+    },
+    [chat.dbSessionId, chat.messages.length, conversations, activity],
+  );
+
   // Available LLM providers — fetched from daemon API
   const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   useEffect(() => {
@@ -316,7 +343,7 @@ export function ChatPage({
           onDetach={chat.onDetachFromSession}
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
-          onNewChat={conversations.onNewChat}
+          onNewChat={handleNewChat}
           onTogglePanel={activity.togglePanel}
           agents={conversations.agents ?? []}
           agentDefinitions={agentDefinitions}
@@ -432,6 +459,8 @@ export function ChatPage({
         chatSessionId={chat.dbSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
+        watchingSessionIds={watchingSessionIds}
+        onUnwatchSession={handleUnwatch}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
       />

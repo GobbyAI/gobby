@@ -163,6 +163,8 @@ interface ActivityPanelProps {
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusSessionHandled?: () => void;
+  watchingSessionIds?: Set<string>;
+  onUnwatchSession?: (sessionId: string) => void;
   isMobile?: boolean;
 }
 
@@ -194,6 +196,8 @@ export function ActivityPanel({
   chatSessionId,
   focusSessionId,
   onFocusSessionHandled,
+  watchingSessionIds,
+  onUnwatchSession,
   isMobile = false,
 }: ActivityPanelProps) {
   if (!isPinned) return null;
@@ -212,6 +216,8 @@ export function ActivityPanel({
             chatSessionId={chatSessionId ?? undefined}
             focusSessionId={focusSessionId}
             onFocusHandled={onFocusSessionHandled}
+            watchingSessionIds={watchingSessionIds}
+            onUnwatch={onUnwatchSession}
             isMobile={useOverlay}
           />
         );

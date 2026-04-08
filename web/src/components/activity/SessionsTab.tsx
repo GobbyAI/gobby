@@ -29,6 +29,8 @@ interface SessionsTabProps {
   isMobile?: boolean;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
+  watchingSessionIds?: Set<string>;
+  onUnwatch?: (sessionId: string) => void;
 }
 
 interface SessionEntry {
@@ -61,6 +63,8 @@ export const SessionsTab = memo(function SessionsTab({
   isMobile = false,
   focusSessionId,
   onFocusHandled,
+  watchingSessionIds,
+  onUnwatch,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
   const [cliSessions, setCliSessions] = useState<GobbySession[]>([]);
@@ -108,7 +112,7 @@ export const SessionsTab = memo(function SessionsTab({
       const isWatchable = (s: any) =>
         s.source !== "pipeline" &&
         s.source !== "cron" &&
-        s.session_type !== "web_chat" &&
+        (s.session_type !== "web_chat" || watchingSessionIds?.has(s.id)) &&
         s.id !== chatSessionId;
       const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
       const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
@@ -121,7 +125,7 @@ export const SessionsTab = memo(function SessionsTab({
     } finally {
       setLoading(false);
     }
-  }, [projectId, chatSessionId]);
+  }, [projectId, chatSessionId, watchingSessionIds]);
 
   // Initial fetch + poll every 5s
   useEffect(() => {
@@ -448,7 +452,12 @@ export const SessionsTab = memo(function SessionsTab({
             </span>
             <button
               className="text-xs text-muted-foreground hover:text-foreground ml-auto"
-              onClick={() => setSelectedSessionId(null)}
+              onClick={() => {
+                if (selectedSessionId && watchingSessionIds?.has(selectedSessionId)) {
+                  onUnwatch?.(selectedSessionId);
+                }
+                setSelectedSessionId(null);
+              }}
             >
               Close
             </button>
