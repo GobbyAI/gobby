@@ -1,11 +1,6 @@
-export type SourceType = 'claude' | 'gemini' | 'codex' | (string & {})
+import { SOURCE_COLORS } from './sourceTheme'
 
-const SOURCE_COLORS: Record<string, string> = {
-  claude: '#f97316',
-  gemini: '#3b82f6',
-  codex: '#a855f7',
-  default: '#737373',
-}
+export type SourceType = 'claude' | 'gemini' | 'codex' | (string & {})
 
 interface SourceIconProps {
   source: SourceType

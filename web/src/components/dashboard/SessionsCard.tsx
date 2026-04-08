@@ -1,22 +1,7 @@
 import { useTimeStats } from '../../hooks/useTimeStats'
+import { SOURCE_COLORS, SOURCE_LABELS } from '../shared/sourceTheme'
 
-const SOURCE_COLORS: Record<string, string> = {
-  claude: '#f97316',
-  gemini: '#3b82f6',
-  codex: '#a855f7',
-  pipeline: '#737373',
-  cron: '#a3a3a3',
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  gemini: 'Gemini',
-  codex: 'Codex',
-  pipeline: 'Pipeline',
-  cron: 'Cron',
-}
-
-const FALLBACK_COLOR = '#525252'
+const FALLBACK_COLOR = SOURCE_COLORS.default
 
 const SIZE = 120
 const STROKE = 18

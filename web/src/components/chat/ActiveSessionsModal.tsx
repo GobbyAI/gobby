@@ -6,6 +6,7 @@ import {
   DialogDescription,
 } from './ui/Dialog'
 import type { GobbySession } from '../../hooks/useSessions'
+import { PROVIDER_COLORS, SOURCE_COLORS } from '../shared/sourceTheme'
 
 interface RunningAgent {
   run_id: string
@@ -14,20 +15,6 @@ interface RunningAgent {
   mode?: string
   started_at?: string
   session_id?: string
-}
-
-const PROVIDER_COLORS: Record<string, string> = {
-  claude: '#c084fc',
-  gemini: '#4ade80',
-  codex: '#3b82f6',
-  unknown: '#737373',
-}
-
-const SOURCE_COLORS: Record<string, string> = {
-  claude: '#c084fc',
-  gemini: '#4ade80',
-  codex: '#3b82f6',
-  unknown: '#737373',
 }
 
 interface ActiveSessionsModalProps {

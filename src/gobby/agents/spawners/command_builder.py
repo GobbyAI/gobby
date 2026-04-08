@@ -49,15 +49,14 @@ def build_cli_command(
         model: Optional model name
         mode: "agent" (default), "interactive", or "headless"
         output_format: Output format override (e.g., "stream-json")
-        env_overrides: Environment variable overrides
+        env_overrides: Environment variable overrides. Callers are responsible
+            for merging inherited environment variables if needed.
 
     Returns:
         Tuple of (command list, env dict) for subprocess execution
     """
-    import os
-
     command = [cli]
-    env = dict(os.environ)
+    env: dict[str, str] = {}
     if env_overrides:
         env.update(env_overrides)
 

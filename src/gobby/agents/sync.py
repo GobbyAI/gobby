@@ -102,6 +102,11 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                         description=body.description,
                     )
                     result["updated"] += 1
+                    logger.debug(
+                        "Updated bundled agent definition %s (%s); installed definition_json changed",
+                        existing.id,
+                        existing.description or body.description,
+                    )
                     continue
 
                 result["skipped"] += 1

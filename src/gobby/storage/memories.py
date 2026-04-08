@@ -73,6 +73,8 @@ class Memory:
 
         # Handle media column (may not exist in older databases)
         media = row["media"] if "media" in row.keys() else None
+        raw_source_type = row["source_type"]
+        source_type = raw_source_type if raw_source_type in ("user", "agent") else "agent"
 
         return cls(
             id=row["id"],
@@ -81,7 +83,7 @@ class Memory:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             project_id=row["project_id"],
-            source_type=row["source_type"],
+            source_type=source_type,
             source_session_id=row["source_session_id"],
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],

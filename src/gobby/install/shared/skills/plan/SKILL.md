@@ -288,7 +288,22 @@ phase1 = call_tool("gobby-tasks", "create_task", {
 # 3. Save expansion spec per phase (only that phase's tasks)
 call_tool("gobby-tasks-ops", "save_expansion_spec", {
     "task_id": phase1["ref"],
-    "spec": {"plan_file": "path/to/plan.md", "subtasks": [/* phase 1 tasks only */]}
+    "spec": {
+        "plan_file": "path/to/plan.md",
+        "subtasks": [
+            {
+                "id": "phase-1-task-1",
+                "title": "Create protocol.py",
+                "description": "Add protocol interfaces for the new backend",
+                "estimated_time": 45,
+                "dependencies": [],
+                "status": "open",
+                "assignee": null,
+                "metadata": {"phase": 1},
+                "tags": ["backend"]
+            }
+        ]
+    }
 })
 
 # 4. Execute expansion per phase with TDD
@@ -300,7 +315,16 @@ call_tool("gobby-tasks-ops", "execute_expansion", {
 call_tool("gobby-tasks", "add_dependency", {
     "task_id": phase2_first_task, "depends_on": phase1["ref"]
 })
+
+# Selective task-level handoff
+call_tool("gobby-tasks", "add_dependency", {
+    "task_id": phase2_codegen_task, "depends_on": phase1_schema_task
+})
 ```
+
+Use the phase-level pattern when all of Phase 2 must wait for the whole Phase 1
+sub-epic. Use the task-level pattern when only one downstream task needs a
+specific upstream task.
 
 ---
 
@@ -372,21 +396,19 @@ Output task tree:
 #100 [epic] Memory V3 Backend                           L1 (root epic)
 ├── #101 [epic] Phase 1: Protocol Layer                  L2 (phase sub-epic)
 │   ├── [TEST] Phase 1: Write failing tests              L3 (TDD sandwich)
-│   ├── #102 [task] Create protocol.py                   L3 (from plan § 1.1)
-│   │   └─ validation: Protocol class exists with required methods
-│   ├── #103 [task] Create backends/__init__.py          L3 (from plan § 1.2)
-│   │   └─ validation: Factory function works
+│   ├── #102 [task] Create protocol.py (✓ Protocol class exists with required methods)  L3 (from plan § 1.1)
+│   ├── #103 [task] Create backends/__init__.py (✓ Factory function works)               L3 (from plan § 1.2)
 │   └── [REF] Phase 1: Refactor with green tests         L3 (TDD sandwich)
-├── #104 [epic] Phase 2: Configuration                   L2 (phase sub-epic)
+├── #104 [epic] Phase 2: Configuration -> depends-on: #101  L2 (phase sub-epic)
 │   ├── [TEST] Phase 2: Write failing tests              L3 (TDD sandwich)
-│   ├── #105 [task] Add config schema                    L3 (from plan § 2.1)
-│   │   └─ validation: Config loads and validates
+│   ├── #105 [task] Add config schema (✓ Config loads and validates)                     L3 (from plan § 2.1)
 │   └── [REF] Phase 2: Refactor with green tests         L3 (TDD sandwich)
 ```
 
 **NOTE**: Each phase gets its own TDD [TEST]/[REF] sandwich. `/gobby expand` preserves
 the full plan section content in each task description. Cross-phase dependencies are wired
-between phase sub-epics (e.g., Phase 2 depends on Phase 1 sub-epic).
+between phase sub-epics (for example, `/gobby expand` will show `-> depends-on: #101`
+when Phase 2 is gated on the Phase 1 sub-epic).
 
 ## Example Usage
 

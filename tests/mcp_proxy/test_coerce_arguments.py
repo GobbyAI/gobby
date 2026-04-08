@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
+
+pytestmark = pytest.mark.unit
 
 
 class TestCoerceStringArguments:
@@ -67,12 +71,11 @@ class TestCoerceStringArguments:
             r'{\"server_name\": \"gobby-tasks\", \"tool_name\": \"create_task\", '
             r'\"arguments\": \"{\\\"title\\\": \\\"My task\\\"}\"}'
         )
-        # Triple-nested escapes can't be resolved with a single replace.
-        # The outer call_tool layer coerces the first level; the inner
-        # arguments string gets coerced again by the tool proxy.
-        # So this particular string won't parse — but the common case
-        # (single-level escaping) is what matters.
-        assert coerce_string_arguments(s) is None
+        result = coerce_string_arguments(s)
+        assert result is not None
+        assert result["server_name"] == "gobby-tasks"
+        assert result["tool_name"] == "create_task"
+        assert result["arguments"] == '{"title": "My task"}'
 
     def test_realistic_agent_payload(self) -> None:
         r"""The common case: agent sends flat arguments with escaped quotes."""

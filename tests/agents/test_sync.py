@@ -74,8 +74,8 @@ class TestSyncBundledAgents:
             assert result2["updated"] == 0
 
     @pytest.mark.unit
-    def test_sync_does_not_overwrite_existing(self, tmp_path: Path) -> None:
-        """Test that sync does not overwrite existing rows (drift detected at runtime)."""
+    def test_sync_updates_existing_installed_definition(self, tmp_path: Path) -> None:
+        """Installed bundled agents should update when the template definition changes."""
         db = _setup_db(tmp_path)
 
         agents_dir = tmp_path / "agents"
@@ -94,19 +94,19 @@ class TestSyncBundledAgents:
                 "name: test-agent\ndescription: Updated description\nprovider: claude\nmode: interactive\n"
             )
 
-            # Second sync — should skip (no overwrite)
+            # Second sync — should update the installed row
             result2 = sync_bundled_agents(db)
-            assert result2["skipped"] == 1
+            assert result2["skipped"] == 0
             assert result2["synced"] == 0
-            assert result2["updated"] == 0
+            assert result2["updated"] == 1
 
-        # Verify content was NOT updated (preserved user's version)
+        # Verify content was updated in place
         mgr = LocalWorkflowDefinitionManager(db)
         rows = mgr.list_all(workflow_type="agent")
         row = next((r for r in rows if r.name == "test-agent"), None)
         assert row is not None
         body = AgentDefinitionBody.model_validate_json(row.definition_json)
-        assert body.description == "A test agent"  # Original, not updated
+        assert body.description == "Updated description"
 
     @pytest.mark.unit
     def test_sync_multiple_agents(self, tmp_path: Path) -> None:

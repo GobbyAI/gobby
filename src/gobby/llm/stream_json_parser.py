@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # StreamEvent hierarchy
@@ -177,6 +180,7 @@ async def parse_stream(reader: asyncio.StreamReader) -> AsyncIterator[StreamEven
             continue
         try:
             data = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            logger.debug("Skipping malformed stream JSON line: %s (%s)", line[:200], exc)
             continue
         yield _classify_event(data)

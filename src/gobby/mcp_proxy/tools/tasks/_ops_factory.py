@@ -65,7 +65,7 @@ def create_task_ops_registry(
     registry.merge_from(create_ops_affected_files_registry(ctx))
 
     # Merge GitHub integration tools (2 tools)
-    registry.merge_from(create_github_registry(task_manager=task_manager))
+    registry.merge_from(create_github_registry(ctx))
 
     # Merge reindex tool (1 tool)
     registry.merge_from(create_reindex_registry(ctx))

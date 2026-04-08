@@ -667,7 +667,13 @@ def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
 
     project_id = resolve_project_ref(project_ref)
     if not project_id:
-        raise click.ClickException("No project found. Use -p to specify a project.")
+        if project_ref is None:
+            raise click.ClickException(
+                "No project was found for the current directory. Use -p to specify a project."
+            )
+        raise click.ClickException(
+            f"Project '{project_ref}' was not found. Pass a valid -p value or check the identifier."
+        )
 
     if not yes:
         click.confirm(

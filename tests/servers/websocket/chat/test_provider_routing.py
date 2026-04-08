@@ -9,9 +9,9 @@ Covers:
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from gobby.servers.cli_chat_session import CLIChatSession
 
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat._session import ChatSessionMixin
@@ -29,6 +29,22 @@ def _make_mixin(**overrides: Any) -> ChatSessionMixin:
     mixin._pending_worktree_paths = {}
     mixin._pending_agents = {}
     mixin._session_create_locks = {}
+    mixin._fire_lifecycle = AsyncMock(return_value=None)
+    mixin._inject_pending_messages = MagicMock(return_value=None)
+    mixin.broadcast_session_event = AsyncMock(return_value=None)
+    mixin.hook_broadcaster = None
+    mixin.session_manager = MagicMock()
+    mixin.session_manager.db = MagicMock()
+    mixin.session_manager.register = MagicMock(
+        return_value=MagicMock(
+            id="db-session-1",
+            seq_num=12,
+            usage_output_tokens=0,
+            chat_mode="code",
+            usage_total_cost_usd=0.0,
+            approved_tools_json=None,
+        )
+    )
     for k, v in overrides.items():
         setattr(mixin, k, v)
     return mixin
@@ -55,25 +71,25 @@ class TestDefaultProvider:
 
         session = await _create_session_for_provider(mixin, provider=None)
 
-        # Should be a standard SDK ChatSession, not CLI-backed
-        assert not isinstance(session, CLIChatSession)
+        # Should be a standard SDK ChatSession.
+        assert isinstance(session, ChatSession)
 
 
 class TestClaudeProvider:
     """Tests for provider='claude'."""
 
     @pytest.mark.asyncio
-    async def test_claude_provider_creates_cli_chat_session(self) -> None:
-        """provider='claude' should create a CLIChatSession."""
+    async def test_claude_provider_creates_sdk_chat_session(self) -> None:
+        """provider='claude' should create the Claude SDK ChatSession."""
         mixin = _make_mixin()
 
         session = await _create_session_for_provider(mixin, provider="claude")
 
-        assert isinstance(session, CLIChatSession)
+        assert isinstance(session, ChatSession)
 
     @pytest.mark.asyncio
     async def test_claude_provider_has_correct_provider_attr(self) -> None:
-        """CLIChatSession created via provider='claude' should have provider='claude'."""
+        """ChatSession created via provider='claude' should have provider='claude'."""
         mixin = _make_mixin()
 
         session = await _create_session_for_provider(mixin, provider="claude")
@@ -93,15 +109,23 @@ class TestSessionRegistration:
 
         # The session should have been registered in the DB with appropriate source
         assert session is not None
+        assert mixin._chat_sessions["test-conv-routing"] is session
+        register_kwargs = mixin.session_manager.register.call_args.kwargs
+        assert register_kwargs["source"] == "claude"
+        assert register_kwargs["session_type"] == "web_chat"
 
     @pytest.mark.asyncio
     async def test_cli_session_registers_with_cli_source(self) -> None:
-        """CLIChatSession should register with source='cli_chat' or 'claude_cli'."""
+        """Explicit Claude provider should still register the session in the mixin and DB."""
         mixin = _make_mixin()
 
         session = await _create_session_for_provider(mixin, provider="claude")
 
         assert session is not None
+        assert mixin._chat_sessions["test-conv-routing"] is session
+        register_kwargs = mixin.session_manager.register.call_args.kwargs
+        assert register_kwargs["source"] == "claude"
+        assert register_kwargs["session_type"] == "web_chat"
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +143,14 @@ async def _create_session_for_provider(
     The exact method name may differ in implementation — this helper isolates
     that coupling.
     """
-    from gobby.servers.websocket.chat._session import create_chat_session_for_provider
+    from gobby.servers.chat_session import ChatSession
 
-    return await create_chat_session_for_provider(
-        conversation_id="test-conv-routing",
-        provider=provider,
-    )
+    original_chat_start = ChatSession.start
+    ChatSession.start = AsyncMock(return_value=None)
+    try:
+        return await mixin._create_chat_session(
+            conversation_id="test-conv-routing",
+            provider=provider,
+        )
+    finally:
+        ChatSession.start = original_chat_start

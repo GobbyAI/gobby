@@ -13,6 +13,7 @@ Protocol lifecycle:
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import shutil
@@ -23,13 +24,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # JSON-RPC request ID counter
-_next_id = 0
+_next_id = itertools.count(1)
 
 
 def _make_id() -> int:
-    global _next_id
-    _next_id += 1
-    return _next_id
+    return next(_next_id)
 
 
 @dataclass
@@ -61,8 +60,16 @@ class GeminiACPClient:
         await client.stop()
     """
 
-    def __init__(self, cli_path: str | None = None) -> None:
+    def __init__(
+        self,
+        cli_path: str | None = None,
+        *,
+        cwd: str | None = None,
+        request_timeout: float = 30.0,
+    ) -> None:
         self._cli_path = cli_path
+        self._cwd = cwd
+        self._request_timeout = request_timeout
         self._process: asyncio.subprocess.Process | None = None
         self._started = False
         self._session_id: str | None = None
@@ -101,6 +108,7 @@ class GeminiACPClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=self._cwd,
         )
         self._started = True
         logger.debug(f"GeminiACPClient started (pid={self._process.pid})")
@@ -161,7 +169,16 @@ class GeminiACPClient:
 
         # Read lines until we get a JSON-RPC response (has "id" field)
         while True:
-            line = await self._process.stdout.readline()
+            try:
+                line = await asyncio.wait_for(
+                    self._process.stdout.readline(),
+                    timeout=self._request_timeout,
+                )
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"Timed out waiting for ACP {method} response "
+                    f"after {self._request_timeout:.1f}s"
+                ) from exc
             if not line:
                 raise RuntimeError(f"EOF while waiting for {method} response")
 
@@ -245,9 +262,17 @@ class GeminiACPClient:
 
         while True:
             try:
-                line = await self._process.stdout.readline()
+                line = await asyncio.wait_for(
+                    self._process.stdout.readline(),
+                    timeout=self._request_timeout,
+                )
             except asyncio.CancelledError:
                 return
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    "Timed out waiting for ACP session/prompt response "
+                    f"after {self._request_timeout:.1f}s"
+                ) from exc
 
             if not line:
                 # EOF -- process may have exited

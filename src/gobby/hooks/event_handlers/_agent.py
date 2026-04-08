@@ -163,8 +163,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
             session_row = self._session_storage.get(session_id)
             if session_row:
                 project_id = session_row.project_id
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                "Failed to resolve session %s while injecting agent context: %s",
+                session_id,
+                e,
+                exc_info=True,
+            )
 
         from gobby.workflows.agent_resolver import resolve_agent
 

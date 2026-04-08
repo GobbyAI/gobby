@@ -86,9 +86,14 @@ export function ChatPage({
   const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   useEffect(() => {
     fetch("/api/providers")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error(`Provider fetch failed with ${r.status}`);
+        }
+        return r.json();
+      })
       .then((data) => {
-        const names = (data.providers || [])
+        const names = (Array.isArray(data?.providers) ? data.providers : [])
           .filter((p: { available: boolean }) => p.available)
           .map((p: { name: string }) => p.name);
         setAvailableProviders(names);

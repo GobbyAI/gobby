@@ -59,6 +59,29 @@ class TestBuildCliCommand:
         # sandbox args come before prompt
         assert cmd == ["claude", "--sandbox", "hello"]
 
+    def test_claude_interactive_mode_uses_stream_json_and_no_prompt(self):
+        cmd, env = build_cli_command("claude", prompt="hello", mode="interactive")
+        assert cmd == [
+            "claude",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--input-format",
+            "stream-json",
+        ]
+        assert env == {}
+
+    def test_gemini_interactive_mode_uses_acp_and_resume(self):
+        cmd, env = build_cli_command(
+            "gemini",
+            prompt="hello",
+            mode="interactive",
+            session_id="gem-session",
+            env_overrides={"CUSTOM_VAR": "value"},
+        )
+        assert cmd == ["gemini", "--acp", "--resume", "gem-session"]
+        assert env == {"CUSTOM_VAR": "value"}
+
 
 class TestBuildGeminiResume:
     def test_basic_resume(self):

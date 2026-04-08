@@ -29,7 +29,7 @@ class MemoryFTS5Searcher:
     above the relevance threshold.
     """
 
-    def __init__(self, db: DatabaseProtocol):
+    def __init__(self, db: DatabaseProtocol) -> None:
         self._db = db
 
     def search(
@@ -104,15 +104,16 @@ class MemoryFTS5Searcher:
             Dict with reindex result.
         """
         try:
-            self._db.execute("DELETE FROM memories_fts")
-            self._db.execute("""
-                INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
-                SELECT rowid, content,
-                       REPLACE(REPLACE(REPLACE(COALESCE(tags, ''), '"', ''), '[', ''), ']', ''),
-                       memory_type, COALESCE(source_type, '')
-                FROM memories
-            """)
-            row = self._db.fetchone("SELECT count(*) FROM memories_fts")
+            with self._db.transaction() as conn:
+                conn.execute("DELETE FROM memories_fts")
+                conn.execute("""
+                    INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+                    SELECT rowid, content,
+                           REPLACE(REPLACE(REPLACE(COALESCE(tags, ''), '"', ''), '[', ''), ']', ''),
+                           memory_type, COALESCE(source_type, '')
+                    FROM memories
+                """)
+                row = conn.execute("SELECT count(*) FROM memories_fts").fetchone()
             count = row[0] if row else 0
         except Exception as e:
             logger.error(f"Failed to reindex memories_fts: {e}")

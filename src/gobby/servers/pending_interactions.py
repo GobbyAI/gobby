@@ -8,7 +8,9 @@ approval state (pending_plan_path + in-memory asyncio.Event).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -69,7 +71,6 @@ class PendingInteractionManager:
         await self.supersede(session_id, kind)
 
         interaction_id = str(uuid.uuid4())
-        import json
 
         payload_json = json.dumps(payload)
 
@@ -94,12 +95,12 @@ class PendingInteractionManager:
                         ),
                     )
                 break
-            except Exception as e:
-                if "UNIQUE constraint" in str(e) and attempt < max_retries - 1:
+            except sqlite3.IntegrityError:
+                if attempt < max_retries - 1:
                     await self.supersede(session_id, kind)
                     await asyncio.sleep(0.05 * (attempt + 1))
-                else:
-                    raise
+                    continue
+                raise
 
         # Create in-memory waiter
         event = asyncio.Event()
@@ -131,8 +132,6 @@ class PendingInteractionManager:
         response: dict[str, Any] | None = None,
     ) -> bool:
         """Set decision, wake waiter, update DB. Returns False if expired/missing."""
-        import json
-
         # Update DB
         with self._db.transaction() as conn:
             result = conn.execute(
@@ -185,8 +184,6 @@ class PendingInteractionManager:
 
         Only the latest non-expired per (session_id, kind) is returned.
         """
-        import json
-
         rows = self._db.fetchall(
             """SELECT id, kind, provider, tool_name, payload_json, timeout_seconds
                FROM pending_interactions

@@ -36,7 +36,10 @@ logger = logging.getLogger(__name__)
 
 
 def _find_transcript_on_disk(
-    source: str, external_id: str, project_path: str | None = None
+    source: str,
+    external_id: str,
+    project_path: str | None = None,
+    max_days: int = 90,
 ) -> str | None:
     """Try to find a transcript file on disk by CLI source and external_id.
 
@@ -65,6 +68,7 @@ def _find_transcript_on_disk(
         sessions_dir = Path.home() / ".codex" / "sessions"
         if sessions_dir.exists():
             # Search recent date dirs (walk backwards to find quickly)
+            inspected_days = 0
             for year_dir in sorted(sessions_dir.iterdir(), reverse=True):
                 if not year_dir.is_dir():
                     continue
@@ -74,6 +78,9 @@ def _find_transcript_on_disk(
                     for day_dir in sorted(month_dir.iterdir(), reverse=True):
                         if not day_dir.is_dir():
                             continue
+                        if inspected_days >= max_days:
+                            return None
+                        inspected_days += 1
                         matches = list(day_dir.glob(f"*{external_id}*"))
                         if matches:
                             return str(matches[0])
@@ -335,6 +342,37 @@ class TranscriptReader:
             logger.warning(f"Failed to read archive for session {session_id}: {e}")
             return []
 
+    async def _ensure_transcript_path(
+        self,
+        session_id: str,
+        session: Any,
+        source: str,
+        transcript_path: str | None,
+    ) -> str | None:
+        """Return a valid transcript path, re-deriving and persisting it when needed."""
+        if (
+            transcript_path
+            and transcript_path != "missing_transcript"
+            and os.path.isfile(transcript_path)
+        ):
+            return transcript_path
+
+        external_id = getattr(session, "external_id", None)
+        derived = _find_transcript_on_disk(
+            source,
+            external_id or "",
+            getattr(session, "project_path", None),
+        )
+        if not derived:
+            return None
+
+        try:
+            await asyncio.to_thread(self._session_manager.update, session_id, transcript_path=derived)
+            logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
+        except Exception as e:
+            logger.debug(f"Failed to persist re-derived transcript path: {e}")
+        return derived
+
     async def _get_parsed_messages_from_file(self, session_id: str) -> list[ParsedMessage]:
         """Read and parse ParsedMessages from live transcript file.
 
@@ -347,24 +385,9 @@ class TranscriptReader:
 
         transcript_path = getattr(session, "transcript_path", None)
         source = session.source or "claude"
-
-        # Re-derive transcript path if missing or invalid
-        if (
-            not transcript_path
-            or transcript_path == "missing_transcript"
-            or not os.path.isfile(transcript_path)
-        ):
-            external_id = getattr(session, "external_id", None)
-            derived = _find_transcript_on_disk(source, external_id or "")
-            if derived:
-                transcript_path = derived
-                try:
-                    self._session_manager.update(session_id, transcript_path=derived)
-                    logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
-                except Exception as e:
-                    logger.debug(f"Failed to persist re-derived transcript path: {e}")
-            else:
-                return []
+        transcript_path = await self._ensure_transcript_path(session_id, session, source, transcript_path)
+        if not transcript_path:
+            return []
 
         try:
             if _is_json_session_file(transcript_path):
@@ -434,25 +457,9 @@ class TranscriptReader:
 
         transcript_path = getattr(session, "transcript_path", None)
         source = session.source or "claude"
-
-        # Re-derive transcript path if missing or invalid
-        if (
-            not transcript_path
-            or transcript_path == "missing_transcript"
-            or not os.path.isfile(transcript_path)
-        ):
-            external_id = getattr(session, "external_id", None)
-            derived = _find_transcript_on_disk(source, external_id or "")
-            if derived:
-                transcript_path = derived
-                # Persist the fix so we don't re-derive every time
-                try:
-                    self._session_manager.update(session_id, transcript_path=derived)
-                    logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
-                except Exception as e:
-                    logger.debug(f"Failed to persist re-derived transcript path: {e}")
-            else:
-                return []
+        transcript_path = await self._ensure_transcript_path(session_id, session, source, transcript_path)
+        if not transcript_path:
+            return []
 
         try:
             if _is_json_session_file(transcript_path):

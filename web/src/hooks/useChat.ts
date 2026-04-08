@@ -1898,7 +1898,7 @@ export function useChat() {
       if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
-            type: "chat_stop",
+            type: "stop_chat",
             conversation_id: conversationIdRef.current,
           }),
         );
@@ -2207,7 +2207,7 @@ export function useChat() {
         }),
       );
     },
-    [],
+    [selectedProvider],
   );
 
   // Send a message (allowed even while streaming — cancels the active stream)

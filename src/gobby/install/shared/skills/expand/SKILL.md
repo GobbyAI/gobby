@@ -51,6 +51,7 @@ If `pending=True`, skip to **Phase 3** immediately.
 1. **Parse input**: Task ref (`#N`) or file path (`plan.md`)
 
 2. **If file path**: Read file content, create root epic, and detect phases:
+
    ```python
    content = Read(file_path)
    plan_file_path = file_path
@@ -70,6 +71,7 @@ If `pending=True`, skip to **Phase 3** immediately.
    ```
 
 3. **If task ref**: Get task details and check for existing children:
+
    ```python
    task = call_tool("gobby-tasks", "get_task", {"task_id": "<ref>"})
    children = call_tool("gobby-tasks", "list_tasks", {"parent_task_id": task_id})
@@ -85,15 +87,22 @@ becomes a sub-epic under the root. Single-phase plans skip this step.
 
 ```python
 phase_refs = {}
+seen_phase_numbers = set()
 for phase in phases:
+    phase_number = phase.get("number")
+    if not isinstance(phase_number, int) or phase_number in seen_phase_numbers:
+        raise ValueError(
+            f"Invalid phase number for {phase.get('name') or phase.get('heading')}: {phase_number}"
+        )
+    seen_phase_numbers.add(phase_number)
     phase_epic = call_tool("gobby-tasks", "create_task", {
-        "title": f"Phase {phase['number']}: {phase['name']}",
+        "title": f"Phase {phase_number}: {phase['name']}",
         "task_type": "epic",
         "category": "code",
         "parent_task_id": root_id,
         "description": phase["goal"]
     })
-    phase_refs[phase["number"]] = phase_epic["ref"]
+    phase_refs[phase_number] = phase_epic["ref"]
 ```
 
 **Wire cross-phase dependencies** — if Phase 2 depends on Phase 1:
@@ -112,14 +121,24 @@ then execute with TDD.
 **Option A: Via pipeline** (preferred — spawns researcher for codebase analysis):
 ```python
 for phase_num, phase_ref in phase_refs.items():
-    result = call_tool("gobby-workflows", "run_pipeline", {
-        "name": "expand-task",
-        "inputs": {"task_id": phase_ref, "plan_file": plan_file_path}
-    })
+    result = None
+    if not manual_expansion:
+        for attempt in range(2):
+            result = call_tool("gobby-workflows", "run_pipeline", {
+                "name": "expand-task",
+                "inputs": {"task_id": phase_ref, "plan_file": plan_file_path}
+            })
+            if result and not result.get("error"):
+                break
+            if result and "not found" not in str(result.get("error", "")).lower() and attempt == 0:
+                continue
+        if result and not result.get("error"):
+            continue
 ```
 
 **Option B: Direct spec** (when pipeline is unavailable or researcher fails):
 ```python
+phase_results = []
 for phase in phases:
     phase_ref = phase_refs[phase["number"]]
 
@@ -129,10 +148,17 @@ for phase in phases:
         "plan_file": plan_file_path,
         "subtasks": [
             {
+                "id": task["id"],  # required unique ref within this phase
                 "title": task["title"],
-                "category": task["category"],
                 "description": task["description"],
+                "estimated_time": task.get("estimated_time", 30),
+                "dependencies": task.get("dependencies", []),
+                "category": task["category"],
                 "validation": task["validation"],
+                "status": task.get("status"),
+                "assignee": task.get("assignee"),
+                "metadata": task.get("metadata", {}),
+                "tags": task.get("tags", []),
                 "depends_on": task["local_depends_on"],  # Indices within THIS phase
                 "affected_files": task["affected_files"],
                 "priority": task.get("priority", 2)
@@ -140,6 +166,8 @@ for phase in phases:
             for task in phase["tasks"]
         ]
     }
+
+    phase_status = {"phase_number": phase["number"], "phase_ref": phase_ref, "success": False, "errors": []}
 
     call_tool("gobby-tasks-ops", "save_expansion_spec", {
         "task_id": phase_ref, "spec": spec
@@ -149,32 +177,45 @@ for phase in phases:
         "task_id": phase_ref
     })
     if not validation["valid"]:
-        print(f"Phase {phase['number']} spec invalid: {validation['errors']}")
+        phase_status["errors"].append({"step": "validate_expansion_spec", "errors": validation["errors"]})
+        phase_results.append(phase_status)
         continue
 
-    call_tool("gobby-tasks-ops", "execute_expansion", {
+    execution = call_tool("gobby-tasks-ops", "execute_expansion", {
         "parent_task_id": phase_ref, "tdd": True
     })
+    if execution.get("error"):
+        phase_status["errors"].append({"step": "execute_expansion", "error": execution["error"]})
+        phase_results.append(phase_status)
+        continue
 
     call_tool("gobby-tasks-ops", "wire_affected_files_from_spec", {
         "parent_task_id": phase_ref
     })
+    phase_status["success"] = True
+    phase_results.append(phase_status)
 ```
 
 **Wire cross-phase task dependencies** — after all phases are expanded, wire
 dependencies between tasks in different phases (e.g., task 2.1 depends on task 1.2):
 ```python
+# Example: a plan entry with "depends: Phase 1" should wire the first concrete
+# task created in Phase 2 to the stored Phase 1 sub-epic ref.
+phase_2_first_task_ref = "<task_in_phase_2>"
 call_tool("gobby-tasks", "add_dependency", {
-    "task_id": "<task_in_phase_2>",
-    "depends_on": "<task_in_phase_1>"
+    "task_id": phase_2_first_task_ref,
+    "depends_on": phase_refs[1]
 })
 ```
+
+Iterate over any expanded task whose plan entry used `depends: Phase N` and wire
+that task to `phase_refs[N]` after expansion.
 
 ### Phase 4: Report
 
 Show the hierarchical task tree:
 
-```
+```text
 Created 3 phases, 12 tasks for #100 "Implement dark mode":
 
 Phase 1: Theme Foundation (#101)

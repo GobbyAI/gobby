@@ -358,7 +358,7 @@ class HookManagerFactory:
                         args["query"] = args["prompt_text"]
 
                 result = await proxy.call_tool(server, tool, args, strip_unknown=True)
-                success = isinstance(result, dict) and result.get("success", False)
+                success = isinstance(result, dict) and result.get("success", True)
                 return {
                     "success": success,
                     "inject_result": True,

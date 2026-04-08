@@ -272,7 +272,15 @@ def _sync_single_rule(
             result["skipped"] += 1
             return
 
-        if existing.source == "installed" and existing.definition_json != definition_json:
+        metadata_changed = (
+            existing.priority != priority
+            or existing.description != description
+            or (existing.tags or []) != file_tags
+            or (existing.sources or []) != file_sources
+        )
+        if existing.source == "installed" and (
+            existing.definition_json != definition_json or metadata_changed
+        ):
             # Overwrite installed rows when template changes,
             # preserving the user's enabled toggle (same pattern as skills sync).
             manager.update(

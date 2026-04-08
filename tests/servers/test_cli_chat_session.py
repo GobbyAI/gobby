@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.llm.claude_models import DoneEvent, TextChunk, ThinkingEvent
+
+pytestmark = pytest.mark.unit
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,8 +69,8 @@ def _mock_cli_imports(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
         async def send(self, text: str):  # type: ignore[override]
             # Must be overridden per-test via mock
-            return  # pragma: no cover
-            yield  # make it an async generator  # noqa: E501
+            if False:  # pragma: no cover
+                yield text
 
         async def interrupt(self) -> None:
             pass
@@ -367,7 +370,7 @@ class TestCLIChatSessionProtocolConformance:
         assert session.chat_mode == "code"
         assert session.system_prompt_override is None
         assert session.resume_session_id is None
-        assert isinstance(session.last_activity, type(session.last_activity))
+        assert isinstance(session.last_activity, datetime)
 
         # Lifecycle callbacks
         assert session._on_before_agent is None

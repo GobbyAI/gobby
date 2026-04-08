@@ -2,7 +2,7 @@
 
 Tests for:
 - _score_tasks helper (extracted from suggest_next_task)
-- suggest_next_task (plural) greedy file-conflict selection
+- suggest_next_task greedy file-conflict selection
 - dispatch_batch concurrent agent spawning
 - update_observed_files post-hoc annotation
 """

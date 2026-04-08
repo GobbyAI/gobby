@@ -15,7 +15,7 @@ import signal
 from collections.abc import AsyncIterator, Awaitable, Callable
 from urllib.parse import urlparse
 
-from gobby.llm.stream_json_parser import StreamEvent, parse_stream
+from gobby.llm.stream_json_parser import ResultEvent, StreamEvent, parse_stream
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,7 @@ class CLISession:
         self._model = model
         self._env_overrides = env_overrides or {}
         self._process: asyncio.subprocess.Process | None = None
+        self._stop_timeout = 5.0
 
     async def start(self) -> None:
         """Spawn CLI subprocess with stream-json I/O."""
@@ -181,11 +182,22 @@ class CLISession:
         """Send a message and stream responses."""
         if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError("CLISession not started — call start() first")
+        if self._process.returncode is not None:
+            raise RuntimeError(
+                f"Claude CLI process exited before send (code={self._process.returncode})"
+            )
         payload = json.dumps({"type": "user", "content": message}) + "\n"
         self._process.stdin.write(payload.encode())
         await self._process.stdin.drain()
+        saw_result = False
         async for event in parse_stream(self._process.stdout):
+            if isinstance(event, ResultEvent):
+                saw_result = True
             yield event
+        if self._process.returncode is not None and not saw_result:
+            raise RuntimeError(
+                f"Claude CLI process exited while streaming response (code={self._process.returncode})"
+            )
 
     async def interrupt(self) -> None:
         """Send interrupt signal to CLI process."""
@@ -195,5 +207,17 @@ class CLISession:
     async def stop(self) -> None:
         """Terminate CLI process."""
         if self._process:
-            self._process.terminate()
-            await self._process.wait()
+            try:
+                self._process.terminate()
+            except ProcessLookupError:
+                return
+            try:
+                await asyncio.wait_for(self._process.wait(), timeout=self._stop_timeout)
+            except TimeoutError:
+                try:
+                    self._process.kill()
+                except ProcessLookupError:
+                    return
+                await self._process.wait()
+            except OSError:
+                logger.debug("Claude CLI process was already gone during stop()", exc_info=True)

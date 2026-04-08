@@ -84,7 +84,10 @@ def extract_json_from_text(text: str) -> str | None:
         except json.JSONDecodeError:
             continue
 
-    logger.debug("extract_json_from_text: no valid JSON found in text: %s", text[:300])
+    logger.debug(
+        "extract_json_from_text: no valid JSON found in text (length=%d, redacted)",
+        len(text),
+    )
     return None
 
 

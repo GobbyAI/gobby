@@ -467,6 +467,7 @@ Increase HTTP timeouts in the hook dispatcher to support the hold-open approval 
 **Target:** `src/gobby/install/shared/hooks/hook_dispatcher.py`
 
 Line 716 — httpx async path:
+
 ```python
 # Before:
 timeout=90.0,
@@ -474,15 +475,18 @@ timeout=90.0,
 timeout=httpx.Timeout(10.0, read=600.0),
 ```
 
+
 This keeps a short 10s connect timeout (fail fast if daemon is down) but allows 600s read timeout for hold-open approvals.
 
 Line 688 — curl fire-and-forget path:
+
 ```python
 # Before:
 "--max-time", "90",
 # After:
 "--max-time", "600",
 ```
+
 
 Only used for `SessionEnd` (not approval-bearing) but should match for consistency.
 

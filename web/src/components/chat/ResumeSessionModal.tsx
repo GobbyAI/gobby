@@ -2,18 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { Dialog, DialogContent } from "./ui/Dialog";
 import type { GobbySession } from "../../hooks/useSessions";
 import { formatRelativeTime } from "../../utils/formatTime";
-
-const SOURCE_LABELS: Record<string, string> = {
-  claude: "Claude",
-  gemini: "Gemini",
-  codex: "Codex",
-};
-
-const SOURCE_COLORS: Record<string, string> = {
-  claude: "#c084fc",
-  gemini: "#4ade80",
-  codex: "#3b82f6",
-};
+import { SOURCE_COLORS, SOURCE_LABELS } from "../shared/sourceTheme";
 
 interface ResumeSessionModalProps {
   isOpen: boolean;

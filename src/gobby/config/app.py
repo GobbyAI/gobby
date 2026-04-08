@@ -96,6 +96,13 @@ class LocalLLMConfig(BaseModel):
         description="Providers to route through the local endpoint",
     )
 
+    @model_validator(mode="after")
+    def validate_enabled_endpoint(self) -> LocalLLMConfig:
+        """Require a non-empty endpoint when local routing is enabled."""
+        if self.enabled and not self.endpoint.strip():
+            raise ValueError("endpoint must be set when enabled is True")
+        return self
+
 
 class ToolApprovalPolicy(BaseModel):
     """A single tool approval policy matching server/tool glob patterns."""

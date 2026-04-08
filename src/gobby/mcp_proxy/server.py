@@ -11,12 +11,13 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
 from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
-from gobby.utils.project_context import get_project_context
+from gobby.utils import project_context as project_context_utils
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -180,10 +181,10 @@ class GobbyDaemonTools:
         project_token = None
         session_token = None
         if project_id:
-            from gobby.utils.project_context import set_project_context_from_ref
-
             if self._session_manager and self._session_manager.db:
-                project_token = set_project_context_from_ref(project_id, self._session_manager.db)
+                project_token = project_context_utils.set_project_context_from_ref(
+                    project_id, self._session_manager.db
+                )
                 if project_token is None:
                     return CallToolResult(
                         content=[
@@ -224,8 +225,6 @@ class GobbyDaemonTools:
         # Coerce string arguments to dict (agents often stringify JSON,
         # sometimes with literal \" escapes instead of proper quotes)
         if isinstance(arguments, str):
-            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
-
             parsed = coerce_string_arguments(arguments)
             if parsed is not None:
                 arguments = parsed
@@ -400,7 +399,7 @@ class GobbyDaemonTools:
 
         project_id = self._mcp_manager.project_id
         if not project_id:
-            ctx = get_project_context()
+            ctx = project_context_utils.get_project_context()
             project_id = ctx.get("id") if ctx else None
         if not project_id:
             return {

@@ -8,6 +8,7 @@ points use so the fallback logic lives in one place.
 
 from __future__ import annotations
 
+import codecs
 import json
 from typing import Any
 
@@ -32,11 +33,24 @@ def coerce_string_arguments(value: str) -> dict[str, Any] | None:
 
     # Fallback — literal backslash-escaped quotes
     if '\\"' in value:
+        candidates: list[str] = []
         try:
-            parsed = json.loads(value.replace('\\"', '"'))
-            if isinstance(parsed, dict):
-                return parsed
-        except (ValueError, TypeError):
+            decoded = codecs.decode(value, "unicode_escape")
+            if decoded != value:
+                candidates.append(decoded)
+        except (UnicodeDecodeError, ValueError):
             pass
+
+        replaced = value.replace('\\"', '"')
+        if replaced != value:
+            candidates.append(replaced)
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (ValueError, TypeError):
+                continue
 
     return None

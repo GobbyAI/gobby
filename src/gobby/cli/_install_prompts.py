@@ -82,6 +82,13 @@ _API_KEY_PROMPTS = [
         "description": "Linear MCP server authentication",
     },
     {
+        "secret_name": "brave_api_key",
+        "env_var": "BRAVE_API_KEY",
+        "label": "Brave Search API Key",
+        "category": "mcp_server",
+        "description": "Brave Search MCP server authentication",
+    },
+    {
         "secret_name": "openai_api_key",
         "env_var": "OPENAI_API_KEY",
         "label": "OpenAI API Key",

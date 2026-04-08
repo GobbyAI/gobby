@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.storage.tasks import LocalTaskManager
 
 __all__ = ["create_github_registry"]
@@ -67,17 +68,19 @@ def _fetch_issues_via_gh(
 
 
 def create_github_registry(
-    task_manager: LocalTaskManager,
+    ctx: RegistryContext,
 ) -> InternalToolRegistry:
     """Create a registry with GitHub integration tools.
 
     Args:
-        task_manager: LocalTaskManager instance for task CRUD.
+        ctx: RegistryContext providing task manager and shared services.
 
     Returns:
         InternalToolRegistry with GitHub tools registered.
     """
     from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+
+    task_manager = ctx.task_manager
 
     registry = InternalToolRegistry(
         name="gobby-tasks-github",

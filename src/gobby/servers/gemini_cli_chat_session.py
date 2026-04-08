@@ -132,7 +132,7 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
             cwd = str(Path.cwd())
 
         # Create and start the ACP client
-        self._client = GeminiACPClient()
+        self._client = GeminiACPClient(cwd=cwd)
 
         await self._client.start(session_id=self.resume_session_id)
 
@@ -191,7 +191,7 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
             )
 
             # Plan mode context
-            plan_ctx = self._consume_plan_mode_context()
+            plan_ctx = self._pop_plan_mode_context()
             if plan_ctx:
                 context_parts.append(plan_ctx)
 

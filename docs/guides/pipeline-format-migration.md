@@ -441,33 +441,41 @@ gobby pipelines run deploy -i env=production -i version=v2.1.0
 ### Import Errors
 
 **Error: "File not found"**
+
 ```bash
 gobby pipelines import nonexistent.lobster
 # Error: File not found: nonexistent.lobster
 ```
+
 Solution: Check the file path is correct.
 
 **Error: "Invalid YAML"**
+
 ```bash
 gobby pipelines import malformed.lobster
 # Error: Failed to import: ...
 ```
+
 Solution: Validate your YAML syntax.
 
 ### Execution Errors
 
 **Error: "Pipeline not found"**
+
 ```bash
 gobby pipelines run unknown-pipeline
 # Pipeline 'unknown-pipeline' not found.
 ```
+
 Solution: Use `gobby pipelines list` to see available pipelines.
 
 **Error: "Step failed"**
 Check the execution status for details:
+
 ```bash
 gobby pipelines status <execution_id> --json
 ```
+
 
 ## See Also
 

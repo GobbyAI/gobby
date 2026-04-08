@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from typing import Any
@@ -22,9 +23,12 @@ def create_providers_router() -> APIRouter:
     @router.get("")
     async def list_providers() -> dict[str, Any]:
         """List CLI providers with their availability status."""
+        provider_defs = [("claude", "claude"), ("gemini", "gemini"), ("codex", "codex")]
+        paths = await asyncio.gather(
+            *[asyncio.to_thread(shutil.which, binary) for _name, binary in provider_defs]
+        )
         providers = []
-        for name, binary in [("claude", "claude"), ("gemini", "gemini"), ("codex", "codex")]:
-            path = shutil.which(binary)
+        for (name, _binary), path in zip(provider_defs, paths, strict=False):
             providers.append(
                 {
                     "name": name,

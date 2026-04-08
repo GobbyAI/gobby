@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from gobby.storage.memories import Memory
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -18,10 +20,8 @@ logger = logging.getLogger(__name__)
 _BATCH_SIZE = 500
 
 
-def _fetch_all_memories(server: "HTTPServer", project_id: str | None = None) -> list[Any]:
+def _fetch_all_memories(server: "HTTPServer", project_id: str | None = None) -> list[Memory]:
     """Fetch all memories using pagination (no hardcoded limit)."""
-    from gobby.storage.memories import Memory
-
     all_memories: list[Memory] = []
     offset = 0
     while True:

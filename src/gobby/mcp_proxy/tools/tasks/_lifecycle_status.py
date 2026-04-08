@@ -463,11 +463,16 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
             "escalated_at": None,
             "escalation_reason": None,
         }
+        reason_note = f"De-escalated: {reason}"
+        update_kwargs["description"] = (
+            f"{task.description}\n\n{reason_note}" if task.description else reason_note
+        )
 
         if reset_validation:
             update_kwargs["validation_fail_count"] = 0
 
-        ctx.task_manager.update_task(task.id, **update_kwargs)
+        ctx.task_manager.update_task(resolved_id, **update_kwargs)
+        logger.info("Task %s de-escalated: %s", resolved_id, reason)
 
         notify_parent_on_status_change(
             ctx.task_manager.db,

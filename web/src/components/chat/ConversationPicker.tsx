@@ -3,6 +3,7 @@ import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { AgentPickerDropdown } from "./AgentPickerDropdown";
+import { PROVIDER_COLORS, SOURCE_COLORS } from "../shared/sourceTheme";
 
 interface AgentInfo {
   run_id: string;
@@ -37,20 +38,6 @@ interface ConversationPickerProps {
   agentHasGlobal?: boolean;
   agentHasProject?: boolean;
 }
-
-const PROVIDER_COLORS: Record<string, string> = {
-  claude: "#c084fc",
-  gemini: "#4ade80",
-  codex: "#3b82f6",
-  unknown: "#737373",
-};
-
-const SOURCE_COLORS: Record<string, string> = {
-  claude: "#c084fc",
-  gemini: "#4ade80",
-  codex: "#3b82f6",
-  unknown: "#737373",
-};
 
 const TERMINAL_INITIAL_LIMIT = 5;
 

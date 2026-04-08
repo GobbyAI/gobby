@@ -110,7 +110,7 @@ class SessionControlMixin:
                         {
                             "type": "pending_interaction",
                             "conversation_id": conv_id,
-                            **interaction,
+                            "interaction": interaction,
                         }
                     )
                     await websocket.send(msg)

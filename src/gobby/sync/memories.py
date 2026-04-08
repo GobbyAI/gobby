@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,16 @@ from gobby.memory.manager import MemoryManager
 from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_updated_at(value: Any) -> tuple[int, str]:
+    """Build a sortable timestamp key for memory export/import deduplication."""
+    if isinstance(value, str) and value:
+        try:
+            return (1, datetime.fromisoformat(value).isoformat())
+        except ValueError:
+            return (0, value)
+    return (0, "")
 
 
 class MemoryBackupManager:
@@ -215,6 +226,7 @@ class MemoryBackupManager:
 
         count = 0
         skipped = 0
+        parsed_records: list[dict[str, Any]] = []
         try:
             for line_num, line in enumerate(lines, 1):
                 try:
@@ -225,25 +237,8 @@ class MemoryBackupManager:
                         continue
 
                     content = data.get("content", "")
-                    content = self._sanitize_content(content)
-
-                    # Skip if memory with identical content already exists
-                    if self.memory_manager.content_exists(content):
-                        skipped += 1
-                        continue
-
-                    # Use storage directly for sync import (skip auto-embedding)
-                    # Don't pass source_session_id — the session may not exist
-                    # on this machine (cross-machine sync via git)
-                    raw_source = data.get("source", "agent")
-                    source_type = raw_source if raw_source in ("user", "agent") else "agent"
-                    self.memory_manager.storage.create_memory(
-                        content=content,
-                        memory_type=data.get("type", "fact"),
-                        tags=data.get("tags", []),
-                        source_type=source_type,
-                    )
-                    count += 1
+                    data["content"] = self._sanitize_content(content)
+                    parsed_records.append(data)
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON in memories file: {line[:50]}...")
                 except Exception as e:
@@ -251,6 +246,22 @@ class MemoryBackupManager:
 
         except Exception as e:
             logger.error(f"Failed to import memories: {e}")
+
+        for data in self._deduplicate_records_by_id(parsed_records):
+            content = data.get("content", "")
+            if self.memory_manager.content_exists(content):
+                skipped += 1
+                continue
+
+            raw_source = data.get("source", "agent")
+            source_type = raw_source if raw_source in ("user", "agent") else "agent"
+            self.memory_manager.storage.create_memory(
+                content=content,
+                memory_type=data.get("type", "fact"),
+                tags=data.get("tags", []),
+                source_type=source_type,
+            )
+            count += 1
 
         if skipped > 0:
             logger.debug(f"Skipped {skipped} duplicate memories during import")
@@ -289,6 +300,23 @@ class MemoryBackupManager:
                 return False
 
         return True
+
+    def _deduplicate_records_by_id(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep a single canonical record per id, preferring the latest updated_at."""
+        canonical_by_key: dict[str, dict[str, Any]] = {}
+        for record in records:
+            record_id = str(record.get("id", "")).strip()
+            key = record_id or record.get("content", "").strip()
+            if not key:
+                continue
+
+            existing = canonical_by_key.get(key)
+            if existing is None or _parse_updated_at(record.get("updated_at")) >= _parse_updated_at(
+                existing.get("updated_at")
+            ):
+                canonical_by_key[key] = record
+
+        return list(canonical_by_key.values())
 
     def _sanitize_content(self, content: str) -> str:
         """Replace user home directories with ~ for privacy.
@@ -355,7 +383,7 @@ class MemoryBackupManager:
 
         try:
             # 1. Read existing file records (preserves records from other machines)
-            existing_by_content: dict[str, dict[str, Any]] = {}
+            existing_records: list[dict[str, Any]] = []
             if file_path.exists():
                 try:
                     with open(file_path, encoding="utf-8") as f:
@@ -365,9 +393,8 @@ class MemoryBackupManager:
                                 continue
                             try:
                                 data = json.loads(line)
-                                key = data.get("content", "").strip()
-                                if key:
-                                    existing_by_content[key] = data
+                                if data.get("id") or data.get("content", "").strip():
+                                    existing_records.append(data)
                             except json.JSONDecodeError as e:
                                 logger.debug(f"Skipping malformed JSONL line in {file_path}: {e}")
                                 continue
@@ -388,11 +415,11 @@ class MemoryBackupManager:
                 offset += page_size
             unique_memories = self._deduplicate_memories(memories)
 
-            db_by_content: dict[str, dict[str, Any]] = {}
+            db_records: list[dict[str, Any]] = []
             for memory in unique_memories:
                 sanitized = self._sanitize_content(memory.content)
-                key = sanitized.strip()
-                db_by_content[key] = {
+                db_records.append(
+                    {
                     "id": memory.id,
                     "content": sanitized,
                     "type": memory.memory_type,
@@ -402,30 +429,27 @@ class MemoryBackupManager:
                     "source": memory.source_type,
                     "source_id": memory.source_session_id,
                     "project_id": memory.project_id,
-                }
+                    }
+                )
 
-            # 3. Merge: file-first, DB overrides shared content
+            # 3. Merge: keep one canonical record per id, preferring the latest updated_at
             # When scoped to a project, drop file records that belong to
             # other projects. Preserve records without a project_id (from
             # other machines or legacy exports).
             if project_id:
-                filtered_existing = {
-                    k: v
-                    for k, v in existing_by_content.items()
-                    if not v.get("project_id") or v.get("project_id") == project_id
-                }
-                merged = {**filtered_existing, **db_by_content}
+                filtered_existing = [
+                    record
+                    for record in existing_records
+                    if not record.get("project_id") or record.get("project_id") == project_id
+                ]
             else:
-                merged = {**existing_by_content, **db_by_content}
-
-            # 4. Sort deterministically by ID (fall back to content for file-only
-            #    records that may lack an id field) to ensure stable output order
+                filtered_existing = existing_records
             sorted_records = sorted(
-                merged.values(),
-                key=lambda r: r.get("id") or r.get("content", ""),
+                self._deduplicate_records_by_id([*filtered_existing, *db_records]),
+                key=lambda record: record.get("id") or record.get("content", ""),
             )
 
-            # 5. Build output and skip write if content is unchanged
+            # 4. Build output and skip write if content is unchanged
             new_content = "".join(
                 json.dumps(data, ensure_ascii=False, sort_keys=True) + "\n"
                 for data in sorted_records

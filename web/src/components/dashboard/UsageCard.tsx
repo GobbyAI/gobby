@@ -1,4 +1,5 @@
 import { useUsage } from '../../hooks/useUsage'
+import { SOURCE_LABELS } from '../shared/sourceTheme'
 
 function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000_000) return `${(tokens / 1_000_000_000).toFixed(1)}B`
@@ -12,12 +13,6 @@ function formatUsd(value: number): string {
   if (value >= 0.01) return `$${value.toFixed(3)}`
   if (value > 0) return `$${value.toFixed(4)}`
   return '$0.00'
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  gemini: 'Gemini',
-  codex: 'Codex',
 }
 
 interface Props {

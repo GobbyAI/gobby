@@ -345,9 +345,7 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 | `run_fix_attempt` | Spawn fix agent for validation issues |
 | `validate_and_fix` | Run validation loop with auto-fix |
 
-> **Note:** Validation tools (`validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history`) are internal-only Python functions, not available via MCP.
-
-> **Note:** Sync tools (`sync_tasks`, `sync_import`, `sync_export`, `get_sync_status`) are CLI-only, not available via MCP.
+> **Note:** Validation tools (`validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history`) are internal-only Python functions, not available via MCP. Sync tools (`sync_tasks`, `sync_import`, `sync_export`, `get_sync_status`) are CLI-only, not available via MCP.
 
 ### Git Integration
 

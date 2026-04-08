@@ -16,6 +16,7 @@ Protocol lifecycle:
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import logging
 import shutil
@@ -30,15 +31,6 @@ from gobby.llm.claude_models import (
 )
 
 logger = logging.getLogger(__name__)
-
-# JSON-RPC request ID counter
-_next_id = 0
-
-
-def _make_id() -> int:
-    global _next_id
-    _next_id += 1
-    return _next_id
 
 
 def _extract_text(content: str | list[dict[str, Any]]) -> str:
@@ -120,6 +112,8 @@ class CodexCLIChatSession:
         self._thread_id = thread_id
         self._process: asyncio.subprocess.Process | None = None
         self._connected = False
+        self._request_id = itertools.count(1)
+        self._read_timeout = 30.0
 
     @property
     def is_connected(self) -> bool:
@@ -151,7 +145,7 @@ class CodexCLIChatSession:
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
-            "id": _make_id(),
+            "id": next(self._request_id),
         }
 
         request_line = json.dumps(request) + "\n"
@@ -161,7 +155,15 @@ class CodexCLIChatSession:
 
         # Read lines until we get a JSON-RPC response (has "id" field)
         while True:
-            line = await self._process.stdout.readline()
+            try:
+                line = await asyncio.wait_for(
+                    self._process.stdout.readline(),
+                    timeout=self._read_timeout,
+                )
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"Timed out waiting for Codex {method} response after {self._read_timeout:.1f}s"
+                ) from exc
             if not line:
                 raise RuntimeError(f"EOF while waiting for {method} response")
 
@@ -277,7 +279,7 @@ class CodexCLIChatSession:
             "jsonrpc": "2.0",
             "method": "turn/start",
             "params": turn_params,
-            "id": _make_id(),
+            "id": next(self._request_id),
         }
 
         request_line = json.dumps(request) + "\n"
@@ -289,7 +291,15 @@ class CodexCLIChatSession:
 
         # Read streaming notifications until turn/completed or response
         while True:
-            raw_line = await self._process.stdout.readline()
+            try:
+                raw_line = await asyncio.wait_for(
+                    self._process.stdout.readline(),
+                    timeout=self._read_timeout,
+                )
+            except TimeoutError:
+                yield TextChunk(content="Codex response timed out while waiting for output.")
+                yield DoneEvent(tool_calls_count=0)
+                break
             if not raw_line:
                 break
             line = raw_line.decode().strip()
@@ -352,7 +362,7 @@ class CodexCLIChatSession:
                     "jsonrpc": "2.0",
                     "method": "turn/cancel",
                     "params": {"threadId": self._thread_id},
-                    "id": _make_id(),
+                    "id": next(self._request_id),
                 }
                 line = json.dumps(cancel_request) + "\n"
                 self._process.stdin.write(line.encode())

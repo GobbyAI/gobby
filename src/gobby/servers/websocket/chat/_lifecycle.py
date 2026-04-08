@@ -108,7 +108,15 @@ class ChatLifecycleMixin:
             data = normalize_tool_fields(data)
 
         # Source is determined by session's provider (default claude)
-        source = SessionSource(getattr(session, "provider", "claude"))
+        provider_value = getattr(session, "provider", "claude")
+        try:
+            source = SessionSource(provider_value)
+        except ValueError:
+            logger.warning(
+                "Invalid session provider %r; defaulting lifecycle source to 'claude'",
+                provider_value,
+            )
+            source = SessionSource("claude")
 
         event = HookEvent(
             event_type=event_type,

@@ -80,7 +80,7 @@ async def _maybe_hold_open(
     if not db:
         return None
     session_store = LocalSessionManager(db)
-    db_session = session_store.get(session_id)
+    db_session = await asyncio.to_thread(session_store.get, session_id)
 
     if not db_session:
         return None

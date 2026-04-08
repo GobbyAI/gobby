@@ -206,9 +206,12 @@ class LocalSessionManager:
         """
         query = """
             SELECT * FROM sessions
-            WHERE external_id = ? AND machine_id = ? AND project_id = ? AND source = ?
+            WHERE external_id = ?
+              AND machine_id = ?
+              AND ((project_id = ?) OR (project_id IS NULL AND ? IS NULL))
+              AND source = ?
         """
-        params: list[str | None] = [external_id, machine_id, project_id, source]
+        params: list[str | None] = [external_id, machine_id, project_id, project_id, source]
         if session_type is not None:
             query += " AND session_type = ?"
             params.append(session_type)

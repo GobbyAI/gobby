@@ -76,7 +76,7 @@ class GeminiCLIChatSessionPermissionsMixin:
         if self._on_mode_persist:
             try:
                 self._on_mode_persist(mode)
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 logger.warning(f"Failed to persist chat_mode={mode}: {e}")
 
     def approve_plan(self) -> None:
@@ -98,8 +98,8 @@ class GeminiCLIChatSessionPermissionsMixin:
         """Whether a plan is awaiting approval."""
         return False
 
-    def _consume_plan_mode_context(self) -> str | None:
-        """Return plan mode system context for context injection."""
+    def _pop_plan_mode_context(self) -> str | None:
+        """Return plan mode system context for injection and clear consumed feedback."""
         if self.chat_mode != "plan":
             return None
 
@@ -135,6 +135,10 @@ class GeminiCLIChatSessionPermissionsMixin:
 
         parts.append("</plan-mode>")
         return "\n".join(parts)
+
+    def _consume_plan_mode_context(self) -> str | None:
+        """Backward-compatible alias for callers still using the old name."""
+        return self._pop_plan_mode_context()
 
     async def _wait_for_tool_approval(
         self, tool_name: str, input_data: dict[str, Any]
@@ -183,6 +187,7 @@ class GeminiCLIChatSessionPermissionsMixin:
 
     async def sync_sdk_permission_mode(self) -> None:
         """No-op for Gemini -- permission mode is enforced via context injection."""
+        pass
 
     @property
     def has_pending_approval(self) -> bool:

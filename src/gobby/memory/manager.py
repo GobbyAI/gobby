@@ -25,6 +25,7 @@ from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
+    from gobby.memory.fts_search import MemoryFTS5Searcher
     from gobby.memory.services.dedup import DedupService
     from gobby.memory.vectorstore import VectorStore
 
@@ -37,6 +38,10 @@ DEFAULT_LIST_LIMIT = 50
 DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_GRAPH_LIMIT = 500
 MAX_REINDEX_LIMIT = 100_000
+
+
+class CrossrefRebuildError(RuntimeError):
+    """Raised when cross-reference rebuild fails for a specific memory."""
 
 
 class MemoryManager:
@@ -70,10 +75,8 @@ class MemoryManager:
         # Primary storage layer — always SQLite via LocalMemoryManager
         self.storage = LocalMemoryManager(db)
 
-        # FTS5 keyword search fallback (always available — SQLite-based)
-        from gobby.memory.fts_search import MemoryFTS5Searcher
-
-        self._fts_searcher = MemoryFTS5Searcher(db)
+        # Lazily initialized to avoid import-time surprises from the FTS helper.
+        self._fts_searcher: MemoryFTS5Searcher | None = None
 
         # Backend for async protocol operations (always StorageAdapter)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage)
@@ -173,6 +176,14 @@ class MemoryManager:
     def llm_service(self) -> LLMService | None:
         """Get the LLM service for image description."""
         return self._ingestion_service.llm_service
+
+    def _get_fts_searcher(self) -> MemoryFTS5Searcher:
+        """Lazily initialize the SQLite FTS5 searcher."""
+        if self._fts_searcher is None:
+            from gobby.memory.fts_search import MemoryFTS5Searcher
+
+            self._fts_searcher = MemoryFTS5Searcher(self.db)
+        return self._fts_searcher
 
     @llm_service.setter
     def llm_service(self, service: LLMService | None) -> None:
@@ -712,7 +723,7 @@ class MemoryManager:
 
         # FTS5 fallback: if vector+graph returned nothing above threshold
         if not memories and query:
-            memories = self._fts5_fallback(
+            memories = await self._fts5_fallback(
                 query,
                 limit,
                 project_id,
@@ -727,7 +738,7 @@ class MemoryManager:
 
         return memories
 
-    def _fts5_fallback(
+    async def _fts5_fallback(
         self,
         query: str,
         limit: int,
@@ -738,14 +749,19 @@ class MemoryManager:
         tags_none: list[str] | None,
     ) -> list[Memory]:
         """FTS5 keyword search fallback when vector search returns nothing."""
-        fts_results = self._fts_searcher.search(query=query, top_k=limit * 2, project_id=project_id)
+        fts_results = await asyncio.to_thread(
+            self._get_fts_searcher().search,
+            query,
+            limit * 2,
+            project_id,
+        )
         if not fts_results:
             return []
 
         memories: list[Memory] = []
         for mem_id, score in fts_results:
             try:
-                mem = self.storage.get_memory(mem_id)
+                mem = await asyncio.to_thread(self.storage.get_memory, mem_id)
             except ValueError:
                 continue
             if memory_type and mem.memory_type != memory_type:
@@ -1112,7 +1128,7 @@ class MemoryManager:
         report["embeddings"] = await self.reindex_embeddings()
 
         # 3. Fetch all memories for crossref + KG rebuild
-        all_memories = self._fetch_all_project_memories(project_id)
+        all_memories = await self._fetch_all_project_memories(project_id)
         total = len(all_memories)
 
         # 4. Rebuild crossrefs
@@ -1120,7 +1136,7 @@ class MemoryManager:
         for memory in all_memories:
             try:
                 crossrefs_created += await self.rebuild_crossrefs_for_memory(memory)
-            except Exception as e:
+            except (CrossrefRebuildError, ValueError) as e:
                 logger.warning(f"Crossref failed for {memory.id}: {e}")
         report["crossrefs"] = {
             "memories_processed": total,
@@ -1144,18 +1160,22 @@ class MemoryManager:
             report["graph_rebuilt"] = {"extracted": extracted, "errors": errors}
 
         # 6. Reindex FTS5
-        report["fts5"] = self._fts_searcher.reindex()
+        report["fts5"] = await asyncio.to_thread(self._get_fts_searcher().reindex)
 
         return report
 
-    def _fetch_all_project_memories(self, project_id: str) -> list[Memory]:
+    async def _fetch_all_project_memories(self, project_id: str) -> list[Memory]:
         """Fetch all memories for a project using pagination."""
         all_memories: list[Memory] = []
         offset = 0
         batch_size = 500
         while True:
-            batch = self.storage.list_memories(
-                project_id=project_id, limit=batch_size, offset=offset
+            batch = await asyncio.to_thread(
+                self.storage.list_memories,
+                project_id,
+                None,
+                batch_size,
+                offset,
             )
             if not batch:
                 break
@@ -1176,7 +1196,10 @@ class MemoryManager:
         max_links: int | None = None,
     ) -> int:
         """Public wrapper for cross-reference creation."""
-        return await self._create_crossrefs(memory, threshold, max_links)
+        try:
+            return await self._create_crossrefs(memory, threshold, max_links)
+        except Exception as exc:
+            raise CrossrefRebuildError(str(exc)) from exc
 
     async def _create_crossrefs(
         self,

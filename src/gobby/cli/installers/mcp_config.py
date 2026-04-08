@@ -495,6 +495,14 @@ DEFAULT_MCP_SERVERS: list[dict[str, Any]] = [
         "description": "Linear issue tracking integration",
     },
     {
+        "name": "brave-search",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@brave/brave-search-mcp-server"],
+        "env": {"BRAVE_API_KEY": "$secret:brave_api_key"},
+        "description": "Brave Search API for web search, local search, and news",
+    },
+    {
         "name": "context7",
         "transport": "stdio",
         "command": "npx",
@@ -508,7 +516,7 @@ DEFAULT_MCP_SERVERS: list[dict[str, Any]] = [
 def install_default_mcp_servers() -> dict[str, Any]:
     """Install default external MCP servers to ~/.gobby/.mcp.json.
 
-    Adds default MCP servers (GitHub, Linear, context7) if not
+    Adds default MCP servers (GitHub, Linear, Brave Search, context7) if not
     already configured. Also syncs to the database so the daemon proxy can
     serve them. These servers pull API keys from environment variables.
 

@@ -12,7 +12,7 @@ Docker-based Kùzu+Qdrant coexists with this work — the Rust crates talk to th
 
 ## Crate Dependency Graph
 
-```
+```text
 gcode ──────> gobby-core
 gsqz ──────> gobby-core
 gobby-storage ──> gobby-core
@@ -75,7 +75,7 @@ gobby-hook ────> gobby-core (bootstrap, daemon, project)
 
 ### Module Layout
 
-```
+```text
 src/
   lib.rs
   error.rs              — StorageError enum (thiserror)
@@ -151,7 +151,7 @@ src/
 
 ### Module Layout
 
-```
+```text
 src/
   lib.rs
   error.rs              — RuleError enum
@@ -296,7 +296,7 @@ The Python version piggybacks on `ast.parse()`. Rust needs a hand-written parser
 - Depends on `gobby-core` only (bootstrap, daemon client, project detection)
 - **ureq** for HTTP (blocking is fine — short-lived CLI process, not a server)
 - **serde_json** for stdin/stdout JSON
-- Fire-and-forget: `Command::new("curl")` with `pre_exec(|| { libc::setsid(); Ok(()) })` or spawn detached ureq request in forked process
+- Fire-and-forget: spawn a detached thread that performs `ureq::post(...).send_json(...)`. Only use a fork/setsid/exec fallback if the request truly must survive immediate parent termination (for example, a session-end hook) and document that Unix-only fallback separately.
 - Agent kill: `libc::killpg()` / tmux kill-pane via `Command`
 - Failure tracking: counter files in `std::env::temp_dir()/gobby-agent-failures/`. Cleanup policy: the hook binary itself prunes files older than 24h on each invocation (cheap `metadata().modified()` check). Cap at 100 files with LRU removal. No external cleanup daemon needed — the hook runs frequently enough to self-maintain.
 
@@ -314,7 +314,7 @@ Per-CLI behavioral differences:
 
 ### Module Layout
 
-```
+```text
 src/
   main.rs             — arg parsing, main dispatch loop
   cli_config.rs       — CLIConfig struct, CLI_CONFIGS registry

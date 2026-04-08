@@ -332,7 +332,7 @@ class ChatSessionMixin:
                     session_manager.register,
                     external_id=conversation_id,
                     machine_id=get_machine_id(),
-                    source="claude",
+                    source=effective_provider or "claude",
                     project_id=project_id or PERSONAL_PROJECT_ID,
                     session_type="web_chat",
                 )

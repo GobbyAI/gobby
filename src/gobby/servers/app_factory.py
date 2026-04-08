@@ -319,8 +319,11 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         # Cleanup PendingInteractionManager
         if hasattr(app.state, "pending_interaction_manager"):
-            await app.state.pending_interaction_manager.cleanup()
-            logger.debug("PendingInteractionManager cleanup complete")
+            try:
+                await app.state.pending_interaction_manager.cleanup()
+                logger.debug("PendingInteractionManager cleanup complete")
+            except Exception as e:
+                logger.exception("PendingInteractionManager cleanup failed: %s", e)
 
         # Cleanup HookManager
         if hasattr(app.state, "hook_manager"):

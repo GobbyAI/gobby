@@ -692,7 +692,7 @@ def create_memory_registry(
     # It is NOT called directly from Python code. Do not remove without also removing the DB rule.
     @registry.tool(
         name="build_turn_and_digest",
-        description="Build a detailed turn record from the last agent response, append to session digest, synthesize title, and extract memories. Fired by digest-on-response rule on stop events.",
+        description="Build a detailed turn record from the last agent response, append it to the session digest, and synthesize a title. Fired by digest-on-response rule on stop events.",
     )
     async def build_turn_and_digest_tool(
         session_id: str = "",
@@ -703,8 +703,8 @@ def create_memory_registry(
 
         Reads the last user/assistant exchange from the transcript,
         generates a structured turn record via LLM, appends it to the
-        session's rolling digest, synthesizes a title, and extracts
-        reusable memories.
+        session's rolling digest, and synthesizes a title via
+        ``build_turn_and_digest``.
 
         Args:
             session_id: Platform session ID (injected by dispatch layer)

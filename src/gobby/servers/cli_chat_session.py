@@ -280,18 +280,24 @@ class CLIChatSession:
 
     def provide_answer(self, answers: dict[str, str]) -> None:
         """No-op — handled by PendingInteractionManager."""
+        pass
 
     def provide_approval(self, decision: str) -> None:
         """No-op — handled by PendingInteractionManager."""
+        pass
 
     def provide_plan_decision(self, decision: str) -> None:
         """No-op — handled by PendingInteractionManager."""
+        pass
 
     def approve_plan(self) -> None:
         """No-op — handled by PendingInteractionManager."""
+        pass
 
     def set_plan_feedback(self, feedback: str) -> None:
         """No-op — handled by PendingInteractionManager."""
+        pass
 
     async def sync_sdk_permission_mode(self) -> None:
         """No-op — permissions handled via hook hold-open, not SDK sync."""
+        pass

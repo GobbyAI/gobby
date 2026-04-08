@@ -497,7 +497,7 @@ export default function App() {
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
-  const agentDefs = useAgentDefinitions(effectiveProjectId, "claude");
+  const agentDefs = useAgentDefinitions(effectiveProjectId, selectedProvider);
 
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {

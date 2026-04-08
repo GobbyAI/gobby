@@ -168,7 +168,7 @@ def _build_and_set_project_context(
                         f"Project ID mismatch: db='{project.id}', "
                         f"filesystem='{fs_id}' at {project.repo_path}. Using filesystem.",
                     )
-                data["project_path"] = project.repo_path
+                data["project_path"] = repo_path
                 return set_project_context(data)
             except (json.JSONDecodeError, OSError) as e:
                 logger.debug(f"Failed to read project.json at {project_file}: {e}")

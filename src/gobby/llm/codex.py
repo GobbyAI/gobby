@@ -62,7 +62,7 @@ class CodexProvider(LLMProvider):
         # Pydantic defaults guarantee llm_providers.default_model is never None.
         providers = getattr(config, "llm_providers", None)
         codex_cfg = getattr(providers, "codex", None) if providers else None
-        self._default_model: str = str(
+        self._default_model: str = (
             getattr(codex_cfg, "default_model", None)
             or getattr(providers, "default_model", None)
             or config.llm_providers.default_model

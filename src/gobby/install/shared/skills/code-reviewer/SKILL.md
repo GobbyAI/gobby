@@ -146,5 +146,3 @@ Before running a review, estimate the size:
 - Preserve file paths and line numbers exactly as reported
 - **Do NOT auto-fix issues** — ask the user which findings to address
 - Don't generate substitute findings if the review tool or process fails
-- If the review passes clean, set the gate variable if applicable:
-  `set_variable(name="review_gate_passed", value=true)`

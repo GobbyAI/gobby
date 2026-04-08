@@ -481,6 +481,8 @@ async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
 
     # Verify project_id was stripped from the arguments passed to tool_proxy
     call_args = daemon_tools.tool_proxy.call_tool.call_args
-    effective_args = call_args[0][2]  # Third positional arg is arguments
+    effective_args = call_args.kwargs.get("arguments")
+    if effective_args is None:
+        effective_args = call_args[0][2]
     assert "project_id" not in effective_args
     assert effective_args["title"] == "Test"
