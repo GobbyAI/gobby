@@ -82,10 +82,11 @@ class ClaudeLLMProvider(LLMProvider):
         # Pydantic defaults guarantee llm_providers.default_model is never None.
         providers = getattr(config, "llm_providers", None)
         claude_cfg = getattr(providers, "claude", None) if providers else None
-        self._default_model: str = (
+        self._default_model: str = str(
             getattr(claude_cfg, "default_model", None)
             or getattr(providers, "default_model", None)
             or config.llm_providers.default_model
+            or "opus"
         )
 
     def _find_cli_path(self) -> str | None:
