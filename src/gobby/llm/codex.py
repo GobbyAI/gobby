@@ -66,7 +66,6 @@ class CodexProvider(LLMProvider):
             getattr(codex_cfg, "default_model", None)
             or getattr(providers, "default_model", None)
             or config.llm_providers.default_model
-            or "o3"
         )
 
         # Determine auth mode from config or parameter

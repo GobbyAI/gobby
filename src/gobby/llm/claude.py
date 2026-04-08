@@ -86,7 +86,6 @@ class ClaudeLLMProvider(LLMProvider):
             getattr(claude_cfg, "default_model", None)
             or getattr(providers, "default_model", None)
             or config.llm_providers.default_model
-            or "opus"
         )
 
     def _find_cli_path(self) -> str | None:
