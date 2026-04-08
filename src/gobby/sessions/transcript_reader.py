@@ -367,7 +367,9 @@ class TranscriptReader:
             return None
 
         try:
-            await asyncio.to_thread(self._session_manager.update, session_id, transcript_path=derived)
+            await asyncio.to_thread(
+                self._session_manager.update, session_id, transcript_path=derived
+            )
             logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
         except Exception as e:
             logger.debug(f"Failed to persist re-derived transcript path: {e}")
@@ -385,7 +387,9 @@ class TranscriptReader:
 
         transcript_path = getattr(session, "transcript_path", None)
         source = session.source or "claude"
-        transcript_path = await self._ensure_transcript_path(session_id, session, source, transcript_path)
+        transcript_path = await self._ensure_transcript_path(
+            session_id, session, source, transcript_path
+        )
         if not transcript_path:
             return []
 
@@ -457,7 +461,9 @@ class TranscriptReader:
 
         transcript_path = getattr(session, "transcript_path", None)
         source = session.source or "claude"
-        transcript_path = await self._ensure_transcript_path(session_id, session, source, transcript_path)
+        transcript_path = await self._ensure_transcript_path(
+            session_id, session, source, transcript_path
+        )
         if not transcript_path:
             return []
 

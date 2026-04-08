@@ -420,15 +420,15 @@ class MemoryBackupManager:
                 sanitized = self._sanitize_content(memory.content)
                 db_records.append(
                     {
-                    "id": memory.id,
-                    "content": sanitized,
-                    "type": memory.memory_type,
-                    "tags": memory.tags,
-                    "created_at": memory.created_at,
-                    "updated_at": memory.updated_at,
-                    "source": memory.source_type,
-                    "source_id": memory.source_session_id,
-                    "project_id": memory.project_id,
+                        "id": memory.id,
+                        "content": sanitized,
+                        "type": memory.memory_type,
+                        "tags": memory.tags,
+                        "created_at": memory.created_at,
+                        "updated_at": memory.updated_at,
+                        "source": memory.source_type,
+                        "source_id": memory.source_session_id,
+                        "project_id": memory.project_id,
                     }
                 )
 
