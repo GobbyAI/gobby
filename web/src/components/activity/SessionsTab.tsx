@@ -101,12 +101,13 @@ export const SessionsTab = memo(function SessionsTab({
         ).then((r) => (r.ok ? r.json() : { sessions: [] })),
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
-      const active = (activeRes.sessions ?? activeRes ?? []).filter(
-        (s: any) => s.source !== "pipeline" && s.source !== "cron",
-      );
-      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(
-        (s: any) => s.source !== "pipeline" && s.source !== "cron",
-      );
+      const isWatchable = (s: any) =>
+        s.source !== "pipeline" &&
+        s.source !== "cron" &&
+        s.session_type !== "web_chat" &&
+        s.id !== chatSessionId;
+      const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
+      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
       setCliSessions([...active, ...paused]);
       setExpiringIds(new Set());
       setFetchError(null);
@@ -116,7 +117,7 @@ export const SessionsTab = memo(function SessionsTab({
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, chatSessionId]);
 
   // Initial fetch + poll every 5s
   useEffect(() => {
