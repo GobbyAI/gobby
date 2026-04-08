@@ -76,8 +76,10 @@ async def _maybe_hold_open(
     """
     from gobby.storage.sessions import LocalSessionManager
 
-    hook_manager = request.app.state.hook_manager
-    session_store = LocalSessionManager(hook_manager._db)
+    db = request.app.state.server.services.database
+    if not db:
+        return None
+    session_store = LocalSessionManager(db)
     db_session = session_store.get(session_id)
 
     if not db_session:
