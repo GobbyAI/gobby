@@ -546,7 +546,12 @@ class MemoryManager:
             tags_none: Memory must have NONE of these tags
         """
         if query and self._vector_store and self._embed_fn:
-            query_embedding = await self._embed_fn(query, is_query=True)
+            # Use YAKE keyword extraction for noisy queries to improve
+            # embedding quality. Raw query still goes to FTS5 unchanged.
+            from gobby.search.keywords import extract_keywords
+
+            embed_query = extract_keywords(query) or query
+            query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = getattr(self.config, "temporal_decay_half_life_days", 30.0)
             effective_min_score = min_score if min_score is not None else 0.0
 
