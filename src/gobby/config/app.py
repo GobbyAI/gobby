@@ -48,6 +48,7 @@ from gobby.config.pipelines import PipelineConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
+    ContextCompressionConfig,
     ContextInjectionConfig,
     DigestConfig,
     MessageTrackingConfig,
@@ -353,6 +354,10 @@ class DaemonConfig(BaseModel):
     context_injection: ContextInjectionConfig = Field(
         default_factory=ContextInjectionConfig,
         description="Context injection configuration for subagent spawning",
+    )
+    context_compression: ContextCompressionConfig = Field(
+        default_factory=ContextCompressionConfig,
+        description="Prose compression for additionalContext before the 10K char truncation limit",
     )
     mcp_client_proxy: MCPClientProxyConfig = Field(
         default_factory=MCPClientProxyConfig,

@@ -189,7 +189,13 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.gemini import GeminiAdapter
 
             if source == "claude":
-                adapter: BaseAdapter = ClaudeCodeAdapter(hook_manager=hook_manager)
+                # Pass compression config from daemon config
+                cc = getattr(getattr(hook_manager, "_config", None), "context_compression", None)
+                adapter: BaseAdapter = ClaudeCodeAdapter(
+                    hook_manager=hook_manager,
+                    compression_enabled=getattr(cc, "enabled", True),
+                    compression_level=getattr(cc, "level", "standard"),
+                )
             elif source == "gemini":
                 adapter = GeminiAdapter(hook_manager=hook_manager)
             elif source == "codex":
@@ -208,6 +214,18 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # Execute hook via adapter
             try:
                 result = await asyncio.to_thread(adapter.handle_native, payload, hook_manager)
+
+                # Record context compression savings (best-effort)
+                compression_stats = result.pop("_compression_stats", None)
+                if compression_stats:
+                    from gobby.savings.record import record_savings
+
+                    record_savings(
+                        category="compression",
+                        original_chars=compression_stats.get("original_chars", 0),
+                        actual_chars=compression_stats.get("compressed_chars", 0),
+                        metadata={"strategy": compression_stats.get("strategy", "prose")},
+                    )
 
                 # After existing hook processing, check for web chat hold-open.
                 # Terminal sessions pass straight through; only web_chat sessions

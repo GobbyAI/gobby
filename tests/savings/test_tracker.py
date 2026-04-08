@@ -114,4 +114,4 @@ class TestSavingsTracker:
 
     def test_valid_categories_constant(self) -> None:
         """VALID_CATEGORIES contains exactly the expected set."""
-        assert VALID_CATEGORIES == {"code_index", "discovery"}
+        assert VALID_CATEGORIES == {"code_index", "discovery", "compression"}

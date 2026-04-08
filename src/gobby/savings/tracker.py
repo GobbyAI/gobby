@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 3.7
 
 # Only these categories produce real, measurable savings.
-VALID_CATEGORIES: frozenset[str] = frozenset({"code_index", "discovery"})
+VALID_CATEGORIES: frozenset[str] = frozenset({"code_index", "discovery", "compression"})
 
 
 class SavingsTracker:
@@ -25,6 +25,7 @@ class SavingsTracker:
     Savings categories:
     - code_index: symbol retrieval vs full file read
     - discovery: progressive schema loading
+    - compression: gsqz output/input compression (output=tool results, input=context injection)
     """
 
     def __init__(self, db: DatabaseProtocol, model_costs: ModelCostStore | None = None) -> None:

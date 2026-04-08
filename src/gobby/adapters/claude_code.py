@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import BaseAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import truncate_additional_context
+from gobby.llm.sdk_utils import compress_context, truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -58,14 +58,23 @@ class ClaudeCodeAdapter(BaseAdapter):
         "notification": HookEventType.NOTIFICATION,
     }
 
-    def __init__(self, hook_manager: "HookManager | None" = None):
+    def __init__(
+        self,
+        hook_manager: "HookManager | None" = None,
+        compression_enabled: bool = True,
+        compression_level: str = "standard",
+    ):
         """Initialize the Claude Code adapter.
 
         Args:
             hook_manager: Reference to HookManager for delegation.
                          If None, the adapter can only translate (not handle events).
+            compression_enabled: Enable prose compression via gsqz input.
+            compression_level: Compression aggressiveness (lite/standard/aggressive).
         """
         self._hook_manager = hook_manager
+        self._compression_enabled = compression_enabled
+        self._compression_level = compression_level
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
         """Convert Claude Code native event to unified HookEvent.
@@ -280,12 +289,18 @@ class ClaudeCodeAdapter(BaseAdapter):
         # Valid hookEventName values: PreToolUse, UserPromptSubmit, PostToolUse, SessionStart
         valid_hook_event_names = {"PreToolUse", "UserPromptSubmit", "PostToolUse", "SessionStart"}
         if additional_context_parts and hook_event_name in valid_hook_event_names:
+            raw_context = "\n\n".join(additional_context_parts)
+            compressed, compression_stats = compress_context(
+                raw_context,
+                level=self._compression_level,
+                enabled=self._compression_enabled,
+            )
             result["hookSpecificOutput"] = {
                 "hookEventName": hook_event_name,
-                "additionalContext": truncate_additional_context(
-                    "\n\n".join(additional_context_parts)
-                ),
+                "additionalContext": truncate_additional_context(compressed),
             }
+            if compression_stats:
+                result["_compression_stats"] = compression_stats
 
         # PreToolUse: rewrite tool input via updatedInput
         if response.modified_input and hook_event_name == "PreToolUse":
