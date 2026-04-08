@@ -3,7 +3,7 @@ name: Release gcode
 on:
   push:
     tags:
-      - "v*"
+      - "gcode-v*"
 
 permissions:
   contents: write
