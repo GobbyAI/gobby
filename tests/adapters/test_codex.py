@@ -1568,9 +1568,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", system_message="Session info")
-        result = adapter.translate_from_hook_response(
-            response, hook_type="UserPromptSubmit"
-        )
+        result = adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
 
         assert "systemMessage" not in result
         hso = result["hookSpecificOutput"]

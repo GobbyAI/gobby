@@ -210,16 +210,14 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         if resolved_key:
             runner.config.embeddings.api_key = resolved_key
 
-    # Populate model costs from OpenRouter into DB and load into memory
-    from gobby.llm.cost_table import init as init_cost_table
+    # Populate model metadata (context_length, max_completion_tokens) from OpenRouter
     from gobby.storage.model_costs import ModelCostStore
 
     try:
         cost_store = ModelCostStore(runner.database)
         cost_store.populate()
-        init_cost_table(runner.database)
     except Exception as e:
-        logger.warning(f"Failed to populate model costs: {e}")
+        logger.warning(f"Failed to populate model metadata: {e}")
 
     runner.session_manager = LocalSessionManager(runner.database)
     runner.task_manager = LocalTaskManager(runner.database)

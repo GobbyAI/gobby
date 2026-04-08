@@ -12,7 +12,7 @@ import { RawTraceView } from './RawTraceView'
 import { OversightSelector } from './OversightSelector'
 import { EscalationCard } from './EscalationCard'
 import { TaskResults } from './TaskResults'
-import { CostTracker } from './CostTracker'
+import { TokenTracker } from './TokenTracker'
 import { TaskMemories } from './TaskMemories'
 import { AssigneePicker } from './AssigneePicker'
 import { TaskComments } from './TaskComments'
@@ -380,11 +380,11 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
               <TaskResults task={task} />
             </div>
 
-            {/* Cost & Token Usage */}
+            {/* Token Usage */}
             {task.created_in_session_id && (
               <div className="task-detail-section">
                 <h4 className="task-detail-section-title">Usage</h4>
-                <CostTracker sessionId={task.created_in_session_id} />
+                <TokenTracker sessionId={task.created_in_session_id} />
               </div>
             )}
 

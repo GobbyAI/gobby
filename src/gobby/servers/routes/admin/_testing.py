@@ -204,7 +204,6 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         output_tokens: int = 0
         cache_creation_tokens: int = 0
         cache_read_tokens: int = 0
-        total_cost_usd: float = 0.0
 
     @router.post("/test/set-session-usage")
     async def set_test_session_usage(request: TestSessionUsageRequest) -> dict[str, Any]:
@@ -239,7 +238,6 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 output_tokens=request.output_tokens,
                 cache_creation_tokens=request.cache_creation_tokens,
                 cache_read_tokens=request.cache_read_tokens,
-                total_cost_usd=request.total_cost_usd,
             )
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -253,7 +251,6 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                         "output_tokens": request.output_tokens,
                         "cache_creation_tokens": request.cache_creation_tokens,
                         "cache_read_tokens": request.cache_read_tokens,
-                        "total_cost_usd": request.total_cost_usd,
                     },
                     "response_time_ms": response_time_ms,
                 }

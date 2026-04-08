@@ -1208,5 +1208,3 @@ steps:
 
             assert result.exit_code == 0
             assert custom_output.exists()
-
-

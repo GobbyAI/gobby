@@ -393,7 +393,6 @@ class TestCLIChatSessionProtocolConformance:
         assert session._plan_approval_completed is False
         assert session._context_window_overrides == {}
         assert session._accumulated_output_tokens == 0
-        assert session._accumulated_cost_usd == 0.0
         assert session._message_manager_source_session_id is None
         assert session._needs_history_injection is False
         assert session._message_manager is None

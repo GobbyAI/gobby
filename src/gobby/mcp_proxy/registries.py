@@ -202,15 +202,15 @@ def setup_internal_registries(
     if metrics_manager is not None:
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry
 
-        # Get daily budget from metrics config
-        daily_budget_usd = 50.0  # Default
+        # Get daily token budget from metrics config
+        daily_budget_tokens = 10_000_000  # Default: 10M tokens
         if _config is not None:
-            daily_budget_usd = _config.metrics.daily_budget_usd
+            daily_budget_tokens = _config.metrics.daily_budget_tokens
 
         metrics_registry = create_metrics_registry(
             metrics_manager=metrics_manager,
             session_storage=local_session_manager,
-            daily_budget_usd=daily_budget_usd,
+            daily_budget_tokens=daily_budget_tokens,
             event_store=metrics_manager.event_store,
         )
         manager.add_registry(metrics_registry)

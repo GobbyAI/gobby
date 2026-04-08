@@ -800,7 +800,6 @@ class LocalSessionManager:
         output_tokens: int,
         cache_creation_tokens: int,
         cache_read_tokens: int,
-        total_cost_usd: float,
         context_window: int | None = None,
         model: str | None = None,
     ) -> bool:
@@ -812,7 +811,6 @@ class LocalSessionManager:
             usage_output_tokens = ?,
             usage_cache_creation_tokens = ?,
             usage_cache_read_tokens = ?,
-            usage_total_cost_usd = ?,
             context_window = COALESCE(?, context_window),
             model = COALESCE(?, model),
             updated_at = datetime('now')
@@ -827,7 +825,6 @@ class LocalSessionManager:
                         output_tokens,
                         cache_creation_tokens,
                         cache_read_tokens,
-                        total_cost_usd,
                         context_window,
                         model,
                         session_id,
@@ -836,38 +833,6 @@ class LocalSessionManager:
                 return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Failed to update session usage {session_id}: {e}")
-            return False
-
-    def add_cost(self, session_id: str, cost_usd: float) -> bool:
-        """
-        Add cost to the session's usage_total_cost_usd.
-
-        This is used for internal agent runs that track cost via CostInfo.
-        Unlike update_usage which overwrites, this method adds to the existing cost.
-
-        Args:
-            session_id: Session ID to update.
-            cost_usd: Cost in USD to add.
-
-        Returns:
-            True if update succeeded, False otherwise.
-        """
-        if cost_usd <= 0:
-            return True  # Nothing to add
-
-        query = """
-        UPDATE sessions
-        SET
-            usage_total_cost_usd = COALESCE(usage_total_cost_usd, 0) + ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-        """
-        try:
-            with self.db.transaction():
-                cursor = self.db.execute(query, (cost_usd, session_id))
-                return cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Failed to add cost to session {session_id}: {e}")
             return False
 
     def get_sessions_since(

@@ -82,7 +82,6 @@ class MiscEventHandlerMixin(EventHandlersBase):
                             output_tokens=output_tokens,
                             cache_creation_tokens=0,  # Gemini doesn't always split these here
                             cache_read_tokens=0,
-                            total_cost_usd=0.0,  # We don't have pricing info here yet
                             model=model_name,
                         )
                         self.logger.debug(

@@ -1,11 +1,5 @@
 import { useSavings } from '../../hooks/useSavings'
-
-function formatUsd(value: number): string {
-  if (value >= 1) return `$${value.toFixed(2)}`
-  if (value >= 0.01) return `$${value.toFixed(3)}`
-  if (value > 0) return `$${value.toFixed(4)}`
-  return '$0.00'
-}
+import { useUsage } from '../../hooks/useUsage'
 
 function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
@@ -26,6 +20,16 @@ interface Props {
 
 export function SavingsCard({ hours, projectId }: Props) {
   const { data } = useSavings(hours, projectId)
+  const { data: usageData } = useUsage(hours, projectId)
+
+  const tokensSaved = data?.total_tokens_saved ?? 0
+  const tokensSpent = usageData
+    ? usageData.totals.input_tokens + usageData.totals.output_tokens
+    : 0
+  const totalWork = tokensSpent + tokensSaved
+  const efficiencyPct = totalWork > 0
+    ? Math.round((tokensSaved / totalWork) * 100)
+    : 0
 
   const categories = data?.categories ?? {}
 
@@ -35,24 +39,24 @@ export function SavingsCard({ hours, projectId }: Props) {
         <h3 className="dash-card-title">Savings</h3>
       </div>
       <div className="dash-card-body">
-        <div className="dash-stat-grid">
-          <div className="dash-stat">
-            <span className="dash-stat-value">
-              {formatUsd(data?.total_cost_saved_usd ?? 0)}
+        <div className="dash-big-stat" style={{ color: '#22c55e' }}>
+          {formatTokens(tokensSaved)}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12 }}>
+          Tokens Saved
+          {efficiencyPct > 0 && (
+            <span style={{
+              marginLeft: 8,
+              color: efficiencyPct > 20 ? '#22c55e' : efficiencyPct > 10 ? '#f59e0b' : 'var(--text-secondary)',
+            }}>
+              {efficiencyPct}% efficiency
             </span>
-            <span className="dash-stat-label">Cost Saved</span>
-          </div>
+          )}
+        </div>
+        <div className="dash-stat-grid" style={{ gridTemplateColumns: '1fr' }}>
           <div className="dash-stat">
-            <span className="dash-stat-value">
-              {formatTokens(data?.total_tokens_saved ?? 0)}
-            </span>
-            <span className="dash-stat-label">Tokens Saved</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">
-              {data?.total_events ?? 0}
-            </span>
-            <span className="dash-stat-label">Events</span>
+            <span className="dash-stat-value">{data?.total_events ?? 0}</span>
+            <span className="dash-stat-label">Savings Events</span>
           </div>
         </div>
         {Object.keys(categories).length > 0 && (

@@ -1,6 +1,6 @@
-"""OpenRouter-backed model registry for cost, context, and discovery data.
+"""OpenRouter-backed model registry for context window and metadata.
 
-Replaces LiteLLM's model_cost registry with OpenRouter's public API
+Fetches model data from OpenRouter's public API
 (GET https://openrouter.ai/api/v1/models — no auth required).
 
 Data is fetched synchronously at daemon startup (before the event loop)
@@ -13,8 +13,12 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -40,38 +44,6 @@ class ModelInfo:
     provider: str  # Gobby provider name (claude, codex, gemini)
     context_length: int
     max_completion_tokens: int | None
-    input_cost_per_token: float
-    output_cost_per_token: float
-    cache_read_cost_per_token: float | None = None
-    cache_creation_cost_per_token: float | None = None
-
-
-def _parse_pricing(
-    pricing: dict[str, str | None] | None,
-) -> tuple[float, float, float | None, float | None]:
-    """Parse OpenRouter pricing dict (string values) to floats.
-
-    Returns (input, output, cache_read, cache_write). Pricing strings
-    are per-token USD (e.g. "0.000005"). Missing or unparseable values
-    default to 0.0 for required fields, None for optional cache fields.
-    """
-    if not pricing:
-        return 0.0, 0.0, None, None
-
-    def _to_float(val: str | None) -> float | None:
-        if val is None:
-            return None
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return None
-
-    input_cost = _to_float(pricing.get("prompt")) or 0.0
-    output_cost = _to_float(pricing.get("completion")) or 0.0
-    cache_read = _to_float(pricing.get("input_cache_read"))
-    cache_write = _to_float(pricing.get("input_cache_write"))
-
-    return input_cost, output_cost, cache_read, cache_write
 
 
 def _provider_for_model(model_id: str) -> str | None:
@@ -115,12 +87,6 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
         if provider is None:
             continue
 
-        input_cost, output_cost, cache_read, cache_write = _parse_pricing(entry.get("pricing"))
-
-        # Skip zero-cost models (free tiers, not useful for cost tracking)
-        if input_cost == 0.0 and output_cost == 0.0:
-            continue
-
         top_provider = entry.get("top_provider") or {}
         if not isinstance(top_provider, dict):
             top_provider = {}
@@ -134,15 +100,39 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
                 provider=provider,
                 context_length=context_length,
                 max_completion_tokens=max_completion,
-                input_cost_per_token=input_cost,
-                output_cost_per_token=output_cost,
-                cache_read_cost_per_token=cache_read,
-                cache_creation_cost_per_token=cache_write,
             )
         )
 
     logger.info(f"Fetched {len(models)} models from OpenRouter")
     return models
+
+
+def lookup_context_window(model: str, db: DatabaseProtocol | None = None) -> int | None:
+    """Look up context window size for a model.
+
+    Uses ModelCostStore for DB-backed lookup with prefix matching.
+    Falls back to the module-level cache if no DB is provided.
+    """
+    if db is not None:
+        from gobby.storage.model_costs import ModelCostStore
+
+        store = ModelCostStore(db)
+        return store.get_context_window(model)
+
+    # Fallback: try to get DB from app context
+    try:
+        from gobby.app_context import get_app_context
+
+        ctx = get_app_context()
+        if ctx and ctx.database:
+            from gobby.storage.model_costs import ModelCostStore
+
+            store = ModelCostStore(ctx.database)
+            return store.get_context_window(model)
+    except Exception:
+        pass
+
+    return None
 
 
 def group_by_provider(models: list[ModelInfo]) -> dict[str, list[ModelInfo]]:

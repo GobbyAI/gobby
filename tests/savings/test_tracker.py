@@ -19,7 +19,6 @@ def db(tmp_path) -> LocalDatabase:
         original_tokens INTEGER NOT NULL,
         actual_tokens INTEGER NOT NULL,
         tokens_saved INTEGER NOT NULL,
-        cost_saved_usd REAL,
         model TEXT,
         metadata TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -91,7 +90,6 @@ class TestSavingsTracker:
     def test_empty_summary(self, tracker: SavingsTracker) -> None:
         summary = tracker.get_summary(days=1)
         assert summary["total_tokens_saved"] == 0
-        assert summary["total_cost_saved_usd"] == 0.0
         assert summary["total_events"] == 0
         assert summary["categories"] == {}
 

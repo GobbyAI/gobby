@@ -423,5 +423,7 @@ class TestHealthCheck:
     def test_returns_false_on_runtime_error(self, mock_run: MagicMock) -> None:
         from gobby.cli.installers.embedding import _health_check_embedding
 
-        mock_run.side_effect = RuntimeError("asyncio.run() cannot be called from a running event loop")
+        mock_run.side_effect = RuntimeError(
+            "asyncio.run() cannot be called from a running event loop"
+        )
         assert _health_check_embedding("model", "http://x/v1") is False

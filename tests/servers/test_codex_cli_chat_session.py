@@ -59,15 +59,23 @@ def _handshake_lines(thread_id: str = "thread-1") -> list[str]:
     """Return stdout lines for initialize + thread/start handshake."""
     return [
         # initialize response
-        json.dumps({
-            "jsonrpc": "2.0", "id": 1,
-            "result": {"userAgent": "Codex/1.0", "codexHome": "/tmp/.codex"},
-        }) + "\n",
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"userAgent": "Codex/1.0", "codexHome": "/tmp/.codex"},
+            }
+        )
+        + "\n",
         # thread/start response
-        json.dumps({
-            "jsonrpc": "2.0", "id": 2,
-            "result": {"threadId": thread_id, "status": "active"},
-        }) + "\n",
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"threadId": thread_id, "status": "active"},
+            }
+        )
+        + "\n",
     ]
 
 
@@ -87,8 +95,12 @@ class TestCodexCLIChatSession:
     async def test_start_spawns_app_server_and_handshakes(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         with (
-            patch("gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"),
-            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc) as mock_exec,
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
+            patch(
+                "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc
+            ) as mock_exec,
         ):
             session = CodexCLIChatSession(conversation_id="conv-1")
             await session.start()
@@ -113,7 +125,9 @@ class TestCodexCLIChatSession:
     async def test_start_with_model(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         with (
-            patch("gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"),
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
         ):
             session = CodexCLIChatSession(conversation_id="conv-1", model="o4-mini")
@@ -136,27 +150,40 @@ class TestCodexCLIChatSession:
             # turn/start acknowledgment
             json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"turnId": "turn-1"}}) + "\n",
             # Streaming deltas
-            json.dumps({
-                "jsonrpc": "2.0",
-                "method": "agent/messageDelta",
-                "params": {"delta": "Hello "},
-            }) + "\n",
-            json.dumps({
-                "jsonrpc": "2.0",
-                "method": "agent/messageDelta",
-                "params": {"delta": "world!"},
-            }) + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "agent/messageDelta",
+                    "params": {"delta": "Hello "},
+                }
+            )
+            + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "agent/messageDelta",
+                    "params": {"delta": "world!"},
+                }
+            )
+            + "\n",
             # Turn completed
-            json.dumps({
-                "jsonrpc": "2.0",
-                "method": "turn/completed",
-                "params": {"usage": {"input_tokens": 10, "output_tokens": 5, "cost_usd": 0.001}},
-            }) + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "turn/completed",
+                    "params": {
+                        "usage": {"input_tokens": 10, "output_tokens": 5, "cost_usd": 0.001}
+                    },
+                }
+            )
+            + "\n",
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
 
         with (
-            patch("gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"),
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
         ):
             session = CodexCLIChatSession(conversation_id="conv-1")
@@ -188,15 +215,21 @@ class TestCodexCLIChatSession:
     async def test_send_message_handles_error_response(self) -> None:
         """Error in turn/start response yields TextChunk + DoneEvent."""
         error_lines = [
-            json.dumps({
-                "jsonrpc": "2.0", "id": 3,
-                "error": {"code": -32001, "message": "Server overloaded"},
-            }) + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "error": {"code": -32001, "message": "Server overloaded"},
+                }
+            )
+            + "\n",
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + error_lines)
 
         with (
-            patch("gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"),
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
         ):
             session = CodexCLIChatSession(conversation_id="conv-1")
@@ -212,7 +245,9 @@ class TestCodexCLIChatSession:
     async def test_stop_terminates(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         with (
-            patch("gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"),
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
         ):
             session = CodexCLIChatSession(conversation_id="conv-1")
@@ -232,7 +267,9 @@ class TestCodexCLIChatSession:
     async def test_interrupt_sends_cancel(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         with (
-            patch("gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"),
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
         ):
             session = CodexCLIChatSession(conversation_id="conv-1")

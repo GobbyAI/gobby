@@ -813,7 +813,25 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Remove pending_plan_path from sessions table",
         lambda db: _drop_column_if_exists(db, "sessions", "pending_plan_path"),
     ),
+    (
+        204,
+        "Remove USD cost tracking columns — tokens are the only unit now",
+        lambda db: _remove_usd_columns(db),
+    ),
 ]
+
+
+def _remove_usd_columns(db: LocalDatabase) -> None:
+    """Drop all USD-related columns from sessions, savings_ledger, and model_costs."""
+    for table, column in [
+        ("sessions", "usage_total_cost_usd"),
+        ("savings_ledger", "cost_saved_usd"),
+        ("model_costs", "input_cost_per_token"),
+        ("model_costs", "output_cost_per_token"),
+        ("model_costs", "cache_read_cost_per_token"),
+        ("model_costs", "cache_creation_cost_per_token"),
+    ]:
+        _drop_column_if_exists(db, table, column)
 
 
 def get_current_version(db: LocalDatabase) -> int:

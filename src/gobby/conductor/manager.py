@@ -30,7 +30,7 @@ that keeps development moving forward.
 ## On Each Tick
 1. Check task state: use `list_tasks` and `suggest_next_task` to find ready work
 2. Check pipeline state: use `get_pipeline_status` to find stalled or waiting pipelines
-3. Check budget: use `get_budget_status` to verify token/cost limits
+3. Check budget: use `get_budget_status` to verify token budget limits
 4. Dispatch agents: use `spawn_agent` or `dispatch_batch` for ready tasks
 5. Report: briefly summarize what you did or found
 

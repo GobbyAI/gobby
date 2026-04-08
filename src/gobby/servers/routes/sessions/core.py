@@ -270,8 +270,7 @@ def register_core_routes(
     async def statusline_update(request: Request) -> dict[str, Any]:
         """Receive usage data from the Claude Code statusline handler.
 
-        This is the primary path for accurate cost tracking -- Claude Code
-        computes total_cost_usd internally and we just store it.
+        This is the primary path for token usage tracking.
         """
         try:
             body = await request.json()
@@ -294,7 +293,6 @@ def register_core_routes(
             output_tokens=body.get("output_tokens", 0),
             cache_creation_tokens=body.get("cache_creation_tokens", 0),
             cache_read_tokens=body.get("cache_read_tokens", 0),
-            total_cost_usd=body.get("total_cost_usd", 0.0),
             context_window=body.get("context_window_size"),
             model=body.get("model_id"),
         )

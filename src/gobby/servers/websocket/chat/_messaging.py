@@ -734,10 +734,6 @@ class ChatMessagingMixin:
                                 new_output = prev_output + (event.output_tokens or 0)
                                 session._accumulated_output_tokens = new_output
 
-                                prev_cost = getattr(session, "_accumulated_cost_usd", 0.0)
-                                new_cost = prev_cost + (event.cost_usd or 0.0)
-                                session._accumulated_cost_usd = new_cost
-
                                 await asyncio.to_thread(
                                     session_manager.update_usage,
                                     db_sid,
@@ -745,7 +741,6 @@ class ChatMessagingMixin:
                                     output_tokens=new_output,
                                     cache_creation_tokens=event.cache_creation_input_tokens or 0,
                                     cache_read_tokens=event.cache_read_input_tokens or 0,
-                                    total_cost_usd=new_cost,
                                     context_window=event.context_window,
                                     model=getattr(session, "_last_model", None),
                                 )

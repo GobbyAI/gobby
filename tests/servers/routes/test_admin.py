@@ -327,18 +327,14 @@ class TestDiscoverModels:
                 "claude",
                 200000,
                 64000,
-                0.8e-6,
-                4e-6,
             ),
-            ModelInfo("openai/gpt-4o", "OpenAI: GPT-4o", "codex", 128000, 16384, 2.5e-6, 10e-6),
+            ModelInfo("openai/gpt-4o", "OpenAI: GPT-4o", "codex", 128000, 16384),
             ModelInfo(
                 "google/gemini-2.5-pro",
                 "Google: Gemini 2.5 Pro",
                 "gemini",
                 1000000,
                 65536,
-                1.25e-6,
-                10e-6,
             ),
         ]
 
@@ -372,8 +368,6 @@ class TestDiscoverModels:
                 "claude",
                 200000,
                 64000,
-                3e-6,
-                15e-6,
             ),
         ]
 
@@ -719,7 +713,6 @@ class TestTestEndpoints:
                 "output_tokens": 500,
                 "cache_creation_tokens": 200,
                 "cache_read_tokens": 100,
-                "total_cost_usd": 0.05,
             },
         )
         assert response.status_code == 200
@@ -729,7 +722,6 @@ class TestTestEndpoints:
         assert data["session_id"] == "sess-1"
         assert data["usage_set"]["input_tokens"] == 1000
         assert data["usage_set"]["output_tokens"] == 500
-        assert data["usage_set"]["total_cost_usd"] == 0.05
 
         mock_server.session_manager.update_usage.assert_called_once_with(
             session_id="sess-1",
@@ -737,7 +729,6 @@ class TestTestEndpoints:
             output_tokens=500,
             cache_creation_tokens=200,
             cache_read_tokens=100,
-            total_cost_usd=0.05,
         )
 
     def test_set_session_usage_not_found(self, client, mock_server) -> None:
@@ -767,7 +758,6 @@ class TestTestEndpoints:
         assert data["status"] == "success"
         assert data["usage_set"]["input_tokens"] == 0
         assert data["usage_set"]["output_tokens"] == 0
-        assert data["usage_set"]["total_cost_usd"] == 0.0
 
     def test_set_session_usage_forbidden_when_not_test_mode(self, mock_server) -> None:
         mock_server.test_mode = False

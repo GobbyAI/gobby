@@ -854,16 +854,12 @@ class TestBuildAndSetProjectContext:
         finally:
             _current_project_context.reset(token)
 
-    def test_warns_on_id_mismatch(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_warns_on_id_mismatch(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Warns and uses filesystem ID when DB and filesystem disagree."""
         monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
         gobby_dir = tmp_path / ".gobby"
         gobby_dir.mkdir()
-        (gobby_dir / "project.json").write_text(
-            json.dumps({"id": "fs-id", "name": "my-project"})
-        )
+        (gobby_dir / "project.json").write_text(json.dumps({"id": "fs-id", "name": "my-project"}))
 
         project = MagicMock()
         project.id = "db-id"
@@ -892,9 +888,7 @@ class TestSetProjectContextFromRef:
         mock_project.repo_path = None
 
         mock_db = MagicMock()
-        with patch(
-            "gobby.storage.projects.LocalProjectManager"
-        ) as MockPM:
+        with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
             MockPM.return_value.resolve_ref.return_value = mock_project
             token = set_project_context_from_ref("uuid-123", mock_db)
 
@@ -916,9 +910,7 @@ class TestSetProjectContextFromRef:
         mock_project.repo_path = None
 
         mock_db = MagicMock()
-        with patch(
-            "gobby.storage.projects.LocalProjectManager"
-        ) as MockPM:
+        with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
             MockPM.return_value.resolve_ref.return_value = mock_project
             token = set_project_context_from_ref("gobby", mock_db)
 
@@ -934,17 +926,13 @@ class TestSetProjectContextFromRef:
     def test_returns_none_when_not_found(self) -> None:
         """Returns None when project ref doesn't resolve."""
         mock_db = MagicMock()
-        with patch(
-            "gobby.storage.projects.LocalProjectManager"
-        ) as MockPM:
+        with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
             MockPM.return_value.resolve_ref.return_value = None
             token = set_project_context_from_ref("nonexistent", mock_db)
 
         assert token is None
 
-    def test_refactored_session_path_unchanged(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_refactored_session_path_unchanged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """set_project_context_from_session still produces correct output after refactor."""
         monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
         mock_session = MagicMock()
@@ -959,9 +947,7 @@ class TestSetProjectContextFromRef:
         mock_session_manager.get.return_value = mock_session
 
         mock_db = MagicMock()
-        with patch(
-            "gobby.storage.projects.LocalProjectManager"
-        ) as MockPM:
+        with patch("gobby.storage.projects.LocalProjectManager") as MockPM:
             MockPM.return_value.get.return_value = mock_project
             token = set_project_context_from_session("sess-1", mock_session_manager, mock_db)
 

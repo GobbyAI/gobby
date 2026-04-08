@@ -53,7 +53,6 @@ class ChatSessionProtocol(Protocol):
     _plan_approval_completed: bool
     _context_window_overrides: dict[str, int]
     _accumulated_output_tokens: int
-    _accumulated_cost_usd: float
     _message_manager_source_session_id: str | None
     _needs_history_injection: bool
     _message_manager: Any

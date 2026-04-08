@@ -93,9 +93,9 @@ class TestConductorLifecycle:
         budget = result.get("budget", {})
 
         # Verify expected fields
-        assert "daily_budget_usd" in budget, f"Missing daily_budget_usd: {result}"
-        assert "used_today_usd" in budget, f"Missing used_today_usd: {result}"
-        assert "remaining_usd" in budget, f"Missing remaining_usd: {result}"
+        assert "daily_budget_tokens" in budget, f"Missing daily_budget_tokens: {result}"
+        assert "used_today_tokens" in budget, f"Missing used_today_tokens: {result}"
+        assert "remaining_tokens" in budget, f"Missing remaining_tokens: {result}"
         assert "percentage_used" in budget, f"Missing percentage_used: {result}"
         assert "over_budget" in budget, f"Missing over_budget: {result}"
 
@@ -206,7 +206,6 @@ class TestAutonomousSpawningGate:
             session_id=session_id,
             input_tokens=1000,
             output_tokens=500,
-            total_cost_usd=0.10,  # $0.10 - well under $1.00 budget
         )
         assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
 
@@ -311,10 +310,10 @@ class TestAutonomousThrottling:
         """Test that exceeding budget would block autonomous spawning.
 
         Config has:
-        - daily_budget_usd: 1.0
+        - daily_budget_tokens: 10_000_000
         - throttle_threshold: 0.9 (90%)
 
-        So spawning is blocked when usage >= $0.90
+        So spawning is blocked when token usage >= 9_000_000
         """
         # Setup - register project and session
         project_result = cli_events.register_test_project(
@@ -333,12 +332,11 @@ class TestAutonomousThrottling:
         )
         session_id = session_result["id"]
 
-        # Set high usage (exceeds $1.00 budget)
+        # Set high usage (exceeds 10M token budget)
         usage_result = cli_events.set_session_usage(
             session_id=session_id,
-            input_tokens=100000,
-            output_tokens=50000,
-            total_cost_usd=1.50,  # $1.50 - over $1.00 budget
+            input_tokens=6_000_000,
+            output_tokens=5_000_000,
         )
         assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
 
@@ -384,9 +382,8 @@ class TestAutonomousThrottling:
         # Set very high usage
         cli_events.set_session_usage(
             session_id=session_id,
-            input_tokens=500000,
-            output_tokens=250000,
-            total_cost_usd=5.00,  # $5.00 - way over budget
+            input_tokens=6_000_000,
+            output_tokens=5_000_000,
         )
 
         # Both budget status and usage report should still work

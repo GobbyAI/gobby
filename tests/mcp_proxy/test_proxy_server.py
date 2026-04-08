@@ -366,12 +366,13 @@ async def test_call_tool_with_project_id_override(daemon_tools):
 
     mock_token = sentinel.token
 
-    with patch(
-        "gobby.utils.project_context.set_project_context_from_ref",
-        return_value=mock_token,
-    ) as mock_ref, patch(
-        "gobby.utils.project_context.reset_project_context"
-    ) as mock_reset:
+    with (
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value=mock_token,
+        ) as mock_ref,
+        patch("gobby.utils.project_context.reset_project_context") as mock_reset,
+    ):
         result = await daemon_tools.call_tool(
             "gobby-tasks", "list_tasks", {}, project_id="other-project"
         )
@@ -436,11 +437,14 @@ async def test_call_tool_project_id_priority_over_session(daemon_tools):
 
     mock_token = sentinel.token
 
-    with patch(
-        "gobby.utils.project_context.set_project_context_from_ref",
-        return_value=mock_token,
-    ) as mock_ref, patch(
-        "gobby.utils.project_context.reset_project_context",
+    with (
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value=mock_token,
+        ) as mock_ref,
+        patch(
+            "gobby.utils.project_context.reset_project_context",
+        ),
     ):
         result = await daemon_tools.call_tool(
             "gobby-tasks",
@@ -466,11 +470,14 @@ async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
     mock_sm.db = MagicMock()
     daemon_tools._session_manager = mock_sm
 
-    with patch(
-        "gobby.utils.project_context.set_project_context_from_ref",
-        return_value=sentinel.token,
-    ), patch(
-        "gobby.utils.project_context.reset_project_context",
+    with (
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value=sentinel.token,
+        ),
+        patch(
+            "gobby.utils.project_context.reset_project_context",
+        ),
     ):
         await daemon_tools.call_tool(
             "gobby-tasks",

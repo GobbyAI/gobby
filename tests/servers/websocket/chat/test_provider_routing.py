@@ -41,7 +41,6 @@ def _make_mixin(**overrides: Any) -> ChatSessionMixin:
             seq_num=12,
             usage_output_tokens=0,
             chat_mode="code",
-            usage_total_cost_usd=0.0,
             approved_tools_json=None,
         )
     )

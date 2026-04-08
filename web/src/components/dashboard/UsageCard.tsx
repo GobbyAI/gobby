@@ -8,13 +8,6 @@ function formatTokens(tokens: number): string {
   return String(tokens)
 }
 
-function formatUsd(value: number): string {
-  if (value >= 1) return `$${value.toFixed(2)}`
-  if (value >= 0.01) return `$${value.toFixed(3)}`
-  if (value > 0) return `$${value.toFixed(4)}`
-  return '$0.00'
-}
-
 interface Props {
   hours: number
   projectId?: string
@@ -26,11 +19,13 @@ export function UsageCard({ hours, projectId }: Props) {
   const totals = data?.totals ?? {
     input_tokens: 0, output_tokens: 0,
     cache_read_tokens: 0, cache_creation_tokens: 0,
-    cost_usd: 0, session_count: 0,
+    session_count: 0,
   }
 
   const bySource = data?.by_source ?? {}
   const byModel = data?.by_model ?? {}
+
+  const totalTokens = totals.input_tokens + totals.output_tokens
 
   // Filter out sources with no usage
   const sourceEntries = Object.entries(bySource)
@@ -51,20 +46,20 @@ export function UsageCard({ hours, projectId }: Props) {
       <div className="dash-card-body">
         <div className="dash-stat-grid">
           <div className="dash-stat">
+            <span className="dash-stat-value">{formatTokens(totalTokens)}</span>
+            <span className="dash-stat-label">Total Tokens</span>
+          </div>
+          <div className="dash-stat">
+            <span className="dash-stat-value">{totals.session_count}</span>
+            <span className="dash-stat-label">Sessions</span>
+          </div>
+          <div className="dash-stat">
             <span className="dash-stat-value">{formatTokens(totals.input_tokens)}</span>
             <span className="dash-stat-label">Input Tokens</span>
           </div>
           <div className="dash-stat">
             <span className="dash-stat-value">{formatTokens(totals.output_tokens)}</span>
             <span className="dash-stat-label">Output Tokens</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">{formatUsd(totals.cost_usd)}</span>
-            <span className="dash-stat-label">Total Cost</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">{totals.session_count}</span>
-            <span className="dash-stat-label">Sessions</span>
           </div>
         </div>
 
@@ -76,7 +71,7 @@ export function UsageCard({ hours, projectId }: Props) {
                   {SOURCE_LABELS[src] ?? src}
                 </span>
                 <span className="dash-breakdown-value">
-                  {formatTokens(usage.input_tokens + usage.output_tokens)} &middot; {formatUsd(usage.cost_usd)}
+                  {formatTokens(usage.input_tokens + usage.output_tokens)}
                 </span>
               </div>
             ))}

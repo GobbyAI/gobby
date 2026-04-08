@@ -188,7 +188,6 @@ CREATE TABLE sessions (
     usage_output_tokens INTEGER DEFAULT 0,
     usage_cache_creation_tokens INTEGER DEFAULT 0,
     usage_cache_read_tokens INTEGER DEFAULT 0,
-    usage_total_cost_usd REAL DEFAULT 0.0,
     context_window INTEGER,
     terminal_context TEXT,
     seq_num INTEGER,
@@ -791,10 +790,6 @@ CREATE INDEX idx_auth_sessions_expires ON auth_sessions(expires_at);
 CREATE TABLE model_costs (
     model TEXT PRIMARY KEY,
     provider TEXT,
-    input_cost_per_token REAL NOT NULL,
-    output_cost_per_token REAL NOT NULL,
-    cache_read_cost_per_token REAL,
-    cache_creation_cost_per_token REAL,
     context_length INTEGER,
     max_completion_tokens INTEGER,
     source TEXT NOT NULL DEFAULT 'registry',
@@ -809,7 +804,6 @@ CREATE TABLE savings_ledger (
     original_tokens INTEGER NOT NULL,
     actual_tokens INTEGER NOT NULL,
     tokens_saved INTEGER NOT NULL,
-    cost_saved_usd REAL,
     model TEXT,
     metadata TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))

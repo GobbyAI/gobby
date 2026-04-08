@@ -102,7 +102,6 @@ class TestStatuslineEndpoint:
             output_tokens=6789,
             cache_creation_tokens=1000,
             cache_read_tokens=5000,
-            total_cost_usd=0.0423,
             context_window=200000,
             model="claude-opus-4-6",
         )
@@ -114,7 +113,6 @@ class TestStatuslineEndpoint:
             "/api/sessions/statusline",
             json={
                 "session_id": "unknown-session",
-                "total_cost_usd": 0.01,
             },
         )
 
@@ -126,7 +124,7 @@ class TestStatuslineEndpoint:
     def test_rejects_missing_session_id(self, client) -> None:
         response = client.post(
             "/api/sessions/statusline",
-            json={"total_cost_usd": 0.01},
+            json={"input_tokens": 100},
         )
         assert response.status_code == 400
 
@@ -147,7 +145,6 @@ class TestStatuslineEndpoint:
             "/api/sessions/statusline",
             json={
                 "session_id": "ext-123",
-                "total_cost_usd": 0.01,
             },
         )
 
@@ -158,7 +155,6 @@ class TestStatuslineEndpoint:
             output_tokens=0,
             cache_creation_tokens=0,
             cache_read_tokens=0,
-            total_cost_usd=0.01,
             context_window=None,
             model=None,
         )

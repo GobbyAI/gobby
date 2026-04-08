@@ -101,7 +101,6 @@ class CodexCLIChatSession:
         self._plan_approval_completed: bool = False
         self._context_window_overrides: dict[str, int] = {}
         self._accumulated_output_tokens: int = 0
-        self._accumulated_cost_usd: float = 0.0
         self._message_manager_source_session_id: str | None = None
         self._needs_history_injection: bool = False
         self._message_manager: Any = None

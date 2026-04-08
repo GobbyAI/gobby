@@ -231,16 +231,22 @@ class TestSend:
     async def test_send_yields_content_delta_from_notifications(self) -> None:
         # Notifications followed by final response
         notification_lines = [
-            json.dumps({
-                "jsonrpc": "2.0",
-                "method": "session/message",
-                "params": {"role": "assistant", "delta": True, "content": "Hello "},
-            }) + "\n",
-            json.dumps({
-                "jsonrpc": "2.0",
-                "method": "session/message",
-                "params": {"role": "assistant", "delta": True, "content": "world!"},
-            }) + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/message",
+                    "params": {"role": "assistant", "delta": True, "content": "Hello "},
+                }
+            )
+            + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/message",
+                    "params": {"role": "assistant", "delta": True, "content": "world!"},
+                }
+            )
+            + "\n",
             json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {"tokens": 10}}}) + "\n",
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
@@ -262,11 +268,16 @@ class TestSend:
 
     @pytest.mark.asyncio
     async def test_send_yields_error_from_response(self) -> None:
-        error_response = json.dumps({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "error": {"code": 429, "message": "rate limited"},
-        }) + "\n"
+        error_response = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "error": {"code": 429, "message": "rate limited"},
+                }
+            )
+            + "\n"
+        )
         proc = _mock_process(stdout_lines=_handshake_lines() + [error_response])
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
@@ -335,11 +346,14 @@ class TestSend:
     async def test_send_handles_init_notification(self) -> None:
         """Verify session/init notification during prompt is captured."""
         notification_lines = [
-            json.dumps({
-                "jsonrpc": "2.0",
-                "method": "session/init",
-                "params": {"session_id": "s1", "model": "gemini-2.5-pro"},
-            }) + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/init",
+                    "params": {"session_id": "s1", "model": "gemini-2.5-pro"},
+                }
+            )
+            + "\n",
             json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {}}}) + "\n",
         ]
         proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
@@ -455,9 +469,7 @@ class TestNormalizeNotification:
 
     def test_legacy_type_based_init(self) -> None:
         """Legacy format with 'type' field instead of 'method'."""
-        event = GeminiACPClient._normalize_notification(
-            {"type": "init", "session_id": "abc"}
-        )
+        event = GeminiACPClient._normalize_notification({"type": "init", "session_id": "abc"})
         assert event.event_type == "init"
         assert event.data["session_id"] == "abc"
 

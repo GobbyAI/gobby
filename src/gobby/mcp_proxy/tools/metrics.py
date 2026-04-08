@@ -21,7 +21,7 @@ from gobby.sessions.token_tracker import SessionTokenTracker
 def create_metrics_registry(
     metrics_manager: ToolMetricsManager,
     session_storage: Any | None = None,
-    daily_budget_usd: float = 50.0,
+    daily_budget_tokens: int = 10_000_000,
     event_store: MetricsEventStore | None = None,
 ) -> InternalToolRegistry:
     """
@@ -30,7 +30,7 @@ def create_metrics_registry(
     Args:
         metrics_manager: ToolMetricsManager instance
         session_storage: Optional LocalSessionManager for token/cost tracking
-        daily_budget_usd: Daily budget limit for token tracking (default: $50)
+        daily_budget_tokens: Daily budget limit in tokens (default: 10M)
 
     Returns:
         InternalToolRegistry with metrics tools registered
@@ -40,7 +40,7 @@ def create_metrics_registry(
     if session_storage is not None:
         token_tracker = SessionTokenTracker(
             session_storage=session_storage,
-            daily_budget_usd=daily_budget_usd,
+            daily_budget_tokens=daily_budget_tokens,
         )
     registry = InternalToolRegistry(
         name="gobby-metrics",
@@ -291,7 +291,7 @@ def create_metrics_registry(
     # Token/cost tracking tools (only available if session_storage provided)
     @registry.tool(
         name="get_usage_report",
-        description="Get token and cost usage report for a specified time period.",
+        description="Get token usage report for a specified time period.",
     )
     def get_usage_report(days: int = 1) -> dict[str, Any]:
         """
@@ -314,7 +314,7 @@ def create_metrics_registry(
 
     @registry.tool(
         name="get_budget_status",
-        description="Get current daily budget status including used amount and remaining budget.",
+        description="Get current daily token budget status including used and remaining tokens.",
     )
     def get_budget_status() -> dict[str, Any]:
         """

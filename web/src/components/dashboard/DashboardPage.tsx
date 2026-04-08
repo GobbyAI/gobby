@@ -8,6 +8,7 @@ import { MemoryCard } from './MemoryCard'
 import { SavingsCard } from './SavingsCard'
 import { UsageCard } from './UsageCard'
 import { MetricsChartsCard } from './MetricsChartsCard'
+import { TokenEfficiencyCard } from './TokenEfficiencyCard'
 import { TimeRangePills, rangeToHours, type TimeRange } from './TimeRangePills'
 import './DashboardPage.css'
 
@@ -78,7 +79,10 @@ export function DashboardPage() {
             <SavingsCard hours={hours} projectId={projectId} />
             <MemoryCard hours={hours} projectId={projectId} />
 
-            {/* Row 3: Metrics charts (full width) */}
+            {/* Row 3: Token efficiency chart (full width) */}
+            <TokenEfficiencyCard hours={hours} projectId={projectId} />
+
+            {/* Row 4: System metrics charts (full width) */}
             <MetricsChartsCard hours={hours} />
           </div>
         ) : null}

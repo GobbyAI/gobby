@@ -25,7 +25,6 @@ MOCK_SESSION = Session(
     parent_session_id=None,
     created_at=datetime.now(UTC).isoformat(),
     updated_at=datetime.now(UTC).isoformat(),
-    usage_total_cost_usd=0.02,
     seq_num=42,
 )
 
@@ -60,7 +59,6 @@ def test_list_sessions_populated(mock_session_manager) -> None:
     assert "●" in result.output
     assert "#42" in result.output
     assert "Test Session" in result.output
-    assert "$0.02" in result.output  # formatted cost
 
 
 def test_show_session_found(mock_session_manager) -> None:

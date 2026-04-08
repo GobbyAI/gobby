@@ -85,7 +85,6 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
     _plan_approval_completed: bool = field(default=False, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
     _accumulated_output_tokens: int = field(default=0, repr=False)
-    _accumulated_cost_usd: float = field(default=0.0, repr=False)
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
     _needs_history_injection: bool = field(default=False, repr=False)
     _message_manager: Any | None = field(default=None, repr=False)

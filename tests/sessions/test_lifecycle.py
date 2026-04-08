@@ -649,7 +649,7 @@ class TestProcessSessionTranscriptJsonDispatch:
 
         msg = MagicMock(spec=ParsedMessage)
         msg.model = "gemini-2.5-pro"
-        msg.usage = TokenUsage(input_tokens=100, output_tokens=50, total_cost_usd=None)
+        msg.usage = TokenUsage(input_tokens=100, output_tokens=50)
 
         with patch("gobby.sessions.lifecycle.GeminiTranscriptParser") as MockParser:
             MockParser.return_value.parse_session_json.return_value = [msg]
@@ -729,7 +729,7 @@ class TestProcessSessionTranscriptTokenPreservation:
 
         msg = MagicMock(spec=ParsedMessage)
         msg.model = "claude-sonnet-4-6"
-        msg.usage = TokenUsage(input_tokens=8000, output_tokens=3000, total_cost_usd=0.05)
+        msg.usage = TokenUsage(input_tokens=8000, output_tokens=3000)
 
         with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = [msg]

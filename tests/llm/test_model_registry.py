@@ -8,7 +8,6 @@ import pytest
 
 from gobby.llm.model_registry import (
     ModelInfo,
-    _parse_pricing,
     _provider_for_model,
     fetch_models_sync,
     group_by_provider,
@@ -70,7 +69,7 @@ SAMPLE_OPENROUTER_RESPONSE = {
             "pricing": {"prompt": "0.000002", "completion": "0.000006"},
             "top_provider": {"context_length": 128000},
         },
-        # Should be filtered out — free model (zero cost)
+        # Not filtered — free models are no longer excluded (no cost tracking)
         {
             "id": "anthropic/claude-free",
             "name": "Free Claude",
@@ -80,44 +79,6 @@ SAMPLE_OPENROUTER_RESPONSE = {
         },
     ]
 }
-
-
-# -- _parse_pricing ----------------------------------------------------------
-
-
-class TestParsePricing:
-    def test_parses_string_values(self) -> None:
-        pricing = {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-        }
-        inp, out, cr, cw = _parse_pricing(pricing)
-        assert inp == 3e-6
-        assert out == 15e-6
-        assert cr == 3e-7
-        assert cw == 3.75e-6
-
-    def test_missing_cache_fields(self) -> None:
-        pricing = {"prompt": "0.000003", "completion": "0.000015"}
-        inp, out, cr, cw = _parse_pricing(pricing)
-        assert inp == 3e-6
-        assert out == 15e-6
-        assert cr is None
-        assert cw is None
-
-    def test_none_pricing(self) -> None:
-        assert _parse_pricing(None) == (0.0, 0.0, None, None)
-
-    def test_empty_pricing(self) -> None:
-        assert _parse_pricing({}) == (0.0, 0.0, None, None)
-
-    def test_unparseable_values(self) -> None:
-        pricing = {"prompt": "not-a-number", "completion": "also-bad"}
-        inp, out, cr, cw = _parse_pricing(pricing)
-        assert inp == 0.0
-        assert out == 0.0
 
 
 # -- _provider_for_model -----------------------------------------------------
@@ -153,8 +114,8 @@ class TestFetchModelsSync:
 
         models = fetch_models_sync()
 
-        # 3 valid models (mistral filtered by provider, free claude filtered by zero cost)
-        assert len(models) == 3
+        # 4 valid models (mistral filtered by provider, free claude passes through)
+        assert len(models) == 4
         providers = {m.provider for m in models}
         assert providers == {"claude", "codex", "gemini"}
 
@@ -166,16 +127,12 @@ class TestFetchModelsSync:
         mock_get.return_value = mock_response
 
         models = fetch_models_sync()
-        claude = next(m for m in models if m.provider == "claude")
+        claude = next(m for m in models if m.id == "anthropic/claude-sonnet-4-6")
 
         assert claude.id == "anthropic/claude-sonnet-4-6"
         assert claude.name == "Anthropic: Claude Sonnet 4.6"
         assert claude.context_length == 200000
         assert claude.max_completion_tokens == 64000
-        assert claude.input_cost_per_token == 3e-6
-        assert claude.output_cost_per_token == 15e-6
-        assert claude.cache_read_cost_per_token == 3e-7
-        assert claude.cache_creation_cost_per_token == 3.75e-6
 
     @patch("gobby.llm.model_registry.httpx.get")
     def test_network_failure_returns_empty(self, mock_get: MagicMock) -> None:
@@ -222,9 +179,9 @@ class TestFetchModelsSync:
 class TestGroupByProvider:
     def test_groups_correctly(self) -> None:
         models = [
-            ModelInfo("anthropic/a", "A", "claude", 100000, None, 1e-6, 5e-6),
-            ModelInfo("anthropic/b", "B", "claude", 200000, None, 3e-6, 15e-6),
-            ModelInfo("openai/c", "C", "codex", 128000, None, 2e-6, 10e-6),
+            ModelInfo("anthropic/a", "A", "claude", 100000, None),
+            ModelInfo("anthropic/b", "B", "claude", 200000, None),
+            ModelInfo("openai/c", "C", "codex", 128000, None),
         ]
         grouped = group_by_provider(models)
         assert len(grouped["claude"]) == 2

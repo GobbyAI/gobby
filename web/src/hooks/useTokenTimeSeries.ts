@@ -1,32 +1,28 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 
-export interface UsageTotals {
-  input_tokens: number
-  output_tokens: number
-  cache_read_tokens: number
-  cache_creation_tokens: number
-  session_count: number
+export interface TokenBucket {
+  timestamp: string
+  tokens_spent: number
+  tokens_saved: number
 }
 
-export interface UsageData {
+export interface TokenTimeSeriesData {
   hours: number
-  totals: UsageTotals
-  by_source: Record<string, UsageTotals>
-  by_model: Record<string, UsageTotals>
+  buckets: TokenBucket[]
 }
 
-export function useUsage(hours: number, projectId?: string) {
-  const [data, setData] = useState<UsageData | null>(null)
+export function useTokenTimeSeries(hours: number, projectId?: string) {
+  const [data, setData] = useState<TokenTimeSeriesData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  const fetchUsage = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      let url = `/api/admin/usage?hours=${hours}`
+      let url = `/api/admin/tokens/timeseries?hours=${hours}`
       if (projectId) url += `&project_id=${encodeURIComponent(projectId)}`
       const resp = await fetch(url, { signal: controller.signal })
       if (resp.ok) {
@@ -45,15 +41,15 @@ export function useUsage(hours: number, projectId?: string) {
 
   useEffect(() => {
     setIsLoading(true)
-    fetchUsage()
-      .catch((err) => { console.error('Usage fetch failed:', err) })
+    fetchData()
+      .catch((err) => { console.error('Token timeseries fetch failed:', err) })
       .finally(() => setIsLoading(false))
-    const interval = setInterval(fetchUsage, 30_000)
+    const interval = setInterval(fetchData, 30_000)
     return () => {
       clearInterval(interval)
       abortRef.current?.abort()
     }
-  }, [fetchUsage])
+  }, [fetchData])
 
   return { data, isLoading, error }
 }

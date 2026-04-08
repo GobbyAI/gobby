@@ -348,13 +348,13 @@ session_summary:
   summary_file_path: "{gobby_home}/session_summaries"
 
 conductor:
-  daily_budget_usd: 1.0
+  daily_budget_tokens: 10_000_000
   warning_threshold: 0.8
   throttle_threshold: 0.9
   tracking_window_days: 7
 
 metrics:
-  daily_budget_usd: 1.0
+  daily_budget_tokens: 10_000_000
 """
 
     config_path.write_text(config_content)
@@ -643,7 +643,6 @@ class CLIEventSimulator:
         output_tokens: int = 0,
         cache_creation_tokens: int = 0,
         cache_read_tokens: int = 0,
-        total_cost_usd: float = 0.0,
     ) -> dict[str, Any]:
         """Set usage statistics for a test session.
 
@@ -655,7 +654,6 @@ class CLIEventSimulator:
             "output_tokens": output_tokens,
             "cache_creation_tokens": cache_creation_tokens,
             "cache_read_tokens": cache_read_tokens,
-            "total_cost_usd": total_cost_usd,
         }
 
         response = self.client.post("/api/admin/test/set-session-usage", json=payload)

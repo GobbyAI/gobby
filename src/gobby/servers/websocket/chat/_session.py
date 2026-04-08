@@ -358,8 +358,6 @@ class ChatSessionMixin:
                     session.chat_mode = db_session.chat_mode
                 if db_session.usage_output_tokens:
                     session._accumulated_output_tokens = db_session.usage_output_tokens
-                if db_session.usage_total_cost_usd:
-                    session._accumulated_cost_usd = db_session.usage_total_cost_usd
                 if db_session.approved_tools_json:
                     try:
                         session._approved_tools = set(json.loads(db_session.approved_tools_json))
