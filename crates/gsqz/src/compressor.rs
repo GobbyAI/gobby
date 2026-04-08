@@ -1,5 +1,6 @@
 use regex::Regex;
 
+use crate::command_split;
 use crate::config::{Config, Step};
 use crate::primitives::{dedup, filter, group, match_output, replace, truncate};
 
@@ -91,19 +92,23 @@ impl Compressor {
             };
         }
 
-        // Find matching pipeline
+        // Find matching pipeline — try compound command segments in reverse
+        // (last command's output is most relevant)
         let mut lines: Vec<String> = output.lines().map(|l| format!("{}\n", l)).collect();
         let mut strategy_name = "fallback".to_string();
         let mut pipeline_on_empty: Option<&str> = None;
+        let segments = command_split::split_compound(command);
 
         let mut matched = false;
-        for pipeline in &self.pipelines {
-            if pipeline.regex.is_match(command) {
-                strategy_name = pipeline.name.clone();
-                lines = apply_steps(lines, &pipeline.steps);
-                pipeline_on_empty = pipeline.on_empty.as_deref();
-                matched = true;
-                break;
+        'outer: for segment in segments.iter().rev() {
+            for pipeline in &self.pipelines {
+                if pipeline.regex.is_match(segment) {
+                    strategy_name = pipeline.name.clone();
+                    lines = apply_steps(lines, &pipeline.steps);
+                    pipeline_on_empty = pipeline.on_empty.as_deref();
+                    matched = true;
+                    break 'outer;
+                }
             }
         }
 
@@ -435,5 +440,40 @@ mod tests {
         let output = lines.join("");
         let result = compressor.compress("cargo test", &output);
         assert!(!result.compressed.contains("[gsqz:"));
+    }
+
+    #[test]
+    fn test_compound_command_matches_last_segment() {
+        let compressor = Compressor::new(&test_config());
+        // "cargo build && cargo test" — last segment "cargo test" matches cargo-test pipeline
+        let mut lines: Vec<String> = (0..100)
+            .map(|i| format!("test test_{} ... ok\n", i))
+            .collect();
+        lines.push("test result: ok. 100 passed; 0 failed\n".into());
+        let output = lines.join("");
+        let result = compressor.compress("cargo build && cargo test", &output);
+        assert_eq!(result.strategy_name, "cargo-test");
+    }
+
+    #[test]
+    fn test_compound_single_command_unchanged() {
+        let compressor = Compressor::new(&test_config());
+        let output = (0..200)
+            .map(|i| format!("some random line number {}\n", i))
+            .collect::<String>();
+        // Single command behaves exactly as before
+        let result = compressor.compress("some-unknown-command", &output);
+        assert_eq!(result.strategy_name, "fallback");
+    }
+
+    #[test]
+    fn test_compound_falls_back_to_earlier_segment() {
+        let compressor = Compressor::new(&test_config());
+        // Last segment doesn't match any pipeline, first does
+        let output = (0..200)
+            .map(|i| format!(" M src/file_{}.rs\n", i))
+            .collect::<String>();
+        let result = compressor.compress("git status && unknown-cmd", &output);
+        assert_eq!(result.strategy_name, "git-status");
     }
 }

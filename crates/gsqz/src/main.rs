@@ -1,3 +1,4 @@
+mod command_split;
 mod compressor;
 mod config;
 mod daemon;
