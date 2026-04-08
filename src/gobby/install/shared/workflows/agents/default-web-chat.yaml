@@ -64,6 +64,12 @@ instructions: |
   - Format responses for web readability — use markdown headers, lists,
     and code blocks. Avoid terminal-centric formatting assumptions.
 
+  ## Skills
+  Skills are managed by Gobby via the gobby-skills MCP server, not the CLI's native skill system.
+  Do NOT use the Skill tool — it is for native CLI skills only.
+  - search_skills(query="...") on gobby-skills — find skills by topic
+  - get_skill(name="...") on gobby-skills — load a skill's full content
+
 # Interactive sessions should not use pipeline-only status transitions.
 # Agents should create, claim, close, or escalate tasks — not manage review gates.
 blocked_mcp_tools:
@@ -74,4 +80,6 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
+  skill_selectors:
+    include: []  # No skills auto-injected; on-demand via get_skill() MCP
   variables: {}

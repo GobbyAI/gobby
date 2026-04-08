@@ -1,0 +1,24 @@
+tags: [task-enforcement, enforcement, lifecycle, gobby, default]
+
+rules:
+  inject-task-creation-on-schema:
+    description: "Inject task-creation skill when agent fetches create/claim task schema"
+    event: after_tool
+    enabled: true
+    priority: 25
+    when: >
+      (event.data.get('mcp_tool') == 'get_tool_schema'
+       or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
+      and tool_input.get('server_name') == 'gobby-tasks'
+      and tool_input.get('tool_name') in ('create_task', 'claim_task')
+      and 'task-creation' not in variables.get('injected_skills', [])
+    effects:
+      - type: mcp_call
+        server: gobby-skills
+        tool: get_skill
+        arguments:
+          name: task-creation
+        inject_result: true
+      - type: set_variable
+        variable: injected_skills
+        value: "variables.get('injected_skills', []) + ['task-creation']"

@@ -9,12 +9,6 @@ rules:
     when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
     effects:
       - type: set_variable
-        variable: task_creation_loaded
-        value: false
-      - type: set_variable
-        variable: plan_skill_loaded
-        value: false
-      - type: set_variable
         variable: suggested_skill_names
         value: []
       - type: set_variable

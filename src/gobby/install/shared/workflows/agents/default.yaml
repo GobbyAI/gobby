@@ -37,6 +37,12 @@ instructions: |
   - Be concise — respect the reader's attention.
   - If you don't know something, say so and go find out.
 
+  ## Skills
+  Skills are managed by Gobby via the gobby-skills MCP server, not the CLI's native skill system.
+  Do NOT use the Skill tool — it is for native CLI skills only.
+  - search_skills(query="...") on gobby-skills — find skills by topic
+  - get_skill(name="...") on gobby-skills — load a skill's full content
+
 # Interactive sessions should not use pipeline-only status transitions.
 # Agents should create, claim, close, or escalate tasks — not manage review gates.
 blocked_mcp_tools:
@@ -47,8 +53,7 @@ workflows:
   rule_selectors:
     include:
       - "tag:default"
-  # skill_selectors intentionally omitted (null) — all enabled skills available.
+  skill_selectors:
+    include: []  # No skills auto-injected; on-demand via get_skill() MCP
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
-  # Rules are enforcement (explicit), skills/variables are permissive by default.
-  # Derived agents narrow skills via skill_selectors when they need lean context.
   variables: {}

@@ -1,0 +1,36 @@
+tags: [code-index, gobby, default]
+
+rules:
+  block-and-teach-code-index:
+    description: "Block first code file read/grep, inject code-index skill to teach gcode"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not variables.get('code_index_loaded')
+      and (
+        (event.data.get('tool_name') == 'Read'
+         and tool_input.get('file_path', '').rpartition('.')[2]
+             in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
+                 'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala'))
+        or event.data.get('tool_name', '').lower() in ('grep_search', 'grep')
+      )
+    conditions:
+      - "variables.get('code_index_available', False)"
+    effects:
+      - type: block
+        reason: >
+          This project is indexed with gcode. Use gcode for code navigation:
+          - `gcode outline path/to/file` — symbol map (much cheaper than Read)
+          - `gcode search "query"` — find symbols by name
+          - `gcode symbol <id>` — retrieve just the source you need
+          See the code-index skill injected below for full usage.
+      - type: mcp_call
+        server: gobby-skills
+        tool: get_skill
+        arguments:
+          name: code-index
+        inject_result: true
+      - type: set_variable
+        variable: code_index_loaded
+        value: true
