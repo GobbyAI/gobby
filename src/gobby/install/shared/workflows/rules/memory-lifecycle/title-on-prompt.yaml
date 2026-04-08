@@ -6,7 +6,7 @@ rules:
     event: before_agent
     enabled: true
     priority: 12
-    when: "not variables.get('session_title_set')"
+    when: "not variables.get('session_title_set') and len((event.data.get('prompt') or '').split()) >= 10"
     effects:
       - type: mcp_call
         server: gobby-sessions
