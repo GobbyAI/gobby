@@ -1,7 +1,7 @@
 use regex::Regex;
 
 use crate::config::{Config, Step};
-use crate::primitives::{dedup, filter, group, replace, truncate};
+use crate::primitives::{dedup, filter, group, match_output, replace, truncate};
 
 pub struct CompressionResult {
     pub compressed: String,
@@ -146,19 +146,26 @@ impl Compressor {
 
 fn apply_steps(mut lines: Vec<String>, steps: &[Step]) -> Vec<String> {
     for step in steps {
-        lines = match step {
-            Step::FilterLines(args) => filter::filter_lines(lines, &args.patterns),
-            Step::GroupLines(args) => group::group_lines(lines, &args.mode),
-            Step::Truncate(args) => truncate::truncate(
-                lines,
-                args.head,
-                args.tail,
-                args.per_file_lines,
-                &args.file_marker,
-            ),
-            Step::Dedup(_) => dedup::dedup(lines),
-            Step::Replace(args) => replace::replace(lines, &args.rules),
-        };
+        match step {
+            Step::MatchOutput(args) => {
+                if let Some(msg) = match_output::check(&lines, &args.rules) {
+                    return vec![format!("{}\n", msg)];
+                }
+            }
+            Step::FilterLines(args) => lines = filter::filter_lines(lines, &args.patterns),
+            Step::GroupLines(args) => lines = group::group_lines(lines, &args.mode),
+            Step::Truncate(args) => {
+                lines = truncate::truncate(
+                    lines,
+                    args.head,
+                    args.tail,
+                    args.per_file_lines,
+                    &args.file_marker,
+                )
+            }
+            Step::Dedup(_) => lines = dedup::dedup(lines),
+            Step::Replace(args) => lines = replace::replace(lines, &args.rules),
+        }
     }
     lines
 }
@@ -168,7 +175,7 @@ mod tests {
     use super::*;
 
     fn test_config() -> Config {
-        Config::load(None)
+        Config::builtin()
     }
 
     #[test]
@@ -283,5 +290,35 @@ mod tests {
         let output = lines.join("");
         let result = compressor.compress("cargo test", &output);
         assert_eq!(result.strategy_name, "cargo-test");
+    }
+
+    #[test]
+    fn test_match_output_short_circuits() {
+        let compressor = Compressor::new(&test_config());
+        // cargo-test pipeline has match_output that fires on "test result: ok."
+        let mut lines: Vec<String> = (0..100)
+            .map(|i| format!("test test_{} ... ok\n", i))
+            .collect();
+        lines.push("test result: ok. 100 passed; 0 failed\n".into());
+        let output = lines.join("");
+        let result = compressor.compress("cargo test", &output);
+        assert_eq!(result.strategy_name, "cargo-test");
+        assert!(result.compressed.contains("All tests passed."));
+    }
+
+    #[test]
+    fn test_match_output_unless_prevents_short_circuit() {
+        let compressor = Compressor::new(&test_config());
+        // If output contains FAILED, unless pattern blocks the match_output
+        let mut lines: Vec<String> = (0..100)
+            .map(|i| format!("test test_{} ... ok\n", i))
+            .collect();
+        lines.push("test test_bad ... FAILED\n".into());
+        lines.push("test result: ok. 99 passed; 1 FAILED\n".into());
+        let output = lines.join("");
+        let result = compressor.compress("cargo test", &output);
+        assert_eq!(result.strategy_name, "cargo-test");
+        // Should NOT have short-circuited because of FAILED in output
+        assert!(!result.compressed.contains("All tests passed."));
     }
 }

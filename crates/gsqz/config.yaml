@@ -72,6 +72,11 @@ pipelines:
   pytest:
     match: '\b(?:pytest|py\.test)\b'
     steps:
+      - match_output:
+          rules:
+            - pattern: 'passed'
+              unless: 'FAILED|ERROR|error'
+              message: 'All tests passed.'
       - filter_lines:
           patterns:
             - '^tests/.*PASSED'
@@ -90,6 +95,11 @@ pipelines:
   cargo-test:
     match: '\bcargo\s+test\b'
     steps:
+      - match_output:
+          rules:
+            - pattern: 'test result: ok\.'
+              unless: 'FAILED|panicked'
+              message: 'All tests passed.'
       - filter_lines:
           patterns:
             - '^\s+Running '
@@ -103,6 +113,11 @@ pipelines:
   generic-test:
     match: '\b(?:npm\s+test|vitest|jest|mocha|go\s+test)\b'
     steps:
+      - match_output:
+          rules:
+            - pattern: '(?:Tests?:.*\d+ passed|PASS|ok\s+\d)'
+              unless: '(?:FAIL|ERROR|failed)'
+              message: 'All tests passed.'
       - filter_lines:
           patterns:
             - '^\s*$'

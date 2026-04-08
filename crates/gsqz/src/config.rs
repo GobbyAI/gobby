@@ -64,6 +64,7 @@ pub enum Step {
     Truncate(TruncateArgs),
     Dedup(DedupArgs),
     Replace(ReplaceArgs),
+    MatchOutput(MatchOutputArgs),
 }
 
 // Custom deserializer: each step is a YAML map with a single key like
@@ -80,7 +81,7 @@ impl<'de> Deserialize<'de> for Step {
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str(
-                    "a map with a single key: filter_lines, group_lines, truncate, dedup, or replace",
+                    "a map with a single key: filter_lines, group_lines, truncate, dedup, replace, or match_output",
                 )
             }
 
@@ -113,10 +114,14 @@ impl<'de> Deserialize<'de> for Step {
                         let args: ReplaceArgs = map.next_value()?;
                         Step::Replace(args)
                     }
+                    "match_output" => {
+                        let args: MatchOutputArgs = map.next_value()?;
+                        Step::MatchOutput(args)
+                    }
                     other => {
                         return Err(de::Error::unknown_variant(
                             other,
-                            &["filter_lines", "group_lines", "truncate", "dedup", "replace"],
+                            &["filter_lines", "group_lines", "truncate", "dedup", "replace", "match_output"],
                         ));
                     }
                 };
@@ -175,6 +180,19 @@ pub struct ReplaceRule {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct MatchOutputArgs {
+    pub rules: Vec<MatchOutputRule>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MatchOutputRule {
+    pub pattern: String,
+    #[serde(default)]
+    pub unless: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Fallback {
     #[serde(default = "default_fallback_steps")]
     pub steps: Vec<Step>,
@@ -198,6 +216,12 @@ fn default_fallback_steps() -> Vec<Step> {
 }
 
 impl Config {
+    /// Return the compiled-in default config (used by tests for determinism).
+    #[cfg(test)]
+    pub fn builtin() -> Self {
+        serde_yaml::from_str(DEFAULT_CONFIG).expect("built-in config.yaml is invalid")
+    }
+
     /// Load config: CLI override → .gobby/gsqz.yaml → ~/.gobby/gsqz.yaml → compiled-in default.
     /// First found wins entirely (no merging).
     pub fn load(config_override: Option<&Path>) -> Self {
@@ -297,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_load_default_config() {
-        let config = Config::load(None);
+        let config = Config::builtin();
         assert_eq!(config.settings.min_output_length, 1000);
         assert_eq!(config.settings.max_compressed_lines, 100);
         assert!(!config.pipelines.is_empty());
@@ -305,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_default_config_has_expected_pipelines() {
-        let config = Config::load(None);
+        let config = Config::builtin();
         assert!(config.pipelines.contains_key("git-status"));
         assert!(config.pipelines.contains_key("pytest"));
         assert!(config.pipelines.contains_key("cargo-test"));
@@ -313,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_pipeline_has_match_and_steps() {
-        let config = Config::load(None);
+        let config = Config::builtin();
         let git_status = config.pipelines.get("git-status").unwrap();
         assert!(!git_status.match_pattern.is_empty());
         assert!(!git_status.steps.is_empty());
@@ -321,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_fallback_has_steps() {
-        let config = Config::load(None);
+        let config = Config::builtin();
         assert!(!config.fallback.steps.is_empty());
     }
 
@@ -403,6 +427,22 @@ mod tests {
     }
 
     #[test]
+    fn test_step_deserialization_match_output() {
+        let yaml = "match_output:\n  rules:\n    - pattern: 'test result: ok'\n      message: 'All tests passed.'\n    - pattern: 'passed'\n      unless: 'FAILED'\n      message: 'Passed (no failures).'";
+        let step: Step = serde_yaml::from_str(yaml).unwrap();
+        match step {
+            Step::MatchOutput(args) => {
+                assert_eq!(args.rules.len(), 2);
+                assert_eq!(args.rules[0].pattern, "test result: ok");
+                assert_eq!(args.rules[0].message, "All tests passed.");
+                assert!(args.rules[0].unless.is_none());
+                assert_eq!(args.rules[1].unless.as_deref(), Some("FAILED"));
+            }
+            _ => panic!("expected MatchOutput"),
+        }
+    }
+
+    #[test]
     fn test_step_deserialization_unknown_variant() {
         let yaml = "unknown_step: {}";
         let result: Result<Step, _> = serde_yaml::from_str(yaml);
@@ -411,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_config_dump_contains_settings() {
-        let config = Config::load(None);
+        let config = Config::builtin();
         let dump = config.dump();
         assert!(dump.contains("min_output_length: 1000"));
         assert!(dump.contains("max_compressed_lines: 100"));
@@ -443,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_all_pipeline_regexes_compile() {
-        let config = Config::load(None);
+        let config = Config::builtin();
         for (name, pipeline) in &config.pipelines {
             assert!(
                 regex::Regex::new(&pipeline.match_pattern).is_ok(),
