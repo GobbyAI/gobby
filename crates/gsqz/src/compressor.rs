@@ -23,6 +23,7 @@ struct CompiledPipeline {
     name: String,
     regex: Regex,
     steps: Vec<Step>,
+    on_empty: Option<String>,
 }
 
 pub struct Compressor {
@@ -31,6 +32,7 @@ pub struct Compressor {
     excluded: Vec<Regex>,
     min_length: usize,
     max_lines: usize,
+    global_on_empty: Option<String>,
 }
 
 impl Compressor {
@@ -45,6 +47,7 @@ impl Compressor {
                         name: name.clone(),
                         regex,
                         steps: p.steps.clone(),
+                        on_empty: p.on_empty.clone(),
                     })
             })
             .collect();
@@ -61,6 +64,7 @@ impl Compressor {
             excluded,
             min_length: config.settings.min_output_length,
             max_lines: config.settings.max_compressed_lines,
+            global_on_empty: config.settings.on_empty.clone(),
         }
     }
 
@@ -90,12 +94,14 @@ impl Compressor {
         // Find matching pipeline
         let mut lines: Vec<String> = output.lines().map(|l| format!("{}\n", l)).collect();
         let mut strategy_name = "fallback".to_string();
+        let mut pipeline_on_empty: Option<&str> = None;
 
         let mut matched = false;
         for pipeline in &self.pipelines {
             if pipeline.regex.is_match(command) {
                 strategy_name = pipeline.name.clone();
                 lines = apply_steps(lines, &pipeline.steps);
+                pipeline_on_empty = pipeline.on_empty.as_deref();
                 matched = true;
                 break;
             }
@@ -115,8 +121,17 @@ impl Compressor {
         let compressed = lines.join("");
         let compressed_chars = compressed.len();
 
-        // If compression produced empty output, pass through
+        // If compression produced empty output, try on_empty fallback
         if compressed.trim().is_empty() {
+            let on_empty_msg = pipeline_on_empty.or(self.global_on_empty.as_deref());
+            if let Some(msg) = on_empty_msg {
+                return CompressionResult {
+                    compressed_chars: msg.len(),
+                    compressed: msg.to_string(),
+                    original_chars,
+                    strategy_name: format!("{}/on_empty", strategy_name),
+                };
+            }
             return CompressionResult {
                 compressed: output.to_string(),
                 original_chars,
@@ -320,5 +335,69 @@ mod tests {
         assert_eq!(result.strategy_name, "cargo-test");
         // Should NOT have short-circuited because of FAILED in output
         assert!(!result.compressed.contains("All tests passed."));
+    }
+
+    #[test]
+    fn test_on_empty_global_fallback() {
+        // When pipeline steps produce empty output, global on_empty kicks in
+        let mut config = test_config();
+        config.settings.on_empty = Some("Nothing left.".into());
+        config.settings.min_output_length = 0; // ensure we don't passthrough early
+        config.pipelines.insert(
+            "filter-all".into(),
+            crate::config::Pipeline {
+                match_pattern: r"\bfilter-all\b".into(),
+                steps: vec![crate::config::Step::FilterLines(
+                    crate::config::FilterLinesArgs {
+                        patterns: vec![".*".into()],
+                    },
+                )],
+                on_empty: None,
+            },
+        );
+        let compressor = Compressor::new(&config);
+        let output = (0..50)
+            .map(|i| format!("line {}\n", i))
+            .collect::<String>();
+        let result = compressor.compress("filter-all", &output);
+        assert_eq!(result.compressed, "Nothing left.");
+        assert!(result.strategy_name.contains("on_empty"));
+    }
+
+    #[test]
+    fn test_on_empty_pipeline_overrides_global() {
+        let mut config = test_config();
+        config.settings.on_empty = Some("Global fallback.".into());
+        config.settings.min_output_length = 0;
+        config.pipelines.insert(
+            "filter-all".into(),
+            crate::config::Pipeline {
+                match_pattern: r"\bfilter-all\b".into(),
+                steps: vec![crate::config::Step::FilterLines(
+                    crate::config::FilterLinesArgs {
+                        patterns: vec![".*".into()],
+                    },
+                )],
+                on_empty: Some("Pipeline-specific.".into()),
+            },
+        );
+        let compressor = Compressor::new(&config);
+        let output = (0..50)
+            .map(|i| format!("line {}\n", i))
+            .collect::<String>();
+        let result = compressor.compress("filter-all", &output);
+        assert_eq!(result.compressed, "Pipeline-specific.");
+    }
+
+    #[test]
+    fn test_on_empty_not_used_when_output_nonempty() {
+        let mut config = test_config();
+        config.settings.on_empty = Some("Should not appear.".into());
+        let compressor = Compressor::new(&config);
+        let output = (0..200)
+            .map(|i| format!("some random line number {}\n", i))
+            .collect::<String>();
+        let result = compressor.compress("some-unknown-command", &output);
+        assert!(!result.compressed.contains("Should not appear."));
     }
 }

@@ -29,6 +29,8 @@ pub struct Settings {
     pub max_compressed_lines: usize,
     #[serde(default)]
     pub daemon_url: Option<String>,
+    #[serde(default)]
+    pub on_empty: Option<String>,
 }
 
 impl Default for Settings {
@@ -37,6 +39,7 @@ impl Default for Settings {
             min_output_length: default_min_output_length(),
             max_compressed_lines: default_max_compressed_lines(),
             daemon_url: None,
+            on_empty: None,
         }
     }
 }
@@ -55,6 +58,8 @@ pub struct Pipeline {
     pub match_pattern: String,
     #[serde(default)]
     pub steps: Vec<Step>,
+    #[serde(default)]
+    pub on_empty: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -355,6 +360,27 @@ mod tests {
         assert_eq!(settings.min_output_length, 1000);
         assert_eq!(settings.max_compressed_lines, 100);
         assert!(settings.daemon_url.is_none());
+        assert!(settings.on_empty.is_none());
+    }
+
+    #[test]
+    fn test_builtin_config_has_global_on_empty() {
+        let config = Config::builtin();
+        assert!(config.settings.on_empty.is_some());
+    }
+
+    #[test]
+    fn test_pipeline_on_empty_deserialization() {
+        let yaml = "match: '\\btest\\b'\nsteps: []\non_empty: 'All good.'";
+        let pipeline: Pipeline = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(pipeline.on_empty.as_deref(), Some("All good."));
+    }
+
+    #[test]
+    fn test_pipeline_on_empty_defaults_to_none() {
+        let yaml = "match: '\\btest\\b'\nsteps: []";
+        let pipeline: Pipeline = serde_yaml::from_str(yaml).unwrap();
+        assert!(pipeline.on_empty.is_none());
     }
 
     #[test]

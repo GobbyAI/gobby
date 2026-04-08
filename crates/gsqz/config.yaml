@@ -12,6 +12,7 @@
 settings:
   min_output_length: 1000
   max_compressed_lines: 100
+  on_empty: 'No output after compression.'
 
 pipelines:
   # === Git ===
