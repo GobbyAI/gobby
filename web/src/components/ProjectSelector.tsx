@@ -3,6 +3,9 @@ import { createPortal } from "react-dom";
 import type { ProjectOption } from "../types/chat";
 import { cn } from "../lib/utils";
 
+/** Width of the project dropdown in pixels (matches Tailwind w-48). */
+const DROPDOWN_WIDTH = 192;
+
 interface ProjectSelectorProps {
   projects: ProjectOption[];
   selectedProjectId: string | null;
@@ -48,8 +51,8 @@ export function ProjectSelector({
     const rect = triggerRef.current.getBoundingClientRect();
     setDropdownPos({
       top: dropDirection === "up" ? rect.top : rect.bottom + 4,
-      left: rect.right - 192, // 192px = w-48
-      width: 192,
+      left: rect.right - DROPDOWN_WIDTH,
+      width: DROPDOWN_WIDTH,
     });
   }, [dropDirection]);
 

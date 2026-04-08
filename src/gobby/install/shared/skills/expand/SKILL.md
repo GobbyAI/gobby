@@ -106,6 +106,7 @@ for phase in phases:
 ```
 
 **Wire cross-phase dependencies** — if Phase 2 depends on Phase 1:
+
 ```python
 call_tool("gobby-tasks", "add_dependency", {
     "task_id": phase_refs[2],
@@ -119,6 +120,7 @@ For each phase sub-epic, build an expansion spec with only that phase's tasks,
 then execute with TDD.
 
 **Option A: Via pipeline** (preferred — spawns researcher for codebase analysis):
+
 ```python
 for phase_num, phase_ref in phase_refs.items():
     result = None
@@ -130,13 +132,15 @@ for phase_num, phase_ref in phase_refs.items():
             })
             if result and not result.get("error"):
                 break
-            if result and "not found" not in str(result.get("error", "")).lower() and attempt == 0:
-                continue
+            # Don't retry "not found" errors — pipeline doesn't exist
+            if "not found" in str(result.get("error", "")).lower():
+                break
         if result and not result.get("error"):
             continue
 ```
 
 **Option B: Direct spec** (when pipeline is unavailable or researcher fails):
+
 ```python
 phase_results = []
 for phase in phases:
@@ -250,6 +254,7 @@ Or fall back to direct spec if pipeline is unavailable.
 ### Re-expansion Handling
 
 If the root epic already has children:
+
 ```python
 backup = call_tool("gobby-tasks", "get_task", {"task_id": task_id})
 print(f"Task has {len(children)} existing subtasks. Re-expansion deletes all.")
@@ -261,6 +266,7 @@ call_tool("gobby-tasks", "delete_task", {"task_id": task_id, "cascade": True})
 ## Error Handling
 
 **Task not found**:
+
 ```
 Error: Task #42 not found. Verify the task reference exists.
 ```

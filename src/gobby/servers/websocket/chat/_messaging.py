@@ -207,7 +207,9 @@ class ChatMessagingMixin:
         project_id = data.get("project_id")
         provider = data.get("provider")
         if provider is not None and provider not in {"claude", "codex", "gemini"}:
-            await self._send_error(websocket, f"Invalid provider '{provider}'")
+            await self._send_error(
+                websocket, f"Invalid provider '{provider}'", request_id=request_id
+            )
             return
 
         # Use content_blocks (multimodal) if provided, otherwise plain text

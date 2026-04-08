@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Iterator
@@ -325,8 +326,6 @@ class TestCodexStopHookBlocking:
 
         assert exit_code == 0
         captured = capsys.readouterr()
-        import json
-
         output = json.loads(captured.out)
         assert output["decision"] == "block"
 

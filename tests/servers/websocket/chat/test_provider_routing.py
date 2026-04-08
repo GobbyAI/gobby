@@ -9,7 +9,7 @@ Covers:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -143,14 +143,11 @@ async def _create_session_for_provider(
     The exact method name may differ in implementation — this helper isolates
     that coupling.
     """
-    from gobby.servers.chat_session import ChatSession
-
-    original_chat_start = ChatSession.start
-    ChatSession.start = AsyncMock(return_value=None)
-    try:
+    with patch(
+        "gobby.servers.chat_session.ChatSession.start",
+        new=AsyncMock(return_value=None),
+    ):
         return await mixin._create_chat_session(
             conversation_id="test-conv-routing",
             provider=provider,
         )
-    finally:
-        ChatSession.start = original_chat_start

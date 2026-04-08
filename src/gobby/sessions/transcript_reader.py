@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+    from gobby.storage.session_models import Session
     from gobby.storage.sessions import LocalSessionManager
 
     TranscriptParser = ClaudeTranscriptParser | GeminiTranscriptParser | CodexTranscriptParser
@@ -38,7 +39,6 @@ logger = logging.getLogger(__name__)
 def _find_transcript_on_disk(
     source: str,
     external_id: str,
-    project_path: str | None = None,
     max_days: int = 90,
 ) -> str | None:
     """Try to find a transcript file on disk by CLI source and external_id.
@@ -345,7 +345,7 @@ class TranscriptReader:
     async def _ensure_transcript_path(
         self,
         session_id: str,
-        session: Any,
+        session: Session,
         source: str,
         transcript_path: str | None,
     ) -> str | None:
@@ -361,7 +361,6 @@ class TranscriptReader:
         derived = _find_transcript_on_disk(
             source,
             external_id or "",
-            getattr(session, "project_path", None),
         )
         if not derived:
             return None

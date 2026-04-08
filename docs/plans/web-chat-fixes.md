@@ -6,6 +6,8 @@ Epic #11509 has 8 subtasks from Drawbridge UI annotations. All are open/new. Bef
 
 The tasks split into three natural groups by area of the codebase they touch.
 
+Task execution truth now lives in the expanded Gobby tasks under `#11509`. Use the task records for current scope, dependencies, and validation criteria; treat this document as planning context only.
+
 ---
 
 ## Phase 0: Housekeeping (chore, no task needed)

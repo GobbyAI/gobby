@@ -185,7 +185,7 @@ def test_match_skill_source() -> None:
     assert _match_skill("source", "installed", skill) is True
 
 
-def test_match_skill_source_none() -> None:
+def test_match_skill_source_mismatch() -> None:
     skill = MagicMock()
     skill.source_type = "agent"
     assert _match_skill("source", "installed", skill) is False

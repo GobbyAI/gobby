@@ -13,15 +13,16 @@ from gobby.servers.routes.providers import create_providers_router
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture
+def client() -> TestClient:
+    app = FastAPI()
+    router = create_providers_router()
+    app.include_router(router)
+    return TestClient(app)
+
+
 class TestProviderRoutes:
     """Tests for GET /api/providers."""
-
-    @pytest.fixture
-    def client(self) -> TestClient:
-        app = FastAPI()
-        router = create_providers_router()
-        app.include_router(router)
-        return TestClient(app)
 
     def test_list_providers_returns_all_three(self, client: TestClient) -> None:
         """Endpoint returns claude, gemini, and codex entries."""
@@ -75,13 +76,6 @@ class TestProviderRoutes:
 
 class TestProviderModelsRoute:
     """Tests for GET /api/providers/models."""
-
-    @pytest.fixture
-    def client(self) -> TestClient:
-        app = FastAPI()
-        router = create_providers_router()
-        app.include_router(router)
-        return TestClient(app)
 
     def test_returns_all_providers_with_models(self, client: TestClient) -> None:
         """Endpoint returns claude, gemini, and codex with model lists."""

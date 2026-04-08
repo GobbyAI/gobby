@@ -296,7 +296,8 @@ The Python version piggybacks on `ast.parse()`. Rust needs a hand-written parser
 - Depends on `gobby-core` only (bootstrap, daemon client, project detection)
 - **ureq** for HTTP (blocking is fine — short-lived CLI process, not a server)
 - **serde_json** for stdin/stdout JSON
-- Fire-and-forget: spawn a detached thread that performs `ureq::post(...).send_json(...)`. Only use a fork/setsid/exec fallback if the request truly must survive immediate parent termination (for example, a session-end hook) and document that Unix-only fallback separately.
+- **Fire-and-forget (non-session-end):** Spawn a detached thread that calls `ureq::post(...).send_json(...)`. The thread runs in-process and does not need to survive parent termination — it only needs to outlive the main dispatch logic.
+- **Fire-and-forget (session-end):** Session-end hooks must deliver their payload even if the parent process exits immediately. Use a true process-level solution: `fork()` + `libc::setsid()` + `exec()` to create a detached child process. This is Unix-only (macOS, Linux) — document it separately from the thread-based path above.
 - Agent kill: `libc::killpg()` / tmux kill-pane via `Command`
 - Failure tracking: counter files in `std::env::temp_dir()/gobby-agent-failures/`. Cleanup policy: the hook binary itself prunes files older than 24h on each invocation (cheap `metadata().modified()` check). Cap at 100 files with LRU removal. No external cleanup daemon needed — the hook runs frequently enough to self-maintain.
 

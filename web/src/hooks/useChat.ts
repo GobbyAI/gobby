@@ -2227,7 +2227,7 @@ export function useChat() {
         }),
       );
     },
-    [selectedProvider],
+    [],
   );
 
   // Send a message (allowed even while streaming — cancels the active stream)

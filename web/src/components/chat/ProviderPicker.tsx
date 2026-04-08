@@ -38,8 +38,10 @@ async function fetchModelCatalog(): Promise<ProviderModelEntry[]> {
     const res = await fetch("/api/providers/models");
     if (res.ok) {
       const data = await res.json();
-      _cachedModels = data.providers ?? [];
-      return _cachedModels!;
+      if (Array.isArray(data?.providers)) {
+        _cachedModels = data.providers;
+        return _cachedModels!;
+      }
     }
   } catch {
     // Fall through to static
