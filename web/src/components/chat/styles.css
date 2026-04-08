@@ -2871,15 +2871,23 @@
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-/* --- Session tmux badge --- */
-.session-tmux-badge {
+/* --- Session kind badges --- */
+.session-kind-badge {
   font-size: calc(var(--font-size-base) * 0.6);
   padding: 0.0625rem 0.375rem;
   border-radius: 9999px;
-  background: color-mix(in srgb, #14b8a6 15%, transparent);
-  color: #14b8a6;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.session-kind-badge--tmux {
+  background: color-mix(in srgb, #14b8a6 15%, transparent);
+  color: #14b8a6;
+}
+
+.session-kind-badge--web {
+  background: color-mix(in srgb, #0284c7 15%, transparent);
+  color: #0284c7;
 }
 
 /* --- Session context menu --- */

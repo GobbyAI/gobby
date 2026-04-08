@@ -43,6 +43,7 @@ interface SessionEntry {
   startedAt?: string;
   seqNum?: number | null;
   hasTmux: boolean;
+  badges: Array<"tmux" | "web">;
 }
 
 interface SessionContextMenu {
@@ -67,7 +68,7 @@ export const SessionsTab = memo(function SessionsTab({
   onUnwatch,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
-  const [cliSessions, setCliSessions] = useState<GobbySession[]>([]);
+  const [activitySessions, setActivitySessions] = useState<GobbySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
@@ -109,14 +110,13 @@ export const SessionsTab = memo(function SessionsTab({
         ).then((r) => (r.ok ? r.json() : { sessions: [] })),
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
-      const isWatchable = (s: any) =>
+      const isWatchable = (s: GobbySession) =>
         s.source !== "pipeline" &&
         s.source !== "cron" &&
-        (s.session_type !== "web_chat" || watchingSessionIds?.has(s.id)) &&
         s.id !== chatSessionId;
       const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
       const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
-      setCliSessions([...active, ...paused]);
+      setActivitySessions([...active, ...paused]);
       setExpiringIds(new Set());
       setFetchError(null);
     } catch (err) {
@@ -144,8 +144,12 @@ export const SessionsTab = memo(function SessionsTab({
     const agentEntries: SessionEntry[] = agents.map((a) => {
       // Find matching session for richer metadata
       const matchedSession = a.session_id
-        ? cliSessions.find((s) => s.id === a.session_id)
+        ? activitySessions.find((s) => s.id === a.session_id)
         : undefined;
+
+      const badges: Array<"tmux" | "web"> = [];
+      if (a.pid) badges.push("tmux");
+      if (matchedSession?.session_type === "web_chat") badges.push("web");
 
       return {
         id: a.session_id ?? a.run_id,
@@ -161,29 +165,37 @@ export const SessionsTab = memo(function SessionsTab({
         startedAt: a.started_at,
         seqNum: matchedSession?.seq_num,
         hasTmux: !!a.pid,
+        badges,
       };
     });
 
-    const sessionEntries: SessionEntry[] = cliSessions
+    const sessionEntries: SessionEntry[] = activitySessions
       .filter((s) => !agentSessionIds.has(s.id))
-      .map((s) => ({
-        id: s.id,
-        type: "cli" as const,
-        label: s.title ?? `CLI ${s.ref}`,
-        provider: s.source ?? "unknown",
-        status: (s.status === "paused" ? "paused" : "active") as
-          | "active"
-          | "paused",
-        startedAt: s.updated_at,
-        seqNum: s.seq_num,
-        hasTmux: !!s.terminal_context,
-      }));
+      .map((s) => {
+        const badges: Array<"tmux" | "web"> = [];
+        if (s.terminal_context) badges.push("tmux");
+        if (s.session_type === "web_chat") badges.push("web");
+
+        return {
+          id: s.id,
+          type: "cli" as const,
+          label: s.title ?? `CLI ${s.ref}`,
+          provider: s.source ?? "unknown",
+          status: (s.status === "paused" ? "paused" : "active") as
+            | "active"
+            | "paused",
+          startedAt: s.updated_at,
+          seqNum: s.seq_num,
+          hasTmux: !!s.terminal_context,
+          badges,
+        };
+      });
 
     // Filter out entries being expired
     return [...agentEntries, ...sessionEntries].filter(
       (e) => !expiringIds.has(e.id),
     );
-  }, [agents, cliSessions, expiringIds]);
+  }, [agents, activitySessions, expiringIds]);
 
   // Auto-close watching view when the selected session disappears from the list
   useEffect(() => {
@@ -336,7 +348,7 @@ export const SessionsTab = memo(function SessionsTab({
       <div className="activity-tab-empty">
         <p>No active sessions</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Agent and CLI sessions will appear here when active
+          Agent, terminal, and web chat sessions will appear here when active
         </p>
       </div>
     );
@@ -371,9 +383,14 @@ export const SessionsTab = memo(function SessionsTab({
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                {entry.hasTmux && (
-                  <span className="session-tmux-badge">tmux</span>
-                )}
+                {entry.badges.map((badge) => (
+                  <span
+                    key={badge}
+                    className={`session-kind-badge session-kind-badge--${badge}`}
+                  >
+                    {badge}
+                  </span>
+                ))}
                 {isMobile ? (
                   <button
                     className="session-more-btn"

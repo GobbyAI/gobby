@@ -100,7 +100,7 @@ export function ChatPage({
     setFocusSessionId(null);
   }, []);
 
-  // Watching: parked web chats visible in Sessions tab
+  // Watching: parked web chats stay selected in Sessions tab after starting a new chat
   const [watchingSessionIds, setWatchingSessionIds] = useState<Set<string>>(
     new Set(),
   );
