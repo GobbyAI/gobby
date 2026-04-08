@@ -2,7 +2,7 @@ use regex::Regex;
 
 use crate::command_split;
 use crate::config::{Config, Step};
-use crate::primitives::{dedup, filter, group, match_output, replace, truncate};
+use crate::primitives::{dedup, filter, group, match_output, prose, replace, truncate};
 
 pub struct CompressionResult {
     pub compressed: String,
@@ -188,6 +188,13 @@ fn apply_steps(mut lines: Vec<String>, steps: &[Step]) -> Vec<String> {
             }
             Step::Dedup(_) => lines = dedup::dedup(lines),
             Step::Replace(args) => lines = replace::replace(lines, &args.rules),
+            Step::CompressProse(args) => {
+                // Text-level step: join lines, compress, split back
+                let level = prose::Level::from_str(&args.level).unwrap_or(prose::Level::Standard);
+                let text = lines.join("");
+                let compressed = prose::compress_prose(&text, level);
+                lines = compressed.lines().map(|l| format!("{}\n", l)).collect();
+            }
         }
     }
     lines
@@ -363,9 +370,7 @@ mod tests {
             },
         );
         let compressor = Compressor::new(&config);
-        let output = (0..50)
-            .map(|i| format!("line {}\n", i))
-            .collect::<String>();
+        let output = (0..50).map(|i| format!("line {}\n", i)).collect::<String>();
         let result = compressor.compress("filter-all", &output);
         assert_eq!(result.compressed, "Nothing left.");
         assert!(result.strategy_name.contains("on_empty"));
@@ -389,9 +394,7 @@ mod tests {
             },
         );
         let compressor = Compressor::new(&config);
-        let output = (0..50)
-            .map(|i| format!("line {}\n", i))
-            .collect::<String>();
+        let output = (0..50).map(|i| format!("line {}\n", i)).collect::<String>();
         let result = compressor.compress("filter-all", &output);
         assert_eq!(result.compressed, "Pipeline-specific.");
     }

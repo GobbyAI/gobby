@@ -59,10 +59,7 @@ mod tests {
     #[test]
     fn test_unless_blocks_match() {
         let rules = vec![rule("test result: ok", "All tests passed.", Some("FAILED"))];
-        let result = check(
-            &lines("test result: ok. 4 passed; 1 FAILED"),
-            &rules,
-        );
+        let result = check(&lines("test result: ok. 4 passed; 1 FAILED"), &rules);
         assert_eq!(result, None);
     }
 
@@ -92,10 +89,7 @@ mod tests {
 
     #[test]
     fn test_invalid_regex_skipped() {
-        let rules = vec![
-            rule("[invalid", "bad", None),
-            rule("ok", "good", None),
-        ];
+        let rules = vec![rule("[invalid", "bad", None), rule("ok", "good", None)];
         let result = check(&lines("ok"), &rules);
         assert_eq!(result, Some("good".into()));
     }

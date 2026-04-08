@@ -39,12 +39,29 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     config: Option<std::path::PathBuf>,
 
-    /// Command to run (everything after --)
+    /// Command to run, or subcommand (input/output)
     #[arg(
         trailing_var_arg = true,
         required_unless_present_any = ["dump_config", "init"]
     )]
     command: Vec<String>,
+}
+
+fn parse_input_level(args: &[String]) -> primitives::prose::Level {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--level" {
+            if let Some(val) = args.get(i + 1) {
+                return primitives::prose::Level::from_str(val)
+                    .unwrap_or(primitives::prose::Level::Standard);
+            }
+        } else if let Some(val) = args[i].strip_prefix("--level=") {
+            return primitives::prose::Level::from_str(val)
+                .unwrap_or(primitives::prose::Level::Standard);
+        }
+        i += 1;
+    }
+    primitives::prose::Level::Standard
 }
 
 fn main() {
@@ -98,13 +115,74 @@ fn main() {
         return;
     }
 
-    // Join command args and run through shell
-    let cmd = cli.command.join(" ");
+    // Dispatch to input/output subcommand or default output mode
+    match cli.command.first().map(|s| s.as_str()) {
+        Some("input") => {
+            run_input_mode(&cli.command[1..], &config, cli.stats);
+        }
+        Some("output") => {
+            // Explicit output subcommand — strip "output" and proceed
+            let cmd = cli.command[1..].join(" ");
+            run_output_mode(&cmd, &config, cli.stats);
+        }
+        _ => {
+            // Default: treat all args as the command (backward compat)
+            let cmd = cli.command.join(" ");
+            run_output_mode(&cmd, &config, cli.stats);
+        }
+    }
+}
 
+fn run_input_mode(args: &[String], config: &Config, stats: bool) {
+    use std::io::Read;
+
+    let level = parse_input_level(args);
+
+    let mut input = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut input) {
+        eprintln!("gsqz: failed to read stdin: {e}");
+        std::process::exit(1);
+    }
+
+    if input.trim().is_empty() {
+        return;
+    }
+
+    let original_chars = input.len();
+    let compressed = primitives::prose::compress_prose(&input, level);
+    let compressed_chars = compressed.len();
+
+    if stats {
+        let savings = if original_chars > 0 {
+            (1.0 - compressed_chars as f64 / original_chars as f64) * 100.0
+        } else {
+            0.0
+        };
+        eprintln!(
+            "[gsqz] strategy=prose/{:?} original={} compressed={} savings={:.1}%",
+            level, original_chars, compressed_chars, savings
+        );
+    }
+
+    // Report savings to daemon
+    let daemon_url = daemon::resolve_daemon_url(config.settings.daemon_url.as_deref());
+    if let Some(ref url) = daemon_url {
+        daemon::report_savings(
+            url,
+            &format!("prose/{:?}", level),
+            original_chars,
+            compressed_chars,
+        );
+    }
+
+    print!("{}", compressed);
+}
+
+fn run_output_mode(cmd: &str, config: &Config, stats: bool) {
     let output = if cfg!(windows) {
-        Command::new("cmd").arg("/C").arg(&cmd).output()
+        Command::new("cmd").arg("/C").arg(cmd).output()
     } else {
-        Command::new("sh").arg("-c").arg(&cmd).output()
+        Command::new("sh").arg("-c").arg(cmd).output()
     };
 
     let output = match output {
@@ -147,9 +225,9 @@ fn main() {
     }
 
     let compressor = Compressor::new(&compressor_config);
-    let result = compressor.compress(&cmd, &raw_output);
+    let result = compressor.compress(cmd, &raw_output);
 
-    if cli.stats {
+    if stats {
         eprintln!(
             "[gsqz] strategy={} original={} compressed={} savings={:.1}%",
             result.strategy_name,

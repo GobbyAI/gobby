@@ -70,6 +70,7 @@ pub enum Step {
     Dedup(DedupArgs),
     Replace(ReplaceArgs),
     MatchOutput(MatchOutputArgs),
+    CompressProse(CompressProseArgs),
 }
 
 // Custom deserializer: each step is a YAML map with a single key like
@@ -86,7 +87,7 @@ impl<'de> Deserialize<'de> for Step {
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str(
-                    "a map with a single key: filter_lines, group_lines, truncate, dedup, replace, or match_output",
+                    "a map with a single key: filter_lines, group_lines, truncate, dedup, replace, match_output, or compress_prose",
                 )
             }
 
@@ -123,10 +124,22 @@ impl<'de> Deserialize<'de> for Step {
                         let args: MatchOutputArgs = map.next_value()?;
                         Step::MatchOutput(args)
                     }
+                    "compress_prose" => {
+                        let args: CompressProseArgs = map.next_value()?;
+                        Step::CompressProse(args)
+                    }
                     other => {
                         return Err(de::Error::unknown_variant(
                             other,
-                            &["filter_lines", "group_lines", "truncate", "dedup", "replace", "match_output"],
+                            &[
+                                "filter_lines",
+                                "group_lines",
+                                "truncate",
+                                "dedup",
+                                "replace",
+                                "match_output",
+                                "compress_prose",
+                            ],
                         ));
                     }
                 };
@@ -195,6 +208,16 @@ pub struct MatchOutputRule {
     #[serde(default)]
     pub unless: Option<String>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompressProseArgs {
+    #[serde(default = "default_prose_level")]
+    pub level: String,
+}
+
+fn default_prose_level() -> String {
+    "standard".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -11,7 +11,11 @@ pub fn replace(lines: Vec<String>, rules: &[ReplaceRule]) -> Vec<String> {
 
     let compiled: Vec<(&str, Regex)> = rules
         .iter()
-        .filter_map(|r| Regex::new(&r.pattern).ok().map(|re| (r.replacement.as_str(), re)))
+        .filter_map(|r| {
+            Regex::new(&r.pattern)
+                .ok()
+                .map(|re| (r.replacement.as_str(), re))
+        })
         .collect();
 
     lines
@@ -53,10 +57,7 @@ mod tests {
     #[test]
     fn test_chained_rules() {
         let lines = vec!["v1.2.3 release\n".into()];
-        let rules = vec![
-            rule(r"v\d+\.\d+\.\d+", "vX.X.X"),
-            rule("release", "build"),
-        ];
+        let rules = vec![rule(r"v\d+\.\d+\.\d+", "vX.X.X"), rule("release", "build")];
         let result = replace(lines, &rules);
         assert_eq!(result, vec!["vX.X.X build\n"]);
     }

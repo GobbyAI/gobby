@@ -103,18 +103,12 @@ mod tests {
 
     #[test]
     fn test_or_split() {
-        assert_eq!(
-            split_compound("cmd1 || cmd2"),
-            vec!["cmd1", "cmd2"]
-        );
+        assert_eq!(split_compound("cmd1 || cmd2"), vec!["cmd1", "cmd2"]);
     }
 
     #[test]
     fn test_semicolon_split() {
-        assert_eq!(
-            split_compound("cmd1; cmd2"),
-            vec!["cmd1", "cmd2"]
-        );
+        assert_eq!(split_compound("cmd1; cmd2"), vec!["cmd1", "cmd2"]);
     }
 
     #[test]
@@ -169,9 +163,6 @@ mod tests {
 
     #[test]
     fn test_whitespace_trimming() {
-        assert_eq!(
-            split_compound("  cmd1  &&  cmd2  "),
-            vec!["cmd1", "cmd2"]
-        );
+        assert_eq!(split_compound("  cmd1  &&  cmd2  "), vec!["cmd1", "cmd2"]);
     }
 }
