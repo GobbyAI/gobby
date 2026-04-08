@@ -52,28 +52,32 @@ fn main() {
     // Load config
     let config = Config::load(cli.config.as_deref());
 
-    // Auto-export default config to .gobby/gsqz.yaml if .gobby/ exists but no config is found
-    let gobby_dir = std::path::Path::new(".gobby");
-    let project_config = gobby_dir.join("gsqz.yaml");
-    if cli.config.is_none()
-        && !cli.init
-        && gobby_dir.is_dir()
-        && !project_config.exists()
-    {
-        if let Err(e) = std::fs::write(&project_config, config::DEFAULT_CONFIG_YAML) {
-            eprintln!("Warning: failed to write {}: {e}", project_config.display());
-        } else {
-            eprintln!("Created .gobby/gsqz.yaml with default config.");
+    // Auto-export default config to ~/.gobby/gsqz.yaml on first run (creates ~/.gobby/ if needed)
+    if cli.config.is_none() && !cli.init {
+        if let Some(home) = dirs::home_dir() {
+            let global_dir = home.join(".gobby");
+            let global_config = global_dir.join("gsqz.yaml");
+            if !global_config.exists() {
+                let _ = std::fs::create_dir_all(&global_dir);
+                if let Err(e) = std::fs::write(&global_config, config::DEFAULT_CONFIG_YAML) {
+                    eprintln!("Warning: failed to write {}: {e}", global_config.display());
+                } else {
+                    eprintln!("Created ~/.gobby/gsqz.yaml with default config.");
+                }
+            }
         }
     }
 
+    // --init writes to project-level .gobby/gsqz.yaml
     if cli.init {
-        if !gobby_dir.is_dir() {
+        let project_dir = std::path::Path::new(".gobby");
+        let project_config = project_dir.join("gsqz.yaml");
+        if !project_dir.is_dir() {
             eprintln!("Error: .gobby/ directory not found. Run from a Gobby project root.");
             return;
         }
         if project_config.exists() {
-            let bak = gobby_dir.join("gsqz.yaml.bak");
+            let bak = project_dir.join("gsqz.yaml.bak");
             if let Err(e) = std::fs::rename(&project_config, &bak) {
                 eprintln!("Failed to backup .gobby/gsqz.yaml: {e}");
                 return;
