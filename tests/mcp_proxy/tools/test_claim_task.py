@@ -96,6 +96,7 @@ class TestClaimTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -170,6 +171,7 @@ class TestClaimTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -226,6 +228,7 @@ class TestClaimTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -421,6 +424,7 @@ class TestClaimTaskSessionVariables:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -474,6 +478,7 @@ class TestClaimTaskVsUpdateTask:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -519,3 +524,82 @@ class TestClaimTaskVsUpdateTask:
         assert "error" in result
         # update_task should NOT have been called because conflict was detected first
         mock_task_manager.update_task.assert_not_called()
+
+
+class TestClaimTaskCrossProjectBlocking:
+    """Tests for cross-project claim blocking."""
+
+    @pytest.fixture(autouse=True)
+    def _set_session_context(self):
+        with session_context_for_test("my-session-id"):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_claim_task_blocked_when_different_project(
+        self, mock_task_manager, mock_sync_manager, sample_task
+    ):
+        """claim_task must reject when task.project_id != session.project_id."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+        ):
+            mock_st_instance = MagicMock()
+            MockSessionTaskManager.return_value = mock_st_instance
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            # Session belongs to a different project than the task
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-OTHER")
+            MockSessionManager.return_value = mock_session_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            # sample_task has project_id="proj-1"
+            mock_task_manager.get_task.return_value = sample_task
+
+            result = await registry.call(
+                "claim_task",
+                {"task_id": sample_task.id},
+            )
+
+            assert "error" in result
+            assert "different project" in result["error"].lower()
+            assert result["task_project"] == "proj-1"
+            assert result["session_project"] == "proj-OTHER"
+            # Should NOT have attempted the update
+            mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_claim_task_allowed_when_session_lookup_returns_none(
+        self, mock_task_manager, mock_sync_manager, sample_task
+    ):
+        """claim_task should proceed if session lookup returns None (graceful degradation)."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+        ):
+            mock_st_instance = MagicMock()
+            MockSessionTaskManager.return_value = mock_st_instance
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            # Session not found in DB
+            mock_session_manager.get.return_value = None
+            MockSessionManager.return_value = mock_session_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task_manager.get_task.return_value = sample_task
+            mock_task_manager.update_task.return_value = sample_task
+
+            result = await registry.call(
+                "claim_task",
+                {"task_id": sample_task.id},
+            )
+
+            # Should succeed — can't enforce if session isn't in DB
+            assert "error" not in result

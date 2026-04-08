@@ -58,6 +58,18 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         except ValueError as e:
             return {"error": f"Cannot resolve session '{session_id}': {e}"}
 
+        # Block cross-project claiming
+        try:
+            session = ctx.session_manager.get(resolved_session_id)
+        except Exception:
+            session = None
+        if session and task.project_id != session.project_id:
+            return {
+                "error": "Cannot claim a task from a different project",
+                "task_project": task.project_id,
+                "session_project": session.project_id,
+            }
+
         # Check if already claimed by another session
         if task.assignee and task.assignee != resolved_session_id and not force:
             return {

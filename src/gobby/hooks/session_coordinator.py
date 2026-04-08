@@ -233,6 +233,9 @@ class SessionCoordinator:
                     self._message_processor.register_session(
                         session.id, transcript_path, source=source
                     )
+                    # Reset _agent_context_injected so the next before_agent
+                    # re-injects instructions lost when the daemon restarted.
+                    self._reset_deferred_injection_flags(session.id)
                     registered_count += 1
                 except Exception as e:
                     self.logger.warning(f"Failed to re-register session {session.id}: {e}")
@@ -248,6 +251,25 @@ class SessionCoordinator:
         except Exception as e:
             self.logger.warning(f"Failed to re-register active/paused sessions: {e}")
             return 0
+
+    def _reset_deferred_injection_flags(self, session_id: str) -> None:
+        """Reset session variables that gate deferred context injection.
+
+        After a daemon restart the DB still has _agent_context_injected=True
+        from the previous run, which causes _inject_agent_instructions_if_needed
+        to skip re-injecting instructions on the next before_agent.
+        """
+        if not self._session_storage:
+            return
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            sv_mgr = SessionVariableManager(self._session_storage.db)
+            sv_mgr.set_variable(session_id, "_agent_context_injected", False)
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to reset deferred injection flags for session {session_id}: {e}"
+            )
 
     def start_agent_run(self, agent_run_id: str) -> bool:
         """
