@@ -764,9 +764,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
             patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.LocalProjectManager"
-            ) as MockProjManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
