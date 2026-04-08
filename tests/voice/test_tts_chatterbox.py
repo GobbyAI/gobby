@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -137,6 +138,65 @@ class TestChatterboxTurboProvider:
         # Should NOT pass audio_prompt_path when file doesn't exist
         call_kwargs = mock_model.generate.call_args
         assert "audio_prompt_path" not in call_kwargs.kwargs
+
+    @pytest.mark.asyncio
+    async def test_synthesize_stream_casts_reference_audio_to_float32_on_mps(
+        self, tmp_path: Path
+    ) -> None:
+        """Reference-audio conditioning should be cast to float32 before MPS use."""
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        ref = tmp_path / "reference.wav"
+        ref.write_bytes(b"RIFF" + b"\x00" * 100)
+        provider = ChatterboxTurboProvider(
+            VoiceConfig(
+                enabled=True,
+                tts_enabled=True,
+                tts_provider="chatterbox",
+                tts_reference_audio=str(ref),
+                tts_device="mps",
+            )
+        )
+
+        seen_dtype: np.dtype[Any] | None = None
+
+        def tokenizer_forward(wavs: list[np.ndarray], max_len: int | None = None) -> tuple[np.ndarray, None]:
+            nonlocal seen_dtype
+            seen_dtype = wavs[0].dtype
+            return np.zeros((1, 1), dtype=np.int64), None
+
+        mock_wav = MagicMock()
+        mock_wav.squeeze.return_value = mock_wav
+        mock_wav.cpu.return_value = mock_wav
+        mock_wav.numpy.return_value = np.zeros(8, dtype=np.float32)
+
+        tokenizer = MagicMock()
+        tokenizer.forward = tokenizer_forward
+        original_forward = tokenizer.forward
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.device = "mps"
+        mock_model.s3gen.tokenizer = tokenizer
+
+        def generate_side_effect(text: str, **kwargs: object) -> MagicMock:
+            assert kwargs["audio_prompt_path"] == str(ref)
+            mock_model.s3gen.tokenizer.forward(
+                [np.array([0.1, -0.1], dtype=np.float64)],
+                max_len=1,
+            )
+            return mock_wav
+
+        mock_model.generate.side_effect = generate_side_effect
+        provider._model = mock_model
+
+        chunks = []
+        async for chunk in provider.synthesize_stream("Test"):
+            chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert seen_dtype == np.float32
+        assert mock_model.s3gen.tokenizer.forward is original_forward
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_handles_model_load_failure(

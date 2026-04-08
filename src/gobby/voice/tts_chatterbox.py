@@ -9,12 +9,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from gobby.config.voice import VoiceConfig
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,52 @@ def _auto_device() -> str:
     except ImportError:
         pass
     return "cpu"
+
+
+def _coerce_conditioning_audio(value: Any) -> Any:
+    """Cast Chatterbox conditioning audio to float32 for MPS compatibility."""
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - torch is required when this is used
+        torch = None
+
+    if isinstance(value, np.ndarray):
+        if np.issubdtype(value.dtype, np.floating) and value.dtype != np.float32:
+            return value.astype(np.float32, copy=False)
+        return value
+
+    if torch is not None and torch.is_tensor(value):
+        if value.dtype.is_floating_point and value.dtype != torch.float32:
+            return value.to(dtype=torch.float32)
+        return value
+
+    if isinstance(value, list):
+        return [_coerce_conditioning_audio(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_coerce_conditioning_audio(item) for item in value)
+
+    return value
+
+
+@contextmanager
+def _float32_conditioning_tokenizer(model: Any) -> Iterator[None]:
+    """Wrap the Chatterbox tokenizer so conditioning audio stays float32 on MPS."""
+    tokenizer = getattr(getattr(model, "s3gen", None), "tokenizer", None)
+    original_forward = getattr(tokenizer, "forward", None)
+
+    if getattr(model, "device", None) != "mps" or tokenizer is None or original_forward is None:
+        yield
+        return
+
+    def _wrapped_forward(wavs: Any, *args: Any, **kwargs: Any) -> Any:
+        return original_forward(_coerce_conditioning_audio(wavs), *args, **kwargs)
+
+    tokenizer.forward = _wrapped_forward
+    try:
+        yield
+    finally:
+        tokenizer.forward = original_forward
 
 
 class ChatterboxTurboProvider:
@@ -93,20 +142,13 @@ class ChatterboxTurboProvider:
             ref_path = str(self._reference_audio) if self._reference_audio.exists() else None
 
             def _generate() -> Any:
-                import torch
-
-                # MPS doesn't support float64. Chatterbox's s3tokenizer
-                # moves loaded audio tensors to the device without casting,
-                # which crashes on MPS if torchaudio returns float64.
-                # Setting the default dtype ensures all tensors stay float32.
-                torch.set_default_dtype(torch.float32)
-
                 kwargs: dict[str, Any] = {
                     "temperature": self._config.tts_temperature,
                 }
                 if ref_path:
                     kwargs["audio_prompt_path"] = ref_path
-                return model.generate(text, **kwargs)
+                with _float32_conditioning_tokenizer(model):
+                    return model.generate(text, **kwargs)
 
             wav = await asyncio.to_thread(_generate)
 
@@ -118,6 +160,15 @@ class ChatterboxTurboProvider:
         except asyncio.CancelledError:
             logger.debug("Chatterbox TTS synthesis cancelled")
             raise
+        except TypeError as exc:
+            if "MPS Tensor to float64 dtype" in str(exc):
+                logger.error(
+                    "Chatterbox TTS synthesis failed on MPS while preparing reference audio. "
+                    "Conditioning audio must be float32 before it is moved to the device.",
+                    exc_info=True,
+                )
+                return
+            logger.error("Chatterbox TTS synthesis failed", exc_info=True)
         except Exception:
             logger.error("Chatterbox TTS synthesis failed", exc_info=True)
 
