@@ -456,7 +456,7 @@ class TestGobbyDaemonToolsSemanticSearch:
         tools_handler._semantic_search = MagicMock()
         tools_handler._mcp_manager.project_id = None
 
-        with patch("gobby.mcp_proxy.server.get_project_context", return_value=None):
+        with patch("gobby.utils.project_context.get_project_context", return_value=None):
             result = await tools_handler.search_tools(query="find files")
 
         assert result["success"] is False
