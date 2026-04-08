@@ -237,7 +237,7 @@ class MemoryConfig(BaseModel):
         ),
     )
     min_recall_score: float = Field(
-        default=0.35,
+        default=0.6,
         description=(
             "Minimum similarity score for memory recall (0.0-1.0). "
             "Memories below this threshold are excluded from search results. "
