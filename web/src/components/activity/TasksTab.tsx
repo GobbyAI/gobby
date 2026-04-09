@@ -2,6 +2,7 @@ import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Tree, type NodeRendererProps } from 'react-arborist'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { Markdown } from '../chat/Markdown'
+import { useWebSocketEvent } from '../../hooks/useWebSocketEvent'
 import '../tasks/task-execution.css'
 import type { GobbyTask } from '../../hooks/useTasks'
 
@@ -187,8 +188,13 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const [treeHeight, setTreeHeight] = useState(300)
 
   // Fetch all tasks (filter client-side)
-  useEffect(() => {
+  const abortRef = useRef<AbortController | null>(null)
+  const debouncedRefetchRef = useRef<number | null>(null)
+
+  const fetchTasks = useCallback(() => {
+    abortRef.current?.abort()
     const controller = new AbortController()
+    abortRef.current = controller
     setLoading(true)
     const baseUrl = getBaseUrl()
     const params = new URLSearchParams()
@@ -199,8 +205,65 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
       .then((data) => setTasks(data.tasks ?? []))
       .catch((err) => { if (err.name !== 'AbortError') setTasks([]) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
   }, [projectId])
+
+  useEffect(() => {
+    fetchTasks()
+    return () => {
+      abortRef.current?.abort()
+      if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+    }
+  }, [fetchTasks])
+
+  // WebSocket: real-time task event subscription
+  const handleTaskEventRef = useRef<(event: string, taskData: Record<string, unknown>) => void>(() => {})
+  handleTaskEventRef.current = (event: string, taskData: Record<string, unknown>) => {
+    const taskId = taskData.id as string
+    if (!taskId) return
+
+    // Ignore events for other projects
+    const taskProjectId = taskData.project_id as string | undefined
+    if (projectId && taskProjectId && taskProjectId !== projectId) return
+
+    if (event === 'task_deleted') {
+      setTasks(prev => prev.filter(t => t.id !== taskId))
+      if (taskId === selectedTaskId) setSelectedTaskId(null)
+    } else if (event === 'task_created') {
+      const newTask = taskData as unknown as GobbyTask
+      setTasks(prev => {
+        if (prev.some(t => t.id === taskId)) return prev
+        return [...prev, newTask]
+      })
+    } else {
+      // task_updated, task_closed, task_reopened, task_de_escalated
+      const updated = taskData as unknown as GobbyTask
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updated } : t))
+    }
+
+    // Re-fetch detail if the affected task is currently selected
+    if (taskId === selectedTaskId && event !== 'task_deleted') {
+      setDetailLoading(true)
+      const baseUrl = getBaseUrl()
+      fetch(`${baseUrl}/api/tasks/${taskId}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => setTaskDetail(data?.id ? data : (data?.task ?? null)))
+        .catch(() => {})
+        .finally(() => setDetailLoading(false))
+    }
+
+    // Debounced full refetch to sync server truth
+    if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+    debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500)
+  }
+
+  useWebSocketEvent('task_event', useCallback((data: Record<string, unknown>) => {
+    if (data.event && (data.task || data.task_id)) {
+      handleTaskEventRef.current(
+        data.event as string,
+        (data.task || { id: data.task_id }) as Record<string, unknown>,
+      )
+    }
+  }, []))
 
   // Fetch task detail when selected
   useEffect(() => {
