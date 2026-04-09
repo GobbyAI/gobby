@@ -1205,14 +1205,20 @@ class MemoryManager:
 
         # 4. Rebuild crossrefs (concurrent, semaphore-limited)
         crossref_sem = asyncio.Semaphore(10)
+        crossref_done = 0
 
         async def _rebuild_crossref(mem: Memory) -> int:
+            nonlocal crossref_done
             async with crossref_sem:
                 try:
-                    return await self.rebuild_crossrefs_for_memory(mem)
+                    result = await self.rebuild_crossrefs_for_memory(mem)
                 except (CrossrefRebuildError, ValueError) as e:
                     logger.warning(f"Crossref failed for {mem.id}: {e}")
-                    return 0
+                    result = 0
+                crossref_done += 1
+                if crossref_done % 50 == 0 or crossref_done == total:
+                    logger.info(f"Crossref progress: {crossref_done}/{total}")
+                return result
 
         crossref_results = await asyncio.gather(*[_rebuild_crossref(m) for m in all_memories])
         crossrefs_created = sum(crossref_results)
@@ -1226,8 +1232,10 @@ class MemoryManager:
         if self._kg_service:
             kg_service = self._kg_service
             kg_sem = asyncio.Semaphore(5)
+            kg_done = 0
 
             async def _rebuild_kg(mem: Memory) -> bool:
+                nonlocal kg_done
                 async with kg_sem:
                     try:
                         await kg_service.add_to_graph(
@@ -1235,10 +1243,14 @@ class MemoryManager:
                             memory_id=mem.id,
                             project_id=mem.project_id,
                         )
-                        return True
+                        success = True
                     except Exception as e:
                         logger.warning(f"KG extraction failed for {mem.id}: {e}")
-                        return False
+                        success = False
+                    kg_done += 1
+                    if kg_done % 50 == 0 or kg_done == total:
+                        logger.info(f"KG extraction progress: {kg_done}/{total}")
+                    return success
 
             kg_results = await asyncio.gather(*[_rebuild_kg(m) for m in all_memories])
             extracted = sum(1 for r in kg_results if r)

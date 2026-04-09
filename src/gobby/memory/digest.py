@@ -346,8 +346,15 @@ async def _synthesize_title(
     session_manager: Any,
     session: Any,
     db: Any | None = None,
+    llm_service: Any | None = None,
+    digest_config: Any | None = None,
 ) -> str | None:
-    """Synthesize session title from digest via LLM and update tmux window."""
+    """Synthesize session title from digest via LLM and update tmux window.
+
+    When *llm_service* and *digest_config* are supplied, uses
+    ``call_feature`` for tier-based fallback.  Otherwise falls back to
+    the legacy ``provider.generate_text`` path.
+    """
     try:
         from gobby.prompts.loader import PromptLoader
 
@@ -359,7 +366,16 @@ async def _synthesize_title(
     except Exception:
         title_prompt = _build_title_synthesis_prompt(updated_digest)
 
-    title = await provider.generate_text(title_prompt, model=model)
+    # Prefer call_feature for tier-based fallback when available.
+    if (
+        llm_service is not None
+        and digest_config is not None
+        and hasattr(llm_service, "call_feature")
+    ):
+        title = await llm_service.call_feature(digest_config, title_prompt)
+    else:
+        title = await provider.generate_text(title_prompt, model=model)
+
     title_str = str(title).strip().strip('"').strip("'")
     if title_str and len(title_str) < 80:
         session_manager.update_title(session_id, title_str)
@@ -466,7 +482,15 @@ async def build_turn_and_digest(
         # 7. Synthesize title from updated digest
         try:
             title = await _synthesize_title(
-                provider, model, updated_digest, session_id, session_manager, session, db
+                provider,
+                model,
+                updated_digest,
+                session_id,
+                session_manager,
+                session,
+                db,
+                llm_service=llm_service,
+                digest_config=digest_config,
             )
             if title:
                 result["title"] = title
