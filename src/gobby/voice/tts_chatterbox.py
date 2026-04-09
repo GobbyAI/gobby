@@ -42,7 +42,7 @@ def _coerce_conditioning_audio(value: Any) -> Any:
     try:
         import torch
     except ImportError:  # pragma: no cover - torch is required when this is used
-        torch = None
+        torch = None  # type: ignore[assignment]
 
     if isinstance(value, np.ndarray):
         if np.issubdtype(value.dtype, np.floating) and value.dtype != np.float32:
@@ -188,6 +188,7 @@ class ChatterboxTurboProvider:
                 return ChatterboxTurboTTS.from_pretrained(device=device)
 
             self._model = await asyncio.to_thread(_load)
+            assert self._model is not None  # just loaded above
             self._sample_rate = self._model.sr
             logger.info("Chatterbox Turbo model loaded successfully")
             return self._model

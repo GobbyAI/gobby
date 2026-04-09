@@ -28,6 +28,7 @@ _WARMUP_ERROR = "error"
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
     from gobby.voice.tts import KokoroTTS
+    from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
 
 class TTSPipeline:
@@ -39,7 +40,7 @@ class TTSPipeline:
 
     def __init__(
         self,
-        tts: KokoroTTS,
+        tts: KokoroTTS | ChatterboxTurboProvider,
         conversation_id: str,
         clients: dict[Any, dict[str, Any]],
     ) -> None:
@@ -156,7 +157,7 @@ class VoiceMixin:
 
         # Lazy singletons
         self._whisper_stt: Any = None
-        self._kokoro_tts: KokoroTTS | None = None
+        self._kokoro_tts: KokoroTTS | ChatterboxTurboProvider | None = None
 
         # Dep auto-install tracking (run once per daemon lifecycle)
         self._stt_deps_checked = False
@@ -213,7 +214,7 @@ class VoiceMixin:
         except Exception:
             return False, "faster-whisper not installed (uv sync --extra voice)"
 
-    def _get_tts(self) -> KokoroTTS | None:
+    def _get_tts(self) -> KokoroTTS | ChatterboxTurboProvider | None:
         """Get or create the TTS singleton (routes by provider config)."""
         if self._kokoro_tts is not None:
             return self._kokoro_tts
@@ -227,11 +228,12 @@ class VoiceMixin:
             self._tts_deps_checked = True
             asyncio.create_task(self._ensure_tts_deps(voice_config))
 
+        tts: KokoroTTS | ChatterboxTurboProvider
         provider = getattr(voice_config, "tts_provider", "kokoro")
         if provider == "chatterbox":
-            from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+            from gobby.voice.tts_chatterbox import ChatterboxTurboProvider as _Chatterbox
 
-            tts = ChatterboxTurboProvider(voice_config)
+            tts = _Chatterbox(voice_config)
         else:
             from gobby.voice.tts import KokoroTTS as _KokoroTTS
 

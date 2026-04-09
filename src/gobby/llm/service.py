@@ -104,7 +104,6 @@ class LLMService:
             raise ValueError(f"Provider '{name}' is not configured. Available providers: {enabled}")
 
         # Create provider instance based on name
-        provider: LLMProvider
 
         if name == "claude":
             from gobby.llm.claude import ClaudeLLMProvider
