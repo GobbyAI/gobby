@@ -251,6 +251,8 @@ export interface ProjectProps {
 export interface VoiceProps {
   voiceMode?: boolean;
   voiceAvailable?: boolean;
+  voiceReady?: boolean;
+  voiceLoading?: boolean;
   isListening?: boolean;
   isSpeechDetected?: boolean;
   isTranscribing?: boolean;

@@ -105,11 +105,41 @@ def _float32_conditioning_resample(model: Any) -> Iterator[None]:
 
 
 @contextmanager
+def _float32_voice_encoder(model: Any) -> Iterator[None]:
+    """Wrap Chatterbox voice encoder entrypoints so MPS never sees float64 refs."""
+    if getattr(model, "device", None) != "mps":
+        yield
+        return
+
+    voice_encoder = getattr(model, "ve", None)
+    original_embeds_from_wavs = getattr(voice_encoder, "embeds_from_wavs", None)
+    original_embeds_from_mels = getattr(voice_encoder, "embeds_from_mels", None)
+    if voice_encoder is None or original_embeds_from_wavs is None or original_embeds_from_mels is None:
+        yield
+        return
+
+    def _wrapped_embeds_from_wavs(wavs: Any, *args: Any, **kwargs: Any) -> Any:
+        return original_embeds_from_wavs(_coerce_conditioning_audio(wavs), *args, **kwargs)
+
+    def _wrapped_embeds_from_mels(mels: Any, *args: Any, **kwargs: Any) -> Any:
+        return original_embeds_from_mels(_coerce_conditioning_audio(mels), *args, **kwargs)
+
+    voice_encoder.embeds_from_wavs = _wrapped_embeds_from_wavs
+    voice_encoder.embeds_from_mels = _wrapped_embeds_from_mels
+    try:
+        yield
+    finally:
+        voice_encoder.embeds_from_wavs = original_embeds_from_wavs
+        voice_encoder.embeds_from_mels = original_embeds_from_mels
+
+
+@contextmanager
 def _float32_conditioning_workarounds(model: Any) -> Iterator[None]:
     """Apply all Chatterbox MPS reference-audio float32 workarounds."""
     with _float32_conditioning_resample(model):
         with _float32_conditioning_tokenizer(model):
-            yield
+            with _float32_voice_encoder(model):
+                yield
 
 
 class ChatterboxTurboProvider:
@@ -208,7 +238,7 @@ class ChatterboxTurboProvider:
             import chatterbox  # noqa: F401
 
             return True
-        except ImportError:
+        except Exception:
             return False
 
     @property

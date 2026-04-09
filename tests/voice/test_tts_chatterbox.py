@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -180,6 +181,12 @@ class TestChatterboxTurboProvider:
         mock_model.device = "mps"
         mock_model.s3gen.tokenizer = tokenizer
 
+        fake_librosa = SimpleNamespace(
+            resample=lambda y, *args, **kwargs: np.asarray(y, dtype=np.float64),
+            effects=SimpleNamespace(trim=lambda y, top_db=20: (np.asarray(y), None)),
+        )
+        fake_torch = SimpleNamespace(is_tensor=lambda value: False, float32=np.float32)
+
         def generate_side_effect(text: str, **kwargs: object) -> MagicMock:
             import librosa
 
@@ -198,13 +205,99 @@ class TestChatterboxTurboProvider:
         provider._model = mock_model
 
         chunks = []
-        async for chunk in provider.synthesize_stream("Test"):
-            chunks.append(chunk)
+        with patch.dict("sys.modules", {"librosa": fake_librosa, "torch": fake_torch}):
+            async for chunk in provider.synthesize_stream("Test"):
+                chunks.append(chunk)
 
         assert len(chunks) == 1
         assert seen_resample_dtype == np.float32
         assert seen_dtype == np.float32
         assert mock_model.s3gen.tokenizer.forward is original_forward
+
+    @pytest.mark.asyncio
+    async def test_synthesize_stream_casts_voice_encoder_inputs_to_float32_on_mps(
+        self, tmp_path: Path
+    ) -> None:
+        """Voice encoder inputs should be coerced to float32 before MPS transfer."""
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        ref = tmp_path / "reference.wav"
+        ref.write_bytes(b"RIFF" + b"\x00" * 100)
+        provider = ChatterboxTurboProvider(
+            VoiceConfig(
+                enabled=True,
+                tts_enabled=True,
+                tts_provider="chatterbox",
+                tts_reference_audio=str(ref),
+                tts_device="mps",
+            )
+        )
+
+        seen_wav_dtype: np.dtype[Any] | None = None
+        seen_mel_dtype: np.dtype[Any] | None = None
+
+        def embeds_from_wavs(
+            wavs: list[np.ndarray], sample_rate: int, *args: object, **kwargs: object
+        ) -> np.ndarray:
+            nonlocal seen_wav_dtype
+            seen_wav_dtype = wavs[0].dtype
+            return np.zeros((1, 2), dtype=np.float32)
+
+        def embeds_from_mels(mels: list[np.ndarray], *args: object, **kwargs: object) -> np.ndarray:
+            nonlocal seen_mel_dtype
+            seen_mel_dtype = mels[0].dtype
+            return np.zeros((1, 2), dtype=np.float32)
+
+        mock_wav = MagicMock()
+        mock_wav.squeeze.return_value = mock_wav
+        mock_wav.cpu.return_value = mock_wav
+        mock_wav.numpy.return_value = np.zeros(8, dtype=np.float32)
+
+        tokenizer = MagicMock()
+        tokenizer.forward = MagicMock(return_value=(np.zeros((1, 1), dtype=np.int64), None))
+
+        voice_encoder = MagicMock()
+        voice_encoder.embeds_from_wavs = embeds_from_wavs
+        voice_encoder.embeds_from_mels = embeds_from_mels
+        original_embeds_from_wavs = voice_encoder.embeds_from_wavs
+        original_embeds_from_mels = voice_encoder.embeds_from_mels
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.device = "mps"
+        mock_model.s3gen.tokenizer = tokenizer
+        mock_model.ve = voice_encoder
+
+        fake_librosa = SimpleNamespace(
+            resample=lambda y, *args, **kwargs: np.asarray(y, dtype=np.float64),
+            effects=SimpleNamespace(trim=lambda y, top_db=20: (np.asarray(y), None)),
+        )
+        fake_torch = SimpleNamespace(is_tensor=lambda value: False, float32=np.float32)
+
+        def generate_side_effect(text: str, **kwargs: object) -> MagicMock:
+            assert kwargs["audio_prompt_path"] == str(ref)
+            mock_model.ve.embeds_from_wavs(
+                [np.array([0.2, -0.2], dtype=np.float64)],
+                sample_rate=16000,
+            )
+            mock_model.ve.embeds_from_mels(
+                [np.ones((2, 3), dtype=np.float64)],
+            )
+            return mock_wav
+
+        mock_model.generate.side_effect = generate_side_effect
+        provider._model = mock_model
+
+        chunks = []
+        with patch.dict("sys.modules", {"librosa": fake_librosa, "torch": fake_torch}):
+            async for chunk in provider.synthesize_stream("Test"):
+                chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert seen_wav_dtype == np.float32
+        assert seen_mel_dtype == np.float32
+        assert mock_model.ve.embeds_from_wavs is original_embeds_from_wavs
+        assert mock_model.ve.embeds_from_mels is original_embeds_from_mels
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_handles_model_load_failure(

@@ -6,6 +6,8 @@ const MAX_AUDIO_QUEUE_SIZE = 50
 interface VoiceState {
   voiceMode: boolean
   voiceAvailable: boolean
+  voiceReady: boolean
+  voiceLoading: boolean
   isListening: boolean
   isSpeechDetected: boolean
   isTranscribing: boolean
@@ -32,14 +34,18 @@ export function useVoice(
 ): UseVoiceReturn {
   const [voiceMode, setVoiceMode] = useState(false)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
+  const [voiceReady, setVoiceReady] = useState(false)
+  const [voiceLoading, setVoiceLoading] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [isSpeechDetected, setIsSpeechDetected] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [statusVoiceError, setStatusVoiceError] = useState<string | null>(null)
 
   const vadRef = useRef<MicVAD | null>(null)
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const statusPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Stable ref for conversationId so long-lived callbacks (e.g. VAD onSpeechEnd)
   // always see the latest value without re-subscribing.
@@ -194,22 +200,61 @@ export function useVoice(
     if (!window.isSecureContext) {
       console.warn('Voice: disabled — requires secure context (HTTPS or localhost)')
       setVoiceAvailable(false)
+      setVoiceReady(false)
+      setVoiceLoading(false)
       return
     }
 
-    fetch('/api/voice/status')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.enabled && data?.stt_available) {
-          setVoiceAvailable(true)
+    let cancelled = false
+
+    const syncVoiceStatus = async () => {
+      try {
+        const res = await fetch('/api/voice/status')
+        const data = res.ok ? await res.json() : null
+        if (cancelled) return
+
+        const ttsRequired = Boolean(data?.enabled && data?.tts_enabled)
+        const available = Boolean(data?.enabled && data?.stt_available && (!ttsRequired || data?.tts_available))
+        const ready = Boolean(available && data?.voice_ready)
+        const loading = Boolean(available && data?.voice_loading)
+        const warmupError =
+          (data?.stt_warmup_error as string | undefined) ||
+          (data?.tts_warmup_error as string | undefined) ||
+          null
+
+        setVoiceAvailable(available)
+        setVoiceReady(ready)
+        setVoiceLoading(loading)
+        setStatusVoiceError(warmupError)
+
+        if (loading) {
+          statusPollRef.current = setTimeout(syncVoiceStatus, 1000)
         }
-      })
-      .catch((err) => { console.error('Voice status check failed:', err); setVoiceAvailable(false) })
+      } catch (err) {
+        console.error('Voice status check failed:', err)
+        if (cancelled) return
+        setVoiceAvailable(false)
+        setVoiceReady(false)
+        setVoiceLoading(false)
+      }
+    }
+
+    void syncVoiceStatus()
+
+    return () => {
+      cancelled = true
+      if (statusPollRef.current) clearTimeout(statusPollRef.current)
+    }
   }, [])
 
   const toggleVoiceMode = useCallback(async () => {
     const newMode = !voiceMode
     setVoiceError(null)
+
+    if (newMode && (voiceLoading || !voiceReady)) {
+      setTransientError(statusVoiceError || 'Voice is still loading')
+      return
+    }
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
@@ -302,7 +347,7 @@ export function useVoice(
       setIsSpeechDetected(false)
       setIsTranscribing(false)
     }
-  }, [voiceMode, wsRef, conversationId, setTransientError, stopTTS])
+  }, [voiceMode, voiceLoading, voiceReady, statusVoiceError, wsRef, conversationId, setTransientError, stopTTS])
 
   // Stop TTS when switching conversations (skip initial mount)
   const prevConversationIdRef = useRef(conversationId)
@@ -331,6 +376,7 @@ export function useVoice(
         audioContextRef.current?.suspend()
       } catch { /* noop */ }
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current)
+      if (statusPollRef.current) clearTimeout(statusPollRef.current)
     }
   }, [])
 
@@ -371,11 +417,13 @@ export function useVoice(
   return {
     voiceMode,
     voiceAvailable,
+    voiceReady,
+    voiceLoading,
     isListening,
     isSpeechDetected,
     isTranscribing,
     isSpeaking,
-    voiceError,
+    voiceError: statusVoiceError ?? voiceError,
     toggleVoiceMode,
     handleVoiceMessage,
     handleBinaryMessage,

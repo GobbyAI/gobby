@@ -1280,6 +1280,8 @@ export default function App() {
                 voice={{
                   voiceMode: voice.voiceMode,
                   voiceAvailable: voice.voiceAvailable,
+                  voiceReady: voice.voiceReady,
+                  voiceLoading: voice.voiceLoading,
                   isListening: voice.isListening,
                   isSpeechDetected: voice.isSpeechDetected,
                   isTranscribing: voice.isTranscribing,

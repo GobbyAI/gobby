@@ -114,6 +114,21 @@ describe('ChatInput', () => {
     expect(screen.getByTitle('Enable voice mode')).toBeTruthy()
   })
 
+  it('shows disabled loading voice button while warmup is in progress', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        voiceAvailable={true}
+        voiceLoading={true}
+        onToggleVoice={vi.fn()}
+      />,
+    )
+
+    const button = screen.getByLabelText('Loading voice')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'Loading voice…')
+  })
+
   it('shows voice listening indicator when voice mode active', () => {
     render(
       <ChatInput

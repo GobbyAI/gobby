@@ -12,11 +12,17 @@ import base64
 import json
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 logger = logging.getLogger(__name__)
+
+_WARMUP_IDLE = "idle"
+_WARMUP_LOADING = "loading"
+_WARMUP_READY = "ready"
+_WARMUP_ERROR = "error"
 
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
@@ -144,6 +150,13 @@ class VoiceMixin:
         # Active TTS pipelines per conversation (for cancellation)
         self._active_tts_pipelines: dict[str, TTSPipeline] = {}
 
+        # Background preload state for startup warmup
+        self._voice_warmup_task: asyncio.Task[None] | None = None
+        self._stt_warmup_status = _WARMUP_IDLE
+        self._tts_warmup_status = _WARMUP_IDLE
+        self._stt_warmup_error = ""
+        self._tts_warmup_error = ""
+
     def _get_voice_config(self) -> VoiceConfig | None:
         """Get voice config from daemon_config if available."""
         config = getattr(self, "daemon_config", None)
@@ -170,6 +183,20 @@ class VoiceMixin:
 
         self._whisper_stt = WhisperSTT(voice_config)
         return self._whisper_stt
+
+    def _get_stt_availability(self) -> tuple[bool, str]:
+        """Return package-level STT availability and reason."""
+        voice_config = self._get_voice_config()
+        if not voice_config or not voice_config.enabled:
+            return False, "Voice not enabled in config"
+        if not voice_config.stt_enabled:
+            return False, "STT disabled in config"
+        try:
+            import faster_whisper  # noqa: F401
+
+            return True, ""
+        except Exception:
+            return False, "faster-whisper not installed (uv sync --extra voice)"
 
     def _get_tts(self) -> KokoroTTS | None:
         """Get or create the TTS singleton (routes by provider config)."""
@@ -200,6 +227,191 @@ class VoiceMixin:
 
         self._kokoro_tts = tts
         return self._kokoro_tts
+
+    def _get_tts_availability(self) -> tuple[bool, str]:
+        """Return package-level TTS availability and reason."""
+        voice_config = self._get_voice_config()
+        if not voice_config or not voice_config.enabled:
+            return False, "Voice not enabled in config"
+        if not voice_config.tts_enabled:
+            return False, "TTS disabled in config"
+
+        provider = getattr(voice_config, "tts_provider", "kokoro")
+        if provider == "chatterbox":
+            try:
+                import chatterbox  # noqa: F401
+
+                return True, ""
+            except Exception:
+                return False, "chatterbox not installed (uv sync --extra voice)"
+
+        try:
+            import kokoro_onnx  # noqa: F401
+        except Exception:
+            return False, "kokoro-onnx not installed (uv sync --extra voice)"
+
+        model_path = Path(voice_config.tts_model_path).expanduser()
+        voices_path = Path(voice_config.tts_voices_path).expanduser()
+        if model_path.exists() and voices_path.exists():
+            return True, ""
+        return False, "Kokoro model files not found"
+
+    def start_voice_warmup(self) -> None:
+        """Begin best-effort background warmup for enabled voice models."""
+        if self._voice_warmup_task is not None:
+            return
+
+        voice_config = self._get_voice_config()
+        if not voice_config or not voice_config.enabled:
+            return
+
+        should_warm = False
+        if voice_config.stt_enabled:
+            self._stt_warmup_status = _WARMUP_LOADING
+            self._stt_warmup_error = ""
+            should_warm = True
+        if voice_config.tts_enabled:
+            self._tts_warmup_status = _WARMUP_LOADING
+            self._tts_warmup_error = ""
+            should_warm = True
+
+        if not should_warm:
+            return
+
+        self._voice_warmup_task = asyncio.create_task(
+            self._warm_voice_models(),
+            name="voice-model-warmup",
+        )
+        self._voice_warmup_task.add_done_callback(self._on_voice_warmup_done)
+
+    async def stop_voice_warmup(self) -> None:
+        """Cancel background voice warmup if it is still in progress."""
+        task = self._voice_warmup_task
+        if task is None or task.done():
+            return
+
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    def get_voice_status(self) -> dict[str, Any]:
+        """Return voice feature availability and warmup state."""
+        voice_config = self._get_voice_config()
+        if voice_config is None:
+            return {
+                "enabled": False,
+                "stt_available": False,
+                "reason": "Voice config not found",
+                "voice_ready": False,
+                "voice_loading": False,
+                "stt_warmup_status": _WARMUP_IDLE,
+                "tts_warmup_status": _WARMUP_IDLE,
+                "stt_warmup_error": "",
+                "tts_warmup_error": "",
+            }
+
+        stt_available, stt_reason = self._get_stt_availability()
+        tts_available, tts_reason = self._get_tts_availability()
+
+        stt_warmup_status = self._stt_warmup_status if voice_config.stt_enabled else _WARMUP_IDLE
+        tts_warmup_status = self._tts_warmup_status if voice_config.tts_enabled else _WARMUP_IDLE
+
+        voice_ready = (
+            voice_config.enabled
+            and (not voice_config.stt_enabled or stt_warmup_status == _WARMUP_READY)
+            and (not voice_config.tts_enabled or tts_warmup_status == _WARMUP_READY)
+        )
+        voice_loading = (
+            (voice_config.stt_enabled and stt_warmup_status == _WARMUP_LOADING)
+            or (voice_config.tts_enabled and tts_warmup_status == _WARMUP_LOADING)
+        )
+
+        result: dict[str, Any] = {
+            "enabled": voice_config.enabled,
+            "stt_enabled": voice_config.stt_enabled,
+            "stt_available": stt_available,
+            "stt_reason": stt_reason,
+            "whisper_model": voice_config.whisper_model_size,
+            "stt_warmup_status": stt_warmup_status,
+            "stt_warmup_error": self._stt_warmup_error,
+            "tts_enabled": voice_config.tts_enabled,
+            "tts_provider": getattr(voice_config, "tts_provider", "kokoro"),
+            "tts_available": tts_available,
+            "tts_reason": tts_reason,
+            "tts_warmup_status": tts_warmup_status,
+            "tts_warmup_error": self._tts_warmup_error,
+            "voice_ready": voice_ready,
+            "voice_loading": voice_loading,
+        }
+
+        if result["tts_provider"] == "chatterbox":
+            ref = Path(voice_config.tts_reference_audio).expanduser()
+            result["tts_reference_audio"] = str(ref)
+            result["tts_reference_audio_exists"] = ref.exists()
+            result["tts_device"] = voice_config.tts_device
+        else:
+            result["tts_voice"] = voice_config.tts_voice
+
+        return result
+
+    async def _warm_voice_models(self) -> None:
+        """Warm enabled voice models without blocking daemon startup."""
+        voice_config = self._get_voice_config()
+        if not voice_config or not voice_config.enabled:
+            return
+
+        warmups: list[asyncio.Task[None]] = []
+        if voice_config.stt_enabled:
+            warmups.append(asyncio.create_task(self._warm_stt_model(), name="warm-stt"))
+        if voice_config.tts_enabled:
+            warmups.append(asyncio.create_task(self._warm_tts_model(), name="warm-tts"))
+        if warmups:
+            await asyncio.gather(*warmups)
+
+    def _on_voice_warmup_done(self, task: asyncio.Task[None]) -> None:
+        """Log unexpected warmup task failures."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Voice warmup task failed", exc_info=exc)
+
+    async def _warm_stt_model(self) -> None:
+        """Warm the Whisper STT model."""
+        started_at = time.perf_counter()
+        try:
+            stt = self._get_stt()
+            if stt is None:
+                available, reason = self._get_stt_availability()
+                raise RuntimeError(reason if not available else "STT is not configured")
+            if not stt.is_available:
+                raise RuntimeError("faster-whisper not installed (uv sync --extra voice)")
+            logger.info("Starting Whisper STT warmup")
+            await stt._ensure_model()
+            self._stt_warmup_status = _WARMUP_READY
+            self._stt_warmup_error = ""
+            logger.info(f"Whisper STT warmup complete in {time.perf_counter() - started_at:.2f}s")
+        except Exception as exc:
+            self._stt_warmup_status = _WARMUP_ERROR
+            self._stt_warmup_error = str(exc)
+            logger.error("Whisper STT warmup failed", exc_info=True)
+
+    async def _warm_tts_model(self) -> None:
+        """Warm the configured TTS model."""
+        started_at = time.perf_counter()
+        try:
+            tts = self._get_tts()
+            if tts is None:
+                available, reason = self._get_tts_availability()
+                raise RuntimeError(reason if not available else "TTS is not configured")
+            logger.info("Starting TTS warmup")
+            await tts._ensure_model()
+            self._tts_warmup_status = _WARMUP_READY
+            self._tts_warmup_error = ""
+            logger.info(f"TTS warmup complete in {time.perf_counter() - started_at:.2f}s")
+        except Exception as exc:
+            self._tts_warmup_status = _WARMUP_ERROR
+            self._tts_warmup_error = str(exc)
+            logger.error("TTS warmup failed", exc_info=True)
 
     async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> None:
         """Auto-install STT dependencies if missing."""

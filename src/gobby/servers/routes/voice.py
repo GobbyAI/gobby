@@ -27,12 +27,22 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
     @router.get("/status")
     async def voice_status() -> dict[str, Any]:
         """Check voice feature availability."""
+        ws_server = server.services.websocket_server or server.websocket_server
+        if ws_server and hasattr(ws_server, "get_voice_status"):
+            return ws_server.get_voice_status()
+
         config = server.config
         if not config or not hasattr(config, "voice"):
             return {
                 "enabled": False,
                 "stt_available": False,
                 "reason": "Voice config not found",
+                "voice_ready": False,
+                "voice_loading": False,
+                "stt_warmup_status": "idle",
+                "tts_warmup_status": "idle",
+                "stt_warmup_error": "",
+                "tts_warmup_error": "",
             }
 
         voice_config = config.voice
@@ -50,7 +60,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 import faster_whisper  # noqa: F401
 
                 stt_available = True
-            except ImportError:
+            except Exception:
                 stt_reason = "faster-whisper not installed (uv sync --extra voice)"
 
         # Check TTS availability
@@ -65,7 +75,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 import chatterbox  # noqa: F401
 
                 tts_available = True
-            except ImportError:
+            except Exception:
                 tts_reason = "chatterbox not installed (uv sync --extra voice)"
 
             if tts_available:
@@ -77,7 +87,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         else:
             try:
                 import kokoro_onnx  # noqa: F401
-            except ImportError:
+            except Exception:
                 tts_reason = "kokoro-onnx not installed (uv sync --extra voice)"
             else:
                 from pathlib import Path
@@ -95,10 +105,16 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             "stt_available": stt_available,
             "stt_reason": stt_reason,
             "whisper_model": voice_config.whisper_model_size,
+            "stt_warmup_status": "idle",
+            "stt_warmup_error": "",
             "tts_enabled": voice_config.tts_enabled,
             "tts_provider": tts_provider,
             "tts_available": tts_available,
             "tts_reason": tts_reason,
+            "tts_warmup_status": "idle",
+            "tts_warmup_error": "",
+            "voice_ready": False,
+            "voice_loading": False,
         }
 
         if tts_provider == "chatterbox":

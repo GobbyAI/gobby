@@ -158,6 +158,10 @@ def create_app(server: "HTTPServer") -> FastAPI:
             ws_server.inter_session_msg_manager = app.state.hook_manager._inter_session_msg_manager
             logger.debug("Inter-session message manager connected to WebSocket server")
 
+        if ws_server and hasattr(ws_server, "start_voice_warmup"):
+            ws_server.start_voice_warmup()
+            logger.debug("Voice model warmup scheduled")
+
         # Wire workflow handler to AgentRunner for embedded agent hooks
         if (
             server.services.agent_runner
@@ -284,6 +288,13 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         # Shutdown operations
         logger.debug("Shutting down Gobby HTTP server")
+
+        if ws_server and hasattr(ws_server, "stop_voice_warmup"):
+            try:
+                await ws_server.stop_voice_warmup()
+                logger.debug("Voice model warmup stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop voice warmup task: {e}")
 
         # Cleanup CodexAdapter and stop app-server client
         if hasattr(app.state, "codex_adapter") and app.state.codex_adapter:

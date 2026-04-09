@@ -24,6 +24,8 @@ interface ChatInputProps {
   onModeChange?: (mode: ChatMode) => void
   voiceMode?: boolean
   voiceAvailable?: boolean
+  voiceReady?: boolean
+  voiceLoading?: boolean
   isListening?: boolean
   isSpeechDetected?: boolean
   isTranscribing?: boolean
@@ -65,6 +67,8 @@ export function ChatInput({
   onModeChange,
   voiceMode = false,
   voiceAvailable = false,
+  voiceReady = false,
+  voiceLoading = false,
   isListening = false,
   isSpeechDetected = false,
   isTranscribing = false,
@@ -332,14 +336,22 @@ export function ChatInput({
               hasProject={agentHasProject}
             />
           )}
-          {onToggleVoice && voiceAvailable && (
+          {onToggleVoice && (voiceAvailable || voiceLoading || Boolean(voiceError)) && (
             <button
-              className={cn('p-1.5 rounded transition-colors', voiceMode ? 'text-accent bg-accent/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+              className={cn(
+                'p-1.5 rounded transition-colors',
+                voiceLoading
+                  ? 'text-muted-foreground bg-muted cursor-wait'
+                  : voiceMode
+                    ? 'text-accent bg-accent/20'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted',
+              )}
               onClick={onToggleVoice}
-              disabled={disabled}
-              title={voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
+              disabled={disabled || voiceLoading || !voiceReady}
+              title={voiceLoading ? 'Loading voice…' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
+              aria-label={voiceLoading ? 'Loading voice' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
             >
-              <MicIcon />
+              {voiceLoading ? <SpinnerIcon /> : <MicIcon />}
             </button>
           )}
           <div className="flex items-center gap-2 ml-auto">
