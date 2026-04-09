@@ -265,6 +265,7 @@ class WebSocketServer(
                 "send_to_cli_session": self._handle_send_to_cli_session,
                 "voice_audio": self._handle_voice_audio,
                 "voice_mode_toggle": self._handle_voice_mode_toggle,
+                "voice_prepare": self._handle_voice_prepare,
                 "tts_stop": self._handle_tts_stop,
                 "canvas_interaction": self._handle_canvas_interaction,
                 "heartbeat": self._handle_heartbeat,

@@ -55,6 +55,9 @@ export function useVoice(
 
   const voiceModeRef = useRef(false)
 
+  // When true, auto-enable voice mode once models finish loading
+  const pendingVoiceEnableRef = useRef(false)
+
   // --- TTS playback state ---
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioQueueRef = useRef<AudioBuffer[]>([])
@@ -194,25 +197,17 @@ export function useVoice(
     queueAudioChunk(data, meta.sampleRate)
   }, [queueAudioChunk])
 
-  // Check voice availability on mount (STT availability via /api/voice/status)
-  useEffect(() => {
-    // getUserMedia requires a secure context (HTTPS or localhost).
-    // On plain HTTP (e.g. Tailscale IP), navigator.mediaDevices is undefined.
-    if (!window.isSecureContext) {
-      console.warn('Voice: disabled — requires secure context (HTTPS or localhost)')
-      setVoiceAvailable(false)
-      setVoiceReady(false)
-      setVoiceLoading(false)
-      return
-    }
+  // Reusable status poller — called on mount and when voice_prepare triggers a load
+  const pollCancelledRef = useRef(false)
 
-    let cancelled = false
+  const startStatusPolling = useCallback(() => {
+    if (statusPollRef.current) clearTimeout(statusPollRef.current)
 
     const syncVoiceStatus = async () => {
       try {
         const res = await fetch('/api/voice/status')
         const data = res.ok ? await res.json() : null
-        if (cancelled) return
+        if (pollCancelledRef.current) return
 
         const ttsRequired = Boolean(data?.enabled && data?.tts_enabled)
         const available = Boolean(data?.enabled && data?.stt_available && (!ttsRequired || data?.tts_available))
@@ -233,7 +228,7 @@ export function useVoice(
         }
       } catch (err) {
         console.error('Voice status check failed:', err)
-        if (cancelled) return
+        if (pollCancelledRef.current) return
         setVoiceAvailable(false)
         setVoiceReady(false)
         setVoiceLoading(false)
@@ -241,19 +236,50 @@ export function useVoice(
     }
 
     void syncVoiceStatus()
+  }, [])
+
+  // Check voice availability on mount (STT availability via /api/voice/status)
+  useEffect(() => {
+    // getUserMedia requires a secure context (HTTPS or localhost).
+    // On plain HTTP (e.g. Tailscale IP), navigator.mediaDevices is undefined.
+    if (!window.isSecureContext) {
+      console.warn('Voice: disabled — requires secure context (HTTPS or localhost)')
+      setVoiceAvailable(false)
+      setVoiceReady(false)
+      setVoiceLoading(false)
+      return
+    }
+
+    pollCancelledRef.current = false
+    startStatusPolling()
 
     return () => {
-      cancelled = true
+      pollCancelledRef.current = true
       if (statusPollRef.current) clearTimeout(statusPollRef.current)
     }
-  }, [])
+  }, [startStatusPolling])
 
   const toggleVoiceMode = useCallback(async () => {
     const newMode = !voiceMode
     setVoiceError(null)
 
-    if (newMode && (voiceLoading || !voiceReady)) {
-      setTransientError(statusVoiceError || 'Voice is still loading')
+    if (newMode && voiceLoading) {
+      // Already loading — just wait
+      pendingVoiceEnableRef.current = true
+      return
+    }
+
+    if (newMode && !voiceReady) {
+      // Models not loaded yet — trigger lazy load and wait
+      pendingVoiceEnableRef.current = true
+      setVoiceLoading(true)
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'voice_prepare',
+          conversation_id: conversationId,
+        }))
+      }
+      startStatusPolling()
       return
     }
 
@@ -348,7 +374,15 @@ export function useVoice(
       setIsSpeechDetected(false)
       setIsTranscribing(false)
     }
-  }, [voiceMode, voiceLoading, voiceReady, statusVoiceError, wsRef, conversationId, setTransientError, stopTTS])
+  }, [voiceMode, voiceLoading, voiceReady, wsRef, conversationId, setTransientError, stopTTS, startStatusPolling])
+
+  // Auto-enable voice mode when models finish loading after a mic-button click
+  useEffect(() => {
+    if (voiceReady && pendingVoiceEnableRef.current) {
+      pendingVoiceEnableRef.current = false
+      toggleVoiceMode()
+    }
+  }, [voiceReady, toggleVoiceMode])
 
   // Stop TTS when intentionally switching conversations.
   // Uses conversationSwitchKey (not conversationId) so that SDK session ID

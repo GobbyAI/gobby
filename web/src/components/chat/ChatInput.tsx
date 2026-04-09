@@ -67,7 +67,7 @@ export function ChatInput({
   onModeChange,
   voiceMode = false,
   voiceAvailable = false,
-  voiceReady = false,
+  voiceReady: _voiceReady = false,
   voiceLoading = false,
   isListening = false,
   isSpeechDetected = false,
@@ -455,7 +455,7 @@ export function ChatInput({
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted',
                 )}
                 onClick={onToggleVoice}
-                disabled={disabled || voiceLoading || !voiceReady}
+                disabled={disabled || voiceLoading}
                 title={voiceLoading ? 'Loading voice…' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
                 aria-label={voiceLoading ? 'Loading voice' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
               >

@@ -99,6 +99,10 @@ async def handle_clear_chat(
     if hasattr(mixin, "_session_create_locks"):
         mixin._session_create_locks.pop(conversation_id, None)
 
+    # Unload voice models if no sessions remain
+    if hasattr(mixin, "_check_voice_idle"):
+        mixin._check_voice_idle()
+
     # Notify frontend
     await websocket.send(json.dumps({"type": "chat_cleared", "conversation_id": conversation_id}))
     logger.info(f"Chat cleared for conversation {conversation_id[:8]}")
@@ -134,6 +138,10 @@ async def handle_delete_chat(
         mixin._chat_sessions.pop(conversation_id, None)
         if hasattr(mixin, "_session_create_locks"):
             mixin._session_create_locks.pop(conversation_id, None)
+
+    # Unload voice models if no sessions remain
+    if hasattr(mixin, "_check_voice_idle"):
+        mixin._check_voice_idle()
 
     # Soft-delete: mark as expired (preserves messages;
     # hard delete fails due to FK constraints from agent_runs, tasks, etc.)
@@ -185,6 +193,9 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                 logger.debug(f"Cleaned up idle chat session {conv_id}")
             if stale_ids:
                 logger.info(f"Cleaned up {len(stale_ids)} idle chat session(s)")
+                # Unload voice models if no sessions remain
+                if hasattr(mixin, "_check_voice_idle"):
+                    mixin._check_voice_idle()
         except asyncio.CancelledError:
             break
         except Exception:

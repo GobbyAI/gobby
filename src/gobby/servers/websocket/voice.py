@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import json
 import logging
 import time
@@ -675,6 +676,84 @@ class VoiceMixin:
         )
 
         logger.debug(f"Voice mode {'enabled' if enabled else 'disabled'} for {conversation_id[:8]}")
+
+    async def _handle_voice_prepare(self, websocket: Any, data: dict[str, Any]) -> None:
+        """Handle voice_prepare: trigger lazy model warmup on mic-button click.
+
+        Message format:
+        {
+            "type": "voice_prepare",
+            "conversation_id": "stable-id"
+        }
+        """
+        conversation_id = data.get("conversation_id", "")
+        self.start_voice_warmup()
+
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "voice_status",
+                    "conversation_id": conversation_id,
+                    "status": "preparing",
+                }
+            )
+        )
+        logger.info("Voice model warmup triggered by client")
+
+    def _unload_voice_models(self) -> None:
+        """Release voice models to reclaim memory.
+
+        Called when the last web chat session is removed.
+        """
+        unloaded: list[str] = []
+
+        if self._whisper_stt is not None:
+            self._whisper_stt.unload()
+            self._whisper_stt = None
+            unloaded.append("STT")
+
+        if self._kokoro_tts is not None:
+            self._kokoro_tts.unload()
+            self._kokoro_tts = None
+            unloaded.append("TTS")
+
+        if not unloaded:
+            return
+
+        # Reset warmup status so next mic-click triggers a fresh load
+        self._stt_warmup_status = _WARMUP_IDLE
+        self._tts_warmup_status = _WARMUP_IDLE
+        self._stt_warmup_error = ""
+        self._tts_warmup_error = ""
+
+        # Cancel in-flight warmup task
+        if self._voice_warmup_task and not self._voice_warmup_task.done():
+            self._voice_warmup_task.cancel()
+        self._voice_warmup_task = None
+
+        # Reclaim memory
+        gc.collect()
+        try:
+            import torch
+
+            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()
+        except ImportError:
+            pass
+
+        logger.info(f"Voice models unloaded ({', '.join(unloaded)}) — memory reclaimed")
+
+    def _check_voice_idle(self) -> None:
+        """Unload voice models if no web chat sessions remain."""
+        chat_sessions: dict[str, Any] = getattr(self, "_chat_sessions", {})
+        if len(chat_sessions) > 0:
+            return
+
+        models_loaded = (
+            self._stt_warmup_status == _WARMUP_READY or self._tts_warmup_status == _WARMUP_READY
+        )
+        if models_loaded:
+            self._unload_voice_models()
 
     async def _cleanup_voice(self) -> None:
         """Clean up voice state. Called from stop()."""

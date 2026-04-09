@@ -50,6 +50,10 @@ class KokoroTTS:
         self._load_lock: asyncio.Lock | None = None
         self._sample_rate = 24000  # Kokoro outputs 24kHz
 
+    def unload(self) -> None:
+        """Release the model to reclaim memory."""
+        self._model = None
+
     async def _ensure_model(self) -> Any:
         """Lazy-load the Kokoro model (thread-safe, async)."""
         if self._model is not None:

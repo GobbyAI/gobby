@@ -114,7 +114,11 @@ def _float32_voice_encoder(model: Any) -> Iterator[None]:
     voice_encoder = getattr(model, "ve", None)
     original_embeds_from_wavs = getattr(voice_encoder, "embeds_from_wavs", None)
     original_embeds_from_mels = getattr(voice_encoder, "embeds_from_mels", None)
-    if voice_encoder is None or original_embeds_from_wavs is None or original_embeds_from_mels is None:
+    if (
+        voice_encoder is None
+        or original_embeds_from_wavs is None
+        or original_embeds_from_mels is None
+    ):
         yield
         return
 
@@ -155,6 +159,10 @@ class ChatterboxTurboProvider:
         self._load_lock: asyncio.Lock | None = None
         self._sample_rate = 24000  # Chatterbox outputs 24kHz
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
+
+    def unload(self) -> None:
+        """Release the model to reclaim memory."""
+        self._model = None
 
     async def _ensure_model(self) -> Any:
         """Lazy-load the Chatterbox Turbo model (thread-safe, async)."""

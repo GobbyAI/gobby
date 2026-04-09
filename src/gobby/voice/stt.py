@@ -34,6 +34,10 @@ class WhisperSTT:
         self._loading = False
         self._load_lock = asyncio.Lock()
 
+    def unload(self) -> None:
+        """Release the model to reclaim memory."""
+        self._model = None
+
     def _build_initial_prompt(self) -> str | None:
         """Build the initial_prompt for Whisper from vocabulary + whisper_prompt.
 

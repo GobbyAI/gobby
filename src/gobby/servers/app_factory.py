@@ -158,9 +158,8 @@ def create_app(server: "HTTPServer") -> FastAPI:
             ws_server.inter_session_msg_manager = app.state.hook_manager._inter_session_msg_manager
             logger.debug("Inter-session message manager connected to WebSocket server")
 
-        if ws_server and hasattr(ws_server, "start_voice_warmup"):
-            ws_server.start_voice_warmup()
-            logger.debug("Voice model warmup scheduled")
+        # Voice models are loaded lazily on first mic-button click (voice_prepare)
+        # to avoid ~4GB of idle memory from Chatterbox/Whisper at startup.
 
         # Wire workflow handler to AgentRunner for embedded agent hooks
         if (
