@@ -108,25 +108,25 @@ function PanelTaskNode({ node, style }: NodeRendererProps<TreeNode>) {
   return (
     <div
       style={style}
-      className={`paneltask-row${node.isSelected ? ' paneltask-row--expanded' : ''}${CLOSED_STATUSES.has(task.status) ? ' paneltask-row--closed' : ''}`}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${node.isSelected ? ' bg-accent/[0.06]' : ''}${CLOSED_STATUSES.has(task.status) ? ' opacity-50' : ''}`}
       onClick={() => node.activate()}
     >
       {node.isInternal ? (
         <button
-          className="paneltask-tree-toggle"
+          className="bg-transparent border-none text-muted-foreground text-xs cursor-pointer p-0 w-4 shrink-0 text-center leading-none"
           onClick={e => { e.stopPropagation(); node.toggle() }}
         >
           {node.isOpen ? '▾' : '▸'}
         </button>
       ) : (
-        <span className="paneltask-tree-toggle paneltask-tree-toggle--leaf" />
+        <span className="invisible w-4 shrink-0" />
       )}
       <span
-        className="paneltask-status-dot"
+        className="w-1.5 h-1.5 rounded-full shrink-0"
         style={{ backgroundColor: dotColor }}
       />
-      {ref && <span className="paneltask-ref">{ref}</span>}
-      <span className="paneltask-row-title" style={{ color: textColor }}>
+      {ref && <span className="text-xs text-muted-foreground shrink-0">{ref}</span>}
+      <span className="truncate min-w-0 flex-1 text-sm text-foreground" style={{ color: textColor }}>
         {task.title}
       </span>
     </div>
@@ -148,17 +148,18 @@ function FilterDropdown({
 }) {
   return (
     <>
-      <div className="paneltask-filter-backdrop" onClick={onClose} />
-      <div className="paneltask-filter-dropdown">
+      <div className="fixed inset-0 z-[99]" onClick={onClose} />
+      <div className="absolute top-full right-2 z-[100] bg-secondary border border-border rounded-md shadow-lg p-1.5 flex flex-col gap-0.5 min-w-[10rem]">
         {ALL_STATUSES.map((status) => (
-          <label key={status} className="paneltask-filter-chip">
+          <label key={status} className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50 capitalize">
             <input
               type="checkbox"
+              className="w-3 h-3"
               checked={filters.has(status)}
               onChange={() => onToggle(status)}
             />
             <span
-              className="paneltask-status-dot"
+              className="w-1.5 h-1.5 rounded-full shrink-0"
               style={{ backgroundColor: STATUS_DOT_COLORS[status] ?? '#737373' }}
             />
             <span>{status.replace(/_/g, ' ')}</span>
@@ -355,17 +356,17 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="paneltask-toolbar" style={{ position: 'relative' }}>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-secondary relative">
         <input
           type="text"
-          className="paneltask-search"
+          className="flex-1 min-w-0 px-2 py-0.5 border border-border rounded bg-background text-foreground text-xs outline-none focus:border-accent transition-colors placeholder:text-muted-foreground"
           placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <button
           type="button"
-          className="paneltask-filter-btn"
+          className="flex items-center justify-center bg-transparent border border-border rounded text-muted-foreground cursor-pointer px-1.5 py-0.5 shrink-0 hover:text-foreground hover:border-accent transition-colors"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by status"
         >
@@ -429,13 +430,13 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
       {/* Detail pane */}
       {selectedTaskId && (
         <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-          <div className="paneltask-detail-header">
-            <span className="paneltask-detail-header-title">
+          <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border bg-secondary">
+            <span className="flex-1 min-w-0 truncate text-sm font-medium">
               {taskDetail ? taskDetail.title : 'Loading...'}
             </span>
             <button
               type="button"
-              className="paneltask-detail-close"
+              className="bg-transparent border-none text-muted-foreground cursor-pointer text-sm px-1 shrink-0 hover:text-foreground transition-colors"
               onClick={() => setSelectedTaskId(null)}
               title="Close detail"
             >
@@ -463,27 +464,27 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
   const priorityLabel = PRIORITY_LABELS[task.priority ?? 4] ?? 'Backlog'
 
   return (
-    <div className="paneltask-accordion-content">
-      <div className="paneltask-accordion-meta">
-        <span className="paneltask-accordion-status">{task.status.replace(/_/g, ' ')}</span>
-        <span className="paneltask-detail-sep">{'\u00B7'}</span>
+    <div className="px-3 py-2 flex flex-col gap-2">
+      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
+        <span className="capitalize">{task.status.replace(/_/g, ' ')}</span>
+        <span className="opacity-40">{'\u00B7'}</span>
         <span>{priorityLabel}</span>
         {task.task_type !== 'task' && (
           <>
-            <span className="paneltask-detail-sep">{'\u00B7'}</span>
+            <span className="opacity-40">{'\u00B7'}</span>
             <span>{task.task_type}</span>
           </>
         )}
         {task.assignee && (
           <>
-            <span className="paneltask-detail-sep">{'\u00B7'}</span>
+            <span className="opacity-40">{'\u00B7'}</span>
             <span>{task.assignee}</span>
           </>
         )}
       </div>
 
       {task.description && (
-        <div className="paneltask-accordion-section">
+        <div className="border-t border-border pt-1.5">
           <div className="message-content text-xs">
             <Markdown content={task.description} id={`task-desc-${task.id}`} />
           </div>
@@ -491,15 +492,15 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
       )}
 
       {task.validation_criteria && (
-        <div className="paneltask-accordion-section">
-          <div className="paneltask-detail-label">Validation</div>
+        <div className="border-t border-border pt-1.5">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Validation</div>
           <div className="message-content text-xs">
             <Markdown content={task.validation_criteria} id={`task-vc-${task.id}`} />
           </div>
         </div>
       )}
 
-      <div className="paneltask-accordion-dates">
+      <div className="text-[10px] text-muted-foreground border-t border-border pt-1.5">
         <span>Created {new Date(task.created_at).toLocaleDateString()}</span>
         {task.closed_at && <span> {'\u00B7'} Closed {new Date(task.closed_at).toLocaleDateString()}</span>}
       </div>
