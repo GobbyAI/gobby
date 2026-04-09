@@ -49,32 +49,52 @@ class TTSPipeline:
         self.clients = clients
         self.sentence_buffer = SentenceBuffer()
         self._chunk_index = 0
-        self._synthesis_tasks: list[asyncio.Task[None]] = []
+        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._worker_task: asyncio.Task[None] = asyncio.create_task(
+            self._run_worker(),
+            name=f"tts-pipeline-{conversation_id[:8]}",
+        )
 
     def feed_text(self, chunk: str) -> None:
-        """Feed a text chunk from the LLM stream. Spawns TTS tasks for complete sentences."""
+        """Feed a text chunk from the LLM stream and enqueue complete sentences."""
         sentences = self.sentence_buffer.feed(chunk)
         for sentence in sentences:
-            task = asyncio.create_task(self._synthesize_and_send(sentence))
-            task.add_done_callback(self._on_task_done)
-            self._synthesis_tasks.append(task)
+            self._queue.put_nowait(sentence)
 
     async def flush(self) -> None:
-        """Flush remaining buffer at end of stream."""
+        """Flush remaining buffer at end of stream in FIFO order."""
         remaining = self.sentence_buffer.flush()
         if remaining:
-            await self._synthesize_and_send(remaining)
+            await self._queue.put(remaining)
+        await self._queue.join()
 
     async def cancel(self) -> None:
-        """Cancel all pending synthesis tasks."""
+        """Cancel queued and active TTS work."""
         self.sentence_buffer.clear()
-        for task in self._synthesis_tasks:
-            if not task.done():
-                task.cancel()
-        # Wait for cancellations to settle
-        if self._synthesis_tasks:
-            await asyncio.gather(*self._synthesis_tasks, return_exceptions=True)
-        self._synthesis_tasks.clear()
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+
+        if not self._worker_task.done():
+            self._worker_task.cancel()
+        await asyncio.gather(self._worker_task, return_exceptions=True)
+
+    async def _run_worker(self) -> None:
+        """Serialize sentence synthesis so later sentences cannot overtake earlier ones."""
+        try:
+            while True:
+                text = await self._queue.get()
+                try:
+                    if text is None:
+                        return
+                    await self._synthesize_and_send(text)
+                finally:
+                    self._queue.task_done()
+        except asyncio.CancelledError:
+            raise
 
     async def _synthesize_and_send(self, text: str) -> None:
         """Synthesize a sentence and send audio chunks to all conversation clients."""
@@ -107,15 +127,6 @@ class TTSPipeline:
             raise
         except Exception:
             logger.error("TTS synthesis/send failed", exc_info=True)
-
-    @staticmethod
-    def _on_task_done(task: asyncio.Task[None]) -> None:
-        """Log unhandled exceptions from TTS tasks (fire-and-forget safety)."""
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            logger.error("Unhandled exception in TTS task", exc_info=exc)
 
 
 class VoiceMixin:
@@ -320,9 +331,8 @@ class VoiceMixin:
             and (not voice_config.stt_enabled or stt_warmup_status == _WARMUP_READY)
             and (not voice_config.tts_enabled or tts_warmup_status == _WARMUP_READY)
         )
-        voice_loading = (
-            (voice_config.stt_enabled and stt_warmup_status == _WARMUP_LOADING)
-            or (voice_config.tts_enabled and tts_warmup_status == _WARMUP_LOADING)
+        voice_loading = (voice_config.stt_enabled and stt_warmup_status == _WARMUP_LOADING) or (
+            voice_config.tts_enabled and tts_warmup_status == _WARMUP_LOADING
         )
 
         result: dict[str, Any] = {
