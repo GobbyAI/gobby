@@ -9,10 +9,32 @@ metadata:
 
 # Task Creation
 
-Create and manage tasks via gobby-tasks MCP. Use progressive discovery for tool schemas.
+Create and manage tasks via `call_tool("gobby-tasks", ...)`. Fetch schemas with `get_tool_schema("gobby-tasks", "create_task")` before first use.
 
 > **Note:** Claude Code's native task system (TodoWrite/TodoRead) is disabled by Gobby rules.
 > All task operations go through **gobby-tasks** MCP. Do not use native Claude task tools — they will be blocked.
+
+## Creating a Task
+
+```python
+# Bug — high priority, code category
+call_tool("gobby-tasks", "create_task", {
+    "title": "Fix null pointer in session cleanup",
+    "category": "code",
+    "task_type": "bug",
+    "priority": 1,
+    "validation_criteria": "SessionManager.cleanup() no longer raises on empty sessions"
+})
+
+# Feature — create and claim in one call
+call_tool("gobby-tasks", "create_task", {
+    "title": "Add webhook support for pipeline completion",
+    "category": "code",
+    "task_type": "feature",
+    "claim": true,
+    "validation_criteria": "POST /webhooks endpoint accepts pipeline_completed events and returns 201"
+})
+```
 
 ---
 
@@ -90,8 +112,22 @@ Do **not** create tasks during plan mode unless the user explicitly asks you to.
 
 ## Claiming
 
-Claim a task before editing files — this sets it to `in_progress` and assigns it to your session. You can auto-claim at creation time with `claim: true`, or claim an existing task separately.
+Auto-claim at creation with `claim: true` (shown above), or claim an existing task:
+
+```python
+call_tool("gobby-tasks", "claim_task", {"task_id": "#42"})
+```
 
 ## Error Triage
 
-When you encounter bugs or issues unrelated to your current task, create a bug task for them immediately and continue with your current work. Every error is your error, even if you didn't cause it.
+When you encounter bugs unrelated to your current task, create a task and continue:
+
+```python
+call_tool("gobby-tasks", "create_task", {
+    "title": "Fix pre-existing lint warning in session.py",
+    "category": "code",
+    "task_type": "bug",
+    "priority": 3,
+    "validation_criteria": "ruff check on session.py passes with no warnings"
+})
+```

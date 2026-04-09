@@ -20,7 +20,7 @@ Before closing or changing task status, complete ALL gates below. They fire in o
 | # | Gate | Variable | Skipped by |
 |---|------|----------|------------|
 | 1 | Clean working tree | — | Non-work closes |
-| 2 | Commit linked to task | — | Non-work closes |
+| 2 | Commit SHA passed to close_task | — | Non-work closes |
 | 3 | Lint + tests pass, all issues fixed | `errors_resolved` | — |
 | 4 | Memory review completed | `memory_review_completed` | — |
 
@@ -41,9 +41,9 @@ git commit -m "[project-#N] type: description"
 
 Prefer staging specific files over `git add -A`. Include the task reference in the commit message.
 
-## Gate 2: Commit Linked to Task
+## Gate 2: Close with Commit SHA
 
-Pass `commit_sha` to `close_task` to link and close in one call:
+Pass `commit_sha` to `close_task` — this links the commit and closes in one call:
 
 ```python
 call_tool("gobby-tasks", "close_task", {
@@ -52,6 +52,8 @@ call_tool("gobby-tasks", "close_task", {
     "changes_summary": "What changed and why"
 })
 ```
+
+Do NOT call `link_commit` separately — `close_task` handles linking internally when you pass `commit_sha`. The `link_commit` tool exists only for associating commits to tasks still in progress (multi-commit work).
 
 ## Gate 3: Errors, Warnings, and Failures Resolved
 
@@ -105,7 +107,7 @@ Do NOT create memories for bugs or errors — create tasks instead.
 3. set_variable(errors_resolved=true)
 4. Review memories → save/delete/clear gate
 5. set_variable(memory_review_completed=true)
-6. close_task(task_id, commit_sha, changes_summary)
+6. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes
 ```
 
 ## Review Flow (autonomous/pipeline agents)
@@ -162,7 +164,8 @@ Gates 3-4 still apply. `changes_summary` is still required — explain why no ch
 
 | Mistake | Why it fails | Fix |
 |---------|-------------|-----|
-| Close before commit | Gate 2 blocks — no commit linked | Commit first, pass `commit_sha` |
+| Close without `commit_sha` | Gate 2 blocks — no commit to validate | Commit first, pass `commit_sha` to `close_task` |
+| Separate `link_commit` then `close_task` | Unnecessary extra call | Pass `commit_sha` directly to `close_task` |
 | `git add -A` | May stage secrets or binaries | Stage specific files |
 | File task instead of fixing error | Gate 3 blocks — `errors_resolved` not set | Investigate and fix first |
 | Skip memory review | Gate 4 blocks — `memory_review_completed` not set | Review or explicitly clear |
