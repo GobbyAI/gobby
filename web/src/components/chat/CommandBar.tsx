@@ -1,7 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import type { SessionObservationMeta } from '../../types/chat'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { AgentPickerDropdown } from './AgentPickerDropdown'
 
 interface RunningAgent {
   run_id: string
@@ -64,24 +63,19 @@ export function CommandBar({
   onNewChat,
   onTogglePanel,
   agents: _agents,
-  agentDefinitions = [],
-  agentGlobalDefs = [],
-  agentProjectDefs = [],
-  agentShowScopeToggle = false,
-  agentHasGlobal = false,
-  agentHasProject = false,
+  agentDefinitions: _agentDefinitions = [],
+  agentGlobalDefs: _agentGlobalDefs = [],
+  agentProjectDefs: _agentProjectDefs = [],
+  agentShowScopeToggle: _agentShowScopeToggle = false,
+  agentHasGlobal: _agentHasGlobal = false,
+  agentHasProject: _agentHasProject = false,
   isPanelPinned,
 }: CommandBarProps) {
-  const [showAgentPicker, setShowAgentPicker] = useState(false)
   const isObserving = !!viewingMeta
 
   const handleNewChat = useCallback(() => {
-    if (agentDefinitions.length <= 1) {
-      onNewChat()
-    } else {
-      setShowAgentPicker(true)
-    }
-  }, [agentDefinitions.length, onNewChat])
+    onNewChat()
+  }, [onNewChat])
 
   return (
     <div className="command-bar">
@@ -123,22 +117,6 @@ export function CommandBar({
         >
           <PlusIcon />
         </button>
-
-        {showAgentPicker && (
-          <AgentPickerDropdown
-            definitions={agentDefinitions}
-            globalDefs={agentGlobalDefs}
-            projectDefs={agentProjectDefs}
-            showScopeToggle={agentShowScopeToggle}
-            hasGlobal={agentHasGlobal}
-            hasProject={agentHasProject}
-            onSelect={(name) => {
-              onNewChat(name)
-              setShowAgentPicker(false)
-            }}
-            onClose={() => setShowAgentPicker(false)}
-          />
-        )}
 
         <button
           type="button"

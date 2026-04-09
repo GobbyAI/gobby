@@ -129,41 +129,6 @@ describe('ChatInput', () => {
     expect(button).toHaveAttribute('title', 'Loading voice…')
   })
 
-  it('shows voice listening indicator when voice mode active', () => {
-    render(
-      <ChatInput
-        {...defaultProps}
-        voiceMode={true}
-        voiceAvailable={true}
-        isListening={true}
-        onToggleVoice={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByText('Ready — speak to send')).toBeTruthy()
-  })
-
-  it('shows speech detected indicator', () => {
-    render(
-      <ChatInput
-        {...defaultProps}
-        voiceMode={true}
-        voiceAvailable={true}
-        isListening={true}
-        isSpeechDetected={true}
-        onToggleVoice={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByText('Listening...')).toBeTruthy()
-  })
-
-  it('shows voice error', () => {
-    render(<ChatInput {...defaultProps} voiceError="Mic not found" />)
-
-    expect(screen.getByText('Mic not found')).toBeTruthy()
-  })
-
   it('clears input after sending', async () => {
     const onSend = vi.fn()
     render(<ChatInput {...defaultProps} onSend={onSend} />)

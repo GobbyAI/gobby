@@ -183,6 +183,7 @@ export interface ChatState {
   onCanvasInteraction: (canvasId: string, action: UserAction) => void;
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
+  onModeChangeLocal?: (mode: ChatMode) => void;
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
   activeAgent?: string;
   onAgentChange?: (agentName: string) => void;

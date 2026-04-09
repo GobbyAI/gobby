@@ -1223,6 +1223,7 @@ export default function App() {
                     updateChatMode(mode);
                     sendMode(mode);
                   },
+                  onModeChangeLocal: updateChatMode,
                   onWorktreeChange: isPersonalProject
                     ? undefined
                     : sendWorktreeChange,

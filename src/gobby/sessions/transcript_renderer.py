@@ -291,18 +291,26 @@ _PROTOCOL_TAG_UNCLOSED_RE = re.compile(
     re.DOTALL,
 )
 
+# Tags where only the wrapper should be stripped (content preserved)
+_TAG_ONLY_STRIP_RE = re.compile(
+    r"</?(?:proposed_plan|proposed_implementation|search_quality_reflection)>"
+)
+
 
 def _strip_protocol_tags(content: str) -> str:
     """Remove protocol XML tags from message content.
 
     Strips system-reminder, task-notification, local-command-*,
     hook_context, and other infrastructure tags that shouldn't be
-    displayed in the session viewer.
+    displayed in the session viewer.  Also strips tag wrappers (but
+    preserves content) for proposed_plan, proposed_implementation,
+    and search_quality_reflection.
     """
     if "<" not in content:
         return content
     result = _PROTOCOL_TAG_RE.sub("", content)
     result = _PROTOCOL_TAG_UNCLOSED_RE.sub("", result)
+    result = _TAG_ONLY_STRIP_RE.sub("", result)
     # Clean up leftover whitespace
     result = re.sub(r"\n{3,}", "\n\n", result).strip()
     return result

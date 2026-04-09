@@ -17,7 +17,7 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
         <svg
           width={size}
           height={size}
-          viewBox="0 0 512 512"
+          viewBox="100 130 320 250"
           fill="none"
           className="source-icon source-icon-claude"
           aria-labelledby={titleId}

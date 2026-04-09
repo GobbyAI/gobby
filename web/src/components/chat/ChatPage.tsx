@@ -17,7 +17,7 @@ import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActiveSessionsModal } from "./ActiveSessionsModal";
 import { ActivityPanel, useActivityPanel } from "../activity/ActivityPanel";
-import { SessionStatusBar } from "./SessionStatusBar";
+import { VoiceStatusBar } from "./VoiceStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
 
@@ -276,8 +276,11 @@ export function ChatPage({
   const handleApprovePlan = useCallback(() => {
     setPlanPendingLocal(false);
     chat.onApprovePlan?.();
+    // Direct local mode update — bypasses the ref-based callback bridge
+    // in useChat.approvePlan which can silently fail if the ref isn't wired.
+    chat.onModeChangeLocal?.("accept_edits");
     activity.setIsPinned(false);
-  }, [chat.onApprovePlan, activity.setIsPinned]);
+  }, [chat.onApprovePlan, chat.onModeChangeLocal, activity.setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
@@ -367,18 +370,14 @@ export function ChatPage({
           agentHasProject={agentHasProject}
           isPanelPinned={activity.isPinned}
         />
-        <SessionStatusBar
-          sessionRef={effectiveSessionRef}
-          title={
-            chat.viewingSessionMeta?.title ??
-            chat.attachedSessionMeta?.title ??
-            activeTitle
-          }
-          viewingMeta={chat.viewingSessionMeta ?? chat.attachedSessionMeta}
-          isAttached={!!chat.attachedSessionId}
-          onAttach={chat.onAttachToViewed}
-          onDetach={chat.onDetachFromSession}
-        />
+        {voice.voiceMode && (
+          <VoiceStatusBar
+            isListening={voice.isListening ?? false}
+            isSpeechDetected={voice.isSpeechDetected ?? false}
+            isTranscribing={voice.isTranscribing ?? false}
+            voiceError={voice.voiceError}
+          />
+        )}
 
         <ArtifactContext.Provider
           value={{ openCodeAsArtifact, openFileAsArtifact }}
@@ -437,10 +436,6 @@ export function ChatPage({
             voiceAvailable={voice.voiceAvailable}
             voiceReady={voice.voiceReady}
             voiceLoading={voice.voiceLoading}
-            isListening={voice.isListening}
-            isSpeechDetected={voice.isSpeechDetected}
-            isTranscribing={voice.isTranscribing}
-            voiceError={voice.voiceError}
             onToggleVoice={voice.onToggleVoice}
             isMobile={isMobile}
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}

@@ -26,10 +26,6 @@ interface ChatInputProps {
   voiceAvailable?: boolean
   voiceReady?: boolean
   voiceLoading?: boolean
-  isListening?: boolean
-  isSpeechDetected?: boolean
-  isTranscribing?: boolean
-  voiceError?: string | null
   onToggleVoice?: () => void
   contextUsage?: ContextUsage
   currentBranch?: string | null
@@ -69,10 +65,6 @@ export function ChatInput({
   voiceAvailable = false,
   voiceReady: _voiceReady = false,
   voiceLoading = false,
-  isListening = false,
-  isSpeechDetected = false,
-  isTranscribing = false,
-  voiceError,
   onToggleVoice,
   contextUsage,
   currentBranch,
@@ -305,6 +297,30 @@ export function ChatInput({
           <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
             <PaperclipIcon />
           </Button>
+          {canSelectModel && (
+            <>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setPickerOpen(true)}
+                disabled={disabled}
+                title={pickerLabel}
+                aria-label={pickerLabel}
+              >
+                <SourceIcon source={provider || 'claude'} size={16} />
+              </Button>
+              <ProviderPicker
+                open={pickerOpen}
+                onClose={() => setPickerOpen(false)}
+                currentProvider={provider ?? null}
+                currentModel={currentModel}
+                availableProviders={pickerProviders}
+                onModelChange={onModelChange ?? (() => {})}
+                onProviderChange={onSwitchProvider ?? (() => {})}
+                hasMessages={hasMessages}
+              />
+            </>
+          )}
           {onAgentChange && agentName && agentDefinitions.length > 0 && (
             <ActiveAgentIndicator
               agentName={agentName}
@@ -362,67 +378,8 @@ export function ChatInput({
           </div>
         )}
 
-        {/* Listening indicator */}
-        {voiceMode && isListening && !isTranscribing && (
-          <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-accent/10">
-            {isSpeechDetected ? (
-              <>
-                <div className="flex gap-0.5 items-end h-4">
-                  {[10, 14, 8, 12].map((h, i) => (
-                    <span key={i} className="w-1 bg-green-400 rounded-full animate-pulse" style={{ height: `${h}px`, animationDelay: `${i * 0.1}s` }} />
-                  ))}
-                </div>
-                <span className="text-sm text-green-400">Listening...</span>
-              </>
-            ) : (
-              <>
-                <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-                <span className="text-sm text-muted-foreground">Ready — speak to send</span>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Transcribing indicator */}
-        {voiceMode && isTranscribing && (
-          <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-accent/10">
-            <SpinnerIcon />
-            <span className="text-sm text-muted-foreground">Transcribing...</span>
-          </div>
-        )}
-
-        {voiceError && (
-          <div className="text-sm text-destructive-foreground mb-2">{voiceError}</div>
-        )}
-
         {/* Input row */}
         <div className="flex items-end gap-2">
-          <div className="flex gap-1 shrink-0">
-            {canSelectModel && (
-              <>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setPickerOpen(true)}
-                  disabled={disabled}
-                  title={pickerLabel}
-                  aria-label={pickerLabel}
-                >
-                  <SourceIcon source={provider || 'claude'} size={16} />
-                </Button>
-                <ProviderPicker
-                  open={pickerOpen}
-                  onClose={() => setPickerOpen(false)}
-                  currentProvider={provider ?? null}
-                  currentModel={currentModel}
-                  availableProviders={pickerProviders}
-                  onModelChange={onModelChange ?? (() => {})}
-                  onProviderChange={onSwitchProvider ?? (() => {})}
-                  hasMessages={hasMessages}
-                />
-              </>
-            )}
-          </div>
           <textarea
             ref={textareaRef}
             className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
@@ -444,7 +401,7 @@ export function ChatInput({
           />
 
           <div className="flex gap-1 shrink-0">
-            {onToggleVoice && (voiceAvailable || voiceLoading || Boolean(voiceError)) && (
+            {onToggleVoice && (voiceAvailable || voiceLoading) && (
               <button
                 className={cn(
                   'p-1.5 rounded transition-colors',
