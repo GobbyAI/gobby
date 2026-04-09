@@ -1203,32 +1203,49 @@ class MemoryManager:
         all_memories = await self._fetch_all_project_memories(project_id)
         total = len(all_memories)
 
-        # 4. Rebuild crossrefs
-        crossrefs_created = 0
-        for memory in all_memories:
-            try:
-                crossrefs_created += await self.rebuild_crossrefs_for_memory(memory)
-            except (CrossrefRebuildError, ValueError) as e:
-                logger.warning(f"Crossref failed for {memory.id}: {e}")
+        # 4. Rebuild crossrefs (concurrent, semaphore-limited)
+        crossref_sem = asyncio.Semaphore(10)
+
+        async def _rebuild_crossref(mem: Memory) -> int:
+            async with crossref_sem:
+                try:
+                    return await self.rebuild_crossrefs_for_memory(mem)
+                except (CrossrefRebuildError, ValueError) as e:
+                    logger.warning(f"Crossref failed for {mem.id}: {e}")
+                    return 0
+
+        crossref_results = await asyncio.gather(*[_rebuild_crossref(m) for m in all_memories])
+        crossrefs_created = sum(crossref_results)
+        logger.info(f"Crossref rebuild complete: {crossrefs_created} links from {total} memories")
         report["crossrefs"] = {
             "memories_processed": total,
             "crossrefs_created": crossrefs_created,
         }
 
-        # 5. Rebuild knowledge graph
+        # 5. Rebuild knowledge graph (concurrent, semaphore-limited)
         if self._kg_service:
-            extracted = errors = 0
-            for memory in all_memories:
-                try:
-                    await self._kg_service.add_to_graph(
-                        memory.content,
-                        memory_id=memory.id,
-                        project_id=memory.project_id,
-                    )
-                    extracted += 1
-                except Exception as e:
-                    logger.warning(f"KG extraction failed for {memory.id}: {e}")
-                    errors += 1
+            kg_service = self._kg_service
+            kg_sem = asyncio.Semaphore(5)
+
+            async def _rebuild_kg(mem: Memory) -> bool:
+                async with kg_sem:
+                    try:
+                        await kg_service.add_to_graph(
+                            mem.content,
+                            memory_id=mem.id,
+                            project_id=mem.project_id,
+                        )
+                        return True
+                    except Exception as e:
+                        logger.warning(f"KG extraction failed for {mem.id}: {e}")
+                        return False
+
+            kg_results = await asyncio.gather(*[_rebuild_kg(m) for m in all_memories])
+            extracted = sum(1 for r in kg_results if r)
+            errors = sum(1 for r in kg_results if not r)
+            logger.info(
+                f"KG rebuild complete: {extracted} extracted, {errors} errors from {total} memories"
+            )
             report["graph_rebuilt"] = {"extracted": extracted, "errors": errors}
 
         # 6. Reindex FTS5

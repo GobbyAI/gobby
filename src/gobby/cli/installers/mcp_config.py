@@ -398,6 +398,82 @@ args = ["run", "gobby", "mcp-server"]
     return result
 
 
+def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby") -> dict[str, Any]:
+    """Remove per-tool approval overrides from an MCP server entry in a TOML config.
+
+    Strips the [mcp_servers.<server_name>.tools] sub-table if present,
+    so that tool approval inherits the session's approval mode instead of
+    being forced to a specific value (e.g. "approve").
+
+    Uses tomllib (stdlib) for reading and tomli_w for writing to properly
+    handle TOML syntax.
+
+    Args:
+        config_path: Path to the config.toml file (e.g., ~/.codex/config.toml)
+        server_name: Name of the MCP server entry (default: "gobby")
+
+    Returns:
+        Dict with 'success', 'stripped', 'backup_path', and 'error' keys
+    """
+    import tomllib
+
+    import tomli_w
+
+    result: dict[str, Any] = {
+        "success": False,
+        "stripped": False,
+        "backup_path": None,
+        "error": None,
+    }
+
+    if not config_path.exists():
+        result["success"] = True
+        return result
+
+    # Read and parse TOML
+    try:
+        existing_text = config_path.read_text(encoding="utf-8")
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        result["error"] = f"Failed to parse TOML {config_path}: {e}"
+        return result
+    except OSError as e:
+        result["error"] = f"Failed to read {config_path}: {e}"
+        return result
+
+    # Check if server exists and has tools sub-table
+    server_config = config.get("mcp_servers", {}).get(server_name, {})
+    if "tools" not in server_config:
+        result["success"] = True
+        return result
+
+    # Create backup
+    timestamp = int(time.time())
+    backup_path = config_path.with_suffix(f".toml.{timestamp}.backup")
+    try:
+        backup_path.write_text(existing_text, encoding="utf-8")
+        result["backup_path"] = str(backup_path)
+    except OSError as e:
+        result["error"] = f"Failed to create backup: {e}"
+        return result
+
+    # Remove the tools sub-table
+    del config["mcp_servers"][server_name]["tools"]
+
+    # Write updated config
+    try:
+        with open(config_path, "wb") as f:
+            tomli_w.dump(config, f, multiline_strings=True)
+    except OSError as e:
+        result["error"] = f"Failed to write {config_path}: {e}"
+        return result
+
+    result["success"] = True
+    result["stripped"] = True
+    return result
+
+
 def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dict[str, Any]:
     """Remove Gobby MCP server from a TOML config file.
 

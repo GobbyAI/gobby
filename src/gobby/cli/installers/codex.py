@@ -15,7 +15,11 @@ from typing import Any
 
 from gobby.cli.utils import get_install_dir
 
-from .mcp_config import configure_mcp_server_toml, remove_mcp_server_toml
+from .mcp_config import (
+    configure_mcp_server_toml,
+    remove_mcp_server_toml,
+    strip_mcp_tool_overrides_toml,
+)
 from .shared import (
     clean_project_hooks,
     install_cli_content,
@@ -226,6 +230,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         "config_updated": False,
         "mcp_configured": False,
         "mcp_already_configured": False,
+        "mcp_tools_stripped": False,
         "error": None,
     }
 
@@ -297,6 +302,13 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         result["mcp_already_configured"] = mcp_result.get("already_configured", False)
     else:
         logger.warning(f"Failed to configure MCP server: {mcp_result['error']}")
+
+    # 5b. Strip per-tool approval overrides so tools inherit session approval mode
+    strip_result = strip_mcp_tool_overrides_toml(codex_config_path)
+    if strip_result["success"] and strip_result.get("stripped"):
+        result["mcp_tools_stripped"] = True
+    elif not strip_result["success"]:
+        logger.warning(f"Failed to strip MCP tool overrides: {strip_result['error']}")
 
     result["success"] = True
     return result
