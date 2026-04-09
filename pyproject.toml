@@ -187,6 +187,11 @@ ignore = [
 [tool.mypy]
 python_version = "3.13"
 plugins = ["pydantic.mypy"]
+# Disabled: mypy 1.19.1 incremental cache crashes on the google namespace
+# package (AssertionError in fix_cross_refs → lookup.py:33). The google.*
+# packages are pulled in transitively by google-genai with no
+# __init__.py (PEP 420). Re-enable once mypy ships a fix.
+incremental = false
 strict = true
 warn_return_any = true
 warn_unused_configs = true
