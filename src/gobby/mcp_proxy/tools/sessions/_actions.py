@@ -29,16 +29,6 @@ _EMOJI_PATTERN = re.compile(
 )
 
 
-def _resolve_provider(llm_service: Any, config: Any) -> tuple[Any, str | None]:
-    """Resolve LLM provider and model from config, falling back to defaults."""
-    try:
-        provider, model, _ = llm_service.get_provider_for_feature(config)
-    except (ValueError, KeyError, AttributeError):
-        provider = llm_service.get_default_provider()
-        model = None
-    return provider, model
-
-
 def _sanitize_title(raw: str) -> str:
     """Strip markdown, emoji, normalize whitespace from LLM title."""
     title = raw.strip().strip('"').strip("'").split("\n")[0]
@@ -166,7 +156,6 @@ def register_action_tools(
 
             title_config = getattr(config, "session_title", None) if config else None
             config_obj = title_config or SessionTitleConfig()
-            provider, model = _resolve_provider(llm_service, config_obj)
 
             # --- Load prompt template ---
             system_prompt: str | None = None
@@ -194,13 +183,13 @@ def register_action_tools(
                     "Output ONLY the title. No quotes, no punctuation."
                 )
 
-            # --- Call LLM ---
+            # --- Call LLM (with tier-based fallback for local provider) ---
             llm_timeout = getattr(config_obj, "timeout", 30)
             raw_title = await asyncio.wait_for(
-                provider.generate_text(
+                llm_service.call_feature(
+                    config_obj,
                     llm_prompt,
                     system_prompt=system_prompt,
-                    model=model,
                     max_tokens=30,
                 ),
                 timeout=llm_timeout,

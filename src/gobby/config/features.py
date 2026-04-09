@@ -14,6 +14,8 @@ Extracted from app.py using Strangler Fig pattern for code decomposition.
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+
 __all__ = [
     "ChatConfig",
     "KnowledgeGraphQueueConfig",
@@ -31,20 +33,12 @@ __all__ = [
 ]
 
 
-class ToolSummarizerConfig(BaseModel):
+class ToolSummarizerConfig(FeatureDefaultConfig):
     """Tool description summarization configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable LLM-based tool description summarization",
-    )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for summarization",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for summarization (fast/cheap recommended)",
     )
 
     prompt_path: str | None = Field(
@@ -68,7 +62,7 @@ class ToolSummarizerConfig(BaseModel):
     )
 
 
-class TaskDescriptionConfig(BaseModel):
+class TaskDescriptionConfig(FeatureDefaultConfig):
     """Task description generation configuration.
 
     Controls LLM-based description generation for tasks created from specs.
@@ -78,14 +72,6 @@ class TaskDescriptionConfig(BaseModel):
     enabled: bool = Field(
         default=True,
         description="Enable LLM-based task description generation",
-    )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for description generation",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for description generation (fast/cheap recommended)",
     )
     min_structured_length: int = Field(
         default=50,
@@ -111,30 +97,21 @@ class TaskDescriptionConfig(BaseModel):
         return v
 
 
-class MergeResolutionConfig(BaseModel):
+class MergeResolutionConfig(FeatureDefaultConfig):
     """Configuration for merge conflict resolution LLM calls."""
 
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for merge resolution",
-    )
     model: str = Field(
         default="sonnet",
         description="Model to use for merge resolution",
     )
+    tier: ModelTier = Field(
+        default=ModelTier.MID,
+        description="Complexity tier — determines fallback model when local provider fails",
+    )
 
 
-class SkillDescriptionConfig(BaseModel):
+class SkillDescriptionConfig(FeatureDefaultConfig):
     """Configuration for skill description synthesis LLM calls."""
-
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for skill description synthesis",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for skill description synthesis (fast/cheap recommended)",
-    )
 
 
 class KnowledgeGraphQueueConfig(BaseModel):
@@ -152,20 +129,20 @@ class KnowledgeGraphQueueConfig(BaseModel):
     )
 
 
-class RecommendToolsConfig(BaseModel):
+class RecommendToolsConfig(FeatureDefaultConfig):
     """Tool recommendation configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable tool recommendation MCP tool",
     )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for tool recommendations",
-    )
     model: str = Field(
         default="sonnet",
         description="Model to use for tool recommendations",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.MID,
+        description="Complexity tier — determines fallback model when local provider fails",
     )
 
     prompt_path: str | None = Field(
@@ -184,20 +161,12 @@ class RecommendToolsConfig(BaseModel):
     )
 
 
-class ImportMCPServerConfig(BaseModel):
+class ImportMCPServerConfig(FeatureDefaultConfig):
     """MCP server import configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable MCP server import tool",
-    )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for config extraction",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for config extraction",
     )
 
     prompt_path: str | None = Field(
@@ -326,19 +295,26 @@ class ProjectVerificationConfig(BaseModel):
     )
 
 
-class ReviewConfig(BaseModel):
+class ReviewConfig(FeatureDefaultConfig):
     """Code review configuration."""
 
     model: str = Field(default="opus", description="Model for code review")
-    provider: str = Field(default="claude", description="Provider for code review")
+    tier: ModelTier = Field(
+        default=ModelTier.HIGH,
+        description="Complexity tier — determines fallback model when local provider fails",
+    )
 
 
-class ChatConfig(BaseModel):
+class ChatConfig(FeatureDefaultConfig):
     """Chat mode configuration."""
 
     model: str = Field(
         default="opus",
         description="Default model for chat sessions",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.HIGH,
+        description="Complexity tier — determines fallback model when local provider fails",
     )
     default_mode: str = Field(
         default="plan",

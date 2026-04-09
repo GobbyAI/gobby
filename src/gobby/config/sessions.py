@@ -15,6 +15,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+
 __all__ = [
     "ChatHistoryConfig",
     "ContextCompressionConfig",
@@ -114,20 +116,20 @@ class ContextCompressionConfig(BaseModel):
     )
 
 
-class SessionSummaryConfig(BaseModel):
+class SessionSummaryConfig(FeatureDefaultConfig):
     """Session summary generation configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable LLM-based session summary generation",
     )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for session summary",
-    )
     model: str = Field(
         default="sonnet",
         description="Model to use for session summary generation",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.MID,
+        description="Complexity tier — determines fallback model when local provider fails",
     )
     prompt: str = Field(
         default="""Generate a concise session summary for handoff to another agent or future session.
@@ -159,34 +161,18 @@ Be concise. Focus on what the next agent needs to know to continue effectively."
     )
 
 
-class DigestConfig(BaseModel):
+class DigestConfig(FeatureDefaultConfig):
     """Rolling digest and title generation configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable background digest and title generation",
     )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for digest generation",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for digest generation",
-    )
 
 
-class SessionTitleConfig(BaseModel):
+class SessionTitleConfig(FeatureDefaultConfig):
     """Configuration for session title synthesis LLM calls."""
 
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for title synthesis",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for title synthesis (fast/cheap recommended)",
-    )
     timeout: int = Field(
         default=30,
         gt=0,

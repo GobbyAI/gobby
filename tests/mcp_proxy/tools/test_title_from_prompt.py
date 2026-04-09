@@ -56,14 +56,16 @@ def mock_llm_service(mock_llm_provider) -> MagicMock:
     service = MagicMock()
     service.get_provider_for_feature = MagicMock(return_value=(mock_llm_provider, "haiku", None))
     service.get_default_provider = MagicMock(return_value=mock_llm_provider)
+    service.call_feature = AsyncMock(return_value="Implement Auth System")
     return service
 
 
 @pytest.fixture
 def mock_config() -> MagicMock:
+    from gobby.config.sessions import SessionTitleConfig
+
     config = MagicMock()
-    config.session_title = MagicMock()
-    config.session_title.timeout = 30
+    config.session_title = SessionTitleConfig()
     return config
 
 
@@ -205,7 +207,7 @@ class TestHappyPath:
     async def test_calls_llm_with_prompt(
         self,
         registry,
-        mock_llm_provider,
+        mock_llm_service,
     ) -> None:
         with session_context_for_test("sess-123"):
             await registry.call(
@@ -214,10 +216,9 @@ class TestHappyPath:
                     "prompt_text": "Refactor the database layer to use connection pooling",
                 },
             )
-        mock_llm_provider.generate_text.assert_awaited_once()
-        call_kwargs = mock_llm_provider.generate_text.call_args
+        mock_llm_service.call_feature.assert_awaited_once()
+        call_kwargs = mock_llm_service.call_feature.call_args
         assert call_kwargs.kwargs["max_tokens"] == 30
-        assert call_kwargs.kwargs["model"] == "haiku"
 
     @pytest.mark.asyncio
     async def test_renames_tmux_window(
@@ -279,8 +280,8 @@ class TestErrorHandling:
         assert "LLM service" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_llm_timeout(self, registry, mock_llm_provider) -> None:
-        mock_llm_provider.generate_text = AsyncMock(side_effect=TimeoutError("timed out"))
+    async def test_llm_timeout(self, registry, mock_llm_service) -> None:
+        mock_llm_service.call_feature = AsyncMock(side_effect=TimeoutError("timed out"))
         with patch(
             "gobby.prompts.loader.PromptLoader.load",
             side_effect=FileNotFoundError("not found"),
