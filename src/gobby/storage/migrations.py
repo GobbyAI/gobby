@@ -818,6 +818,21 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Remove USD cost tracking columns — tokens are the only unit now",
         lambda db: _remove_usd_columns(db),
     ),
+    (
+        205,
+        "Update LM Studio embedding model to fully qualified identifier",
+        """
+        UPDATE config_store
+        SET value = '"text-embedding-nomic-embed-text-v1.5@q8_0"'
+        WHERE key = 'embeddings.model'
+          AND value = '"nomic-embed-text"'
+          AND EXISTS (
+              SELECT 1 FROM config_store
+              WHERE key = 'embeddings.api_base'
+                AND value LIKE '%1234%'
+          )
+        """,
+    ),
 ]
 
 

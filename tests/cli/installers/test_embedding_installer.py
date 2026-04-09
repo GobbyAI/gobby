@@ -22,7 +22,7 @@ class TestProviderConfig:
 
     def test_lmstudio_config(self) -> None:
         cfg = _PROVIDER_CONFIG["lmstudio"]
-        assert cfg["model"] == "nomic-embed-text"
+        assert cfg["model"] == "text-embedding-nomic-embed-text-v1.5@q8_0"
         assert cfg["api_base"] == "http://localhost:1234/v1"
         assert cfg["dim"] == 768
 
@@ -72,7 +72,7 @@ class TestInstallEmbedding:
         result = install_embedding(provider="lmstudio")
         assert result["success"] is True
         assert result["provider"] == "lmstudio"
-        assert result["model"] == "nomic-embed-text"
+        assert result["model"] == "text-embedding-nomic-embed-text-v1.5@q8_0"
         assert result["dim"] == 768
         assert result["health_check"] is True
         mock_setup.assert_called_once()
@@ -279,7 +279,7 @@ class TestPersistEmbeddingConfig:
         mock_store_class.return_value = mock_store
 
         _persist_embedding_config(
-            model="nomic-embed-text",
+            model="text-embedding-nomic-embed-text-v1.5@q8_0",
             api_base="http://localhost:1234/v1",
             dim=768,
             provider="lmstudio",
@@ -289,7 +289,7 @@ class TestPersistEmbeddingConfig:
         entries = mock_store.set_many.call_args.args[0]
         # Only unified embeddings.* namespace
         assert entries == {
-            "embeddings.model": "nomic-embed-text",
+            "embeddings.model": "text-embedding-nomic-embed-text-v1.5@q8_0",
             "embeddings.api_base": "http://localhost:1234/v1",
             "embeddings.dim": 768,
         }

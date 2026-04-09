@@ -196,11 +196,14 @@ async def try_autoload_embedding_model(model: str, api_base: str | None) -> bool
 
     # LM Studio: try `lms load`
     if _is_lm_studio_endpoint(api_base) and shutil.which("lms"):
+        from gobby.cli.installers.embedding import _LMSTUDIO_MODEL_KEY
+
         try:
             # Run lms load in a thread to avoid blocking the event loop
+            # Use the CLI model key, not the API identifier
             result = await asyncio.to_thread(
                 subprocess.run,
-                ["lms", "load", model, "-y"],
+                ["lms", "load", _LMSTUDIO_MODEL_KEY, "-y"],
                 capture_output=True,
                 text=True,
                 timeout=120,
