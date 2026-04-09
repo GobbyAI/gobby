@@ -21,6 +21,19 @@ interface SessionStatusBarProps {
   onDetach?: () => void
 }
 
+function formatChatMode(chatMode: string | null | undefined): string | null {
+  switch (chatMode) {
+    case 'plan':
+      return 'Plan'
+    case 'accept_edits':
+      return 'Act'
+    case 'bypass':
+      return 'Auto'
+    default:
+      return null
+  }
+}
+
 export function SessionStatusBar({
   sessionRef,
   title,
@@ -36,6 +49,7 @@ export function SessionStatusBar({
     const sourceLabel = SOURCE_LABELS[viewingMeta.source] ?? viewingMeta.source
     const sourceDot = SOURCE_COLORS[viewingMeta.source] ?? 'bg-neutral-400'
     const isLive = viewingMeta.status === 'active'
+    const modeLabel = formatChatMode(viewingMeta.chatMode)
 
     return (
       <div className="flex items-center justify-between px-4 py-1.5 bg-muted border-b border-border text-xs">
@@ -51,6 +65,14 @@ export function SessionStatusBar({
         <div className="flex items-center gap-1.5 shrink-0 whitespace-nowrap ml-4">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${sourceDot}`} />
           <span className="text-muted-foreground">{sourceLabel}</span>
+          {modeLabel && (
+            <>
+              <span className="text-muted-foreground/60">&middot;</span>
+              <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {modeLabel}
+              </span>
+            </>
+          )}
           <span className="text-muted-foreground/60">&middot;</span>
           <span className="text-muted-foreground">
             {isAttached ? 'Attached' : 'Observing'}

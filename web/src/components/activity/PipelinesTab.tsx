@@ -23,7 +23,7 @@ function getBaseUrl(): string {
 export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesTabProps) {
   const [executions, setExecutions] = useState<PipelineExecution[]>([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<'running' | 'all' | 'completed' | 'failed'>('running')
+  const [statusFilter, setStatusFilter] = useState<'running' | 'all' | 'completed' | 'failed'>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topHeight, setTopHeight] = useState(40)
   const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)

@@ -527,6 +527,29 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
   return result;
 }
 
+function mapRenderedMessageToChatMessage(message: Record<string, unknown>): ChatMessage {
+  const chatMsg: ChatMessage = {
+    id: String(message.id ?? `ws-${Date.now()}`),
+    role: ((message.role as string) as "user" | "assistant" | "system") || "assistant",
+    content: (message.content as string) ?? "",
+    timestamp: new Date((message.timestamp as string) ?? Date.now()),
+    contentBlocks: message.content_blocks as ContentBlock[] | undefined,
+  };
+
+  if (chatMsg.contentBlocks) {
+    for (const block of chatMsg.contentBlocks) {
+      if (block.type === "tool_chain" && block.tool_calls) {
+        chatMsg.toolCalls = [...(chatMsg.toolCalls || []), ...block.tool_calls];
+      } else if (block.type === "thinking") {
+        chatMsg.thinkingContent =
+          (chatMsg.thinkingContent || "") + block.content;
+      }
+    }
+  }
+
+  return chatMsg;
+}
+
 export function useChat() {
   const conversationIdRef = useRef<string>(loadConversationId());
   const [conversationId, setConversationId] = useState<string>(
@@ -836,6 +859,7 @@ export function useChat() {
             "chat_thinking",
             "canvas_event",
             "artifact_event",
+            "session_message",
           ],
         }),
       );
@@ -1198,197 +1222,33 @@ export function useChat() {
           data.type === "session_message" &&
           (data as Record<string, unknown>).session_id
         ) {
-          // Real-time message from an attached CLI session
           const sm = data as Record<string, unknown>;
           const smSessionId = sm.session_id as string;
-          // Only append if we're attached to this session
-          if (smSessionId && smSessionId === attachedSessionIdRef.current) {
-            const msg = sm.message as Record<string, unknown> | undefined;
-            if (msg) {
-              const role = msg.role as string;
-              const contentType = msg.content_type as string | undefined;
-              const idx = msg.index as number | undefined;
-              const msgId = `cli-msg-${idx ?? Date.now()}`;
-
-              if (role === "assistant" && contentType === "tool_use") {
-                // Tool invocation — append to last assistant message's toolCalls + contentBlocks
-                const toolUseId = (msg.tool_use_id as string) || msgId;
-                setMessages((prev) => {
-                  if (idx !== undefined && prev.some((m) => m.id === msgId))
-                    return prev;
-                  const lastIdx = prev.length - 1;
-                  const last = lastIdx >= 0 ? prev[lastIdx] : null;
-                  const toolName = (msg.tool_name as string) || "unknown";
-                  const toolCall: ToolCall = {
-                    id: toolUseId,
-                    tool_name: toolName,
-                    server_name: extractServerName(toolName),
-                    tool_type: classifyTool(toolName),
-                    status: "calling",
-                    arguments: tryParseJSON(msg.tool_input) as
-                      | Record<string, unknown>
-                      | undefined,
-                  };
-                  if (last?.role === "assistant") {
-                    const updated = [...prev];
-                    const blocks = [...(last.contentBlocks || [])];
-                    const lastBlock = blocks[blocks.length - 1];
-                    if (lastBlock?.type === "tool_chain") {
-                      blocks[blocks.length - 1] = {
-                        ...lastBlock,
-                        tool_calls: [...lastBlock.tool_calls, toolCall],
-                      };
-                    } else {
-                      blocks.push({
-                        type: "tool_chain" as const,
-                        tool_calls: [toolCall],
-                      });
-                    }
-                    updated[lastIdx] = {
-                      ...last,
-                      toolCalls: [...(last.toolCalls || []), toolCall],
-                      contentBlocks: blocks,
-                    };
-                    return updated;
-                  }
-                  return [
-                    ...prev,
-                    {
-                      id: msgId,
-                      role: "assistant" as const,
-                      content: "",
-                      timestamp: new Date(),
-                      toolCalls: [toolCall],
-                      contentBlocks: [
-                        { type: "tool_chain" as const, tool_calls: [toolCall] },
-                      ],
-                    },
-                  ];
-                });
-              } else if (contentType === "tool_result" || role === "tool") {
-                // Tool result — prefer ID-based match, fall back to positional
-                const resultToolUseId = msg.tool_use_id as string | undefined;
-                setMessages((prev) => {
-                  for (let i = prev.length - 1; i >= 0; i--) {
-                    const m = prev[i];
-                    if (m.role !== "assistant" || !m.toolCalls) continue;
-                    // Prefer ID-based match when tool_use_id is available
-                    const pendingIdx = resultToolUseId
-                      ? m.toolCalls.findIndex((tc) => tc.id === resultToolUseId)
-                      : m.toolCalls.findIndex(
-                          (tc) => tc.status !== "completed",
-                        );
-                    if (pendingIdx < 0) continue;
-                    const updated = [...prev];
-                    const updatedCalls = [...m.toolCalls];
-                    const callRef: ToolCall = {
-                      ...updatedCalls[pendingIdx],
-                      result: tryParseJSON(msg.tool_result ?? msg.content) as
-                        | ToolResult
-                        | undefined,
-                      status: "completed" as const,
-                    };
-                    updatedCalls[pendingIdx] = callRef;
-                    // Also update the call in contentBlocks
-                    const blocks = [...(m.contentBlocks || [])];
-                    for (let bi = 0; bi < blocks.length; bi++) {
-                      const block = blocks[bi];
-                      if (block.type === "tool_chain") {
-                        const tcIdx = block.tool_calls.findIndex(
-                          (c) => c.id === callRef.id,
-                        );
-                        if (tcIdx >= 0) {
-                          const updatedBlockCalls = [...block.tool_calls];
-                          updatedBlockCalls[tcIdx] = callRef;
-                          blocks[bi] = {
-                            ...block,
-                            tool_calls: updatedBlockCalls,
-                          };
-                          break;
-                        }
-                      }
-                    }
-                    updated[i] = {
-                      ...m,
-                      toolCalls: updatedCalls,
-                      contentBlocks: blocks,
-                    };
-                    return updated;
-                  }
-                  return prev;
-                });
-              } else if (role === "user" && contentType !== "tool_result") {
-                // Regular user message
-                setMessages((prev) => {
-                  if (idx !== undefined && prev.some((m) => m.id === msgId))
-                    return prev;
-                  return [
-                    ...prev,
-                    {
-                      id: msgId,
-                      role: "user" as const,
-                      content: (msg.content as string) ?? "",
-                      timestamp: new Date(
-                        (msg.timestamp as string) ?? Date.now(),
-                      ),
-                    },
-                  ];
-                });
-              } else if (role === "assistant") {
-                // Regular assistant text or thinking
-                setMessages((prev) => {
-                  if (idx !== undefined && prev.some((m) => m.id === msgId))
-                    return prev;
-                  if (contentType === "thinking") {
-                    const lastIdx = prev.length - 1;
-                    const last = lastIdx >= 0 ? prev[lastIdx] : null;
-                    if (last?.role === "assistant") {
-                      const updated = [...prev];
-                      updated[lastIdx] = {
-                        ...last,
-                        thinkingContent:
-                          (last.thinkingContent || "") +
-                          ((msg.content as string) || ""),
-                      };
-                      return updated;
-                    }
-                    return [
-                      ...prev,
-                      {
-                        id: msgId,
-                        role: "assistant" as const,
-                        content: "",
-                        timestamp: new Date(),
-                        thinkingContent: (msg.content as string) || "",
-                      },
-                    ];
-                  }
-                  // Regular text — append to existing assistant msg or create new
-                  const lastIdx = prev.length - 1;
-                  const last = lastIdx >= 0 ? prev[lastIdx] : null;
-                  if (last?.role === "assistant" && !last.toolCalls?.length) {
-                    const updated = [...prev];
-                    updated[lastIdx] = {
-                      ...last,
-                      content: last.content + ((msg.content as string) ?? ""),
-                    };
-                    return updated;
-                  }
-                  return [
-                    ...prev,
-                    {
-                      id: msgId,
-                      role: "assistant" as const,
-                      content: (msg.content as string) ?? "",
-                      timestamp: new Date(
-                        (msg.timestamp as string) ?? Date.now(),
-                      ),
-                    },
-                  ];
-                });
-              }
-            }
+          const isObservedSession =
+            smSessionId &&
+            (smSessionId === attachedSessionIdRef.current ||
+              smSessionId === viewingSessionIdRef.current);
+          if (!isObservedSession) {
+            return;
           }
+
+          const msg = sm.message as Record<string, unknown> | undefined;
+          if (!msg) {
+            return;
+          }
+
+          const renderedMessage = mapRenderedMessageToChatMessage(msg);
+          setMessages((prev) => {
+            const existingIdx = prev.findIndex(
+              (message) => message.id === renderedMessage.id,
+            );
+            if (existingIdx >= 0) {
+              const updated = [...prev];
+              updated[existingIdx] = renderedMessage;
+              return updated;
+            }
+            return [...prev, renderedMessage];
+          });
         } else if (data.type === "send_to_cli_session_result") {
           const result = data as Record<string, unknown>;
           console.log("Message sent to CLI session:", result.delivery_method);

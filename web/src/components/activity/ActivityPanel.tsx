@@ -165,6 +165,7 @@ interface ActivityPanelProps {
   onFocusSessionHandled?: () => void;
   watchingSessionIds?: Set<string>;
   onUnwatchSession?: (sessionId: string) => void;
+  onAttachSession?: (sessionId: string) => void;
   isMobile?: boolean;
 }
 
@@ -198,6 +199,7 @@ export function ActivityPanel({
   onFocusSessionHandled,
   watchingSessionIds,
   onUnwatchSession,
+  onAttachSession,
   isMobile = false,
 }: ActivityPanelProps) {
   // Use overlay mode when viewport is too narrow for side-by-side layout
@@ -229,6 +231,7 @@ export function ActivityPanel({
             onFocusHandled={onFocusSessionHandled}
             watchingSessionIds={watchingSessionIds}
             onUnwatch={onUnwatchSession}
+            onAttachSession={onAttachSession}
             isMobile={useOverlay}
           />
         );

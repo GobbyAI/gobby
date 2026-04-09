@@ -31,6 +31,7 @@ interface SessionsTabProps {
   onFocusHandled?: () => void;
   watchingSessionIds?: Set<string>;
   onUnwatch?: (sessionId: string) => void;
+  onAttachSession?: (sessionId: string) => void;
 }
 
 interface SessionEntry {
@@ -39,6 +40,9 @@ interface SessionEntry {
   label: string;
   provider: string;
   status: "active" | "paused";
+  sessionType?: string;
+  externalId?: string;
+  mode?: string | null;
   runId?: string;
   startedAt?: string;
   seqNum?: number | null;
@@ -56,6 +60,26 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
+function getModeBadge(mode: string | null | undefined): {
+  label: string;
+  className: string;
+} | null {
+  switch (mode) {
+    case "interactive":
+      return { label: "interactive", className: "session-kind-badge--interactive" };
+    case "autonomous":
+      return { label: "autonomous", className: "session-kind-badge--autonomous" };
+    case "plan":
+      return { label: "plan", className: "session-kind-badge--plan" };
+    case "accept_edits":
+      return { label: "act", className: "session-kind-badge--act" };
+    case "bypass":
+      return { label: "auto", className: "session-kind-badge--auto" };
+    default:
+      return null;
+  }
+}
+
 export const SessionsTab = memo(function SessionsTab({
   projectId,
   onKillAgent,
@@ -66,6 +90,7 @@ export const SessionsTab = memo(function SessionsTab({
   onFocusHandled,
   watchingSessionIds,
   onUnwatch,
+  onAttachSession,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
   const [activitySessions, setActivitySessions] = useState<GobbySession[]>([]);
@@ -161,6 +186,9 @@ export const SessionsTab = memo(function SessionsTab({
             : `Session ${a.run_id.slice(0, 8)}`),
         provider: a.provider,
         status: "active" as const,
+        sessionType: matchedSession?.session_type,
+        externalId: matchedSession?.external_id,
+        mode: a.mode ?? matchedSession?.chat_mode ?? null,
         runId: a.run_id,
         startedAt: a.started_at,
         seqNum: matchedSession?.seq_num,
@@ -184,6 +212,9 @@ export const SessionsTab = memo(function SessionsTab({
           status: (s.status === "paused" ? "paused" : "active") as
             | "active"
             | "paused",
+          sessionType: s.session_type,
+          externalId: s.external_id,
+          mode: s.chat_mode,
           startedAt: s.updated_at,
           seqNum: s.seq_num,
           hasTmux: !!s.terminal_context,
@@ -259,6 +290,11 @@ export const SessionsTab = memo(function SessionsTab({
   const handleSelect = useCallback((id: string) => {
     setSelectedSessionId((prev) => (prev === id ? null : id));
   }, []);
+
+  const selectedEntry = useMemo(
+    () => entries.find((entry) => entry.id === selectedSessionId) ?? null,
+    [entries, selectedSessionId],
+  );
 
   const handleExpire = useCallback(
     async (entry: SessionEntry) => {
@@ -391,6 +427,18 @@ export const SessionsTab = memo(function SessionsTab({
                     {badge}
                   </span>
                 ))}
+                {(() => {
+                  const modeBadge = getModeBadge(entry.mode);
+                  if (!modeBadge) return null;
+                  return (
+                    <span
+                      className={`session-kind-badge ${modeBadge.className}`}
+                      title={`Session mode: ${modeBadge.label}`}
+                    >
+                      {modeBadge.label}
+                    </span>
+                  );
+                })()}
                 {isMobile ? (
                   <button
                     className="session-more-btn"
@@ -459,14 +507,25 @@ export const SessionsTab = memo(function SessionsTab({
           >
             <span className="text-xs text-muted-foreground">
               Watching{" "}
-              {(() => {
-                const entry = entries.find((e) => e.id === selectedSessionId);
-                if (!entry) return "session";
-                return entry.seqNum
-                  ? `#${entry.seqNum}: ${entry.label}`
-                  : entry.label;
-              })()}
+              {selectedEntry
+                ? selectedEntry.seqNum
+                  ? `#${selectedEntry.seqNum}: ${selectedEntry.label}`
+                  : selectedEntry.label
+                : "session"}
             </span>
+            {selectedEntry?.sessionType === "web_chat" && onAttachSession && (
+              <button
+                className="text-xs text-accent hover:text-foreground"
+                onClick={() => {
+                  if (selectedSessionId) {
+                    onAttachSession(selectedSessionId);
+                    setSelectedSessionId(null);
+                  }
+                }}
+              >
+                Attach
+              </button>
+            )}
             <button
               className="text-xs text-muted-foreground hover:text-foreground ml-auto"
               onClick={() => {

@@ -2890,6 +2890,31 @@
   color: #0284c7;
 }
 
+.session-kind-badge--interactive {
+  background: color-mix(in srgb, #a855f7 15%, transparent);
+  color: #c084fc;
+}
+
+.session-kind-badge--autonomous {
+  background: color-mix(in srgb, #f97316 15%, transparent);
+  color: #fb923c;
+}
+
+.session-kind-badge--plan {
+  background: color-mix(in srgb, #38bdf8 15%, transparent);
+  color: #38bdf8;
+}
+
+.session-kind-badge--act {
+  background: color-mix(in srgb, #10b981 15%, transparent);
+  color: #34d399;
+}
+
+.session-kind-badge--auto {
+  background: color-mix(in srgb, #f97316 15%, transparent);
+  color: #fb923c;
+}
+
 /* --- Session context menu --- */
 .session-ctx-backdrop {
   position: fixed;

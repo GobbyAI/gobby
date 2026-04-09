@@ -31,8 +31,9 @@ interface TreeNode {
 // =============================================================================
 
 const CLOSED_STATUSES = new Set(['closed', 'review_approved'])
-const ALL_STATUSES = ['open', 'in_progress', 'needs_review', 'escalated', 'closed']
-const DEFAULT_FILTERS = new Set(['open', 'in_progress', 'needs_review', 'escalated'])
+const ALL_STATUSES = ['open', 'in_progress', 'needs_review', 'review_approved', 'escalated', 'closed']
+const DEFAULT_FILTERS = new Set(['open', 'in_progress', 'needs_review', 'review_approved', 'escalated'])
+const INITIAL_TASK_LIMIT = 10
 
 const STATUS_DOT_COLORS: Record<string, string> = {
   open: '#3b82f6',
@@ -177,6 +178,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const [search, setSearch] = useState('')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [statusFilters, setStatusFilters] = useState<Set<string>>(() => new Set(DEFAULT_FILTERS))
+  const [visibleCount, setVisibleCount] = useState(INITIAL_TASK_LIMIT)
   const [showFilterDropdown, setShowFilterDropdown] = useState(false)
   const [topHeight, setTopHeight] = useState(50)
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null)
@@ -235,6 +237,10 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     })
   }, [])
 
+  useEffect(() => {
+    setVisibleCount(INITIAL_TASK_LIMIT)
+  }, [projectId, search, statusFilters])
+
   // Client-side filtering
   const now = Date.now()
   const DAY_MS = 24 * 60 * 60 * 1000
@@ -259,7 +265,24 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
       })
   }, [tasks, statusFilters, now])
 
-  const treeData = useMemo(() => buildTree(filtered), [filtered])
+  const treeData = useMemo(() => {
+    const taskMap = new Map(tasks.map((task) => [task.id, task]))
+    const visibleIds = new Set<string>()
+
+    for (const task of filtered.slice(0, visibleCount)) {
+      let current: GobbyTask | undefined = task
+      while (current) {
+        if (visibleIds.has(current.id)) break
+        visibleIds.add(current.id)
+        current = current.parent_task_id ? taskMap.get(current.parent_task_id) : undefined
+      }
+    }
+
+    const visibleTasks = filtered.filter((task) => visibleIds.has(task.id))
+    return buildTree(visibleTasks)
+  }, [filtered, tasks, visibleCount])
+
+  const hasMore = filtered.length > visibleCount
 
   if (loading) {
     return <div className="activity-tab-empty"><p>Loading tasks...</p></div>
@@ -306,21 +329,31 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
             <p>No tasks match filters</p>
           </div>
         ) : (
-          <Tree<TreeNode>
-            data={treeData}
-            openByDefault={true}
-            width="100%"
-            height={selectedTaskId ? undefined : treeHeight}
-            rowHeight={30}
-            indent={16}
-            searchTerm={search}
-            searchMatch={searchMatch}
-            onActivate={(node) => setSelectedTaskId(node.data.task.id)}
-            disableDrag
-            disableDrop
-          >
-            {PanelTaskNode}
-          </Tree>
+          <>
+            <Tree<TreeNode>
+              data={treeData}
+              openByDefault={true}
+              width="100%"
+              height={selectedTaskId ? undefined : treeHeight}
+              rowHeight={30}
+              indent={16}
+              searchTerm={search}
+              searchMatch={searchMatch}
+              onActivate={(node) => setSelectedTaskId(node.data.task.id)}
+              disableDrag
+              disableDrop
+            >
+              {PanelTaskNode}
+            </Tree>
+            {hasMore && (
+              <button
+                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                onClick={() => setVisibleCount((prev) => prev + INITIAL_TASK_LIMIT)}
+              >
+                Load more
+              </button>
+            )}
+          </>
         )}
       </div>
 

@@ -214,6 +214,5 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByLabelText('Select model')).toBeTruthy()
-    expect(screen.getByText('Local')).toBeTruthy()
   })
 })

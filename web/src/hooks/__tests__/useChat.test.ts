@@ -94,6 +94,7 @@ describe('useChat', () => {
     expect(msg.type).toBe('subscribe')
     expect(msg.events).toContain('chat_stream')
     expect(msg.events).toContain('tool_status')
+    expect(msg.events).toContain('session_message')
   })
 
   it('resets state on WS close', async () => {
@@ -369,6 +370,69 @@ describe('useChat', () => {
     expect(result.current.sessionRef).toBe('#42')
     expect(result.current.currentBranch).toBe('feature/test')
     expect(result.current.activeAgent).toBe('test-agent')
+  })
+
+  it('upserts rendered session_message events while viewing a session', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse('/api/sessions/sess-1/messages?limit=100&offset=0', {
+      messages: [
+        {
+          id: 'sess-msg-1',
+          role: 'assistant',
+          content: 'Initial output',
+          timestamp: '2026-04-09T00:00:00Z',
+          content_blocks: [{ type: 'text', content: 'Initial output' }],
+        },
+      ],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-1', {
+      session: {
+        id: 'sess-1',
+        seq_num: 2310,
+        source: 'codex',
+        title: 'Observed session',
+        status: 'active',
+        model: 'gpt-5.4',
+        external_id: 'codex-ext-1',
+        chat_mode: 'bypass',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+      },
+    })
+
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await act(async () => {
+      result.current.viewSession('sess-1')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(result.current.messages).toHaveLength(1)
+    expect(result.current.messages[0].content).toBe('Initial output')
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_message',
+        session_id: 'sess-1',
+        message: {
+          id: 'sess-msg-1',
+          role: 'assistant',
+          content: 'Updated output',
+          timestamp: '2026-04-09T00:00:01Z',
+          content_blocks: [{ type: 'text', content: 'Updated output' }],
+        },
+      })
+    })
+
+    expect(result.current.messages).toHaveLength(1)
+    expect(result.current.messages[0].content).toBe('Updated output')
   })
 
   it('handles mode_changed messages', async () => {

@@ -39,6 +39,19 @@ const SOURCE_CONFIG: Record<string, { label: string; dot: string }> = {
   codex: { label: 'Codex', dot: 'bg-blue-400' },
 }
 
+function formatChatMode(chatMode: string | null | undefined): string | null {
+  switch (chatMode) {
+    case 'plan':
+      return 'Plan'
+    case 'accept_edits':
+      return 'Act'
+    case 'bypass':
+      return 'Auto'
+    default:
+      return null
+  }
+}
+
 export function CommandBar({
   sessionRef,
   title,
@@ -157,6 +170,7 @@ function ObservationSegment({
   const sourceLabel = sourceConf?.label ?? viewingMeta.source
   const sourceDot = sourceConf?.dot ?? 'bg-neutral-400'
   const isLive = viewingMeta.status === 'active'
+  const modeLabel = formatChatMode(viewingMeta.chatMode)
 
   return (
     <div className="command-bar-observation">
@@ -168,6 +182,11 @@ function ObservationSegment({
       </span>
       <span className={`inline-block w-1.5 h-1.5 rounded-full ${sourceDot}`} />
       <span className="text-muted-foreground text-[11px]">{sourceLabel}</span>
+      {modeLabel && (
+        <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+          {modeLabel}
+        </span>
+      )}
       <span className="text-muted-foreground/60 text-[11px]">&middot;</span>
       <span className="text-muted-foreground text-[11px]">
         {isAttached ? 'Attached' : 'Observing'}

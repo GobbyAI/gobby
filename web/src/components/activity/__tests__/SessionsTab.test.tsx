@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SessionsTab } from "../SessionsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../test/mocks/fetch";
 
@@ -107,7 +107,7 @@ const activeSessions = [
     usage_total_cost_usd: 0,
     had_edits: false,
     agent_depth: 0,
-    chat_mode: null,
+    chat_mode: "plan",
     parent_session_id: null,
     session_type: "web_chat",
     terminal_context: null,
@@ -193,5 +193,26 @@ describe("SessionsTab", () => {
 
     expect(screen.getAllByText(/^tmux$/i)).toHaveLength(1);
     expect(screen.getAllByText(/^web$/i)).toHaveLength(1);
+  });
+
+  it("shows mode badges and lets a watched web chat attach into the main chat", async () => {
+    const onAttachSession = vi.fn();
+
+    render(
+      <SessionsTab
+        chatSessionId="web-current"
+        focusSessionId="web-other"
+        onAttachSession={onAttachSession}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/^plan$/i)).toBeTruthy();
+      expect(screen.getByText("Attach")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Attach"));
+
+    expect(onAttachSession).toHaveBeenCalledWith("web-other");
   });
 });

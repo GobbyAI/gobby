@@ -54,16 +54,6 @@ interface ChatInputProps {
   hasMessages?: boolean
 }
 
-function formatModelLabel(model: string): string {
-  if (model === 'local') return 'Local'
-  if (!model) return 'Default'
-  return model
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
 export function ChatInput({
   onSend,
   onStop,
@@ -312,37 +302,9 @@ export function ChatInput({
           {onModeChange && (
             <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
           )}
-          {canSelectModel && (
-            <>
-              <button
-                className="flex items-center gap-1.5 px-2 py-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                onClick={() => setPickerOpen(true)}
-                disabled={disabled}
-                title={pickerLabel}
-                aria-label={pickerLabel}
-              >
-                <SourceIcon source={provider || 'claude'} size={14} />
-                <span className="text-xs font-medium text-foreground">
-                  {formatModelLabel(currentModel)}
-                </span>
-                {canSwitchProvider && (
-                  <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className="opacity-60">
-                    <path d="M1 3l3 3 3-3z" />
-                  </svg>
-                )}
-              </button>
-              <ProviderPicker
-                open={pickerOpen}
-                onClose={() => setPickerOpen(false)}
-                currentProvider={provider ?? null}
-                currentModel={currentModel}
-                availableProviders={pickerProviders}
-                onModelChange={onModelChange ?? (() => {})}
-                onProviderChange={onSwitchProvider ?? (() => {})}
-                hasMessages={hasMessages}
-              />
-            </>
-          )}
+          <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
+            <PaperclipIcon />
+          </Button>
           {onAgentChange && agentName && agentDefinitions.length > 0 && (
             <ActiveAgentIndicator
               agentName={agentName}
@@ -354,24 +316,6 @@ export function ChatInput({
               hasGlobal={agentHasGlobal}
               hasProject={agentHasProject}
             />
-          )}
-          {onToggleVoice && (voiceAvailable || voiceLoading || Boolean(voiceError)) && (
-            <button
-              className={cn(
-                'p-1.5 rounded transition-colors',
-                voiceLoading
-                  ? 'text-muted-foreground bg-muted cursor-wait'
-                  : voiceMode
-                    ? 'text-accent bg-accent/20'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted',
-              )}
-              onClick={onToggleVoice}
-              disabled={disabled || voiceLoading || !voiceReady}
-              title={voiceLoading ? 'Loading voice…' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
-              aria-label={voiceLoading ? 'Loading voice' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
-            >
-              {voiceLoading ? <SpinnerIcon /> : <MicIcon />}
-            </button>
           )}
           <div className="flex items-center gap-2 ml-auto">
           {onWorktreeChange && (
@@ -453,6 +397,32 @@ export function ChatInput({
 
         {/* Input row */}
         <div className="flex items-end gap-2">
+          <div className="flex gap-1 shrink-0">
+            {canSelectModel && (
+              <>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setPickerOpen(true)}
+                  disabled={disabled}
+                  title={pickerLabel}
+                  aria-label={pickerLabel}
+                >
+                  <SourceIcon source={provider || 'claude'} size={16} />
+                </Button>
+                <ProviderPicker
+                  open={pickerOpen}
+                  onClose={() => setPickerOpen(false)}
+                  currentProvider={provider ?? null}
+                  currentModel={currentModel}
+                  availableProviders={pickerProviders}
+                  onModelChange={onModelChange ?? (() => {})}
+                  onProviderChange={onSwitchProvider ?? (() => {})}
+                  hasMessages={hasMessages}
+                />
+              </>
+            )}
+          </div>
           <textarea
             ref={textareaRef}
             className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
@@ -474,9 +444,24 @@ export function ChatInput({
           />
 
           <div className="flex gap-1 shrink-0">
-            <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
-              <PaperclipIcon />
-            </Button>
+            {onToggleVoice && (voiceAvailable || voiceLoading || Boolean(voiceError)) && (
+              <button
+                className={cn(
+                  'p-1.5 rounded transition-colors',
+                  voiceLoading
+                    ? 'text-muted-foreground bg-muted cursor-wait'
+                    : voiceMode
+                      ? 'text-accent bg-accent/20'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted',
+                )}
+                onClick={onToggleVoice}
+                disabled={disabled || voiceLoading || !voiceReady}
+                title={voiceLoading ? 'Loading voice…' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
+                aria-label={voiceLoading ? 'Loading voice' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
+              >
+                {voiceLoading ? <SpinnerIcon /> : <MicIcon />}
+              </button>
+            )}
             <Button size="icon" variant="primary" onClick={handleSubmit} disabled={!isStreaming && (disabled || !hasInput)}>
               <SendIcon />
             </Button>

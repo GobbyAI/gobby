@@ -17,6 +17,7 @@ import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActiveSessionsModal } from "./ActiveSessionsModal";
 import { ActivityPanel, useActivityPanel } from "../activity/ActivityPanel";
+import { SessionStatusBar } from "./SessionStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
 
@@ -111,6 +112,18 @@ export function ChatPage({
       return next;
     });
   }, []);
+
+  const handleAttachWatchedSession = useCallback(
+    (sessionId: string) => {
+      const targetSession = conversations.sessions.find(
+        (session) => session.id === sessionId,
+      );
+      if (!targetSession) return;
+      handleUnwatch(sessionId);
+      conversations.onSelectSession(targetSession);
+    },
+    [conversations, handleUnwatch],
+  );
 
   // Wrap onNewChat to park the current session as Watching
   const handleNewChat = useCallback(
@@ -354,6 +367,18 @@ export function ChatPage({
           agentHasProject={agentHasProject}
           isPanelPinned={activity.isPinned}
         />
+        <SessionStatusBar
+          sessionRef={effectiveSessionRef}
+          title={
+            chat.viewingSessionMeta?.title ??
+            chat.attachedSessionMeta?.title ??
+            activeTitle
+          }
+          viewingMeta={chat.viewingSessionMeta ?? chat.attachedSessionMeta}
+          isAttached={!!chat.attachedSessionId}
+          onAttach={chat.onAttachToViewed}
+          onDetach={chat.onDetachFromSession}
+        />
 
         <ArtifactContext.Provider
           value={{ openCodeAsArtifact, openFileAsArtifact }}
@@ -463,6 +488,7 @@ export function ChatPage({
         onFocusSessionHandled={handleFocusSessionHandled}
         watchingSessionIds={watchingSessionIds}
         onUnwatchSession={handleUnwatch}
+        onAttachSession={handleAttachWatchedSession}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
       />

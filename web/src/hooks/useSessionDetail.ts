@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { GobbySession } from './useSessions'
 import { useWebSocketEvent } from './useWebSocketEvent'
-import type { ContentBlock, TokenUsage } from '../types/chat'
+import type { ContentBlock, TokenUsage, ToolCall } from '../types/chat'
 
 export interface SessionMessage {
   id: string
@@ -21,6 +21,49 @@ export interface SessionMessage {
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
+}
+
+function mapRenderedRecordToSessionMessage(message: Record<string, unknown>): SessionMessage {
+  return {
+    id: String(message.id ?? message.message_index ?? `hist-${Math.random()}`),
+    role: (message.role as string) ?? 'assistant',
+    content: (message.content as string) ?? '',
+    timestamp: (message.timestamp as string) ?? '',
+    content_blocks: message.content_blocks as ContentBlock[] | undefined,
+    model: message.model as string | null | undefined,
+    usage: message.usage as TokenUsage | null | undefined,
+    content_type: message.content_type as string | undefined,
+    tool_name: message.tool_name as string | undefined,
+    message_index: message.message_index as number | undefined,
+  }
+}
+
+function mapWebChatRecordToSessionMessage(message: Record<string, unknown>): SessionMessage {
+  const content = (message.content as string) ?? ''
+  const contentBlocks: ContentBlock[] = []
+  if (content) {
+    contentBlocks.push({ type: 'text', content })
+  }
+
+  const toolCalls = Array.isArray(message.tool_calls)
+    ? (message.tool_calls as ToolCall[])
+    : []
+  if (toolCalls.length > 0) {
+    contentBlocks.push({ type: 'tool_chain', tool_calls: toolCalls })
+  }
+
+  return {
+    id: String(message.id ?? `chat-${Math.random()}`),
+    role: (message.role as string) ?? 'assistant',
+    content,
+    timestamp:
+      (message.created_at as string) ??
+      (message.timestamp as string) ??
+      new Date().toISOString(),
+    content_blocks: contentBlocks.length > 0 ? contentBlocks : undefined,
+    model: (message.model as string | null | undefined) ?? null,
+    usage: null,
+  }
 }
 
 export function useSessionDetail(sessionId: string | null) {
@@ -44,41 +87,52 @@ export function useSessionDetail(sessionId: string | null) {
     async function fetchDetail() {
       const baseUrl = getBaseUrl()
       try {
-        const [sessionRes, messagesRes] = await Promise.all([
-          fetch(`${baseUrl}/api/sessions/${sessionId}`),
-          fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`),
-        ])
+        const sessionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
 
         if (cancelled) return
 
         if (sessionRes.ok) {
           const data = await sessionRes.json()
-          setSession(data.session || null)
+          const sessionData = data.session || null
+          setSession(sessionData)
+
+          let mapped: SessionMessage[] = []
+          let totalCount = 0
+
+          if (sessionData?.session_type === 'web_chat' && sessionData.external_id) {
+            const chatRes = await fetch(`${baseUrl}/api/chat/${sessionData.external_id}/messages`)
+            if (cancelled) return
+            if (chatRes.ok) {
+              const chatData = await chatRes.json()
+              const rawMessages = Array.isArray(chatData?.messages) ? chatData.messages : []
+              mapped = rawMessages.map((m: Record<string, unknown>) =>
+                mapWebChatRecordToSessionMessage(m),
+              )
+              totalCount = mapped.length
+            } else {
+              console.warn(`Web chat messages fetch returned ${chatRes.status}`)
+            }
+          } else {
+            const messagesRes = await fetch(
+              `${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`,
+            )
+            if (cancelled) return
+            if (messagesRes.ok) {
+              const messageData = await messagesRes.json()
+              const rawMessages = Array.isArray(messageData?.messages) ? messageData.messages : []
+              mapped = rawMessages.map((m: Record<string, unknown>) =>
+                mapRenderedRecordToSessionMessage(m),
+              )
+              totalCount = messageData.total_count || mapped.length
+            } else {
+              console.warn(`Messages fetch returned ${messagesRes.status}`)
+            }
+          }
+
+          setMessages(mapped)
+          setTotalMessages(totalCount)
         } else {
           console.warn(`Session fetch returned ${sessionRes.status}`)
-        }
-
-        if (messagesRes.ok) {
-          const data = await messagesRes.json()
-          const rawMessages = data.messages || []
-          // Map RenderedMessage shape: content_blocks, model, usage are top-level
-          const mapped: SessionMessage[] = rawMessages.map((m: Record<string, unknown>) => ({
-            id: String(m.id ?? m.message_index ?? `hist-${Math.random()}`),
-            role: (m.role as string) ?? 'assistant',
-            content: (m.content as string) ?? '',
-            timestamp: (m.timestamp as string) ?? '',
-            content_blocks: m.content_blocks as ContentBlock[] | undefined,
-            model: m.model as string | null | undefined,
-            usage: m.usage as TokenUsage | null | undefined,
-            // Legacy fields (may be absent in new shape)
-            content_type: m.content_type as string | undefined,
-            tool_name: m.tool_name as string | undefined,
-            message_index: m.message_index as number | undefined,
-          }))
-          setMessages(mapped)
-          setTotalMessages(data.total_count || mapped.length)
-        } else {
-          console.warn(`Messages fetch returned ${messagesRes.status}`)
         }
       } catch (e) {
         console.error('Failed to fetch session detail:', e)
@@ -105,15 +159,7 @@ export function useSessionDetail(sessionId: string | null) {
     const msg = data.message as Record<string, unknown> | undefined
     if (!msg) return
 
-    const newMessage: SessionMessage = {
-      id: String(msg.id ?? msg.index ?? `ws-${Date.now()}`),
-      role: (msg.role as string) ?? 'assistant',
-      content: (msg.content as string) ?? '',
-      timestamp: (msg.timestamp as string) ?? new Date().toISOString(),
-      content_blocks: msg.content_blocks as ContentBlock[] | undefined,
-      model: msg.model as string | null | undefined,
-      usage: msg.usage as TokenUsage | null | undefined,
-    }
+    const newMessage = mapRenderedRecordToSessionMessage(msg)
 
     setMessages((prev) => {
       const existingIdx = prev.findIndex((m) => m.id === newMessage.id)

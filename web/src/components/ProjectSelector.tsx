@@ -122,7 +122,7 @@ export function ProjectSelector({
         createPortal(
           <div
             ref={dropdownRef}
-            className="fixed w-48 rounded-md border border-border bg-background shadow-lg z-[250]"
+            className="fixed w-48 rounded-md border border-border bg-background shadow-lg z-[1000]"
             style={{
               top: dropdownPos.top,
               left: dropdownPos.left,
