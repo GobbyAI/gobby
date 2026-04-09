@@ -417,7 +417,7 @@ export default function App() {
   // Reset title synthesis counter on conversation switch
   useEffect(() => {
     titleSynthesisCountRef.current = 0;
-  }, [conversationId]);
+  }, [conversationSwitchKey]);
 
   // Global keyboard: Cmd+K opens command palette (or chord Cmd+K → t for quick capture)
   const chordPendingRef = useRef(false);
