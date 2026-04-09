@@ -65,7 +65,7 @@ const resolvePath = (obj: any, path: string): any => {
   // Handle simple dot notation (e.g. "user.name")
   // Note: JSON pointer uses "/" but dot notation is common. Let's support dot notation for simplicity
   // or real JSON pointer if requested. The doc says "path is JSON pointer" so let's allow basic dot notation.
-  const parts = path.replace(/^\//, "").split(/[\/\.]/);
+  const parts = path.replace(/^\//, "").split(/[/.]/);
 
   let current = obj;
   for (const part of parts) {

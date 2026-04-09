@@ -271,7 +271,7 @@ export function parseGrepOutput(result: string): GrepFileGroup[] | null {
       currentGroup = null
       continue
     }
-    const match = line.match(/^(.+?):(\d+)[:\-](.*)$/)
+    const match = line.match(/^(.+?):(\d+)[:-](.*)$/)
     if (!match) {
       if (matchCount === 0) return null
       continue

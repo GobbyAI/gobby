@@ -11,7 +11,7 @@ import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
-export function PersonalWorkspace({ state, setState, onNext }: StepProps): React.ReactElement {
+export function PersonalWorkspace({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<"init" | "shortcut" | "done">("init");
   const [initMsg, setInitMsg] = useState("");
 

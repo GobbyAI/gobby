@@ -200,6 +200,17 @@ export function ActivityPanel({
   onUnwatchSession,
   isMobile = false,
 }: ActivityPanelProps) {
+  // Use overlay mode when viewport is too narrow for side-by-side layout
+  const [narrowViewport, setNarrowViewport] = useState(
+    () => window.innerWidth < 1100,
+  );
+  useEffect(() => {
+    const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+  const useOverlay = isMobile || narrowViewport;
+
   if (!isPinned) return null;
 
   // Mobile: close handler
@@ -260,17 +271,6 @@ export function ActivityPanel({
         return null;
     }
   };
-
-  // Use overlay mode when viewport is too narrow for side-by-side layout
-  const [narrowViewport, setNarrowViewport] = useState(
-    () => window.innerWidth < 1100,
-  );
-  useEffect(() => {
-    const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-  const useOverlay = isMobile || narrowViewport;
 
   if (useOverlay) {
     return (

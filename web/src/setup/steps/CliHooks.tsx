@@ -3,7 +3,6 @@ import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
 import { runGobby } from "../utils/gobby.js";
 import { MultiSelect } from "../components/MultiSelect.js";
-import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 

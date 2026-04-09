@@ -59,7 +59,7 @@ function buildForceData(
 
 export function MemoryGraph({ fetchGraphData, onSelect, memoryLimit }: MemoryGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const fgRef = useRef<any>(null) // eslint-disable-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null)  
   const [graphData, setGraphData] = useState<MemoryGraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
@@ -123,12 +123,12 @@ export function MemoryGraph({ fetchGraphData, onSelect, memoryLimit }: MemoryGra
     return () => { if (zoomTimeoutRef.current) clearTimeout(zoomTimeoutRef.current) }
   }, [forceData.nodes.length])
 
-  const handleNodeClick = useCallback((node: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const handleNodeClick = useCallback((node: any) => {  
     if (node.memory) onSelect(node.memory)
   }, [onSelect])
 
   // Custom node rendering on canvas
-  const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {  
     const label = node.name as string
     const color = node.color as string
     const x = node.x as number
@@ -178,7 +178,7 @@ export function MemoryGraph({ fetchGraphData, onSelect, memoryLimit }: MemoryGra
     ctx.fillText(label, rx + 5 / globalScale, ry + nodeHeight - 2 / globalScale)
   }, [])
 
-  const nodePointerAreaPaint = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D, globalScale: number) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const nodePointerAreaPaint = useCallback((node: any, color: string, ctx: CanvasRenderingContext2D, globalScale: number) => {  
     const fontSize = Math.max(10 / globalScale, 2)
     const nodeHeight = fontSize * 2.8
     const padding = fontSize * 0.6
@@ -232,7 +232,7 @@ export function MemoryGraph({ fetchGraphData, onSelect, memoryLimit }: MemoryGra
         linkSource="source"
         linkTarget="target"
         linkColor={() => 'rgba(120, 120, 140, 0.3)'}
-        linkWidth={(link: any) => 0.5 + (link.value as number) * 2} // eslint-disable-line @typescript-eslint/no-explicit-any
+        linkWidth={(link: any) => 0.5 + (link.value as number) * 2}  
         linkDirectionalParticles={1}
         linkDirectionalParticleSpeed={0.005}
         linkDirectionalParticleWidth={2}

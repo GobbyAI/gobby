@@ -1971,7 +1971,7 @@ export function useChat() {
         );
       }
     },
-    [isStreaming], // eslint-disable-line react-hooks/exhaustive-deps
+    [isStreaming],  
   );
 
   // Resume a CLI session (e.g., Claude) — sets the conversation ID

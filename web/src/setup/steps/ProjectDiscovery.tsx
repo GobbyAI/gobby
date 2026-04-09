@@ -10,7 +10,7 @@ import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
-export function ProjectDiscovery({ state, setState, onNext }: StepProps): React.ReactElement {
+export function ProjectDiscovery({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [scanning, setScanning] = useState(true);
   const [repos, setRepos] = useState<string[]>([]);
   const [phase, setPhase] = useState<"scan" | "select" | "init" | "done">("scan");

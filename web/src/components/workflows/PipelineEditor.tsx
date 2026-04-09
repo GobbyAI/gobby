@@ -68,7 +68,7 @@ function getStepPreview(step: PipelineStep): string {
 }
 
 function createDefaultStep(type: StepType, existingIds: string[]): PipelineStep {
-  let base = 'step'
+  const base = 'step'
   let n = existingIds.length + 1
   while (existingIds.includes(`${base}-${n}`)) n++
   const id = `${base}-${n}`

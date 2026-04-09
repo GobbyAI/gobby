@@ -118,7 +118,7 @@ const DEFAULT_CENTER = 0.05
 
 export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limit, onError }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const fgRef = useRef<any>(null) // eslint-disable-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null)  
   const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -275,7 +275,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   const isSearchActive = searchQuery.length > 0
 
   // Node click: expand neighbors
-  const handleNodeClick = useCallback((node: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const handleNodeClick = useCallback((node: any) => {  
     if (expandingNode) return
     const name = node.id as string
     setExpandingNode(name)
@@ -292,7 +292,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
 
   // Custom node rendering — iOS: simple colored spheres (zero per-node textures);
   // other mobile: lightweight SpriteText; desktop: full SpriteText with backgrounds
-  const nodeThreeObject = useCallback((node: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const nodeThreeObject = useCallback((node: any) => {  
     try {
       const label = node.name as string
       const color = node.color as string
@@ -322,7 +322,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         sprite.borderColor = dimmed ? 'transparent' : color
         sprite.borderWidth = 0.3
         sprite.borderRadius = 3
-        sprite.padding = [2, 4] as any // eslint-disable-line @typescript-eslint/no-explicit-any
+        sprite.padding = [2, 4] as any  
       }
       return sprite
     } catch (e) {
@@ -335,7 +335,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   }, [isSearchActive, searchLower, sphereGeo])
 
   // Link styling
-  const linkColor = useCallback((link: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const linkColor = useCallback((link: any) => {  
     if (isSearchActive) {
       const srcId = typeof link.source === 'object' ? link.source.id : link.source
       const tgtId = typeof link.target === 'object' ? link.target.id : link.target
@@ -346,12 +346,12 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     return link.color || 'rgba(120,120,120,0.4)'
   }, [isSearchActive, searchLower])
 
-  const linkLabel = useCallback((link: any) => link.type as string, []) // eslint-disable-line @typescript-eslint/no-explicit-any
+  const linkLabel = useCallback((link: any) => link.type as string, [])  
 
   // Node breathing effect — use ref to avoid prop changes that trigger graph rebuilds
   const animateRef = useRef(animateIdle)
   animateRef.current = animateIdle
-  const nodePositionUpdate = useCallback((obj: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const nodePositionUpdate = useCallback((obj: any) => {  
     if (!animateRef.current) {
       // Restore original scale when animation stops
       if (obj.__origScale) {
@@ -411,7 +411,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         height={dimensions.height}
         graphData={forceData}
         nodeId="id"
-        nodeLabel={(node: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        nodeLabel={(node: any) => {  
           const e = node.entity as KnowledgeEntity
           const props = Object.entries(e.properties || {}).slice(0, 4)
             .map(([k, v]) => `${k}: ${String(v).slice(0, 30)}`)
