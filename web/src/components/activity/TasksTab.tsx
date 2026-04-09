@@ -125,7 +125,7 @@ function PanelTaskNode({ node, style }: NodeRendererProps<TreeNode>) {
         className="w-1.5 h-1.5 rounded-full shrink-0"
         style={{ backgroundColor: dotColor }}
       />
-      {ref && <span className="text-xs text-muted-foreground shrink-0">{ref}</span>}
+      {ref && <span className="text-sm text-muted-foreground shrink-0">{ref}</span>}
       <span className="truncate min-w-0 flex-1 text-sm text-foreground" style={{ color: textColor }}>
         {task.title}
       </span>
