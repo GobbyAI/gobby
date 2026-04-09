@@ -31,6 +31,7 @@ interface TTSMeta {
 export function useVoice(
   wsRef: React.RefObject<WebSocket | null>,
   conversationId: string,
+  conversationSwitchKey: number,
 ): UseVoiceReturn {
   const [voiceMode, setVoiceMode] = useState(false)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
@@ -349,14 +350,17 @@ export function useVoice(
     }
   }, [voiceMode, voiceLoading, voiceReady, statusVoiceError, wsRef, conversationId, setTransientError, stopTTS])
 
-  // Stop TTS when switching conversations (skip initial mount)
-  const prevConversationIdRef = useRef(conversationId)
+  // Stop TTS when intentionally switching conversations.
+  // Uses conversationSwitchKey (not conversationId) so that SDK session ID
+  // adoption — which changes conversationId but is the same logical
+  // conversation — does NOT kill in-flight audio playback.
+  const prevSwitchKeyRef = useRef(conversationSwitchKey)
   useEffect(() => {
-    if (prevConversationIdRef.current !== conversationId) {
-      prevConversationIdRef.current = conversationId
+    if (prevSwitchKeyRef.current !== conversationSwitchKey) {
+      prevSwitchKeyRef.current = conversationSwitchKey
       stopTTS()
     }
-  }, [conversationId, stopTTS])
+  }, [conversationSwitchKey, stopTTS])
 
   // Cleanup on unmount
   useEffect(() => {

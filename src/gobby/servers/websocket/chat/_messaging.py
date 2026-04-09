@@ -703,6 +703,18 @@ class ChatMessagingMixin:
                         )
                         conversation_id = sdk_sid
 
+                        # Re-key voice state so future operations
+                        # (cancel, barge-in) use the new conversation ID.
+                        if hasattr(self, "_active_tts_pipelines"):
+                            _tts_pl = self._active_tts_pipelines.pop(old_cid, None)
+                            if _tts_pl is not None:
+                                _tts_pl.conversation_id = sdk_sid
+                                self._active_tts_pipelines[sdk_sid] = _tts_pl
+                        if hasattr(self, "_voice_enabled"):
+                            _ve = self._voice_enabled.pop(old_cid, None)
+                            if _ve is not None:
+                                self._voice_enabled[sdk_sid] = _ve
+
                         # Notify all connected clients to update their conversation_id
                         rekey_msg = json.dumps(
                             {

@@ -284,7 +284,7 @@ export default function App() {
     selectedProvider,
     setSelectedProvider,
   } = useChat();
-  const voice = useVoice(wsRef, conversationId);
+  const voice = useVoice(wsRef, conversationId, conversationSwitchKey);
   const {
     settings,
     updateFontSize,

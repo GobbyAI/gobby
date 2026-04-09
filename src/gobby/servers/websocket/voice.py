@@ -67,6 +67,9 @@ class TTSPipeline:
         if remaining:
             await self._queue.put(remaining)
         await self._queue.join()
+        # Send sentinel so the worker task exits cleanly instead of
+        # hanging forever on _queue.get() after all work is done.
+        await self._queue.put(None)
 
     async def cancel(self) -> None:
         """Cancel queued and active TTS work."""
