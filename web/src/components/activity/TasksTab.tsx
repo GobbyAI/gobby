@@ -187,7 +187,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [treeHeight, setTreeHeight] = useState(300)
 
-  // Fetch all tasks (filter client-side)
+  // Fetch tasks filtered by active status filters (server-side)
   const abortRef = useRef<AbortController | null>(null)
   const debouncedRefetchRef = useRef<number | null>(null)
 
@@ -199,13 +199,14 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     const baseUrl = getBaseUrl()
     const params = new URLSearchParams()
     if (projectId) params.set('project_id', projectId)
+    if (statusFilters.size > 0) params.set('status', [...statusFilters].join(','))
     params.set('limit', '500')
     fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : { tasks: [] }))
       .then((data) => setTasks(data.tasks ?? []))
       .catch((err) => { if (err.name !== 'AbortError') setTasks([]) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-  }, [projectId])
+  }, [projectId, statusFilters])
 
   useEffect(() => {
     fetchTasks()
