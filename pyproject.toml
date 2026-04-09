@@ -58,7 +58,6 @@ dependencies = [
     # tree-sitter AST parsing for code indexing (gobby-code)
     "tree-sitter-language-pack>=0.13.0",
     # Native SDK executors for autonomous mode
-    "google-genai>=1.0.0",
     "openai>=1.0.0",
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
@@ -70,7 +69,6 @@ dependencies = [
     # LLM provider instrumentation for OpenTelemetry tracing
     "opentelemetry-instrumentation-anthropic>=0.34.0",
     "opentelemetry-instrumentation-openai>=0.34.0",
-    "opentelemetry-instrumentation-google-genai>=0.1b0",
     "requests>=2.33.0",
     "yake>=0.7.3",
 ]
@@ -150,9 +148,7 @@ filterwarnings = [
     "ignore:unclosed database:ResourceWarning",
     # Ignore fork() deprecation warning from embedded spawner tests (expected on macOS)
     "ignore:This process.*is multi-threaded.*use of fork:DeprecationWarning",
-    # Ignore third-party deprecation warnings (google-genai, oletools)
-    "ignore::DeprecationWarning:google.genai",
-    "ignore::DeprecationWarning:google.genai.*",
+    # Ignore third-party deprecation warnings (oletools)
     "ignore::DeprecationWarning:oletools",
     "ignore::DeprecationWarning:oletools.*",
     # Ignore MCP SDK streamable_http_client deprecation (upstream)
@@ -187,11 +183,6 @@ ignore = [
 [tool.mypy]
 python_version = "3.13"
 plugins = ["pydantic.mypy"]
-# Disabled: mypy 1.19.1 incremental cache crashes on the google namespace
-# package (AssertionError in fix_cross_refs → lookup.py:33). The google.*
-# packages are pulled in transitively by google-genai with no
-# __init__.py (PEP 420). Re-enable once mypy ships a fix.
-incremental = false
 strict = true
 warn_return_any = true
 warn_unused_configs = true
