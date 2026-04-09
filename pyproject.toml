@@ -30,15 +30,12 @@ dependencies = [
     "pydantic>=2.9.0",
     "uvicorn[standard]>=0.30.0",
     "websockets>=15.0",
-    "rich>=13.0.0",
     "pyyaml>=6.0.3",
     "jinja2>=3.1.0",
     "claude-agent-sdk>=0.1.39",
     "wcwidth>=0.2.14",
     "tomli-w>=1.0.0",
     "msgspec>=0.20.0",
-    # gitingest>=0.3.1 includes CVE-2024-56074 fix (commit 9996a06, Dec 2024)
-    "gitingest>=0.3.1",
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "qdrant-client>=1.12.0",
@@ -46,17 +43,11 @@ dependencies = [
     "python-multipart>=0.0.22",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
-    "protobuf>=5.29.6,<6.0.0",
     # cryptography <46.0.6 has CVE-2026-26007, CVE-2026-34073
     "cryptography>=46.0.6",
-    # Voice deps moved to [project.optional-dependencies] voice
     "cisco-ai-skill-scanner>=0.1.1",
     # pyjwt <2.12.0 has CVE-2026-32597 (transitive via mcp)
     "pyjwt>=2.12.0",
-    # diskcache 5.6.3 has CVE-2025-69872 (no fix version available)
-    "diskcache>=5.6.3",
-    # tree-sitter AST parsing for code indexing (gobby-code)
-    "tree-sitter-language-pack>=0.13.0",
     # Native SDK executors for autonomous mode
     "openai>=1.0.0",
     "opentelemetry-api>=1.28.0",
@@ -69,7 +60,6 @@ dependencies = [
     # LLM provider instrumentation for OpenTelemetry tracing
     "opentelemetry-instrumentation-anthropic>=0.34.0",
     "opentelemetry-instrumentation-openai>=0.34.0",
-    "requests>=2.33.0",
     "yake>=0.7.3",
 ]
 
