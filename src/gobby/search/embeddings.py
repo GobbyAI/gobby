@@ -108,16 +108,12 @@ def _apply_prefix(text: str, is_query: bool, model: str) -> str:
     nomic-embed-text was trained with task-specific prefixes:
     - 'search_query: ' for queries
     - 'search_document: ' for documents
-
-    Phase 1: Only apply query prefix. Document prefix deferred until
-    stored vectors are re-embedded.
     """
     if not _needs_nomic_prefix(model):
         return text
     if is_query:
         return f"search_query: {text}"
-    # Phase 2 (future): return f"search_document: {text}"
-    return text
+    return f"search_document: {text}"
 
 
 async def generate_embeddings(

@@ -663,12 +663,12 @@ class MemoryManager:
                         sources.append("graph")
                     if in_fts:
                         sources.append("fts5")
-                    via = "+".join(sources) or "unknown"
+                    via = "|".join(sources) or "unknown"
                     if mem.source_type == "user":
                         base_score *= _USER_SOURCE_BOOST
-                        via += "+user_boost"
+                        via += "*user_boost"
                     base_score *= temporal_decay(mem.updated_at, half_life)
-                    via += "+temporal_decay"
+                    via += "*temporal_decay"
                     mem.search_via = via
                     scored.append((mem, base_score))
 
@@ -754,12 +754,12 @@ class MemoryManager:
                         sources.append("semantic")
                     if memory_id in fts_set:
                         sources.append("fts5")
-                    via = "+".join(sources) or "unknown"
+                    via = "|".join(sources) or "unknown"
                     if mem.source_type == "user":
                         base_score *= _USER_SOURCE_BOOST
-                        via += "+user_boost"
+                        via += "*user_boost"
                     base_score *= temporal_decay(mem.updated_at, half_life)
-                    via += "+temporal_decay"
+                    via += "*temporal_decay"
                     mem.search_via = via
                     scored.append((mem, base_score))
 
