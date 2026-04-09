@@ -42,12 +42,11 @@ interface SessionEntry {
   status: "active" | "paused";
   sessionType?: string;
   externalId?: string;
-  mode?: string | null;
+  agentRunId?: string | null;
   runId?: string;
   startedAt?: string;
   seqNum?: number | null;
   hasTmux: boolean;
-  badges: Array<"tmux" | "web">;
 }
 
 interface SessionContextMenu {
@@ -60,24 +59,22 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
-function getModeBadge(mode: string | null | undefined): {
+function getSessionTypeBadge(sessionType: string | undefined): {
+  label: string;
+  className: string;
+} {
+  if (sessionType === "web_chat") {
+    return { label: "web", className: "session-kind-badge--web" };
+  }
+  return { label: "tmux", className: "session-kind-badge--tmux" };
+}
+
+function getAgentBadge(agentRunId: string | null | undefined): {
   label: string;
   className: string;
 } | null {
-  switch (mode) {
-    case "interactive":
-      return { label: "interactive", className: "session-kind-badge--interactive" };
-    case "autonomous":
-      return { label: "autonomous", className: "session-kind-badge--autonomous" };
-    case "plan":
-      return { label: "plan", className: "session-kind-badge--plan" };
-    case "accept_edits":
-      return { label: "act", className: "session-kind-badge--act" };
-    case "bypass":
-      return { label: "auto", className: "session-kind-badge--auto" };
-    default:
-      return null;
-  }
+  if (!agentRunId) return null;
+  return { label: "auto", className: "session-kind-badge--auto" };
 }
 
 export const SessionsTab = memo(function SessionsTab({
@@ -172,10 +169,6 @@ export const SessionsTab = memo(function SessionsTab({
         ? activitySessions.find((s) => s.id === a.session_id)
         : undefined;
 
-      const badges: Array<"tmux" | "web"> = [];
-      if (a.pid) badges.push("tmux");
-      if (matchedSession?.session_type === "web_chat") badges.push("web");
-
       return {
         id: a.session_id ?? a.run_id,
         type: "agent" as const,
@@ -188,22 +181,17 @@ export const SessionsTab = memo(function SessionsTab({
         status: "active" as const,
         sessionType: matchedSession?.session_type,
         externalId: matchedSession?.external_id,
-        mode: a.mode ?? matchedSession?.chat_mode ?? null,
+        agentRunId: matchedSession?.agent_run_id ?? a.run_id,
         runId: a.run_id,
         startedAt: a.started_at,
         seqNum: matchedSession?.seq_num,
         hasTmux: !!a.pid,
-        badges,
       };
     });
 
     const sessionEntries: SessionEntry[] = activitySessions
       .filter((s) => !agentSessionIds.has(s.id))
       .map((s) => {
-        const badges: Array<"tmux" | "web"> = [];
-        if (s.terminal_context) badges.push("tmux");
-        if (s.session_type === "web_chat") badges.push("web");
-
         return {
           id: s.id,
           type: "cli" as const,
@@ -214,11 +202,10 @@ export const SessionsTab = memo(function SessionsTab({
             | "paused",
           sessionType: s.session_type,
           externalId: s.external_id,
-          mode: s.chat_mode,
+          agentRunId: s.agent_run_id,
           startedAt: s.updated_at,
           seqNum: s.seq_num,
           hasTmux: !!s.terminal_context,
-          badges,
         };
       });
 
@@ -419,23 +406,20 @@ export const SessionsTab = memo(function SessionsTab({
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                {entry.badges.map((badge) => (
-                  <span
-                    key={badge}
-                    className={`session-kind-badge session-kind-badge--${badge}`}
-                  >
-                    {badge}
-                  </span>
-                ))}
                 {(() => {
-                  const modeBadge = getModeBadge(entry.mode);
-                  if (!modeBadge) return null;
+                  const typeBadge = getSessionTypeBadge(entry.sessionType);
                   return (
-                    <span
-                      className={`session-kind-badge ${modeBadge.className}`}
-                      title={`Session mode: ${modeBadge.label}`}
-                    >
-                      {modeBadge.label}
+                    <span className={`session-kind-badge ${typeBadge.className}`}>
+                      {typeBadge.label}
+                    </span>
+                  );
+                })()}
+                {(() => {
+                  const agentBadge = getAgentBadge(entry.agentRunId);
+                  if (!agentBadge) return null;
+                  return (
+                    <span className={`session-kind-badge ${agentBadge.className}`}>
+                      {agentBadge.label}
                     </span>
                   );
                 })()}

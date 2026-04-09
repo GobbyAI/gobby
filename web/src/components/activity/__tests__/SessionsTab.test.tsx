@@ -58,6 +58,7 @@ const activeSessions = [
     had_edits: false,
     agent_depth: 0,
     chat_mode: null,
+    agent_run_id: null,
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: { session_name: "dev" },
@@ -83,6 +84,7 @@ const activeSessions = [
     had_edits: false,
     agent_depth: 0,
     chat_mode: null,
+    agent_run_id: null,
     parent_session_id: null,
     session_type: "web_chat",
     terminal_context: null,
@@ -108,6 +110,7 @@ const activeSessions = [
     had_edits: false,
     agent_depth: 0,
     chat_mode: "plan",
+    agent_run_id: "run-auto-203",
     parent_session_id: null,
     session_type: "web_chat",
     terminal_context: null,
@@ -133,6 +136,7 @@ const activeSessions = [
     had_edits: false,
     agent_depth: 0,
     chat_mode: null,
+    agent_run_id: null,
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: null,
@@ -158,6 +162,7 @@ const activeSessions = [
     had_edits: false,
     agent_depth: 0,
     chat_mode: null,
+    agent_run_id: null,
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: null,
@@ -195,7 +200,7 @@ describe("SessionsTab", () => {
     expect(screen.getAllByText(/^web$/i)).toHaveLength(1);
   });
 
-  it("shows mode badges and lets a watched web chat attach into the main chat", async () => {
+  it("shows agent badge and lets a watched web chat attach into the main chat", async () => {
     const onAttachSession = vi.fn();
 
     render(
@@ -207,7 +212,7 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/^plan$/i)).toBeTruthy();
+      expect(screen.getByText(/^auto$/i)).toBeTruthy();
       expect(screen.getByText("Attach")).toBeTruthy();
     });
 

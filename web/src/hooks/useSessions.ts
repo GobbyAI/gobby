@@ -22,6 +22,7 @@ export interface GobbySession {
   had_edits: boolean;
   agent_depth: number;
   chat_mode: string | null;
+  agent_run_id: string | null;
   parent_session_id: string | null;
   session_type: string;
   terminal_context: Record<string, unknown> | null;

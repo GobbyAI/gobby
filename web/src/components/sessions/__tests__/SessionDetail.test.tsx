@@ -46,6 +46,7 @@ const SAMPLE_SESSION: GobbySession = {
   had_edits: true,
   agent_depth: 0,
   chat_mode: null,
+  agent_run_id: null,
   parent_session_id: null,
   session_type: 'terminal',
   terminal_context: null,
