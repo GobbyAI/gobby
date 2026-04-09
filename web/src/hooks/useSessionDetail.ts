@@ -147,7 +147,9 @@ export function useSessionDetail(sessionId: string | null) {
 
   // Track current sessionId in a ref for the WebSocket handler
   const sessionIdRef = useRef(sessionId)
-  sessionIdRef.current = sessionId
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
 
   // Subscribe to real-time session_message events via WebSocket
   // Broadcasts are now RenderedMessage-shaped with content_blocks.

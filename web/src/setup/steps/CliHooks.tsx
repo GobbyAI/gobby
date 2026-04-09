@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Text, Box } from "ink";
 import Spinner from "ink-spinner";
 import { runGobby } from "../utils/gobby.js";
@@ -32,7 +32,7 @@ export function CliHooks({ state, setState, onNext }: StepProps): React.ReactEle
   const detected = state.detected_tools;
   const available = Object.keys(CLI_LABELS).filter((k) => detected[k]);
 
-  const finish = (installed: string[]): void => {
+  const finish = useCallback((installed: string[]): void => {
     setState((prev) => {
       const next = {
         ...prev,
@@ -43,14 +43,14 @@ export function CliHooks({ state, setState, onNext }: StepProps): React.ReactEle
       return next;
     });
     setTimeout(onNext, 300);
-  };
+  }, [onNext, setState]);
 
   // Auto-advance when no CLIs detected
   useEffect(() => {
     if (available.length > 0 || phase !== "select") return;
     const timer = setTimeout(() => finish([]), 300);
     return () => clearTimeout(timer);
-  }, [available.length, phase]);
+  }, [available.length, finish, phase]);
 
   // Run install after render so the spinner is visible
   useEffect(() => {
@@ -73,7 +73,7 @@ export function CliHooks({ state, setState, onNext }: StepProps): React.ReactEle
     setResults(lines);
     setPhase("done");
     finish(installed);
-  }, [phase]);
+  }, [finish, phase, selected]);
 
   if (available.length === 0) {
     if (phase === "select") {

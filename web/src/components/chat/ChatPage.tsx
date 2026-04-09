@@ -16,10 +16,13 @@ import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActiveSessionsModal } from "./ActiveSessionsModal";
-import { ActivityPanel, useActivityPanel } from "../activity/ActivityPanel";
+import { ActivityPanel } from "../activity/ActivityPanel";
+import { useActivityPanel } from "../activity/useActivityPanel";
 import { VoiceStatusBar } from "./VoiceStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
+
+const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
 interface ChatPageProps {
   chat: ChatState;
@@ -87,15 +90,41 @@ export function ChatPage({
   const canvas = useCanvasPanel();
   const activity = useActivityPanel();
   const fileChanges = useFileChanges(chat.messages, projectId ?? null);
+  const {
+    openCanvas,
+    closeCanvas,
+    activeCanvas,
+  } = canvas;
+  const {
+    activeTab: activityTab,
+    closeIfAutoOpened,
+    isPinned,
+    panelWidth,
+    setActiveTab: setActivityTab,
+    setIsPinned,
+    setPanelWidth,
+    showTab,
+    togglePanel,
+  } = activity;
+  const {
+    onApprovePlan,
+    onModeChangeLocal,
+    onPaletteSelect,
+    onRequestPlanChanges,
+    onSend,
+    planPendingApproval,
+    setOnArtifactEvent,
+    setOnPlanReady,
+  } = chat;
 
   // Session browsing via activity panel instead of Observing mode
   const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
   const handleViewCliSession = useCallback(
     (session: { id: string }) => {
       setFocusSessionId(session.id);
-      activity.showTab("sessions");
+      showTab("sessions");
     },
-    [activity],
+    [showTab],
   );
   const handleFocusSessionHandled = useCallback(() => {
     setFocusSessionId(null);
@@ -133,11 +162,11 @@ export function ChatPage({
         setWatchingSessionIds((prev) => new Set(prev).add(currentDbId));
         // Auto-select the parked session in the Sessions tab
         setFocusSessionId(currentDbId);
-        activity.showTab("sessions");
+        showTab("sessions");
       }
       conversations.onNewChat(agentName);
     },
-    [chat.dbSessionId, chat.messages.length, conversations, activity],
+    [chat.dbSessionId, chat.messages.length, conversations, showTab],
   );
 
   // Available LLM providers — fetched from daemon API
@@ -165,28 +194,23 @@ export function ChatPage({
 
   useEffect(() => {
     if (chat.canvasPanel) {
-      canvas.openCanvas(chat.canvasPanel);
+      openCanvas(chat.canvasPanel);
       // Auto-switch to canvas tab
-      activity.showTab("canvas");
+      showTab("canvas");
     } else {
-      canvas.closeCanvas();
+      closeCanvas();
     }
-  }, [chat.canvasPanel, canvas.openCanvas, canvas.closeCanvas]);
+  }, [chat.canvasPanel, closeCanvas, openCanvas, showTab]);
 
-  const planArtifactIdRef = useRef<string | null>(null);
-  // Local plan-pending state — kept in ChatPage (same scope as artifact
-  // creation) so React batches both state updates into a single render.
-  // The prop from useChat (chat.planPendingApproval) passes through App.tsx
-  // and may arrive in a separate render cycle, causing the ArtifactPanel
-  // to render the plan content WITHOUT the approval bar.
-  const [planPendingLocal, setPlanPendingLocal] = useState(false);
+  const [planArtifactId, setPlanArtifactId] = useState<string | null>(null);
+  const [pendingPlanArtifactId, setPendingPlanArtifactId] = useState<
+    string | null
+  >(null);
 
   // Clear artifacts and plan state on session switch / new chat
   useEffect(() => {
     clearArtifacts();
-    planArtifactIdRef.current = null;
-    setPlanPendingLocal(false);
-  }, [chat.conversationSwitchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chat.conversationSwitchKey, clearArtifacts]);
 
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {
@@ -210,107 +234,99 @@ export function ChatPage({
       if (!content) return;
       const headingMatch = content.match(/^#\s+(.+)$/m);
       const title = headingMatch?.[1]?.trim() || "Implementation Plan";
+      let nextArtifactId = planArtifactId;
 
-      if (
-        planArtifactIdRef.current &&
-        artifacts.has(planArtifactIdRef.current)
-      ) {
-        updateArtifact(planArtifactIdRef.current, content);
-        openArtifact(planArtifactIdRef.current);
+      if (planArtifactId && artifacts.has(planArtifactId)) {
+        updateArtifact(planArtifactId, content);
+        openArtifact(planArtifactId);
       } else {
-        const id = createArtifact("text", content, "markdown", title, {
+        nextArtifactId = createArtifact("text", content, "markdown", title, {
           isPlan: true,
         });
-        planArtifactIdRef.current = id;
       }
-      setPlanPendingLocal(true);
-      activity.showTab("plans");
+      setPlanArtifactId(nextArtifactId);
+      setPendingPlanArtifactId(nextArtifactId);
+      showTab("plans");
     },
-    [createArtifact, updateArtifact, openArtifact, artifacts, activity.showTab],
+    [artifacts, createArtifact, openArtifact, planArtifactId, showTab, updateArtifact],
   );
 
   useEffect(() => {
-    chat.setOnPlanReady?.(onPlanReady);
-  }, [chat.setOnPlanReady, onPlanReady]);
+    setOnPlanReady?.(onPlanReady);
+  }, [onPlanReady, setOnPlanReady]);
 
   // Wire artifact events (show_file) to artifact panel
-  const validArtifactTypes = new Set<string>([
-    "code",
-    "text",
-    "image",
-    "sheet",
-  ]);
   const onArtifactEvent = useCallback(
     (type: string, content: string, language?: string, title?: string) => {
-      if (validArtifactTypes.has(type)) {
+      if (VALID_ARTIFACT_TYPES.has(type)) {
         createArtifact(type as ArtifactType, content, language, title);
       }
     },
-    [createArtifact, activity.showTab],
+    [createArtifact],
   );
 
   useEffect(() => {
-    chat.setOnArtifactEvent?.(onArtifactEvent);
-  }, [chat.setOnArtifactEvent, onArtifactEvent]);
+    setOnArtifactEvent?.(onArtifactEvent);
+  }, [onArtifactEvent, setOnArtifactEvent]);
 
   // Intercept toggle_panel palette action before forwarding to App.tsx
   const handlePaletteSelect = useCallback(
     (item: PaletteItem) => {
       if (item.kind === "command" && item.action === "toggle_panel") {
-        activity.togglePanel();
+        togglePanel();
         return;
       }
-      chat.onPaletteSelect?.(item);
+      onPaletteSelect?.(item);
     },
-    [activity, chat],
+    [onPaletteSelect, togglePanel],
   );
 
   // Add file to chat from Files tab (right-click "Add to chat")
   const handleAddFileToChat = useCallback(
     (filePath: string) => {
-      chat.onSend(`Read and reference this file: ${filePath}`);
+      onSend?.(`Read and reference this file: ${filePath}`);
     },
-    [chat.onSend],
+    [onSend],
   );
 
   const handleApprovePlan = useCallback(() => {
-    setPlanPendingLocal(false);
-    chat.onApprovePlan?.();
+    setPendingPlanArtifactId(null);
+    onApprovePlan?.();
     // Direct local mode update — bypasses the ref-based callback bridge
     // in useChat.approvePlan which can silently fail if the ref isn't wired.
-    chat.onModeChangeLocal?.("accept_edits");
-    activity.setIsPinned(false);
-  }, [chat.onApprovePlan, chat.onModeChangeLocal, activity.setIsPinned]);
+    onModeChangeLocal?.("accept_edits");
+    setIsPinned(false);
+  }, [onApprovePlan, onModeChangeLocal, setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
-      setPlanPendingLocal(false);
-      chat.onRequestPlanChanges?.(feedback);
-      activity.setIsPinned(false);
+      setPendingPlanArtifactId(null);
+      onRequestPlanChanges?.(feedback);
+      setIsPinned(false);
     },
-    [chat.onRequestPlanChanges, activity.setIsPinned],
+    [onRequestPlanChanges, setIsPinned],
   );
 
   // Close artifact and auto-close activity panel if it was opened programmatically
   const handleCloseArtifact = useCallback(() => {
     closeArtifactPanel();
-    activity.closeIfAutoOpened();
-  }, [closeArtifactPanel, activity.closeIfAutoOpened]);
+    closeIfAutoOpened();
+  }, [closeArtifactPanel, closeIfAutoOpened]);
 
   // Expose callback for /plan command to reopen plan artifact
   useEffect(() => {
     if (showPlanRef) {
       showPlanRef.current = () => {
-        if (planArtifactIdRef.current) {
-          openArtifact(planArtifactIdRef.current);
-          activity.showTab("plans");
+        if (planArtifactId) {
+          openArtifact(planArtifactId);
+          showTab("plans");
         }
       };
     }
     return () => {
       if (showPlanRef) showPlanRef.current = null;
     };
-  }, [showPlanRef, openArtifact, activity.showTab]);
+  }, [openArtifact, planArtifactId, showPlanRef, showTab]);
 
   // Listen for palette open event from App.tsx Cmd+K handler
   useEffect(() => {
@@ -333,13 +349,13 @@ export function ChatPage({
       // Cmd+` — Toggle Activity Panel
       if ((e.metaKey || e.ctrlKey) && e.key === "`") {
         e.preventDefault();
-        activity.togglePanel();
+        togglePanel();
         return;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activity.togglePanel]);
+  }, [togglePanel]);
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
@@ -452,12 +468,12 @@ export function ChatPage({
 
       {/* Activity Panel */}
       <ActivityPanel
-        isPinned={activity.isPinned}
-        onPinnedChange={activity.setIsPinned}
-        panelWidth={activity.panelWidth}
-        onWidthChange={activity.setPanelWidth}
-        activeTab={activity.activeTab}
-        onTabChange={activity.setActiveTab}
+        isPinned={isPinned}
+        onPinnedChange={setIsPinned}
+        panelWidth={panelWidth}
+        onWidthChange={setPanelWidth}
+        activeTab={activityTab}
+        onTabChange={setActivityTab}
         artifacts={artifacts}
         activeArtifact={activeArtifact}
         onOpenArtifact={openArtifact}
@@ -465,14 +481,14 @@ export function ChatPage({
         onUpdateArtifactContent={updateArtifact}
         onSetArtifactVersion={setVersion}
         planPendingApproval={
-          (planPendingLocal || chat.planPendingApproval) &&
-          activeArtifact?.id === planArtifactIdRef.current &&
+          (pendingPlanArtifactId === activeArtifact?.id || planPendingApproval) &&
+          activeArtifact?.id === planArtifactId &&
           activeArtifact?.type === "text"
         }
         onApprovePlan={handleApprovePlan}
         onRequestPlanChanges={handleRequestPlanChanges}
-        canvasState={canvas.activeCanvas}
-        onCloseCanvas={canvas.closeCanvas}
+        canvasState={activeCanvas}
+        onCloseCanvas={closeCanvas}
         onClearCanvas={canvas.closeCanvas}
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}

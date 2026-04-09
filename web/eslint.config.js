@@ -22,7 +22,7 @@ export default defineConfig([
     rules: {
       // Canary-only rules — too strict for the existing codebase
       "react-hooks/set-state-in-effect": "off",
-      "react-hooks/refs": "off",
+      "react-hooks/refs": "error",
       "react-hooks/immutability": "off",
       "react-hooks/purity": "off",
       "react-hooks/preserve-manual-memoization": "off",

@@ -1,11 +1,7 @@
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
 import { cn } from '../../../lib/utils'
-
-export const Select = SelectPrimitive.Root
-export const SelectGroup = SelectPrimitive.Group
-export const SelectValue = SelectPrimitive.Value
-export const SelectLabel = SelectPrimitive.Label
+export { Select, SelectGroup, SelectValue, SelectLabel } from './selectPrimitives'
 
 export const SelectTrigger = forwardRef<
   ElementRef<typeof SelectPrimitive.Trigger>,

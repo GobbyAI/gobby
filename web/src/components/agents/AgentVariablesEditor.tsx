@@ -53,7 +53,7 @@ export function AgentVariablesEditor({ definitionId, variables, onVariablesChang
     } catch (e) {
       console.error('Failed to remove variable:', e)
     }
-  }, [definitionId, variables, entries, onVariablesChange])
+  }, [definitionId, entries, onVariablesChange])
 
   const handleAdd = () => {
     if (!newKey.trim()) return

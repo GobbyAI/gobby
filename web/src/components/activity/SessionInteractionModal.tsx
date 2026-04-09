@@ -134,29 +134,6 @@ export function SessionInteractionModal({
     error?: string;
   } | null>(null);
 
-  // Reset state when modal opens
-  useEffect(() => {
-    if (open) {
-      setText("");
-      setLiteral(true);
-      setError(null);
-      setPaneOutput(null);
-      setSending(false);
-      setSelectedServer("");
-      setSelectedTool("");
-      setToolSchema(null);
-      setFormValues({});
-      setToolResult(null);
-      if (mode === "pane") {
-        fetchPane();
-      }
-      if (mode === "command") {
-        fetchServers();
-        fetchTools();
-      }
-    }
-  }, [open, mode]);
-
   // Focus input when modal opens
   useEffect(() => {
     if (open && mode !== "pane" && mode !== "command") {
@@ -233,6 +210,29 @@ export function SessionInteractionModal({
       setPaneLoading(false);
     }
   }, [entry.id]);
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (open) {
+      setText("");
+      setLiteral(true);
+      setError(null);
+      setPaneOutput(null);
+      setSending(false);
+      setSelectedServer("");
+      setSelectedTool("");
+      setToolSchema(null);
+      setFormValues({});
+      setToolResult(null);
+      if (mode === "pane") {
+        fetchPane();
+      }
+      if (mode === "command") {
+        fetchServers();
+        fetchTools();
+      }
+    }
+  }, [open, mode, fetchPane, fetchServers, fetchTools]);
 
   const handleSend = useCallback(async () => {
     if (!text.trim() && mode !== "keys") return;

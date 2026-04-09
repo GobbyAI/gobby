@@ -1,26 +1,7 @@
-import type { Channel, ChannelType } from '../../hooks/useIntegrations'
+import type { Channel } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
+import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
 import './IntegrationsPage.css'
-
-export const PLATFORM_COLORS: Record<ChannelType, string> = {
-  slack: '#611f69',
-  telegram: '#229ED9',
-  discord: '#5865F2',
-  teams: '#6264A7',
-  email: '#D44638',
-  sms: '#25D366',
-  gobby_chat: 'var(--text-secondary)',
-}
-
-export const CHANNEL_DISPLAY_NAMES: Record<ChannelType, string> = {
-  slack: 'Slack',
-  telegram: 'Telegram',
-  discord: 'Discord',
-  teams: 'Teams',
-  email: 'Email',
-  sms: 'SMS',
-  gobby_chat: 'Gobby Chat',
-}
 
 interface ChannelCardProps {
   channel: Channel

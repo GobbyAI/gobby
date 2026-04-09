@@ -96,7 +96,10 @@ function ensureConnection() {
  */
 export function useWebSocketEvent(eventType: string, handler: Handler): void {
   const handlerRef = useRef(handler)
-  handlerRef.current = handler
+
+  useEffect(() => {
+    handlerRef.current = handler
+  }, [handler])
 
   useEffect(() => {
     // Stable wrapper so we can swap the handler without re-subscribing

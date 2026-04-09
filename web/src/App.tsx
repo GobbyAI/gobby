@@ -342,10 +342,8 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
-  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [initialTraceId, setInitialTraceId] = useState<string | null>(null);
   const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
-  const [projectReady, setProjectReady] = useState(false);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
@@ -357,20 +355,21 @@ export default function App() {
     setActiveTab("traces");
   }, []);
 
-  // When switching to traces tab without navigation, clear initialTraceId
-  useEffect(() => {
-    if (activeTab !== "traces") {
-      setInitialTraceId(null);
-    }
-  }, [activeTab]);
-
   // Auto-synthesize chat title when streaming completes
   const wasStreamingRef = useRef(false);
   const titleSynthesisCountRef = useRef(0); // messages since last synthesis
   const sessionsRef = useRef(sessionsHook.sessions);
-  sessionsRef.current = sessionsHook.sessions;
   const refreshSessionsRef = useRef(sessionsHook.refresh);
-  refreshSessionsRef.current = sessionsHook.refresh;
+  const setSessionFilters = sessionsHook.setFilters;
+  const confirmSessionDeleted = sessionsHook.confirmSessionDeleted;
+  const markSessionDeleting = sessionsHook.markSessionDeleting;
+  const restoreSession = sessionsHook.restoreSession;
+  const refreshTmuxSessions = tmux.refreshSessions;
+
+  useEffect(() => {
+    sessionsRef.current = sessionsHook.sessions;
+    refreshSessionsRef.current = sessionsHook.refresh;
+  }, [sessionsHook.refresh, sessionsHook.sessions]);
 
   useEffect(() => {
     // Detect streaming transition: true → false (response completed)
@@ -493,7 +492,13 @@ export default function App() {
     );
   }, [projectOptions]);
 
-  const effectiveProjectId = selectedProjectId ?? defaultProjectId;
+  const projectReady = uiSettingsLoaded && projectOptions.length > 0;
+  const resolvedSelectedProjectId =
+    selectedProjectId &&
+    projectOptions.some((project) => project.id === selectedProjectId)
+      ? selectedProjectId
+      : null;
+  const effectiveProjectId = resolvedSelectedProjectId ?? defaultProjectId;
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
@@ -507,9 +512,7 @@ export default function App() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
-        if (data?.selectedProjectId) {
-          setPendingProjectId(data.selectedProjectId);
-        }
+        if (data?.selectedProjectId) setSelectedProjectId(data.selectedProjectId);
         setUiSettingsLoaded(true);
       })
       .catch(() => {
@@ -519,20 +522,6 @@ export default function App() {
       cancelled = true;
     };
   }, []);
-
-  // Resolve project once: wait for both projects list and ui-settings fetch
-  useEffect(() => {
-    if (projectReady) return;
-    if (!uiSettingsLoaded || projectOptions.length === 0) return;
-
-    if (
-      pendingProjectId &&
-      projectOptions.some((p) => p.id === pendingProjectId)
-    ) {
-      setSelectedProjectId(pendingProjectId);
-    }
-    setProjectReady(true);
-  }, [uiSettingsLoaded, projectOptions, pendingProjectId, projectReady]);
 
   // Persist project selection to API (only after initial resolution)
   const isFirstProjectRender = useRef(true);
@@ -569,11 +558,11 @@ export default function App() {
   // Sync global project filter into sessions hook for cross-page filtering
   useEffect(() => {
     if (!projectReady) return;
-    sessionsHook.setFilters((prev) => ({
+    setSessionFilters((prev) => ({
       ...prev,
       projectId: effectiveProjectId ?? null,
     }));
-  }, [effectiveProjectId, projectReady]);
+  }, [effectiveProjectId, projectReady, setSessionFilters]);
 
   // Keep useChat's projectIdRef in sync with App's effectiveProjectId
   useEffect(() => {
@@ -717,9 +706,9 @@ export default function App() {
         window.clearTimeout(entry.timerId);
         deleteTimeoutsRef.current.delete(externalId);
       }
-      sessionsHook.confirmSessionDeleted(externalId);
+      confirmSessionDeleted(externalId);
     });
-  }, [setOnChatDeleted, sessionsHook.confirmSessionDeleted]);
+  }, [confirmSessionDeleted, setOnChatDeleted]);
 
   const handleDeleteConversation = useCallback(
     (session: GobbySession) => {
@@ -729,10 +718,10 @@ export default function App() {
         return;
       }
       // Mark as deleting (visually dimmed) while waiting for backend ACK
-      sessionsHook.markSessionDeleting(session.id);
+      markSessionDeleting(session.id);
       // Timeout: if backend doesn't confirm within 5s, restore and show error
       const timerId = window.setTimeout(() => {
-        sessionsHook.restoreSession(session.id);
+        restoreSession(session.id);
         deleteTimeoutsRef.current.delete(session.external_id);
         showToast("Delete failed: server did not respond");
       }, 5000);
@@ -743,8 +732,8 @@ export default function App() {
     },
     [
       deleteConversation,
-      sessionsHook.markSessionDeleting,
-      sessionsHook.restoreSession,
+      markSessionDeleting,
+      restoreSession,
       showToast,
     ],
   );
@@ -752,9 +741,9 @@ export default function App() {
   // Refresh terminal list when switching to terminals tab
   useEffect(() => {
     if (activeTab === "terminals") {
-      tmux.refreshSessions();
+      refreshTmuxSessions();
     }
-  }, [activeTab, tmux.refreshSessions]);
+  }, [activeTab, refreshTmuxSessions]);
 
   /* Navigate to Terminals tab and attach agent's tmux session */
   const handleNavigateToAgent = useCallback(

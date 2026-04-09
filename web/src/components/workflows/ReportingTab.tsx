@@ -10,10 +10,8 @@ import {
   PipelineIcon,
   AgentIcon,
   PipelineStatusDot as StatusDot,
-  formatTime,
-  formatDuration,
-  formatJson,
 } from "./execution-utils";
+import { formatTime, formatDuration, formatJson } from "./executionFormatters";
 import "./PipelinesPage.css";
 
 type TypeFilter = "all" | "pipelines" | "agents";

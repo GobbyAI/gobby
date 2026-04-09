@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import type { GitCommit, DiffResult } from '../../hooks/useSourceControl'
 import { DiffViewer } from './DiffViewer'
 
@@ -19,16 +19,13 @@ export function BranchDetail({ branchName, currentBranch, fetchCommits, fetchDif
   const [error, setError] = useState<string | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
-  const fetchCommitsRef = useRef(fetchCommits)
-  fetchCommitsRef.current = fetchCommits
-
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     setDiff(null)
     setShowDiff(false)
-    fetchCommitsRef.current(branchName, 20)
+    fetchCommits(branchName, 20)
       .then((c) => {
         if (!cancelled) setCommits(c)
       })
@@ -39,7 +36,7 @@ export function BranchDetail({ branchName, currentBranch, fetchCommits, fetchDif
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [branchName])
+  }, [branchName, fetchCommits])
 
   const handleViewDiff = async () => {
     if (diff) {

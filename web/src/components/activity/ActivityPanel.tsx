@@ -1,8 +1,6 @@
 import {
   useState,
-  useCallback,
   useEffect,
-  useRef,
   type ReactNode,
 } from "react";
 import {
@@ -123,10 +121,6 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
 ];
 
 const noopFetchDiff = async (): Promise<string> => "";
-
-const STORAGE_KEY_PINNED = "gobby-activity-panel-pinned";
-const STORAGE_KEY_WIDTH = "gobby-activity-panel-width";
-const STORAGE_KEY_TAB = "gobby-activity-panel-tab";
 
 interface ActivityPanelProps {
   isPinned: boolean;
@@ -370,119 +364,6 @@ export function ActivityPanel({
       </div>
     </>
   );
-}
-
-// Hooks for persisting panel state
-export function useActivityPanel() {
-  const [isPinned, setIsPinned] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_PINNED);
-      if (stored !== null) return stored === "true";
-    } catch {
-      /* ignore */
-    }
-    // Default: pinned on desktop
-    return window.innerWidth >= 1100;
-  });
-
-  const [panelWidth, setPanelWidth] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_WIDTH);
-      if (stored) {
-        const w = parseInt(stored, 10);
-        if (w >= 280 && w <= 1200) return w;
-      }
-    } catch {
-      /* ignore */
-    }
-    return 360;
-  });
-
-  const [activeTab, setActiveTab] = useState<ActivityTab>(() => {
-    try {
-      const stored = localStorage.getItem(
-        STORAGE_KEY_TAB,
-      ) as ActivityTab | null;
-      if (stored && TABS.some((t) => t.id === stored)) return stored;
-    } catch {
-      /* ignore */
-    }
-    return "tasks";
-  });
-
-  // Persist
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_PINNED, String(isPinned));
-    } catch {
-      /* ignore */
-    }
-  }, [isPinned]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_WIDTH, String(panelWidth));
-    } catch {
-      /* ignore */
-    }
-  }, [panelWidth]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_TAB, activeTab);
-    } catch {
-      /* ignore */
-    }
-  }, [activeTab]);
-
-  // No auto-collapse on narrow viewport — the panel switches to overlay
-  // mode when the viewport is too narrow for side-by-side layout.
-
-  // Track whether the panel was opened programmatically (via showTab)
-  // vs manually by the user, so we can auto-close it when the artifact
-  // or canvas that triggered the open is dismissed.
-  const autoOpenedRef = useRef(false);
-
-  const showTab = useCallback(
-    (tab: ActivityTab) => {
-      setActiveTab(tab);
-      if (!isPinned) {
-        setIsPinned(true);
-        autoOpenedRef.current = true;
-      }
-    },
-    [isPinned],
-  );
-
-  const closeIfAutoOpened = useCallback(() => {
-    if (autoOpenedRef.current) {
-      setIsPinned(false);
-      autoOpenedRef.current = false;
-    }
-  }, []);
-
-  const togglePanel = useCallback(() => {
-    autoOpenedRef.current = false;
-    setIsPinned((prev) => !prev);
-  }, []);
-
-  // Clear auto-opened flag when user manually changes tab
-  const handleTabChange = useCallback((tab: ActivityTab) => {
-    autoOpenedRef.current = false;
-    setActiveTab(tab);
-  }, []);
-
-  return {
-    isPinned,
-    setIsPinned,
-    panelWidth,
-    setPanelWidth,
-    activeTab,
-    setActiveTab: handleTabChange,
-    showTab,
-    closeIfAutoOpened,
-    togglePanel,
-  };
 }
 
 function PinIcon({ pinned }: { pinned: boolean }) {

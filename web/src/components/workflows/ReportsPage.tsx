@@ -8,10 +8,8 @@ import {
   ChevronIcon,
   AlertIcon,
   PipelineStatusDot as StatusDot,
-  formatTime,
-  formatDuration,
-  formatJson,
 } from "./execution-utils";
+import { formatTime, formatDuration, formatJson } from "./executionFormatters";
 import { cn } from "../../lib/utils";
 import "./reports-page.css";
 

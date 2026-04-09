@@ -57,7 +57,7 @@ export function SystemCheck({ state: _state, setState, onNext }: StepProps): Rea
     }));
 
     setScanning(false);
-  }, []);
+  }, [setState]);
 
   if (scanning) {
     return (

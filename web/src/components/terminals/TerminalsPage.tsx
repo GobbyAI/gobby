@@ -56,6 +56,7 @@ export function TerminalsPage({
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [isInteractive, setIsInteractive] = useState(false)
   const [terminalNames, setTerminalNames] = useState<Record<string, string>>(loadTerminalNames)
+  const [attachedSocket, setAttachedSocket] = useState('default')
 
   // Prune orphaned terminal names when sessions change
   useEffect(() => {
@@ -92,30 +93,28 @@ export function TerminalsPage({
     setIsInteractive(false)
   }, [streamingId])
 
-  // Track attached session's socket for kill
-  const attachedSocketRef = useRef<string>('default')
   // Track terminal instance for mobile toolbar redraw
   const terminalInstanceRef = useRef<XTerm | null>(null)
 
   // Compute display name for the attached session
   const attachedDisplayName = useMemo(() => {
     if (!attachedSession) return null
-    const key = `${attachedSocketRef.current}:${attachedSession}`
+    const key = `${attachedSocket}:${attachedSession}`
     const customName = terminalNames[key]
     if (customName) return customName
-    const s = sessions.find(s => s.name === attachedSession && s.socket === attachedSocketRef.current)
+    const s = sessions.find(s => s.name === attachedSession && s.socket === attachedSocket)
     return s?.session_title || s?.pane_title || s?.window_name || null
-  }, [attachedSession, terminalNames, sessions])
+  }, [attachedSession, attachedSocket, terminalNames, sessions])
 
   const attachedPid = useMemo(() => {
     if (!attachedSession) return null
-    const s = sessions.find(s => s.name === attachedSession && s.socket === attachedSocketRef.current)
+    const s = sessions.find(s => s.name === attachedSession && s.socket === attachedSocket)
     return s?.pane_pid ?? null
-  }, [attachedSession, sessions])
+  }, [attachedSession, attachedSocket, sessions])
 
   const handleAttach = useCallback((name: string, socket: string) => {
     attachSession(name, socket)
-    attachedSocketRef.current = socket
+    setAttachedSocket(socket)
   }, [attachSession])
 
   const [killTarget, setKillTarget] = useState<{ name: string; socket: string } | null>(null)
@@ -220,9 +219,9 @@ export function TerminalsPage({
               onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
               onTerminalReady={(t) => { terminalInstanceRef.current = t }}
               onRedraw={(terminal) => {
-                if (attachedSession && attachedSocketRef.current) {
+                if (attachedSession && attachedSocket) {
                   terminal?.reset()
-                  refreshTerminal(attachedSession, attachedSocketRef.current)
+                  refreshTerminal(attachedSession, attachedSocket)
                 }
               }}
               sendInput={sendInput}
@@ -285,9 +284,9 @@ export function TerminalsPage({
               <button onClick={() => sendInput('\x1b[D')}>←</button>
               <button onClick={() => sendInput('\x1b[C')}>→</button>
               <button onClick={() => {
-                if (attachedSession && attachedSocketRef.current) {
+                if (attachedSession && attachedSocket) {
                   terminalInstanceRef.current?.reset()
-                  refreshTerminal(attachedSession, attachedSocketRef.current)
+                  refreshTerminal(attachedSession, attachedSocket)
                 }
               }}>Redraw</button>
             </div>
@@ -449,6 +448,9 @@ function TerminalView({
   const terminalRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isInteractiveRef = useRef(isInteractive)
+  const sendInputRef = useRef(sendInput)
+  const resizeTerminalRef = useRef(resizeTerminal)
+  const onTerminalReadyRef = useRef(onTerminalReady)
 
   // Keep ref in sync for use inside terminal.onData callback
   // Also show/hide cursor based on interactive state
@@ -460,6 +462,18 @@ function TerminalView({
       terminalRef.current.options.cursorInactiveStyle = isInteractive ? 'outline' : 'none'
     }
   }, [isInteractive])
+
+  useEffect(() => {
+    sendInputRef.current = sendInput
+  }, [sendInput])
+
+  useEffect(() => {
+    resizeTerminalRef.current = resizeTerminal
+  }, [resizeTerminal])
+
+  useEffect(() => {
+    onTerminalReadyRef.current = onTerminalReady
+  }, [onTerminalReady])
 
   // Initialize terminal
   useEffect(() => {
@@ -519,13 +533,13 @@ function TerminalView({
 
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
-    onTerminalReady(terminal)
+    onTerminalReadyRef.current(terminal)
 
     // Shift+Enter handler — send newline even when xterm might not
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.shiftKey && event.key === 'Enter' && event.type === 'keydown') {
         if (isInteractiveRef.current) {
-          sendInput('\n')
+          sendInputRef.current('\n')
         }
         return false
       }
@@ -537,9 +551,9 @@ function TerminalView({
     // SGR mouse: \x1b[< ...  X10 mouse: \x1b[M ...
     const inputDisposable = terminal.onData((data) => {
       if (isInteractiveRef.current) {
-        sendInput(data)
+        sendInputRef.current(data)
       } else if (data.startsWith('\x1b[<') || data.startsWith('\x1b[M')) {
-        sendInput(data)
+        sendInputRef.current(data)
       }
     })
 
@@ -550,7 +564,7 @@ function TerminalView({
       if (cols !== prevCols || rows !== prevRows) {
         prevCols = cols
         prevRows = rows
-        resizeTerminal(rows, cols)
+        resizeTerminalRef.current(rows, cols)
       }
     })
 
@@ -579,7 +593,7 @@ function TerminalView({
     // Initial resize notification
     const dims = fitAddon.proposeDimensions()
     if (dims) {
-      resizeTerminal(dims.rows, dims.cols)
+      resizeTerminalRef.current(dims.rows, dims.cols)
     }
 
     return () => {
@@ -588,7 +602,7 @@ function TerminalView({
       resizeDisposable.dispose()
       resizeObserver.disconnect()
       window.removeEventListener('resize', handleWindowResize)
-      onTerminalReady(null)
+      onTerminalReadyRef.current(null)
       terminal.dispose()
     }
   }, [streamingId]) // Re-create terminal on new attachment

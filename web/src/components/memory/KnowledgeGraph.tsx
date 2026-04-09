@@ -140,7 +140,9 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
 
   // Catch async WebGL/Three.js errors that escape React error boundaries
   const onErrorRef = useRef(onError)
-  onErrorRef.current = onError
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
   useEffect(() => {
     const handleError = (e: ErrorEvent) => {
       const msg = (e.message || '').toLowerCase()
@@ -350,7 +352,9 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
 
   // Node breathing effect — use ref to avoid prop changes that trigger graph rebuilds
   const animateRef = useRef(animateIdle)
-  animateRef.current = animateIdle
+  useEffect(() => {
+    animateRef.current = animateIdle
+  }, [animateIdle])
   const nodePositionUpdate = useCallback((obj: any) => {  
     if (!animateRef.current) {
       // Restore original scale when animation stops

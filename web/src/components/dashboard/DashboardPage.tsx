@@ -9,7 +9,8 @@ import { SavingsCard } from './SavingsCard'
 import { UsageCard } from './UsageCard'
 import { MetricsChartsCard } from './MetricsChartsCard'
 import { TokenEfficiencyCard } from './TokenEfficiencyCard'
-import { TimeRangePills, rangeToHours, type TimeRange } from './TimeRangePills'
+import { TimeRangePills } from './TimeRangePills'
+import { rangeToHours, type TimeRange } from './timeRangeUtils'
 import './DashboardPage.css'
 
 function formatTime(date: Date | null): string {

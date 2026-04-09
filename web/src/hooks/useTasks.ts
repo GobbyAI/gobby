@@ -365,7 +365,7 @@ export function useTasks(projectId?: string | null) {
 
   // Use a ref for the event handler to avoid stale closures in the WS callback
   const handleTaskEventRef = useRef<(event: string, taskData: Record<string, unknown>) => void>(() => {})
-  handleTaskEventRef.current = (event: string, taskData: Record<string, unknown>) => {
+  const handleTaskEvent = useCallback((event: string, taskData: Record<string, unknown>) => {
     const taskId = taskData.id as string
     if (!taskId) return
 
@@ -388,7 +388,11 @@ export function useTasks(projectId?: string | null) {
     // Debounced full refetch to sync stats, total, and filter accuracy
     if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
     debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), REFETCH_DEBOUNCE_MS)
-  }
+  }, [fetchTasks])
+
+  useEffect(() => {
+    handleTaskEventRef.current = handleTaskEvent
+  }, [handleTaskEvent])
 
   useWebSocketEvent('task_event', useCallback((data: Record<string, unknown>) => {
     if (data.event && (data.task || data.task_id)) {

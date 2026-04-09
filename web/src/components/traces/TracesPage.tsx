@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'
 import { TraceWaterfall } from './TraceWaterfall'
 import { TraceDetail } from './TraceDetail'
-import { formatTime } from '../workflows/execution-utils'
+import { formatTime } from '../workflows/executionFormatters'
 import { isLLMSpan, parseLLMAttributes, formatTokenCount } from './llm-utils'
 import './TracesPage.css'
 

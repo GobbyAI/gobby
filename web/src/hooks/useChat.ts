@@ -551,10 +551,10 @@ function mapRenderedMessageToChatMessage(message: Record<string, unknown>): Chat
 }
 
 export function useChat() {
-  const conversationIdRef = useRef<string>(loadConversationId());
-  const [conversationId, setConversationId] = useState<string>(
-    conversationIdRef.current,
+  const [conversationId, setConversationId] = useState<string>(() =>
+    loadConversationId(),
   );
+  const conversationIdRef = useRef<string>(conversationId);
 
   // Counter that increments only on intentional conversation switches (not SDK
   // session ID adoption).  Used by the mode-restore effect in App.tsx so that
@@ -563,7 +563,6 @@ export function useChat() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
   const [isConnected, setIsConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -729,6 +728,14 @@ export function useChat() {
       projectId?: string | null,
     ) => boolean) | null
   >(null);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // Context usage tracking — accumulated across turns.
   // totalInputTokens = uncached + cacheRead + cacheCreation (the real context size).
@@ -2242,7 +2249,9 @@ export function useChat() {
   );
 
   // Update sendMessageRef with the latest sendMessage callback
-  sendMessageRef.current = sendMessage;
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
 
   // Respond to an AskUserQuestion pending in the backend.
   // Returns false if WS is not connected (caller can show feedback).

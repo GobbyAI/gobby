@@ -1,6 +1,5 @@
 import { SOURCE_COLORS } from "./sourceTheme";
-
-export type SourceType = "claude" | "gemini" | "codex" | (string & {});
+import type { SourceType } from "./sourceIconUtils";
 
 interface SourceIconProps {
   source: SourceType;
@@ -91,8 +90,4 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
         </svg>
       );
   }
-}
-
-export function sourceColor(source: SourceType): string {
-  return SOURCE_COLORS[source] || SOURCE_COLORS.default;
 }

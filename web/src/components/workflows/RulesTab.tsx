@@ -3,8 +3,8 @@ import * as yaml from 'js-yaml'
 import { useRules } from '../../hooks/useRules'
 import type { RuleSummary, RuleDetail } from '../../hooks/useRules'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
-import { RuleEditForm, DEFAULT_RULE_FORM } from '../rules/RuleEditForm'
-import type { RuleFormData } from '../rules/RuleEditForm'
+import { RuleEditForm } from '../rules/RuleEditForm'
+import { DEFAULT_RULE_FORM, type RuleFormData } from '../rules/ruleFormData'
 
 const NEW_RULE_TEMPLATE = yaml.dump({
   name: 'my-rule',
@@ -299,7 +299,7 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     } catch (e) {
       console.error('Failed to move rule to project:', e)
     }
-  }, [projectId, fetchRules])
+  }, [confirm, projectId, fetchRules])
 
   const handleMoveToGlobal = useCallback(async (rule: RuleSummary) => {
     if (!await confirm({ title: 'Move to global?', description: `Move "${rule.name}" to global scope? It will apply to all projects.`, confirmLabel: 'Move' })) return
@@ -311,7 +311,7 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     } catch (e) {
       console.error('Failed to move rule to global:', e)
     }
-  }, [fetchRules])
+  }, [confirm, fetchRules])
 
   const handleRestoreFromTemplate = useCallback(async (rule: RuleSummary) => {
     if (!await confirm({ title: 'Restore from template?', description: `Reset "${rule.name}" to the bundled template version? Your customizations will be lost.`, confirmLabel: 'Restore' })) return
@@ -323,7 +323,7 @@ export function RulesTab({ searchText, sourceFilter, devMode, showCreateModal, o
     } catch (e) {
       console.error('Failed to restore rule from template:', e)
     }
-  }, [fetchRules])
+  }, [confirm, fetchRules])
 
   useEffect(() => {
     onEventTypesChange(eventTypes)

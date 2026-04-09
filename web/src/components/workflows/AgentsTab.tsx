@@ -748,7 +748,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     } catch (e) {
       console.error('Failed to move agent to project:', e)
     }
-  }, [projectId, fetchDefinitions])
+  }, [confirm, projectId, fetchDefinitions])
 
   const handleMoveToGlobal = useCallback(async (item: AgentDefInfo) => {
     if (!item.db_id) return
@@ -761,7 +761,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     } catch (e) {
       console.error('Failed to move agent to global:', e)
     }
-  }, [fetchDefinitions])
+  }, [confirm, fetchDefinitions])
 
   const handleRestoreFromTemplate = useCallback(async (item: AgentDefInfo) => {
     if (!item.db_id) return
@@ -774,7 +774,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     } catch (e) {
       console.error('Failed to restore agent from template:', e)
     }
-  }, [fetchDefinitions])
+  }, [confirm, fetchDefinitions])
 
   const handleImport = async (name: string) => {
     setImportingName(name)

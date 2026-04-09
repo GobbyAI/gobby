@@ -45,7 +45,7 @@ export function PersonalWorkspace({ state: _state, setState, onNext }: StepProps
       : `  Personal workspace: ${personalDir}`;
     setInitMsg(msg);
     setPhase("shortcut");
-  }, [phase]);
+  }, [personalDir, phase]);
 
   if (phase === "init") {
     return (

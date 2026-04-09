@@ -51,7 +51,9 @@ export function useVoice(
   // Stable ref for conversationId so long-lived callbacks (e.g. VAD onSpeechEnd)
   // always see the latest value without re-subscribing.
   const conversationIdRef = useRef(conversationId)
-  conversationIdRef.current = conversationId
+  useEffect(() => {
+    conversationIdRef.current = conversationId
+  }, [conversationId])
 
   const voiceModeRef = useRef(false)
 

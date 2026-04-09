@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
-import { PipelineStatusDot, StepDisplay, formatDateTime, formatDuration, type StepData } from '../workflows/execution-utils'
+import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
+import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
 import '../workflows/PipelinesPage.css'
 
 interface PipelinesTabProps {

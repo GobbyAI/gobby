@@ -3,9 +3,10 @@ import { draggable, dropTargetForElements, monitorForElements } from '@atlaskit/
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge, BlockedIndicator, PRIORITY_STYLES } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
-import { classifyTaskRisk, RiskBadge } from './RiskBadges'
+import { RiskBadge } from './RiskBadges'
+import { classifyTaskRisk } from './riskUtils'
 import { ActivityPulse } from './ActivityPulse'
-import { AssigneeBadge } from './AssigneePicker'
+import { AssigneeBadge } from './AssigneeBadge'
 
 // =============================================================================
 // Column definitions: map 8 statuses → 6 columns

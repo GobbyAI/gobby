@@ -103,7 +103,9 @@ export function ChatInput({
 
   // Revoke blob URLs on unmount to prevent memory leaks
   const queuedFilesRef = useRef(queuedFiles)
-  queuedFilesRef.current = queuedFiles
+  useEffect(() => {
+    queuedFilesRef.current = queuedFiles
+  }, [queuedFiles])
   useEffect(() => {
     return () => {
       queuedFilesRef.current.forEach((qf) => {

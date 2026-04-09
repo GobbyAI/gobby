@@ -64,7 +64,7 @@ export function Launch({ state, setState, onNext: _onNext }: StepProps): React.R
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setState, state]);
 
   if (phase === "starting") {
     return (

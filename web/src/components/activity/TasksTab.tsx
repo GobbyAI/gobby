@@ -219,7 +219,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
 
   // WebSocket: real-time task event subscription
   const handleTaskEventRef = useRef<(event: string, taskData: Record<string, unknown>) => void>(() => {})
-  handleTaskEventRef.current = (event: string, taskData: Record<string, unknown>) => {
+  const handleTaskEvent = useCallback((event: string, taskData: Record<string, unknown>) => {
     const taskId = taskData.id as string
     if (!taskId) return
 
@@ -256,7 +256,11 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     // Debounced full refetch to sync server truth
     if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
     debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500)
-  }
+  }, [fetchTasks, projectId, selectedTaskId])
+
+  useEffect(() => {
+    handleTaskEventRef.current = handleTaskEvent
+  }, [handleTaskEvent])
 
   useWebSocketEvent('task_event', useCallback((data: Record<string, unknown>) => {
     if (data.event && (data.task || data.task_id)) {
@@ -328,7 +332,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
         if (pa !== pb) return pa - pb
         return (b.created_at ?? '').localeCompare(a.created_at ?? '')
       })
-  }, [tasks, statusFilters, now])
+  }, [tasks, statusFilters, now, DAY_MS])
 
   const treeData = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]))

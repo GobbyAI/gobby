@@ -147,7 +147,7 @@ export const SessionsTab = memo(function SessionsTab({
     } finally {
       setLoading(false);
     }
-  }, [projectId, chatSessionId, watchingSessionIds]);
+  }, [projectId, chatSessionId]);
 
   // Initial fetch + poll every 5s
   useEffect(() => {
