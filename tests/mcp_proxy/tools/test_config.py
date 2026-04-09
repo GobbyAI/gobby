@@ -409,3 +409,130 @@ class TestSetConfigSecret:
         assert result["success"] is True
         assert result["value"] == 61000
         assert config_store.get("daemon_port") == 61000
+
+
+# ===========================================================================
+# set_config_batch
+# ===========================================================================
+
+
+class TestSetConfigBatch:
+    """Tests for set_config_batch tool."""
+
+    def test_batch_set_multiple_keys(
+        self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Test setting multiple keys atomically."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local.url", "value": "http://localhost:1234/v1"},
+                {"key": "local.model", "value": "qwen2.5-coder-7b"},
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert "local.url" in result["keys_set"]
+        assert "local.model" in result["keys_set"]
+
+        # Verify in DB
+        assert config_store.get("local.url") == "http://localhost:1234/v1"
+        assert config_store.get("local.model") == "qwen2.5-coder-7b"
+
+        # Verify in-memory config
+        assert config_state["config"].local is not None
+        assert config_state["config"].local.url == "http://localhost:1234/v1"
+        assert config_state["config"].local.model == "qwen2.5-coder-7b"
+
+    def test_batch_set_local_single_key_fails(self, config_registry) -> None:
+        """Setting only local.url without local.model fails validation."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local.url", "value": "http://localhost:1234/v1"},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "error" in result
+
+    def test_batch_set_session_title_provider(
+        self, config_registry, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Test setting session_title.provider to 'local'."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "session_title.provider", "value": "local"},
+            ]
+        )
+
+        assert result["success"] is True
+        assert config_state["config"].session_title.provider == "local"
+
+    def test_batch_set_local_config_and_title_provider(
+        self, config_registry, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Test setting local endpoint and session_title.provider together."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local.url", "value": "http://localhost:1234/v1"},
+                {"key": "local.model", "value": "qwen2.5-coder-7b"},
+                {"key": "session_title.provider", "value": "local"},
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["count"] == 3
+        assert config_state["config"].local is not None
+        assert config_state["config"].local.model == "qwen2.5-coder-7b"
+        assert config_state["config"].session_title.provider == "local"
+
+    def test_batch_set_empty_entries(self, config_registry) -> None:
+        """Empty entries list returns error."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(entries=[])
+
+        assert result["success"] is False
+        assert "empty" in result["error"]
+
+    def test_batch_set_rejects_dict_values(self, config_registry) -> None:
+        """Dict values are rejected (use dotted keys instead)."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local", "value": {"url": "http://localhost:1234"}},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "dict" in result["error"].lower()
+
+    def test_batch_set_rejects_missing_key(self, config_registry) -> None:
+        """Entries without 'key' are rejected."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"value": "something"},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "key" in result["error"].lower()
+
+    def test_batch_set_validation_failure_does_not_persist(
+        self, config_registry, config_store: ConfigStore
+    ) -> None:
+        """If validation fails, nothing is persisted to DB."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "daemon_port", "value": 80},  # Invalid: port < 1024
+            ]
+        )
+
+        assert result["success"] is False
+        # Should not have persisted the invalid value
+        assert config_store.get("daemon_port") is None
