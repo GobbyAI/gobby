@@ -41,6 +41,7 @@ class SessionControlMixin:
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
+    _pending_providers: dict[str, str]
 
     # Provided by ChatMixin / HandlerMixin – declared for type checking only.
     if TYPE_CHECKING:
@@ -131,6 +132,9 @@ class SessionControlMixin:
 
     async def _handle_set_agent(self, websocket: Any, data: dict[str, Any]) -> None:
         await _config.handle_set_agent(self, websocket, data)
+
+    async def _handle_set_provider(self, websocket: Any, data: dict[str, Any]) -> None:
+        await _config.handle_set_provider(self, websocket, data)
 
     # -- Session observation handlers ----------------------------------------
 

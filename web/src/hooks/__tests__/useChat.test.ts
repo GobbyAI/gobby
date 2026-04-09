@@ -154,6 +154,42 @@ describe('useChat', () => {
     expect(result.current.isStreaming).toBe(true)
   })
 
+  it('sendMessage includes the selected provider after switching state', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.setSelectedProvider('gemini')
+    })
+
+    act(() => {
+      result.current.sendMessage('Hello through Gemini')
+    })
+
+    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0])
+    expect(sentMsg.type).toBe('chat_message')
+    expect(sentMsg.provider).toBe('gemini')
+  })
+
+  it('switchProvider primes a new conversation with provider and agent messages', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.switchProvider('codex')
+    })
+
+    const payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw))
+    expect(payloads.some((msg) => msg.type === 'set_provider' && msg.provider === 'codex')).toBe(true)
+    expect(payloads.some((msg) => msg.type === 'set_agent' && msg.agent_name === 'default-web-chat')).toBe(true)
+  })
+
   it('sendMessage queues message when WS not connected', async () => {
     await loadModule()
     const { result } = renderHook(() => useChat())

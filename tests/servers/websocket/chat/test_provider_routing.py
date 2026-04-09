@@ -28,6 +28,8 @@ def _make_mixin(**overrides: Any) -> ChatSessionMixin:
     mixin._pending_modes = {}
     mixin._pending_worktree_paths = {}
     mixin._pending_agents = {}
+    mixin._pending_projects = {}
+    mixin._pending_providers = {}
     mixin._session_create_locks = {}
     mixin._fire_lifecycle = AsyncMock(return_value=None)
     mixin._inject_pending_messages = MagicMock(return_value=None)
@@ -96,6 +98,20 @@ class TestClaudeProvider:
         assert session.provider == "claude"
 
 
+class TestPendingProviderOverride:
+    """Tests for queued UI provider overrides."""
+
+    @pytest.mark.asyncio
+    async def test_pending_provider_takes_precedence_over_agent_or_default(self) -> None:
+        """Queued provider overrides should route the next session creation."""
+        mixin = _make_mixin()
+        mixin._pending_providers["test-conv-routing"] = "gemini"
+
+        session = await _create_session_for_provider(mixin, provider=None)
+
+        assert session.provider == "gemini"
+
+
 class TestSessionRegistration:
     """Tests for session source registration."""
 
@@ -142,9 +158,19 @@ async def _create_session_for_provider(
     The exact method name may differ in implementation — this helper isolates
     that coupling.
     """
-    with patch(
-        "gobby.servers.chat_session.ChatSession.start",
-        new=AsyncMock(return_value=None),
+    with (
+        patch(
+            "gobby.servers.chat_session.ChatSession.start",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "gobby.servers.gemini_cli_chat_session.GeminiCLIChatSession.start",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "gobby.servers.codex_cli_chat_session.CodexCLIChatSession.start",
+            new=AsyncMock(return_value=None),
+        ),
     ):
         return await mixin._create_chat_session(
             conversation_id="test-conv-routing",

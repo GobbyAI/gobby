@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.config.app import DaemonConfig, LocalConfig
+from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
@@ -92,9 +93,19 @@ class TestProviderModelsRoute:
         claude_values = [m["value"] for m in providers["claude"]["models"]]
         assert claude_values == ["opus", "sonnet", "haiku"]
 
-        # Gemini should have pro, flash
-        gemini_values = [m["value"] for m in providers["gemini"]["models"]]
-        assert gemini_values == ["pro", "flash"]
+        # Gemini should expose the hardcoded web-chat defaults
+        gemini = providers["gemini"]["models"]
+        assert [m["value"] for m in gemini] == ["gemini-3.1-pro", "gemini-3-flash"]
+        assert [m["label"] for m in gemini] == ["pro-3.1", "flash-3"]
+
+        # Codex should expose the hardcoded web-chat defaults, not a placeholder
+        codex = providers["codex"]["models"]
+        assert [m["value"] for m in codex] == [
+            "gpt-5.4",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-spark",
+        ]
+        assert [m["label"] for m in codex] == ["codex-5.4", "codex-5.3", "spark-5.3"]
 
         # Each entry should have source field
         for p in data["providers"]:
@@ -127,3 +138,27 @@ class TestProviderModelsRoute:
         claude_models = {m["value"]: m["label"] for m in providers["claude"]["models"]}
 
         assert claude_models["local"] == "Local (qwen-coder-32b)"
+
+    def test_prefers_configured_codex_and_gemini_models(self) -> None:
+        """Configured model lists override the static Gemini/Codex fallback catalog."""
+        app = FastAPI()
+        config = DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                codex=LLMProviderConfig(models="gpt-5.4,gpt-5.3-codex"),
+                gemini=LLMProviderConfig(models="gemini-3.1-pro,gemini-3-flash"),
+            )
+        )
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        response = client.get("/api/providers/models")
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+
+        assert providers["gemini"]["source"] == "config"
+        assert providers["codex"]["source"] == "config"
+        assert [m["label"] for m in providers["gemini"]["models"]] == ["pro-3.1", "flash-3"]
+        assert [m["label"] for m in providers["codex"]["models"]] == [
+            "codex-5.4",
+            "codex-5.3",
+        ]

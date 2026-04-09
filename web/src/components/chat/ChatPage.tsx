@@ -443,6 +443,7 @@ export function ChatPage({
             availableProviders={availableProviders}
             currentModel={currentModel}
             onModelChange={onModelChange}
+            onProviderChange={chat.onProviderChange}
             onSwitchProvider={chat.onSwitchProvider}
             hasMessages={chat.messages.length > 0}
           />

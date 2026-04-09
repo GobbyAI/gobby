@@ -46,6 +46,7 @@ interface ChatInputProps {
   availableProviders?: string[]
   currentModel?: string
   onModelChange?: (model: string) => void
+  onProviderChange?: (provider: string | null) => void
   onSwitchProvider?: (provider: string) => void
   hasMessages?: boolean
 }
@@ -85,6 +86,7 @@ export function ChatInput({
   availableProviders = [],
   currentModel = 'opus',
   onModelChange,
+  onProviderChange,
   onSwitchProvider,
   hasMessages = false,
 }: ChatInputProps) {
@@ -316,7 +318,8 @@ export function ChatInput({
                 currentModel={currentModel}
                 availableProviders={pickerProviders}
                 onModelChange={onModelChange ?? (() => {})}
-                onProviderChange={onSwitchProvider ?? (() => {})}
+                onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
+                onSwitchProvider={onSwitchProvider}
                 hasMessages={hasMessages}
               />
             </>

@@ -620,6 +620,10 @@ export function useChat() {
       /* ignore */
     }
   }, []);
+  const selectedProviderRef = useRef<string | null>(selectedProvider);
+  useEffect(() => {
+    selectedProviderRef.current = selectedProvider;
+  }, [selectedProvider]);
 
   // Session viewing tracking (read-only observation of CLI sessions via REST)
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(null);
@@ -1829,6 +1833,13 @@ export function useChat() {
             provider: newProvider,
           }),
         );
+        wsRef.current.send(
+          JSON.stringify({
+            type: "set_agent",
+            conversation_id: newId,
+            agent_name: activeAgentRef.current,
+          }),
+        );
       }
     },
     [isStreaming],  
@@ -2191,8 +2202,8 @@ export function useChat() {
         payload.inject_context = injectContext;
       }
 
-      if (selectedProvider) {
-        payload.provider = selectedProvider;
+      if (selectedProviderRef.current) {
+        payload.provider = selectedProviderRef.current;
       }
 
       if (files && files.length > 0) {

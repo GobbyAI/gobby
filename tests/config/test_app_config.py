@@ -335,11 +335,13 @@ class TestLLMProvidersConfig:
         config = LLMProvidersConfig(
             claude=LLMProviderConfig(models="claude-haiku-4-5"),
             codex=LLMProviderConfig(models="gpt-4o-mini"),
+            gemini=LLMProviderConfig(models="gemini-3.1-pro"),
         )
         providers = config.get_enabled_providers()
         assert "claude" in providers
         assert "codex" in providers
-        assert len(providers) == 2
+        assert "gemini" in providers
+        assert len(providers) == 3
 
 
 class TestDaemonConfig:

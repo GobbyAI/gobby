@@ -71,6 +71,7 @@ class ChatSessionMixin:
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
+    _pending_providers: dict[str, str]
     _session_create_locks: dict[str, asyncio.Lock]
 
     def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock:
@@ -214,8 +215,11 @@ class ChatSessionMixin:
             except Exception as e:
                 logger.warning(f"Failed to resolve agent '{agent_name}' for provider check: {e}")
 
-        # Provider precedence: explicit UI provider > agent definition > resumed session > default
-        effective_provider = provider
+        # Provider precedence: queued UI override > explicit message provider
+        # > agent definition > resumed session > default.
+        pending_providers = getattr(self, "_pending_providers", {})
+        pending_provider = pending_providers.pop(conversation_id, None)
+        effective_provider = pending_provider or provider
         if not effective_provider and agent_body:
             effective_provider = getattr(agent_body, "provider", None)
 

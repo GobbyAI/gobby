@@ -17,17 +17,21 @@ const STATIC_MODELS: Record<string, { value: string; label: string }[]> = {
     { value: "local", label: "Local" },
   ],
   gemini: [
-    { value: "pro", label: "Pro" },
-    { value: "flash", label: "Flash" },
+    { value: "gemini-3.1-pro", label: "pro-3.1" },
+    { value: "gemini-3-flash", label: "flash-3" },
   ],
-  codex: [{ value: "default", label: "Default" }],
+  codex: [
+    { value: "gpt-5.4", label: "codex-5.4" },
+    { value: "gpt-5.3-codex", label: "codex-5.3" },
+    { value: "gpt-5.3-codex-spark", label: "spark-5.3" },
+  ],
 };
 
 interface ProviderModelEntry {
   provider: string;
   available: boolean;
   models: { value: string; label: string }[];
-  source: "static" | "dynamic";
+  source: "static" | "dynamic" | "config";
 }
 
 /** Fetch model catalog from daemon, falling back to static catalog. */
@@ -71,6 +75,7 @@ interface ProviderPickerProps {
   availableProviders: string[];
   onModelChange: (model: string) => void;
   onProviderChange: (provider: string) => void;
+  onSwitchProvider?: (provider: string) => void;
   hasMessages: boolean;
 }
 
@@ -82,6 +87,7 @@ export function ProviderPicker({
   availableProviders,
   onModelChange,
   onProviderChange,
+  onSwitchProvider,
   hasMessages,
 }: ProviderPickerProps) {
   const [confirmSwitch, setConfirmSwitch] = useState<{
@@ -121,8 +127,9 @@ export function ProviderPicker({
         setConfirmSwitch({ provider, model });
       } else {
         // Different provider but no messages — switch directly
-        onModelChange(model);
         onProviderChange(provider);
+        onModelChange(model);
+        onSwitchProvider?.(provider);
         onClose();
         setConfirmSwitch(null);
       }
@@ -130,20 +137,23 @@ export function ProviderPicker({
     [
       effectiveProvider,
       currentProvider,
+      currentModel,
       hasMessages,
       onModelChange,
       onProviderChange,
+      onSwitchProvider,
       onClose,
     ],
   );
 
   const handleConfirm = useCallback(() => {
     if (!confirmSwitch) return;
-    onModelChange(confirmSwitch.model);
     onProviderChange(confirmSwitch.provider);
+    onModelChange(confirmSwitch.model);
+    onSwitchProvider?.(confirmSwitch.provider);
     onClose();
     setConfirmSwitch(null);
-  }, [confirmSwitch, onModelChange, onProviderChange, onClose]);
+  }, [confirmSwitch, onModelChange, onProviderChange, onSwitchProvider, onClose]);
 
   const handleCancel = useCallback(() => {
     setConfirmSwitch(null);
