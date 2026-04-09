@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.config.app import DaemonConfig, LocalConfig
 from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
@@ -109,3 +111,19 @@ class TestProviderModelsRoute:
             assert providers["claude"]["available"] is True
             assert providers["gemini"]["available"] is False
             assert providers["codex"]["available"] is False
+
+    def test_includes_local_claude_model_when_configured(self) -> None:
+        """Claude model catalog exposes a local option when daemon local config exists."""
+        app = FastAPI()
+        config = DaemonConfig(
+            local=LocalConfig(url="http://localhost:1234/v1", model="qwen-coder-32b"),
+        )
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        response = client.get("/api/providers/models")
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        claude_models = {m["value"]: m["label"] for m in providers["claude"]["models"]}
+
+        assert claude_models["local"] == "Local (qwen-coder-32b)"

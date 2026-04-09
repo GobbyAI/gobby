@@ -14,6 +14,7 @@ const STATIC_MODELS: Record<string, { value: string; label: string }[]> = {
     { value: "opus", label: "Opus" },
     { value: "sonnet", label: "Sonnet" },
     { value: "haiku", label: "Haiku" },
+    { value: "local", label: "Local" },
   ],
   gemini: [
     { value: "pro", label: "Pro" },
@@ -96,14 +97,21 @@ export function ProviderPicker({
   }, [open]);
 
   const effectiveProvider = currentProvider || "claude";
+  const visibleProviders =
+    availableProviders.length > 0 ? availableProviders : [effectiveProvider];
 
   const handleSelect = useCallback(
     (provider: string, model: string) => {
       const isSameProvider =
         provider === effectiveProvider ||
         (!currentProvider && provider === "claude");
+      const requiresFreshConversation =
+        hasMessages &&
+        isSameProvider &&
+        model !== currentModel &&
+        (model === "local" || currentModel === "local");
 
-      if (isSameProvider) {
+      if (isSameProvider && !requiresFreshConversation) {
         // Same provider — just switch model, no new chat needed
         onModelChange(model);
         onClose();
@@ -190,11 +198,13 @@ export function ProviderPicker({
                 Provider & Model
               </DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                Select a provider and model for this conversation
+                {visibleProviders.length > 1
+                  ? "Select a provider and model for this conversation"
+                  : "Select a model for this conversation"}
               </DialogDescription>
             </div>
             <div className="px-2 pb-2 max-h-[60vh] overflow-y-auto">
-              {availableProviders.map((provider) => {
+              {visibleProviders.map((provider) => {
                 const models = getModelsForProvider(catalog, provider);
                 const isActive =
                   provider === effectiveProvider ||

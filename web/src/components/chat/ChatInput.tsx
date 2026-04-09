@@ -54,6 +54,16 @@ interface ChatInputProps {
   hasMessages?: boolean
 }
 
+function formatModelLabel(model: string): string {
+  if (model === 'local') return 'Local'
+  if (!model) return 'Default'
+  return model
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 export function ChatInput({
   onSend,
   onStop,
@@ -235,6 +245,10 @@ export function ChatInput({
   }, [handleSubmit, isStreaming, onStop, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
+  const pickerProviders = availableProviders.length > 0 ? availableProviders : [provider ?? 'claude']
+  const canSelectModel = Boolean(onModelChange)
+  const canSwitchProvider = pickerProviders.length >= 2 && Boolean(onSwitchProvider)
+  const pickerLabel = canSwitchProvider ? 'Select provider and model' : 'Select model'
 
   return (
     <div
@@ -298,28 +312,33 @@ export function ChatInput({
           {onModeChange && (
             <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
           )}
-          {availableProviders.length >= 2 && onSwitchProvider && (
+          {canSelectModel && (
             <>
               <button
-                className="flex items-center gap-1 p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 onClick={() => setPickerOpen(true)}
                 disabled={disabled}
-                title="Select provider & model"
-                aria-label="Select provider and model"
+                title={pickerLabel}
+                aria-label={pickerLabel}
               >
                 <SourceIcon source={provider || 'claude'} size={14} />
-                <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className="opacity-60">
-                  <path d="M1 3l3 3 3-3z" />
-                </svg>
+                <span className="text-xs font-medium text-foreground">
+                  {formatModelLabel(currentModel)}
+                </span>
+                {canSwitchProvider && (
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className="opacity-60">
+                    <path d="M1 3l3 3 3-3z" />
+                  </svg>
+                )}
               </button>
               <ProviderPicker
                 open={pickerOpen}
                 onClose={() => setPickerOpen(false)}
                 currentProvider={provider ?? null}
                 currentModel={currentModel}
-                availableProviders={availableProviders}
+                availableProviders={pickerProviders}
                 onModelChange={onModelChange ?? (() => {})}
-                onProviderChange={onSwitchProvider}
+                onProviderChange={onSwitchProvider ?? (() => {})}
                 hasMessages={hasMessages}
               />
             </>

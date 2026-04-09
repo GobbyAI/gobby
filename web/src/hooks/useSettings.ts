@@ -15,6 +15,7 @@ export const MODEL_OPTIONS = [
   { value: 'opus', label: 'Claude Opus' },
   { value: 'sonnet', label: 'Claude Sonnet' },
   { value: 'haiku', label: 'Claude Haiku' },
+  { value: 'local', label: 'Local Model' },
 ] as const
 
 const DEFAULT_SETTINGS: Settings = {

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
+
 # Static model catalog per provider. Dynamic probing can augment this
 # later without breaking the contract.
-_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
+_BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
     "claude": [
         {"value": "opus", "label": "Opus"},
         {"value": "sonnet", "label": "Sonnet"},
@@ -28,6 +31,16 @@ _MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
 _PROVIDER_DEFS = [("claude", "claude"), ("gemini", "gemini"), ("codex", "codex")]
 
 
+def _build_model_catalog(server: HTTPServer | None = None) -> dict[str, list[dict[str, str]]]:
+    """Return the provider model catalog enriched with runtime config."""
+    catalog = {provider: [*models] for provider, models in _BASE_MODEL_CATALOG.items()}
+    config = getattr(getattr(server, "services", None), "config", None)
+    local_cfg = getattr(config, "local", None) if config is not None else None
+    if local_cfg and getattr(local_cfg, "model", None):
+        catalog["claude"].append({"value": "local", "label": f"Local ({local_cfg.model})"})
+    return catalog
+
+
 async def _probe_providers() -> list[tuple[str, str | None]]:
     """Probe provider binaries concurrently.
 
@@ -39,7 +52,7 @@ async def _probe_providers() -> list[tuple[str, str | None]]:
     return [(name, path) for (name, _binary), path in zip(_PROVIDER_DEFS, paths, strict=False)]
 
 
-def create_providers_router() -> APIRouter:
+def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
     """Create providers API router.
 
     Returns:
@@ -64,11 +77,12 @@ def create_providers_router() -> APIRouter:
         the full catalog when availability probing fails.
         """
         probed = await _probe_providers()
+        model_catalog = _build_model_catalog(server)
         result: list[dict[str, Any]] = [
             {
                 "provider": name,
                 "available": path is not None,
-                "models": _MODEL_CATALOG.get(name, [{"value": "default", "label": "Default"}]),
+                "models": model_catalog.get(name, [{"value": "default", "label": "Default"}]),
                 "source": "static",
             }
             for name, path in probed

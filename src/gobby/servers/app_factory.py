@@ -484,7 +484,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_pipelines_router(server))
     app.include_router(create_files_router(server))
     app.include_router(create_projects_router(server))
-    app.include_router(create_providers_router())
+    app.include_router(create_providers_router(server))
     app.include_router(create_skills_router(server))
     app.include_router(create_voice_router(server))
     app.include_router(create_configuration_router(server))

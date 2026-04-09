@@ -200,4 +200,20 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith('Hello', undefined)
   })
+
+  it('shows model selection in the toolbar for a single-provider setup', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        provider="claude"
+        availableProviders={['claude']}
+        currentModel="local"
+        onModelChange={vi.fn()}
+        onSwitchProvider={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText('Select model')).toBeTruthy()
+    expect(screen.getByText('Local')).toBeTruthy()
+  })
 })

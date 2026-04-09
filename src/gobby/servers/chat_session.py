@@ -166,6 +166,36 @@ class ChatSession(ChatSessionPermissionsMixin):
             return model
         return None
 
+    async def _resolve_requested_model(
+        self, requested_model: str | None, env: dict[str, str]
+    ) -> str | None:
+        """Resolve special model aliases and mutate env for endpoint overrides."""
+        if requested_model != "local":
+            return requested_model or self._default_model
+
+        local_cfg = getattr(self._config, "local", None) if self._config else None
+        if not local_cfg:
+            raise RuntimeError(
+                "Model 'local' requires a configured local endpoint (local.url, local.model)."
+            )
+
+        env["ANTHROPIC_BASE_URL"] = local_cfg.url
+        if local_cfg.api_key:
+            env["ANTHROPIC_AUTH_TOKEN"] = local_cfg.api_key
+
+        resolved_model = local_cfg.model
+        try:
+            from gobby.agents.local_model import ensure_local_model
+
+            resolved_model = await ensure_local_model(local_cfg, registry=None)
+        except Exception as e:
+            raise RuntimeError(f"Local model pre-flight failed: {e}") from e
+
+        logger.info(
+            f"ChatSession {self.conversation_id} using configured local model: {resolved_model}"
+        )
+        return resolved_model
+
     async def start(self, model: str | None = None) -> None:
         """Connect the ClaudeSDKClient with configured options."""
         cli_path = _find_cli_path()
@@ -216,8 +246,16 @@ class ChatSession(ChatSessionPermissionsMixin):
         if self.project_id:
             env["GOBBY_PROJECT_ID"] = self.project_id
 
-        # Route through local LLM endpoint when configured
-        if self._config and hasattr(self._config, "local_llm") and self._config.local_llm.enabled:
+        resolved_model = await self._resolve_requested_model(model, env)
+
+        # Route through local LLM endpoint when configured. A model='local'
+        # selection above takes precedence and has already injected env.
+        if (
+            "ANTHROPIC_BASE_URL" not in env
+            and self._config
+            and hasattr(self._config, "local_llm")
+            and self._config.local_llm.enabled
+        ):
             local_llm = self._config.local_llm
             if local_llm.endpoint and "claude" in local_llm.providers:
                 env["ANTHROPIC_BASE_URL"] = local_llm.endpoint
@@ -229,7 +267,7 @@ class ChatSession(ChatSessionPermissionsMixin):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=None,
-            model=model or self._default_model,
+            model=resolved_model,
             permission_mode=self._to_sdk_permission_mode(self.chat_mode),
             allowed_tools=["mcp__gobby__*"],
             can_use_tool=self._can_use_tool,
@@ -798,7 +836,15 @@ class ChatSession(ChatSessionPermissionsMixin):
         """Switch to a different Claude model mid-conversation."""
         if not self._client or not self._connected:
             raise RuntimeError("ChatSession not connected")
-        await self._client.set_model(new_model)
+        resolved_model = new_model
+        if new_model == "local":
+            local_cfg = getattr(self._config, "local", None) if self._config else None
+            if not local_cfg:
+                raise RuntimeError(
+                    "Model 'local' requires a configured local endpoint (local.url, local.model)."
+                )
+            resolved_model = local_cfg.model
+        await self._client.set_model(resolved_model)
         self._model = new_model
 
     # Map Gobby chat_mode values to SDK PermissionMode values

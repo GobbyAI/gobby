@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.app import DaemonConfig, LocalLLMConfig
+from gobby.config.app import DaemonConfig, LocalConfig, LocalLLMConfig
 
 pytestmark = pytest.mark.unit
 
@@ -130,3 +130,41 @@ class TestChatSessionLocalLLM:
             call_kwargs = mock_sdk.call_args
             options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
             assert "ANTHROPIC_BASE_URL" not in options.env
+
+    @pytest.mark.asyncio
+    async def test_model_local_uses_configured_local_endpoint(self) -> None:
+        """Selecting model='local' resolves the configured local endpoint + model."""
+        from gobby.servers.chat_session import ChatSession
+
+        session = ChatSession(conversation_id="test-local-model")
+        config = MagicMock()
+        config.local = LocalConfig(
+            url="http://localhost:1234/v1",
+            model="qwen-coder-32b",
+            api_key="test-local-key",
+        )
+        config.local_llm = LocalLLMConfig()
+        session._config = config
+
+        with (
+            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
+            patch("gobby.servers.chat_session._find_project_root", return_value=None),
+            patch("gobby.servers.chat_session._load_chat_system_prompt", return_value="test"),
+            patch("gobby.servers.chat_session._build_gobby_mcp_entry", return_value={}),
+            patch(
+                "gobby.agents.local_model.ensure_local_model",
+                new=AsyncMock(return_value="qwen-coder-32b"),
+            ),
+            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_sdk,
+        ):
+            mock_client = AsyncMock()
+            mock_sdk.return_value = mock_client
+
+            await session.start(model="local")
+
+            call_kwargs = mock_sdk.call_args
+            options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
+            assert options.model == "qwen-coder-32b"
+            assert options.env.get("ANTHROPIC_BASE_URL") == "http://localhost:1234/v1"
+            assert options.env.get("ANTHROPIC_AUTH_TOKEN") == "test-local-key"
+            assert session.model == "local"
