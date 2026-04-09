@@ -162,7 +162,9 @@ class TestChatterboxTurboProvider:
         seen_dtype: np.dtype[Any] | None = None
         seen_resample_dtype: np.dtype[Any] | None = None
 
-        def tokenizer_forward(wavs: list[np.ndarray], max_len: int | None = None) -> tuple[np.ndarray, None]:
+        def tokenizer_forward(
+            wavs: list[np.ndarray], max_len: int | None = None
+        ) -> tuple[np.ndarray, None]:
             nonlocal seen_dtype
             seen_dtype = wavs[0].dtype
             return np.zeros((1, 1), dtype=np.int64), None
