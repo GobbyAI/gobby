@@ -24,7 +24,7 @@ call_tool("gobby-tasks", "create_task", {
     "task_type": "bug",
     "priority": 1,
     "validation_criteria": "SessionManager.cleanup() no longer raises on empty sessions"
-})
+}, session_id="#2333")
 
 # Feature — create and claim in one call
 call_tool("gobby-tasks", "create_task", {
@@ -33,8 +33,10 @@ call_tool("gobby-tasks", "create_task", {
     "task_type": "feature",
     "claim": true,
     "validation_criteria": "POST /webhooks endpoint accepts pipeline_completed events and returns 201"
-})
+}, session_id="#2333")
 ```
+
+`session_id` is a parameter of `call_tool`, not the inner tool. Pass your Gobby session ref (e.g. `#2333`).
 
 ---
 
@@ -68,7 +70,8 @@ call_tool("gobby-tasks", "create_task", {
 | `category` | Always | Determines validation behavior |
 | `validation_criteria` | `category=code` | Creation fails without it |
 
-> **Note:** `session_id` is read automatically from session context — you do not need to pass it to task tools.
+> **Note:** Pass `session_id` to `call_tool` as a sibling parameter (not inside `arguments`).
+> Hooks-based sessions (Claude Code, Codex hooks) may propagate it automatically, but always pass it explicitly to be safe.
 
 ### Categories
 
@@ -115,7 +118,7 @@ Do **not** create tasks during plan mode unless the user explicitly asks you to.
 Auto-claim at creation with `claim: true` (shown above), or claim an existing task:
 
 ```python
-call_tool("gobby-tasks", "claim_task", {"task_id": "#42"})
+call_tool("gobby-tasks", "claim_task", {"task_id": "#42"}, session_id="#2333")
 ```
 
 ## Error Triage
@@ -129,5 +132,5 @@ call_tool("gobby-tasks", "create_task", {
     "task_type": "bug",
     "priority": 3,
     "validation_criteria": "ruff check on session.py passes with no warnings"
-})
+}, session_id="#2333")
 ```

@@ -50,8 +50,10 @@ call_tool("gobby-tasks", "close_task", {
     "task_id": "#N",
     "commit_sha": "abc1234",
     "changes_summary": "What changed and why"
-})
+}, session_id="#2333")
 ```
+
+`session_id` is a parameter of `call_tool`, not the inner tool — pass your Gobby session ref.
 
 Do NOT call `link_commit` separately — `close_task` handles linking internally when you pass `commit_sha`. The `link_commit` tool exists only for associating commits to tasks still in progress (multi-commit work).
 
@@ -79,8 +81,10 @@ Fix ALL errors, warnings, and failures — including pre-existing ones.
 
 Once resolved:
 
+`set_variable` and `get_variable` are top-level MCP tools — call them directly, not through `call_tool`:
+
 ```python
-set_variable(name="errors_resolved", value=true, session_id="#session")
+set_variable(name="errors_resolved", value=true, session_id="#2333")
 ```
 
 ## Gate 4: Memory Review
@@ -92,7 +96,7 @@ Review your session for memories worth preserving:
 If nothing new was learned and no stale memories remain, clear the gate:
 
 ```python
-set_variable(name="memory_review_completed", value=true, session_id="#session")
+set_variable(name="memory_review_completed", value=true, session_id="#2333")
 ```
 
 Do NOT create memories for bugs or errors — create tasks instead.
@@ -120,7 +124,7 @@ Autonomous agents **must** use the review flow — they cannot close tasks direc
 call_tool("gobby-tasks", "mark_task_needs_review", {
     "task_id": "#N",
     "review_notes": "What was done and what to verify"
-})
+}, session_id="#2333")
 ```
 
 Commits are auto-linked from your session. All four gates still apply before this call succeeds.
@@ -131,7 +135,7 @@ Commits are auto-linked from your session. All four gates still apply before thi
 call_tool("gobby-tasks", "mark_task_review_approved", {
     "task_id": "#N",
     "approval_notes": "Verified: tests pass, changes match spec"
-})
+}, session_id="#2333")
 ```
 
 Used by QA agents after reviewing work. Same gates apply — if the reviewer made fixes and committed, those commits are auto-linked.
@@ -155,7 +159,7 @@ call_tool("gobby-tasks", "close_task", {
     "task_id": "#N",
     "reason": "duplicate",  # or obsolete, wont_fix, already_implemented, out_of_repo
     "changes_summary": "Why no changes were needed"
-})
+}, session_id="#2333")
 ```
 
 Gates 3-4 still apply. `changes_summary` is still required — explain why no changes were needed.
