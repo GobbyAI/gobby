@@ -37,6 +37,10 @@ _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_BASE_DELAY = 1.0  # seconds
 _DEFAULT_MAX_DELAY = 60.0  # seconds
 
+# Cooldown for model-reload attempts (prevents hammering lms/ollama)
+_RELOAD_COOLDOWN = 60.0  # seconds
+_last_reload_attempt: float = 0.0
+
 # ---------------------------------------------------------------------------
 # TTL cache for embedding results
 # ---------------------------------------------------------------------------
@@ -216,6 +220,25 @@ async def generate_embeddings(
     return results  # type: ignore[return-value]
 
 
+async def _try_reload_model(model: str, api_base: str) -> bool:
+    """Attempt to reload an evicted model on a local inference server.
+
+    Respects a cooldown to avoid hammering the server when multiple
+    concurrent calls all see the same eviction error.
+    """
+    global _last_reload_attempt  # noqa: PLW0603
+    now = time.monotonic()
+    if now - _last_reload_attempt < _RELOAD_COOLDOWN:
+        logger.debug("Skipping model reload — cooldown active")
+        return False
+    _last_reload_attempt = now
+
+    from gobby.cli.services import try_autoload_embedding_model
+
+    logger.info(f"Embedding model evicted — attempting reload ({model})")
+    return await try_autoload_embedding_model(model, api_base)
+
+
 async def _fetch_embeddings(
     texts: list[str],
     model: str,
@@ -225,7 +248,13 @@ async def _fetch_embeddings(
     base_delay: float,
 ) -> list[list[float]]:
     """Raw API call to generate embeddings (no caching)."""
-    from openai import AsyncOpenAI, AuthenticationError, NotFoundError, RateLimitError
+    from openai import (
+        AsyncOpenAI,
+        AuthenticationError,
+        BadRequestError,
+        NotFoundError,
+        RateLimitError,
+    )
 
     # Use "unused" as default key for local endpoints (Ollama doesn't need a key)
     effective_key = api_key or os.environ.get("OPENAI_API_KEY") or "unused"
@@ -244,6 +273,24 @@ async def _fetch_embeddings(
         except NotFoundError as e:
             logger.error(f"Embedding model not found: {e}")
             raise RuntimeError(f"Model not found: {e}") from e
+        except BadRequestError as e:
+            if "no models loaded" not in str(e).lower() or not api_base:
+                logger.error(f"Failed to generate embeddings: {e}")
+                raise RuntimeError(f"Embedding generation failed: {e}") from e
+            # Model was evicted from local inference server — try to reload
+            reloaded = await _try_reload_model(model, api_base)
+            if not reloaded:
+                raise RuntimeError(f"Embedding generation failed: {e}") from e
+            # Retry once after successful reload
+            try:
+                response = await client.embeddings.create(model=model, input=texts)
+                embeddings = [item.embedding for item in response.data]
+                logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
+                return embeddings
+            except Exception as retry_err:
+                raise RuntimeError(
+                    f"Embedding failed after model reload: {retry_err}"
+                ) from retry_err
         except RateLimitError as e:
             last_error = e
             if attempt == max_retries:
