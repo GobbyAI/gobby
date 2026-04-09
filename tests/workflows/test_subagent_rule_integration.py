@@ -1,8 +1,9 @@
 """Integration tests for is_subagent variable and rule engine interaction.
 
 Verifies that:
-- block-native-task-tools fires when is_subagent is False (default)
-- block-native-task-tools is skipped when is_subagent is True
+- block-native-task-tools-unclaimed fires when is_subagent is False and task_claimed is False
+- block-native-task-tools-unclaimed is skipped when is_subagent is True or task_claimed is True
+- block-native-todo-write fires when is_subagent is False (regardless of task_claimed)
 - reset-subagent-flag clears is_subagent on before_agent events
 - Bidirectional toggle works within same session
 """
@@ -38,7 +39,11 @@ def engine(db: LocalDatabase) -> RuleEngine:
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
     # Disable everything, then enable only our target rules
     db.execute("UPDATE workflow_definitions SET enabled = 0")
-    for name in ("block-native-task-tools", "reset-subagent-flag"):
+    for name in (
+        "block-native-task-tools-unclaimed",
+        "block-native-todo-write",
+        "reset-subagent-flag",
+    ):
         db.execute(
             "UPDATE workflow_definitions SET enabled = 1 WHERE name = ?",
             (name,),
@@ -64,18 +69,18 @@ class TestSubagentRuleIntegration:
     """End-to-end: RuleEngine.evaluate() with is_subagent variable."""
 
     @pytest.mark.asyncio
-    async def test_blocks_native_tools_when_not_subagent(self, engine) -> None:
-        """TaskCreate should be blocked when is_subagent is False (default)."""
+    async def test_blocks_task_tools_when_unclaimed(self, engine) -> None:
+        """TaskCreate should be blocked when not subagent and no task claimed."""
         variables: dict = {"is_subagent": False}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
         result = await engine.evaluate(event, "test-session", variables)
 
         assert result.decision == "block"
-        assert "gobby-tasks" in (result.reason or "")
+        assert "gobby task" in (result.reason or "").lower()
 
     @pytest.mark.asyncio
-    async def test_blocks_native_tools_when_variable_unset(self, engine) -> None:
-        """TaskCreate should be blocked when is_subagent is not in variables at all."""
+    async def test_blocks_task_tools_when_variables_unset(self, engine) -> None:
+        """TaskCreate should be blocked when neither is_subagent nor task_claimed is set."""
         variables: dict = {}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
         result = await engine.evaluate(event, "test-session", variables)
@@ -83,7 +88,7 @@ class TestSubagentRuleIntegration:
         assert result.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_allows_native_tools_when_subagent(self, engine) -> None:
+    async def test_allows_task_tools_when_subagent(self, engine) -> None:
         """TaskCreate should be allowed when is_subagent is True."""
         variables: dict = {"is_subagent": True}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
@@ -92,8 +97,26 @@ class TestSubagentRuleIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_allows_all_blocked_tools_when_subagent(self, engine) -> None:
-        """All five blocked tools should be allowed when is_subagent is True."""
+    async def test_allows_task_tools_when_task_claimed(self, engine) -> None:
+        """TaskCreate should be allowed when a Gobby task is claimed."""
+        variables: dict = {"is_subagent": False, "task_claimed": True}
+        for tool in ("TaskCreate", "TaskUpdate", "TaskGet", "TaskList"):
+            event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name=tool)
+            result = await engine.evaluate(event, "test-session", variables)
+            assert result.decision == "allow", f"{tool} should be allowed with task claimed"
+
+    @pytest.mark.asyncio
+    async def test_todo_write_blocked_even_with_task_claimed(self, engine) -> None:
+        """TodoWrite should be blocked regardless of task_claimed."""
+        variables: dict = {"is_subagent": False, "task_claimed": True}
+        event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TodoWrite")
+        result = await engine.evaluate(event, "test-session", variables)
+
+        assert result.decision == "block"
+
+    @pytest.mark.asyncio
+    async def test_allows_all_tools_when_subagent(self, engine) -> None:
+        """All native task tools including TodoWrite should be allowed for subagents."""
         variables: dict = {"is_subagent": True}
         for tool in ("TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TodoWrite"):
             event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name=tool)
@@ -102,21 +125,21 @@ class TestSubagentRuleIntegration:
 
     @pytest.mark.asyncio
     async def test_bidirectional_toggle(self, engine) -> None:
-        """Toggling is_subagent should change blocking behavior."""
-        variables: dict = {"is_subagent": False}
+        """Toggling task_claimed should change blocking behavior for task tools."""
+        variables: dict = {"is_subagent": False, "task_claimed": False}
         event = _make_hook_event(HookEventType.BEFORE_TOOL, tool_name="TaskCreate")
 
-        # Blocked when False
+        # Blocked when unclaimed
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "block"
 
-        # Allowed when True
-        variables["is_subagent"] = True
+        # Allowed when claimed
+        variables["task_claimed"] = True
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "allow"
 
-        # Blocked again when False
-        variables["is_subagent"] = False
+        # Blocked again when unclaimed
+        variables["task_claimed"] = False
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "block"
 

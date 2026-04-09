@@ -11,8 +11,9 @@ metadata:
 
 Create and manage tasks via `call_tool("gobby-tasks", ...)`. Fetch schemas with `get_tool_schema("gobby-tasks", "create_task")` before first use.
 
-> **Note:** Claude Code's native task system (TodoWrite/TodoRead) is disabled by Gobby rules.
-> All task operations go through **gobby-tasks** MCP. Do not use native Claude task tools — they will be blocked.
+> **Note:** TodoWrite is disabled by Gobby rules. Native task tools (TaskCreate, TaskUpdate, TaskGet, TaskList) are
+> available for sub-step tracking once a Gobby task is claimed. All task creation and lifecycle management goes through
+> **gobby-tasks** MCP — native tools are for internal progress tracking only.
 
 ## Creating a Task
 

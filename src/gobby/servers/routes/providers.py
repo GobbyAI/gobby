@@ -20,24 +20,65 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
         {"value": "haiku", "label": "Haiku"},
     ],
     "gemini": [
-        {"value": "pro", "label": "Pro"},
-        {"value": "flash", "label": "Flash"},
+        {"value": "gemini-3.1-pro", "label": "pro-3.1"},
+        {"value": "gemini-3-flash", "label": "flash-3"},
     ],
     "codex": [
-        {"value": "default", "label": "Default"},
+        {"value": "gpt-5.4", "label": "codex-5.4"},
+        {"value": "gpt-5.3-codex", "label": "codex-5.3"},
+        {"value": "gpt-5.3-codex-spark", "label": "spark-5.3"},
     ],
 }
 
 _PROVIDER_DEFS = [("claude", "claude"), ("gemini", "gemini"), ("codex", "codex")]
 
 
-def _build_model_catalog(server: HTTPServer | None = None) -> dict[str, list[dict[str, str]]]:
+def _friendly_label(provider: str, model: str) -> str:
+    """Return a compact UI label for a provider model ID."""
+    if provider == "gemini":
+        parts = model.split("-")
+        if len(parts) >= 3:
+            version = parts[1]
+            tier = parts[2]
+            return f"{tier}-{version}"
+    if provider == "codex":
+        if model == "gpt-5.4":
+            return "codex-5.4"
+        if model == "gpt-5.3-codex":
+            return "codex-5.3"
+        if model == "gpt-5.3-codex-spark":
+            return "spark-5.3"
+    return model
+
+
+def _config_entries(provider: str, models: list[str]) -> list[dict[str, str]]:
+    """Convert configured model IDs into picker entries."""
+    return [{"value": model, "label": _friendly_label(provider, model)} for model in models]
+
+
+def _build_model_catalog(
+    server: HTTPServer | None = None,
+) -> dict[str, tuple[list[dict[str, str]], str]]:
     """Return the provider model catalog enriched with runtime config."""
-    catalog = {provider: [*models] for provider, models in _BASE_MODEL_CATALOG.items()}
+    catalog = {provider: ([*models], "static") for provider, models in _BASE_MODEL_CATALOG.items()}
     config = getattr(getattr(server, "services", None), "config", None)
+    llm_cfg = getattr(config, "llm_providers", None) if config is not None else None
+    if llm_cfg is not None:
+        for provider_name in ("gemini", "codex"):
+            provider_config = getattr(llm_cfg, provider_name, None)
+            if provider_config:
+                models = provider_config.get_models_list()
+                if models:
+                    catalog[provider_name] = (
+                        _config_entries(provider_name, models),
+                        "config",
+                    )
     local_cfg = getattr(config, "local", None) if config is not None else None
     if local_cfg and getattr(local_cfg, "model", None):
-        catalog["claude"].append({"value": "local", "label": f"Local ({local_cfg.model})"})
+        claude_entries, source = catalog["claude"]
+        if not any(entry["value"] == "local" for entry in claude_entries):
+            claude_entries.append({"value": "local", "label": f"Local ({local_cfg.model})"})
+        catalog["claude"] = (claude_entries, source)
     return catalog
 
 
@@ -82,8 +123,14 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
             {
                 "provider": name,
                 "available": path is not None,
-                "models": model_catalog.get(name, [{"value": "default", "label": "Default"}]),
-                "source": "static",
+                "models": model_catalog.get(
+                    name,
+                    ([{"value": "default", "label": "Default"}], "static"),
+                )[0],
+                "source": model_catalog.get(
+                    name,
+                    ([{"value": "default", "label": "Default"}], "static"),
+                )[1],
             }
             for name, path in probed
         ]

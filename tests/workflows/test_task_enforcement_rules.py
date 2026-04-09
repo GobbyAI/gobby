@@ -44,7 +44,8 @@ def _sync_bundled(db):
 
 
 TASK_ENFORCEMENT_RULES = {
-    "block-native-task-tools",
+    "block-native-task-tools-unclaimed",
+    "block-native-todo-write",
     "require-task-before-edit",
     "require-commit-before-status",
     "require-clean-tree-before-status",
@@ -59,7 +60,7 @@ class TestTaskEnforcementSync:
     """Test that task-enforcement.yaml syncs correctly."""
 
     def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
-        """All 7 task-enforcement rules should sync to workflow_definitions."""
+        """All task-enforcement rules should sync to workflow_definitions."""
         _sync_bundled(db)
 
         rules = manager.list_all(workflow_type="rule")
@@ -97,32 +98,60 @@ class TestTaskEnforcementSync:
                 }
 
 
-class TestBlockNativeTaskTools:
-    """Verify block-native-task-tools blocks CC native task tools."""
+class TestBlockNativeTaskToolsUnclaimed:
+    """Verify block-native-task-tools-unclaimed blocks task tools without a Gobby task."""
 
-    def test_blocks_all_native_task_tools(self, db, manager) -> None:
-        """Should block TaskCreate, TaskUpdate, TaskGet, TaskList, TodoWrite."""
+    def test_blocks_task_tools_when_unclaimed(self, db, manager) -> None:
+        """Should block TaskCreate, TaskUpdate, TaskGet, TaskList."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("block-native-task-tools")
+        row = manager.get_by_name("block-native-task-tools-unclaimed")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
 
-        expected_tools = {"TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TodoWrite"}
+        expected_tools = {"TaskCreate", "TaskUpdate", "TaskGet", "TaskList"}
         assert set(body.effects[0].tools) == expected_tools
 
-    def test_when_checks_is_subagent(self, db, manager) -> None:
-        """Should only fire when is_subagent is falsy."""
+    def test_when_checks_is_subagent_and_task_claimed(self, db, manager) -> None:
+        """Should only block when not subagent AND no task claimed."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("block-native-task-tools")
+        row = manager.get_by_name("block-native-task-tools-unclaimed")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert body.when is not None
         assert "is_subagent" in body.when
+        assert "task_claimed" in body.when
+
+
+class TestBlockNativeTodoWrite:
+    """Verify block-native-todo-write blocks TodoWrite unconditionally."""
+
+    def test_blocks_todo_write(self, db, manager) -> None:
+        """Should block TodoWrite."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-native-todo-write")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.effects[0].type == "block"
+        assert set(body.effects[0].tools) == {"TodoWrite"}
+
+    def test_when_only_checks_is_subagent(self, db, manager) -> None:
+        """Should block for all non-subagent sessions regardless of task_claimed."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-native-todo-write")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.when is not None
+        assert "is_subagent" in body.when
+        assert "task_claimed" not in body.when
 
 
 class TestRequireTaskBeforeEdit:
