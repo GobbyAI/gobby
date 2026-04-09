@@ -365,7 +365,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
   const [expanded, setExpanded] = useState(isActive)
   const displayName = formatToolName(call.tool_name)
   const toolType = resolveToolType(call)
-  const summary = useMemo(() => getToolSummary(call), [call])
+  const summary = getToolSummary(call)
   const isCompact = summary !== null && (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
   const isFileHeader = FILE_TOOL_TYPES.has(toolType)
   const { openFileAsArtifact } = useArtifactContext()

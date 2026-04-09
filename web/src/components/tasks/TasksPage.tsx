@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import './tasks-page.css'
 import './task-views.css'
+import { useNow } from '../../hooks/useNow'
 import { useTasks } from '../../hooks/useTasks'
 import type { GobbyTask, GobbyTaskDetail } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
@@ -223,6 +224,7 @@ interface TasksPageProps {
 }
 
 export function TasksPage({ projectFilter }: TasksPageProps = {}) {
+  const now = useNow()
   const { tasks, total, stats, isLoading, filters, setFilters, refreshTasks, getTask, createTask, updateTask, closeTask, reopenTask, getDependencies, getSubtasks } = useTasks(projectFilter)
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -273,12 +275,12 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
   // task list matches the overview card count (which uses the same cutoff).
   const displayTasks = useMemo(() => {
     if (filters.status !== 'recently_done') return scopedTasks
-    const cutoff = Date.now() - RECENTLY_DONE_CUTOFF_MS
+    const cutoff = now - RECENTLY_DONE_CUTOFF_MS
     const completed = new Set(['closed'])
     return scopedTasks.filter(
       t => completed.has(t.status) && new Date(t.updated_at).getTime() > cutoff
     )
-  }, [scopedTasks, filters.status])
+  }, [scopedTasks, filters.status, now])
 
   const selectedTaskObjects = useMemo(() => {
     return displayTasks.filter(t => selectedTaskIds.has(t.id)).map(t => ({

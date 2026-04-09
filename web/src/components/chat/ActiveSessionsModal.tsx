@@ -6,6 +6,7 @@ import {
   DialogDescription,
 } from './ui/Dialog'
 import type { GobbySession } from '../../hooks/useSessions'
+import { useNow } from '../../hooks/useNow'
 import { PROVIDER_COLORS, SOURCE_COLORS } from '../shared/sourceTheme'
 
 interface RunningAgent {
@@ -182,6 +183,7 @@ function CliSessionCard({
 }
 
 function useAgentUptime(startedAt?: string) {
+  const now = useNow(1_000)
   const startTime = useMemo(() => {
     if (startedAt) {
       const t = new Date(startedAt).getTime()
@@ -191,7 +193,7 @@ function useAgentUptime(startedAt?: string) {
   }, [startedAt])
 
   if (startTime === null) return '\u2014'
-  const elapsed = Math.floor((Date.now() - startTime) / 1000)
+  const elapsed = Math.floor((now - startTime) / 1000)
   if (elapsed < 60) return `${elapsed}s ago`
   if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ago`
   return `${Math.floor(elapsed / 3600)}h${Math.floor((elapsed % 3600) / 60)}m ago`

@@ -94,7 +94,7 @@ export function useVoice(
     }
   }, [])
 
-  const playNextChunk = useCallback(() => {
+  const playNextChunk = useCallback(function playNextChunk() {
     const buffer = audioQueueRef.current.shift()
     if (!buffer) {
       isPlayingRef.current = false

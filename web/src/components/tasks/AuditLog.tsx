@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
+import { useNow } from '../../hooks/useNow'
 import { StatusDot } from './TaskBadges'
 import { RiskBadge } from './RiskBadges'
 import { classifyTaskRisk } from './riskUtils'
@@ -117,11 +118,11 @@ interface AuditLogProps {
 export function AuditLog({ tasks, onSelectTask }: AuditLogProps) {
   const [actionFilter, setActionFilter] = useState<ActionFilter>('all')
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all')
+  const now = useNow()
 
   const allEntries = useMemo(() => deriveAuditEntries(tasks), [tasks])
 
   const filtered = useMemo(() => {
-    const now = Date.now()
     const cutoff = now - timeFilterMs(timeFilter)
 
     return allEntries.filter(entry => {
@@ -136,7 +137,7 @@ export function AuditLog({ tasks, onSelectTask }: AuditLogProps) {
 
       return true
     })
-  }, [allEntries, actionFilter, timeFilter])
+  }, [allEntries, actionFilter, timeFilter, now])
 
   return (
     <div className="audit-log">

@@ -2,6 +2,7 @@ import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Tree, type NodeRendererProps } from 'react-arborist'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { Markdown } from '../chat/Markdown'
+import { useNow } from '../../hooks/useNow'
 import { useWebSocketEvent } from '../../hooks/useWebSocketEvent'
 import '../tasks/task-execution.css'
 import type { GobbyTask } from '../../hooks/useTasks'
@@ -311,7 +312,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   }, [projectId, search, statusFilters])
 
   // Client-side filtering
-  const now = Date.now()
+  const now = useNow()
   const DAY_MS = 24 * 60 * 60 * 1000
   const filtered = useMemo(() => {
     return tasks

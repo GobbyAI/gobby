@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import type { GobbySession } from '../../hooks/useSessions'
+import { useNow } from '../../hooks/useNow'
 import { formatRelativeTime } from '../../utils/formatTime'
 
 export interface CommandPaletteAction {
@@ -36,6 +37,7 @@ export function CommandPalette({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const now = useNow()
 
   // Reset on open
   useEffect(() => {
@@ -139,7 +141,6 @@ export function CommandPalette({
 
   // Group sessions by recency + precompute index maps (must be above early return to avoid hook ordering issues)
   const { sessionIndexMap, actionIndexMap, todaySessions, weekSessions, olderSessions } = useMemo(() => {
-    const now = Date.now()
     const todaySessions: GobbySession[] = []
     const weekSessions: GobbySession[] = []
     const olderSessions: GobbySession[] = []
@@ -159,7 +160,7 @@ export function CommandPalette({
     for (const a of filteredActions.filter((a) => a.category === 'action')) actionIndexMap.set(a.id, idx++)
     for (const a of filteredActions.filter((a) => a.category === 'navigate')) actionIndexMap.set(a.id, idx++)
     return { sessionIndexMap, actionIndexMap, todaySessions, weekSessions, olderSessions }
-  }, [filteredSessions, filteredActions])
+  }, [filteredSessions, filteredActions, now])
 
   if (!isOpen) return null
 

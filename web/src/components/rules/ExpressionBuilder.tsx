@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import "./ExpressionBuilder.css";
 
 const VARIABLES = [
@@ -128,16 +128,13 @@ export function ExpressionBuilder({ value, onChange }: ExpressionBuilderProps) {
   // switching whenever the external `value` syncs, causing unwanted mode flips.
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleBuilderChange = useCallback(
-    (v: string, op: string, opd: string) => {
-      setVariable(v);
-      setOperator(op);
-      setOperand(opd);
-      const expr = buildExpression(v, op, smartQuote(opd));
-      onChange(expr);
-    },
-    [onChange],
-  );
+  function handleBuilderChange(v: string, op: string, opd: string) {
+    setVariable(v);
+    setOperator(op);
+    setOperand(opd);
+    const expr = buildExpression(v, op, smartQuote(opd));
+    onChange(expr);
+  }
 
   const switchMode = (newMode: "builder" | "raw") => {
     if (newMode === "builder") {

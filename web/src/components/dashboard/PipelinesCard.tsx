@@ -21,14 +21,16 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 export function PipelinesCard({ pipelines }: Props) {
   const total = pipelines.total
 
-  let offset = 0
-  const rings = SEGMENTS.map(({ key, color }) => {
+  const rings = SEGMENTS.map(({ key, color }, index) => {
     const value = pipelines[key]
     const ratio = total > 0 ? value / total : 0
     const length = ratio * CIRCUMFERENCE
-    const ring = { key, color, length, offset }
-    offset += length
-    return ring
+    const offset = SEGMENTS.slice(0, index).reduce((sum, segment) => {
+      const segmentValue = pipelines[segment.key]
+      const segmentRatio = total > 0 ? segmentValue / total : 0
+      return sum + segmentRatio * CIRCUMFERENCE
+    }, 0)
+    return { key, color, length, offset }
   })
 
   return (
