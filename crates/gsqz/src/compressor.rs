@@ -148,13 +148,22 @@ impl Compressor {
 
         // Named pipeline with low savings gets [gsqz:low-savings] marker.
         // Fallback path already has [gsqz:passthrough] marker, so just falls through.
+        // Skip the marker if adding it would make the output larger than the original.
         if compressed_chars >= (original_chars * 95) / 100 && matched {
             let marked = format!("[gsqz:low-savings]\n{}", compressed);
+            if marked.len() < original_chars {
+                return CompressionResult {
+                    compressed: marked.clone(),
+                    original_chars,
+                    compressed_chars: marked.len(),
+                    strategy_name: format!("{}/low-savings", strategy_name),
+                };
+            }
             return CompressionResult {
-                compressed: marked.clone(),
+                compressed: output.to_string(),
                 original_chars,
-                compressed_chars: marked.len(),
-                strategy_name: format!("{}/low-savings", strategy_name),
+                compressed_chars: original_chars,
+                strategy_name: format!("{}/no-op", strategy_name),
             };
         }
 
@@ -413,7 +422,44 @@ mod tests {
 
     #[test]
     fn test_low_savings_pipeline_gets_marker() {
-        // A named pipeline that barely compresses should get [gsqz:low-savings]
+        // A named pipeline that compresses just a little (still above the 95% threshold)
+        // gets the [gsqz:low-savings] marker as long as the marker fits under the original.
+        let mut config = test_config();
+        config.settings.min_output_length = 0;
+        config.pipelines.insert(
+            "minimal-pipeline".into(),
+            crate::config::Pipeline {
+                match_pattern: r"\bminimal\b".into(),
+                steps: vec![crate::config::Step::FilterLines(
+                    crate::config::FilterLinesArgs {
+                        patterns: vec!["^drop ".into()],
+                    },
+                )],
+                on_empty: None,
+            },
+        );
+        let compressor = Compressor::new(&config);
+        // ~100 keep lines + 3 drop lines — filter removes ~3% of bytes, under the
+        // 5% savings threshold, but the savings are enough that the ~20-byte marker
+        // still fits under the original size.
+        let mut lines: Vec<String> = (0..100)
+            .map(|i| format!("keep line number {}\n", i))
+            .collect();
+        lines.push("drop this entire line\n".into());
+        lines.push("drop this entire line\n".into());
+        lines.push("drop this entire line\n".into());
+        let output = lines.join("");
+        let result = compressor.compress("minimal", &output);
+        assert!(result.strategy_name.contains("low-savings"));
+        assert!(result.compressed.starts_with("[gsqz:low-savings]\n"));
+        assert!(result.compressed_chars < result.original_chars);
+    }
+
+    #[test]
+    fn test_low_savings_suppressed_when_marker_would_grow_output() {
+        // A named pipeline that produces zero savings should NOT get the marker —
+        // adding it would make the output larger than the original. Return the
+        // original unchanged with a {pipeline}/no-op strategy name instead.
         let mut config = test_config();
         config.settings.min_output_length = 0;
         config.pipelines.insert(
@@ -429,8 +475,10 @@ mod tests {
             .map(|i| format!("unique line {}\n", i))
             .collect::<String>();
         let result = compressor.compress("noop", &output);
-        assert!(result.strategy_name.contains("low-savings"));
-        assert!(result.compressed.starts_with("[gsqz:low-savings]\n"));
+        assert_eq!(result.strategy_name, "noop-pipeline/no-op");
+        assert!(!result.compressed.contains("[gsqz:low-savings]"));
+        assert_eq!(result.compressed, output);
+        assert_eq!(result.compressed_chars, result.original_chars);
     }
 
     #[test]
