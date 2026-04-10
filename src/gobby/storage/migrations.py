@@ -234,7 +234,7 @@ def _setup_memories_fts(db: LocalDatabase) -> None:
             );
         END;
 
-        CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
+        CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE OF content, tags, memory_type, source_type ON memories BEGIN
             INSERT INTO memories_fts(memories_fts, rowid, content, tags, memory_type, source_type)
             VALUES (
                 'delete', old.rowid, old.content,
@@ -833,7 +833,45 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
           )
         """,
     ),
+    (
+        206,
+        "Narrow memories FTS update trigger to indexed columns only",
+        lambda db: _narrow_memories_fts_update_trigger(db),
+    ),
 ]
+
+
+def _narrow_memories_fts_update_trigger(db: LocalDatabase) -> None:
+    """Recreate memories_fts_au trigger scoped to indexed columns only.
+
+    Previously the trigger fired on every UPDATE to the memories table,
+    meaning access_count, last_accessed_at, graph_processed, and other
+    bookkeeping columns would invoke FTS maintenance.  If the FTS index
+    was corrupted, those updates would fail, breaking unrelated writes.
+
+    The new trigger only fires on UPDATE OF content, tags, memory_type,
+    source_type — the columns actually indexed by FTS5.
+    """
+    conn = db.connection
+    conn.executescript("""
+        DROP TRIGGER IF EXISTS memories_fts_au;
+
+        CREATE TRIGGER memories_fts_au
+        AFTER UPDATE OF content, tags, memory_type, source_type ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, tags, memory_type, source_type)
+            VALUES (
+                'delete', old.rowid, old.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(old.tags, ''), '"', ''), '[', ''), ']', ''),
+                old.memory_type, COALESCE(old.source_type, '')
+            );
+            INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+            VALUES (
+                new.rowid, new.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(new.tags, ''), '"', ''), '[', ''), ']', ''),
+                new.memory_type, COALESCE(new.source_type, '')
+            );
+        END;
+    """)
 
 
 def _remove_usd_columns(db: LocalDatabase) -> None:

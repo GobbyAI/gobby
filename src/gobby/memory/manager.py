@@ -892,7 +892,13 @@ class MemoryManager:
             try:
                 self.storage.update_access_stats(memory.id, now.isoformat())
             except Exception as e:
-                logger.warning(f"Failed to update access stats for {memory.id}: {e}")
+                if "malformed" in str(e):
+                    logger.warning(
+                        f"Failed to update access stats for {memory.id}: {e} "
+                        "(likely FTS trigger issue — see memory FTS repair docs)"
+                    )
+                else:
+                    logger.warning(f"Failed to update access stats for {memory.id}: {e}")
 
     async def delete_memory(self, memory_id: str) -> bool:
         """Delete a memory from SQLite, VectorStore, and Neo4j."""
@@ -1253,8 +1259,12 @@ class MemoryManager:
             await asyncio.to_thread(lambda: fts._db.execute("DELETE FROM memories_fts"))
             report["fts_cleared"] = True
         except Exception as e:
-            logger.error(f"Failed to clear FTS5: {e}")
+            logger.error(
+                f"Failed to clear memory FTS5 index: {e} "
+                "(this is an FTS-local issue, not whole-DB corruption)"
+            )
             report["fts_cleared"] = False
+            report["fts_error"] = str(e)
 
         scope = f"project {project_id}" if project_id else "all projects"
         logger.info(f"Indices cleared for {scope}: {report}")
@@ -1340,7 +1350,14 @@ class MemoryManager:
             report["graph_rebuilt"] = {"extracted": extracted, "errors": errors}
 
         # 5. Reindex FTS5
-        report["fts5"] = await asyncio.to_thread(self._get_fts_searcher().reindex)
+        try:
+            report["fts5"] = await asyncio.to_thread(self._get_fts_searcher().reindex)
+        except Exception as e:
+            logger.error(
+                f"Failed to rebuild memory FTS5 index: {e} "
+                "(FTS-local failure, other indices were rebuilt successfully)"
+            )
+            report["fts5"] = {"success": False, "error": str(e)}
 
         logger.info(f"Index rebuild complete for {scope}: {report}")
         return report
