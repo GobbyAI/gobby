@@ -69,17 +69,17 @@ def _mock_process(
 
 
 def _handshake_lines(session_id: str = "sess-1") -> list[str]:
-    """Return the stdout lines for a successful initialize + newSession handshake."""
+    """Return the stdout lines for a successful initialize + session/new handshake."""
     return [
         # initialize response
         json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}) + "\n",
-        # newSession response
+        # session/new response
         json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"sessionId": session_id}}) + "\n",
     ]
 
 
 def _resume_handshake_lines(session_id: str = "prev-123") -> list[str]:
-    """Return the stdout lines for initialize + loadSession handshake."""
+    """Return the stdout lines for initialize + session/load handshake."""
     return [
         json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}) + "\n",
         json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"sessionId": session_id}}) + "\n",
@@ -139,17 +139,18 @@ class TestStart:
                 return_value=proc,
             ) as mock_exec:
                 client = GeminiACPClient()
-                await client.start(model="gemini-3.1-pro")
+                await client.start(model="gemini-3.1-pro-preview")
 
                 call_args = mock_exec.call_args
                 assert call_args[0] == (
                     "/usr/bin/gemini",
                     "--acp",
                     "--model",
-                    "gemini-3.1-pro",
+                    "gemini-3.1-pro-preview",
                 )
+                assert call_args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
 
-        # Verify initialize and newSession requests were sent
+        # Verify initialize and session/new requests were sent
         assert proc.stdin.write.call_count == 2
         init_req = json.loads(proc.stdin.write.call_args_list[0][0][0].decode())
         assert init_req["method"] == "initialize"
@@ -157,7 +158,9 @@ class TestStart:
         assert init_req["params"]["clientInfo"]["name"] == "gobby"
 
         session_req = json.loads(proc.stdin.write.call_args_list[1][0][0].decode())
-        assert session_req["method"] == "newSession"
+        assert session_req["method"] == "session/new"
+        assert session_req["params"]["cwd"] == "."
+        assert session_req["params"]["mcpServers"] == []
 
     @pytest.mark.asyncio
     async def test_start_with_resume_uses_load_session(self) -> None:
@@ -173,10 +176,12 @@ class TestStart:
 
                 assert client.session_id == "prev-123"
 
-        # Verify loadSession (not newSession) was called
+        # Verify session/load (not session/new) was called
         session_req = json.loads(proc.stdin.write.call_args_list[1][0][0].decode())
-        assert session_req["method"] == "loadSession"
+        assert session_req["method"] == "session/load"
         assert session_req["params"]["sessionId"] == "prev-123"
+        assert session_req["params"]["cwd"] == "."
+        assert session_req["params"]["mcpServers"] == []
 
     @pytest.mark.asyncio
     async def test_start_raises_when_cli_not_found(self) -> None:
@@ -236,7 +241,7 @@ class TestSend:
                 await client.start()
                 events = [e async for e in client.send("hello")]
 
-        # Third write = the prompt request (after initialize + newSession)
+        # Third write = the prompt request (after initialize + session/new)
         assert proc.stdin.write.call_count == 3
         prompt_req = json.loads(proc.stdin.write.call_args_list[2][0][0].decode())
         assert prompt_req["method"] == "session/prompt"

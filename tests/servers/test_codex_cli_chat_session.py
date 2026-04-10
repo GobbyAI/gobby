@@ -72,7 +72,15 @@ def _handshake_lines(thread_id: str = "thread-1") -> list[str]:
             {
                 "jsonrpc": "2.0",
                 "id": 2,
-                "result": {"threadId": thread_id, "status": "active"},
+                "result": {
+                    "thread": {
+                        "id": thread_id,
+                        "preview": "",
+                        "modelProvider": "openai",
+                        "createdAt": 0,
+                        "path": "/tmp/codex-session.jsonl",
+                    }
+                },
             }
         )
         + "\n",
@@ -106,11 +114,14 @@ class TestCodexCLIChatSession:
             await session.start()
             assert session.is_connected is True
             assert session._thread_id == "thread-1"
+            assert session.sdk_session_id == "thread-1"
+            assert session._transcript_path == "/tmp/codex-session.jsonl"
 
             # Verify spawned with "app-server" subcommand
             call_args = mock_exec.call_args
             assert call_args[0][0] == "/usr/bin/codex"
             assert "app-server" in call_args[0]
+            assert call_args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
 
         # Verify initialize and thread/start requests
         assert proc.stdin.write.call_count == 2
@@ -204,12 +215,56 @@ class TestCodexCLIChatSession:
         assert done_events[0].input_tokens == 10
         assert done_events[0].output_tokens == 5
         assert done_events[0].cost_usd == pytest.approx(0.001)
+        assert done_events[0].sdk_session_id == "thread-1"
 
         # Verify turn/start request format
         turn_req = json.loads(proc.stdin.write.call_args_list[2][0][0].decode())
         assert turn_req["method"] == "turn/start"
         assert turn_req["params"]["threadId"] == "thread-1"
         assert turn_req["params"]["input"] == [{"type": "text", "text": "say hello"}]
+
+    @pytest.mark.asyncio
+    async def test_send_message_falls_back_to_transcript_when_stream_has_no_text(self) -> None:
+        """Use transcript text when Codex omits messageDelta notifications."""
+        notification_lines = [
+            json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"turnId": "turn-1"}}) + "\n",
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "turn/completed",
+                    "params": {
+                        "usage": {"input_tokens": 10, "output_tokens": 0, "cost_usd": 0.001}
+                    },
+                }
+            )
+            + "\n",
+        ]
+        proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
+
+        with (
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
+        ):
+            session = CodexCLIChatSession(conversation_id="conv-1")
+            await session.start()
+            session._get_transcript_offset = AsyncMock(return_value=123)
+            session._get_transcript_assistant_text_since = AsyncMock(
+                return_value="live-codex-gpt-5-4"
+            )
+            events = [e async for e in session.send_message("say hello")]
+
+        from gobby.llm.claude_models import DoneEvent, TextChunk
+
+        text_chunks = [e for e in events if isinstance(e, TextChunk)]
+        done_events = [e for e in events if isinstance(e, DoneEvent)]
+
+        assert len(text_chunks) == 1
+        assert text_chunks[0].content == "live-codex-gpt-5-4"
+        assert len(done_events) == 1
+        assert done_events[0].sdk_session_id == "thread-1"
+        session._get_transcript_assistant_text_since.assert_awaited_once_with(123)
 
     @pytest.mark.asyncio
     async def test_send_message_handles_error_response(self) -> None:

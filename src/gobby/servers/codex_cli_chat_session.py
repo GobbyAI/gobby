@@ -19,6 +19,7 @@ import asyncio
 import itertools
 import json
 import logging
+import os
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ from gobby.llm.claude_models import (
     DoneEvent,
     TextChunk,
 )
+from gobby.sessions.transcripts.codex import CodexTranscriptParser
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,7 @@ class CodexCLIChatSession:
         self.chat_mode: str = "code"
         self.system_prompt_override: str | None = None
         self.resume_session_id: str | None = None
+        self.sdk_session_id: str | None = None
         self.last_activity: datetime = datetime.now(UTC)
 
         # Lifecycle callbacks (protocol conformance)
@@ -113,6 +116,7 @@ class CodexCLIChatSession:
         self._connected = False
         self._request_id = itertools.count(1)
         self._read_timeout = 30.0
+        self._transcript_path: str | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -205,12 +209,15 @@ class CodexCLIChatSession:
             self._model = model
 
         cmd = [path, "app-server"]
+        env = os.environ.copy()
+        env["GOBBY_HOOKS_DISABLED"] = "1"
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         logger.debug(f"Codex app-server started (pid={self._process.pid})")
 
@@ -229,10 +236,12 @@ class CodexCLIChatSession:
         # Create or resume thread
         if self._thread_id:
             # Resume existing thread
-            await self._send_request(
+            resume_result = await self._send_request(
                 "thread/resume",
                 {"threadId": self._thread_id},
             )
+            thread_data = resume_result.get("thread", {})
+            self._transcript_path = thread_data.get("path") or self._transcript_path
         else:
             thread_params: dict[str, Any] = {
                 "cwd": self.project_path or ".",
@@ -241,10 +250,56 @@ class CodexCLIChatSession:
                 thread_params["model"] = self._model
 
             thread_result = await self._send_request("thread/start", thread_params)
-            self._thread_id = thread_result.get("threadId")
+            thread_data = thread_result.get("thread", {})
+            self._thread_id = thread_data.get("id") or thread_result.get("threadId")
+            self._transcript_path = thread_data.get("path")
             logger.debug(f"Codex thread ID: {self._thread_id}")
 
+        self.sdk_session_id = self._thread_id
         self._connected = True
+
+    async def _get_transcript_offset(self) -> int:
+        """Return the current transcript file size before a turn starts."""
+        if not self._transcript_path:
+            return 0
+
+        def _stat_size() -> int:
+            try:
+                return os.path.getsize(self._transcript_path or "")
+            except OSError:
+                return 0
+
+        return await asyncio.to_thread(_stat_size)
+
+    async def _get_transcript_assistant_text_since(self, offset: int) -> str:
+        """Extract assistant text written after ``offset`` from the Codex transcript."""
+        if not self._transcript_path:
+            return ""
+
+        def _read_assistant_text() -> str:
+            try:
+                with open(self._transcript_path or "", encoding="utf-8") as handle:
+                    handle.seek(offset)
+                    parser = CodexTranscriptParser(session_id=self._thread_id)
+                    parsed = parser.parse_lines(handle.readlines())
+            except OSError:
+                return ""
+
+            assistant_chunks = [
+                message.content.strip()
+                for message in parsed
+                if message.role == "assistant" and message.content.strip()
+            ]
+            return "\n\n".join(assistant_chunks)
+
+        # Codex can flush transcript lines slightly after the turn-completed
+        # notification arrives, so poll briefly before giving up.
+        for _ in range(5):
+            assistant_text = await asyncio.to_thread(_read_assistant_text)
+            if assistant_text:
+                return assistant_text
+            await asyncio.sleep(0.1)
+        return ""
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
         """Send a message via turn/start and stream responses.
@@ -287,6 +342,8 @@ class CodexCLIChatSession:
         self.message_index += 1
         self.last_activity = datetime.now(UTC)
         logger.debug(f"Sent turn/start to Codex: {text[:80]!r}")
+        transcript_offset = await self._get_transcript_offset()
+        saw_text_output = False
 
         # Read streaming notifications until turn/completed or response
         while True:
@@ -327,16 +384,24 @@ class CodexCLIChatSession:
                 # Streaming text content
                 delta = params.get("delta", "")
                 if delta:
+                    saw_text_output = True
                     yield TextChunk(content=delta)
 
             elif method == "turn/completed":
                 # Turn finished — extract usage data
                 usage = params.get("usage", {})
+                if not saw_text_output:
+                    fallback_text = await self._get_transcript_assistant_text_since(
+                        transcript_offset
+                    )
+                    if fallback_text:
+                        yield TextChunk(content=fallback_text)
                 yield DoneEvent(
                     tool_calls_count=0,
                     cost_usd=float(usage.get("cost_usd", 0.0)),
                     input_tokens=int(usage.get("input_tokens", 0)),
                     output_tokens=int(usage.get("output_tokens", 0)),
+                    sdk_session_id=self.sdk_session_id,
                 )
                 break
 
@@ -395,6 +460,7 @@ class CodexCLIChatSession:
             finally:
                 self._process = None
                 self._connected = False
+                self.sdk_session_id = None
                 self._thread_id = None
 
     async def switch_model(self, new_model: str) -> None:

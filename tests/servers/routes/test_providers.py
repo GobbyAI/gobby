@@ -95,7 +95,10 @@ class TestProviderModelsRoute:
 
         # Gemini should expose the hardcoded web-chat defaults
         gemini = providers["gemini"]["models"]
-        assert [m["value"] for m in gemini] == ["gemini-3.1-pro", "gemini-3-flash"]
+        assert [m["value"] for m in gemini] == [
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+        ]
         assert [m["label"] for m in gemini] == ["pro-3.1", "flash-3"]
 
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
@@ -151,7 +154,7 @@ class TestProviderModelsRoute:
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
                 codex=LLMProviderConfig(models="gpt-5.4,gpt-5.3-codex"),
-                gemini=LLMProviderConfig(models="gemini-3.1-pro,gemini-3-flash"),
+                gemini=LLMProviderConfig(models="gemini-3.1-pro-preview,gemini-3-flash-preview"),
             )
         )
         server = SimpleNamespace(services=SimpleNamespace(config=config))
@@ -164,8 +167,8 @@ class TestProviderModelsRoute:
         assert providers["gemini"]["source"] == "static"
         assert providers["codex"]["source"] == "static"
         assert [m["value"] for m in providers["gemini"]["models"]] == [
-            "gemini-3.1-pro",
-            "gemini-3-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
         ]
         assert [m["value"] for m in providers["codex"]["models"]] == [
             "gpt-5.4",
@@ -180,8 +183,8 @@ class TestProviderModelsRoute:
             "spark-5.3",
         ]
 
-    def test_ignores_legacy_gemini_preview_models(self) -> None:
-        """Legacy Gemini preview IDs do not leak into the web-chat picker."""
+    def test_current_catalog_keeps_cli_supported_gemini_preview_models(self) -> None:
+        """The web-chat picker stays on the current Gemini CLI-supported preview IDs."""
         app = FastAPI()
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
@@ -198,8 +201,8 @@ class TestProviderModelsRoute:
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
         assert [m["value"] for m in providers["gemini"]["models"]] == [
-            "gemini-3.1-pro",
-            "gemini-3-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
         ]
         assert [m["label"] for m in providers["gemini"]["models"]] == [
             "pro-3.1",

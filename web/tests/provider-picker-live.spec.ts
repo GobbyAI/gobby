@@ -61,6 +61,7 @@ async function openFreshChat(
     localStorage.removeItem("gobby-selected-provider");
   }, conversationId);
   await page.reload();
+  await expect(page.getByLabel("Select provider and model")).toBeVisible();
   await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
 }
 
@@ -148,6 +149,7 @@ test.describe("Live provider picker verification", () => {
     test.setTimeout(10 * 60 * 1000);
 
     const catalog = await loadLiveCatalog(request);
+    const runId = `live-run-${Date.now().toString(36)}`;
     const providersToVerify = ["gemini", "codex"] as const;
 
     for (const providerName of providersToVerify) {
@@ -159,7 +161,10 @@ test.describe("Live provider picker verification", () => {
       );
 
       for (const model of provider.models) {
-        await openFreshChat(page, `live-${providerName}-${sanitizeToken(model.value)}`);
+        await openFreshChat(
+          page,
+          `${runId}-${providerName}-${sanitizeToken(model.value)}`,
+        );
         await selectProviderModel(page, model.label);
         await sendProbePrompt(page, request, providerName, model);
       }

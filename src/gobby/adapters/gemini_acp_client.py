@@ -6,7 +6,7 @@ GeminiCLIChatSession converts to ChatEvent instances.
 
 Protocol lifecycle:
   1. initialize  →  handshake with protocol version and client info
-  2. newSession / loadSession  →  obtain a sessionId
+  2. session/new or session/load  →  obtain a sessionId
   3. session/prompt  →  send user input, receive streaming notifications
 """
 
@@ -16,6 +16,7 @@ import asyncio
 import itertools
 import json
 import logging
+import os
 import shutil
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -81,7 +82,7 @@ class GeminiACPClient:
 
     @property
     def session_id(self) -> str | None:
-        """The ACP session ID obtained from newSession/loadSession."""
+        """The ACP session ID obtained from session/new or session/load."""
         return self._session_id
 
     async def start(
@@ -110,12 +111,17 @@ class GeminiACPClient:
         if model:
             cmd.extend(["--model", model])
 
+        env = os.environ.copy()
+        # Prevent inherited Gemini hooks from registering nested daemon sessions.
+        env["GOBBY_HOOKS_DISABLED"] = "1"
+
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self._cwd,
+            env=env,
         )
         self._started = True
         logger.debug(f"GeminiACPClient started (pid={self._process.pid})")
@@ -134,14 +140,22 @@ class GeminiACPClient:
         )
         logger.debug(f"ACP initialize response: {init_result}")
 
+        session_params = {
+            "cwd": self._cwd or ".",
+            "mcpServers": [],
+        }
+
         # Create or resume session
         if session_id:
             session_result = await self._send_request(
-                "loadSession",
-                {"sessionId": session_id},
+                "session/load",
+                {
+                    **session_params,
+                    "sessionId": session_id,
+                },
             )
         else:
-            session_result = await self._send_request("newSession", {})
+            session_result = await self._send_request("session/new", session_params)
 
         self._session_id = session_result.get("sessionId") if session_result else None
         logger.debug(f"ACP session ID: {self._session_id}")

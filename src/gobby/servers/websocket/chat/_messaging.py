@@ -442,6 +442,13 @@ class ChatMessagingMixin:
                 old_model = session.model
                 try:
                     await session.switch_model(model)
+                    db_sid = getattr(session, "db_session_id", None)
+                    session_mgr = getattr(self, "session_manager", None)
+                    if db_sid and session_mgr:
+                        try:
+                            await asyncio.to_thread(session_mgr.update_model, db_sid, model)
+                        except Exception:
+                            logger.debug("Failed to persist switched model", exc_info=True)
                     await websocket.send(
                         json.dumps(
                             {

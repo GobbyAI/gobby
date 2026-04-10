@@ -21,6 +21,32 @@ logger = logging.getLogger(__name__)
 _CANCEL_YIELD_DELAY = 0.1
 
 
+def _get_runtime_external_id(session: ChatSessionProtocol) -> str | None:
+    """Return the provider-native session/thread id discovered during start()."""
+    sdk_session_id = getattr(session, "sdk_session_id", None)
+    if isinstance(sdk_session_id, str) and sdk_session_id:
+        return sdk_session_id
+
+    thread_id = getattr(session, "_thread_id", None)
+    if isinstance(thread_id, str) and thread_id:
+        return thread_id
+
+    return None
+
+
+def _get_runtime_transcript_path(session: ChatSessionProtocol) -> str | None:
+    """Return the live transcript path discovered during start(), if available."""
+    transcript_path = getattr(session, "transcript_path", None)
+    if isinstance(transcript_path, str) and transcript_path:
+        return transcript_path
+
+    private_path = getattr(session, "_transcript_path", None)
+    if isinstance(private_path, str) and private_path:
+        return private_path
+
+    return None
+
+
 async def _resolve_git_branch(project_path: str | None) -> tuple[str | None, str | None]:
     """Resolve the current git branch for a project directory.
 
@@ -468,6 +494,40 @@ class ChatSessionMixin:
                 await session.start(model=model)
             else:
                 raise
+
+        if session_manager and session.db_session_id:
+            update_kwargs: dict[str, str] = {}
+            runtime_external_id = _get_runtime_external_id(session)
+            if runtime_external_id and runtime_external_id != conversation_id:
+                update_kwargs["external_id"] = runtime_external_id
+
+            runtime_transcript_path = _get_runtime_transcript_path(session)
+            if runtime_transcript_path:
+                update_kwargs["transcript_path"] = runtime_transcript_path
+
+            if update_kwargs:
+                try:
+                    await asyncio.to_thread(
+                        session_manager.update,
+                        session.db_session_id,
+                        **update_kwargs,
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to persist runtime session metadata for web-chat session",
+                        exc_info=True,
+                    )
+
+        if session_manager and session.db_session_id and session.model:
+            try:
+                await asyncio.to_thread(
+                    session_manager.update_model,
+                    session.db_session_id,
+                    session.model,
+                )
+            except Exception:
+                logger.debug("Failed to persist selected model for web-chat session", exc_info=True)
+
         self._chat_sessions[conversation_id] = session
 
         # History injection via message_manager removed (session_messages table dropped)

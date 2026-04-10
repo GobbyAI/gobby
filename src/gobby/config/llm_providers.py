@@ -50,7 +50,7 @@ class LLMProvidersConfig(BaseModel):
         models: gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.3-codex-spark
         auth_mode: subscription
       gemini:
-        models: gemini-3.1-pro,gemini-3-flash
+        models: gemini-3.1-pro-preview,gemini-3-flash-preview
         auth_mode: subscription
     ```
     """

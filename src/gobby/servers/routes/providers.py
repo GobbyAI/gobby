@@ -20,8 +20,8 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
         {"value": "haiku", "label": "Haiku"},
     ],
     "gemini": [
-        {"value": "gemini-3.1-pro", "label": "pro-3.1"},
-        {"value": "gemini-3-flash", "label": "flash-3"},
+        {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},
+        {"value": "gemini-3-flash-preview", "label": "flash-3"},
     ],
     "codex": [
         {"value": "gpt-5.4", "label": "codex-5.4"},

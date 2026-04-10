@@ -300,6 +300,7 @@ class TestCodexAppServerClientStart:
             mock_popen.assert_called_once()
             args = mock_popen.call_args
             assert args[0][0] == ["codex", "app-server"]
+            assert args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
 
         await client.stop()
 

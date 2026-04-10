@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess  # nosec B404 # subprocess needed for Codex app-server process
 import threading
 from collections.abc import AsyncIterator
@@ -126,6 +127,10 @@ class CodexAppServerClient:
         logger.debug("Starting Codex app-server...")
 
         try:
+            env = os.environ.copy()
+            # Prevent installed Codex hooks from registering nested daemon sessions.
+            env["GOBBY_HOOKS_DISABLED"] = "1"
+
             # Start the subprocess
             self._process = subprocess.Popen(  # nosec B603 # hardcoded argument list
                 [self._codex_command, "app-server"],
@@ -134,6 +139,7 @@ class CodexAppServerClient:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,  # Line buffered
+                env=env,
             )
 
             # Start the reader task

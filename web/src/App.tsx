@@ -34,6 +34,28 @@ import type { GobbySession } from "./hooks/useSessions";
 import type { CommandPaletteAction } from "./components/chat/CommandPalette";
 import { FilesProvider } from "./contexts/FilesContext";
 
+const CONVERSATION_ID_STORAGE_KEY = "gobby-conversation-id";
+const DB_SESSION_ID_STORAGE_KEY = "gobby-db-session-id";
+
+
+function loadPersistedConversationId(): string | null {
+  try {
+    return localStorage.getItem(CONVERSATION_ID_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+
+function loadPersistedDbSessionId(): string | null {
+  try {
+    return localStorage.getItem(DB_SESSION_ID_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+
 // Lazy-load non-default page components for code splitting
 const SessionsPage = lazy(() =>
   import("./components/sessions/SessionsPage").then((m) => ({
@@ -599,12 +621,24 @@ export default function App() {
 
     initialReconciliationDone.current = true;
 
-    // Does the current localStorage conversation_id match any server session?
-    const match = webChatSessions.find((s) => s.external_id === conversationId);
+    const persistedConversationId = loadPersistedConversationId();
+    const persistedDbSessionId = loadPersistedDbSessionId();
+
+    // Prefer an exact external_id match, then fall back to the persisted DB row
+    // because provider-backed web chats may re-key external_id after the first turn.
+    const match =
+      webChatSessions.find((s) => s.external_id === conversationId) ||
+      (persistedDbSessionId
+        ? webChatSessions.find((s) => s.id === persistedDbSessionId)
+        : undefined);
 
     if (match) {
       // Valid session — hydrate messages from server (replaces stale localStorage)
       switchConversation(match.external_id, match.id);
+    } else if (persistedConversationId && !persistedDbSessionId) {
+      // Preserve an explicit local fresh-chat ID so reloads do not jump back
+      // to the most recent saved session before the user sends a first message.
+      return;
     } else if (webChatSessions.length > 0) {
       // Unknown conversation_id — switch to most recent session
       const mostRecent = webChatSessions[0]; // sorted newest-first
