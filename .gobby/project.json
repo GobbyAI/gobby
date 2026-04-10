@@ -15,15 +15,14 @@
   },
   "hooks": {
     "pre-commit": {
-      "run": [
-        "lint",
-        "format"
-      ],
+      "run": [],
       "fail_fast": true,
       "timeout": 120
     },
     "pre-push": {
       "run": [
+        "lint",
+        "format",
         "type_check",
         "ts_check",
         "frontend_tests"
