@@ -275,13 +275,20 @@ export interface ProjectProps {
 }
 
 export interface VoiceProps {
-  voiceMode?: boolean;
+  sttEnabled?: boolean;
+  ttsEnabled?: boolean;
+  voiceInputMode?: "ptt" | "vad";
   voiceAvailable?: boolean;
   voiceReady?: boolean;
   voiceLoading?: boolean;
   isListening?: boolean;
   isSpeechDetected?: boolean;
+  isRecording?: boolean;
   isTranscribing?: boolean;
+  isSpeaking?: boolean;
   voiceError?: string | null;
-  onToggleVoice?: () => void;
+  startRecording?: () => Promise<void>;
+  stopRecording?: () => Promise<void>;
+  cancelRecording?: () => void;
+  stopTTS?: () => void;
 }

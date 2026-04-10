@@ -87,17 +87,32 @@ vi.mock('../hooks/useChat', () => ({
 }))
 
 vi.mock('../hooks/useVoice', () => ({
-  useVoice: vi.fn(() => ({})),
+  useVoice: vi.fn(() => ({
+    handleVoiceMessage: vi.fn(),
+    handleBinaryMessage: vi.fn(),
+  })),
 }))
 
 vi.mock('../hooks/useSettings', () => ({
   useSettings: vi.fn(() => ({
-    settings: { model: 'gpt-4', chatMode: 'plan' },
+    settings: {
+      fontSize: 16,
+      model: 'gpt-4',
+      chatMode: 'plan',
+      theme: 'dark',
+      defaultChatMode: 'plan',
+      sttEnabled: false,
+      ttsEnabled: false,
+      voiceInputMode: 'ptt',
+    },
     updateFontSize: vi.fn(),
     updateModel: vi.fn(),
     updateChatMode: vi.fn(),
     updateTheme: vi.fn(),
     updateDefaultChatMode: vi.fn(),
+    updateSttEnabled: vi.fn(),
+    updateTtsEnabled: vi.fn(),
+    updateVoiceInputMode: vi.fn(),
     resetSettings: vi.fn(),
   })),
 }))

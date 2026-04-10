@@ -312,7 +312,6 @@ export default function App() {
     selectedProvider,
     setSelectedProvider,
   } = useChat();
-  const voice = useVoice(wsRef, conversationId, conversationSwitchKey);
   const {
     settings,
     updateFontSize,
@@ -320,8 +319,22 @@ export default function App() {
     updateChatMode,
     updateTheme,
     updateDefaultChatMode,
+    updateSttEnabled,
+    updateTtsEnabled,
+    updateVoiceInputMode,
     resetSettings,
   } = useSettings();
+  const voice = useVoice(
+    wsRef,
+    conversationId,
+    conversationSwitchKey,
+    {
+      sttEnabled: settings.sttEnabled,
+      ttsEnabled: settings.ttsEnabled,
+      voiceInputMode: settings.voiceInputMode,
+    },
+    isConnected,
+  );
   const { agents, refreshAgents } = useTerminal();
   const tmux = useTmuxSessions();
   const mcp = useMcp();
@@ -1256,15 +1269,22 @@ export default function App() {
                 paletteActions={commandPaletteActions}
                 onViewAgent={handleNavigateToAgent}
                 voice={{
-                  voiceMode: voice.voiceMode,
+                  sttEnabled: settings.sttEnabled,
+                  ttsEnabled: settings.ttsEnabled,
+                  voiceInputMode: settings.voiceInputMode,
                   voiceAvailable: voice.voiceAvailable,
                   voiceReady: voice.voiceReady,
                   voiceLoading: voice.voiceLoading,
                   isListening: voice.isListening,
                   isSpeechDetected: voice.isSpeechDetected,
+                  isRecording: voice.isRecording,
                   isTranscribing: voice.isTranscribing,
+                  isSpeaking: voice.isSpeaking,
                   voiceError: voice.voiceError,
-                  onToggleVoice: voice.toggleVoiceMode,
+                  startRecording: voice.startRecording,
+                  stopRecording: voice.stopRecording,
+                  cancelRecording: voice.cancelRecording,
+                  stopTTS: voice.stopTTS,
                 }}
               />
             ) : activeTab === "sessions" ? (
@@ -1342,6 +1362,9 @@ export default function App() {
         onModelChange={updateModel}
         onThemeChange={updateTheme}
         onDefaultChatModeChange={updateDefaultChatMode}
+        onSttEnabledChange={updateSttEnabled}
+        onTtsEnabledChange={updateTtsEnabled}
+        onVoiceInputModeChange={updateVoiceInputMode}
         onReset={resetSettings}
       />
 

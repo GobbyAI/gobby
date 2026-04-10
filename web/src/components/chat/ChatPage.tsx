@@ -489,7 +489,9 @@ export function ChatPage({
           agentHasProject={agentHasProject}
           isPanelPinned={isPinned}
         />
-        {voice.voiceMode && (
+        {voice.sttEnabled &&
+          voice.voiceInputMode === "vad" &&
+          (voice.isListening || voice.isTranscribing || voice.voiceError) && (
           <VoiceStatusBar
             isListening={voice.isListening ?? false}
             isSpeechDetected={voice.isSpeechDetected ?? false}
@@ -558,11 +560,12 @@ export function ChatPage({
             agentShowScopeToggle={agentShowScopeToggle}
             agentHasGlobal={agentHasGlobal}
             agentHasProject={agentHasProject}
-            voiceMode={voice.voiceMode}
-            voiceAvailable={voice.voiceAvailable}
-            voiceReady={voice.voiceReady}
-            voiceLoading={voice.voiceLoading}
-            onToggleVoice={voice.onToggleVoice}
+            sttEnabled={voice.sttEnabled}
+            voiceInputMode={voice.voiceInputMode}
+            isRecording={voice.isRecording}
+            startRecording={voice.startRecording}
+            stopRecording={voice.stopRecording}
+            cancelRecording={voice.cancelRecording}
             isMobile={isMobile}
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
             provider={effectiveInputProvider}

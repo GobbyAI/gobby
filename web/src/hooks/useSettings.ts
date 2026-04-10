@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ChatMode } from '../types/chat'
 
 export type Theme = 'dark' | 'light' | 'system'
+export type VoiceInputMode = 'ptt' | 'vad'
 
 export interface Settings {
   fontSize: number // Base font size in pixels (12-24)
@@ -9,6 +10,9 @@ export interface Settings {
   chatMode: ChatMode // Active chat mode
   theme: Theme // UI theme
   defaultChatMode: ChatMode // Default mode for new conversations
+  sttEnabled: boolean
+  ttsEnabled: boolean
+  voiceInputMode: VoiceInputMode
 }
 
 export const MODEL_OPTIONS = [
@@ -24,13 +28,31 @@ const DEFAULT_SETTINGS: Settings = {
   chatMode: 'plan',
   theme: 'dark',
   defaultChatMode: 'plan',
+  sttEnabled: false,
+  ttsEnabled: false,
+  voiceInputMode: 'ptt',
 }
 
 const STORAGE_KEY = 'gobby-settings'
 
 /** Keys persisted to the backend (excludes per-conversation chatMode). */
-type PersistableKey = 'fontSize' | 'model' | 'theme' | 'defaultChatMode'
-const PERSISTABLE_KEYS: PersistableKey[] = ['fontSize', 'model', 'theme', 'defaultChatMode']
+type PersistableKey =
+  | 'fontSize'
+  | 'model'
+  | 'theme'
+  | 'defaultChatMode'
+  | 'sttEnabled'
+  | 'ttsEnabled'
+  | 'voiceInputMode'
+const PERSISTABLE_KEYS: PersistableKey[] = [
+  'fontSize',
+  'model',
+  'theme',
+  'defaultChatMode',
+  'sttEnabled',
+  'ttsEnabled',
+  'voiceInputMode',
+]
 
 function loadFromLocalStorage(): Partial<Settings> {
   try {
@@ -158,6 +180,18 @@ export function useSettings() {
     setSettings((prev) => ({ ...prev, theme }))
   }, [])
 
+  const updateSttEnabled = useCallback((sttEnabled: boolean) => {
+    setSettings((prev) => ({ ...prev, sttEnabled }))
+  }, [])
+
+  const updateTtsEnabled = useCallback((ttsEnabled: boolean) => {
+    setSettings((prev) => ({ ...prev, ttsEnabled }))
+  }, [])
+
+  const updateVoiceInputMode = useCallback((voiceInputMode: VoiceInputMode) => {
+    setSettings((prev) => ({ ...prev, voiceInputMode }))
+  }, [])
+
   const resetSettings = useCallback(() => {
     setSettings(DEFAULT_SETTINGS)
   }, [])
@@ -169,6 +203,9 @@ export function useSettings() {
     updateChatMode,
     updateTheme,
     updateDefaultChatMode,
+    updateSttEnabled,
+    updateTtsEnabled,
+    updateVoiceInputMode,
     resetSettings,
   }
 }

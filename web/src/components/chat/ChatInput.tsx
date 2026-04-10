@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef, useEffect, type KeyboardEvent } from 'react'
+import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
 import type { QueuedFile, ChatMode, ContextUsage } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
+import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
 import { ModeSelector } from './ModeSelector'
@@ -22,11 +23,12 @@ interface ChatInputProps {
   onPaletteSelect?: (item: PaletteItem) => void
   mode?: ChatMode
   onModeChange?: (mode: ChatMode) => void
-  voiceMode?: boolean
-  voiceAvailable?: boolean
-  voiceReady?: boolean
-  voiceLoading?: boolean
-  onToggleVoice?: () => void
+  sttEnabled?: boolean
+  voiceInputMode?: VoiceInputMode
+  isRecording?: boolean
+  startRecording?: () => Promise<void>
+  stopRecording?: () => Promise<void>
+  cancelRecording?: () => void
   contextUsage?: ContextUsage
   currentBranch?: string | null
   worktreePath?: string | null
@@ -77,11 +79,12 @@ export function ChatInput({
   onPaletteSelect,
   mode = 'accept_edits',
   onModeChange,
-  voiceMode = false,
-  voiceAvailable = false,
-  voiceReady: _voiceReady = false,
-  voiceLoading = false,
-  onToggleVoice,
+  sttEnabled = false,
+  voiceInputMode = 'ptt',
+  isRecording = false,
+  startRecording,
+  stopRecording,
+  cancelRecording,
   contextUsage,
   currentBranch,
   worktreePath,
@@ -119,6 +122,12 @@ export function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
+  const primaryButtonRef = useRef<HTMLButtonElement>(null)
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const holdActiveRef = useRef(false)
+  const latchedRef = useRef(false)
+  const activePointerIdRef = useRef<number | null>(null)
+  const pointerStartedWhileRecordingRef = useRef(false)
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
 
@@ -146,6 +155,20 @@ export function ChatInput({
   }, [input])
 
   useEffect(() => { setSelectedIndex(0) }, [paletteItems])
+
+  const clearHoldTimer = useCallback(() => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current)
+      holdTimerRef.current = null
+    }
+  }, [])
+
+  const resetPTTGesture = useCallback(() => {
+    clearHoldTimer()
+    holdActiveRef.current = false
+    activePointerIdRef.current = null
+    pointerStartedWhileRecordingRef.current = false
+  }, [clearHoldTimer])
 
   // Scroll selected command into view when navigating with arrow keys
   useEffect(() => {
@@ -254,6 +277,7 @@ export function ChatInput({
   }, [handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
+  const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
   const pickerProviders = availableProviders.length > 0 ? availableProviders : [provider ?? 'claude']
   const canSelectModel = Boolean(onModelChange)
   const canSwitchProvider = pickerProviders.length >= 2 && Boolean(onSwitchProvider)
@@ -263,6 +287,157 @@ export function ChatInput({
     : canSwitchProvider
       ? 'Select provider and model'
       : 'Select model'
+
+  type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
+
+  const resolvePrimaryButtonKind = (): PrimaryButtonKind => {
+    if (isStreaming) return 'stop'
+    if (pttEnabled && !hasInput) {
+      return isRecording ? 'mic-recording' : 'mic-idle'
+    }
+    return 'send'
+  }
+
+  const primaryButtonKind = resolvePrimaryButtonKind()
+
+  useEffect(() => {
+    if (!isRecording) {
+      latchedRef.current = false
+      resetPTTGesture()
+    }
+  }, [isRecording, resetPTTGesture])
+
+  useEffect(() => {
+    if (!pttEnabled) {
+      latchedRef.current = false
+      resetPTTGesture()
+    }
+  }, [pttEnabled, resetPTTGesture])
+
+  useEffect(() => {
+    if (!isRecording || !cancelRecording) return
+
+    const handleWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      latchedRef.current = false
+      resetPTTGesture()
+      cancelRecording()
+    }
+
+    window.addEventListener('keydown', handleWindowKeyDown)
+    return () => window.removeEventListener('keydown', handleWindowKeyDown)
+  }, [cancelRecording, isRecording, resetPTTGesture])
+
+  useEffect(() => {
+    return () => clearHoldTimer()
+  }, [clearHoldTimer])
+
+  const handleMicPointerDown = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (disabled || primaryButtonKind === 'stop' || !startRecording) return
+    if (event.button !== 0) return
+
+    event.preventDefault()
+    primaryButtonRef.current?.setPointerCapture(event.pointerId)
+    activePointerIdRef.current = event.pointerId
+    pointerStartedWhileRecordingRef.current = Boolean(isRecording && latchedRef.current)
+    holdActiveRef.current = false
+    clearHoldTimer()
+    holdTimerRef.current = setTimeout(() => {
+      holdActiveRef.current = true
+    }, 250)
+
+    if (!isRecording) {
+      void startRecording()
+    }
+  }, [clearHoldTimer, disabled, isRecording, primaryButtonKind, startRecording])
+
+  const handleMicPointerUp = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current) {
+      return
+    }
+
+    if (primaryButtonRef.current?.hasPointerCapture(event.pointerId)) {
+      primaryButtonRef.current.releasePointerCapture(event.pointerId)
+    }
+
+    const wasHold = holdActiveRef.current
+    const wasLatchedStopTap = pointerStartedWhileRecordingRef.current
+    resetPTTGesture()
+
+    if (wasHold || wasLatchedStopTap) {
+      latchedRef.current = false
+      void stopRecording?.()
+      return
+    }
+
+    latchedRef.current = true
+  }, [resetPTTGesture, stopRecording])
+
+  const handleMicPointerMove = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (!holdActiveRef.current || !cancelRecording) return
+    if (activePointerIdRef.current !== event.pointerId) return
+
+    const rect = primaryButtonRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    const outside =
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom
+
+    if (outside) {
+      if (primaryButtonRef.current?.hasPointerCapture(event.pointerId)) {
+        primaryButtonRef.current.releasePointerCapture(event.pointerId)
+      }
+      latchedRef.current = false
+      resetPTTGesture()
+      cancelRecording()
+    }
+  }, [cancelRecording, resetPTTGesture])
+
+  const handleMicPointerCancel = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (primaryButtonRef.current?.hasPointerCapture(event.pointerId)) {
+      primaryButtonRef.current.releasePointerCapture(event.pointerId)
+    }
+    latchedRef.current = false
+    resetPTTGesture()
+    cancelRecording?.()
+  }, [cancelRecording, resetPTTGesture])
+
+  const handlePrimaryButtonClick = useCallback(() => {
+    if (primaryButtonKind === 'stop') {
+      onStop?.()
+      return
+    }
+    if (primaryButtonKind === 'send') {
+      handleSubmit()
+    }
+  }, [handleSubmit, onStop, primaryButtonKind])
+
+  const primaryButtonDisabled =
+    primaryButtonKind === 'send'
+      ? !isStreaming && (disabled || !hasInput)
+      : primaryButtonKind === 'stop'
+        ? false
+        : disabled || !startRecording || !stopRecording || !cancelRecording
+
+  const primaryButtonLabel =
+    primaryButtonKind === 'stop'
+      ? 'Stop generating'
+      : primaryButtonKind === 'send'
+        ? 'Send message'
+        : primaryButtonKind === 'mic-recording'
+          ? 'Push to talk recording'
+          : 'Start push to talk'
+
+  const primaryButtonClassName = cn(
+    'inline-flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
+    primaryButtonKind === 'stop'
+      ? 'border border-border bg-transparent text-foreground hover:bg-muted'
+      : 'bg-accent text-accent-foreground hover:bg-accent-hover',
+    primaryButtonKind === 'mic-recording' && 'ring-2 ring-red-500/70 ring-offset-2 ring-offset-background animate-pulse',
+  )
 
   return (
     <div
@@ -421,8 +596,8 @@ export function ChatInput({
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={viewingSession ? 'Attach to send messages...' : disabled ? 'Connecting...' : isStreaming ? 'Interrupt...' : voiceMode ? 'Voice mode on...' : 'Message or /command...'}
-              aria-label={disabled ? 'Message input — connecting' : isStreaming ? 'Message input — streaming' : voiceMode ? 'Message input — voice mode' : 'Message input'}
+              placeholder={viewingSession ? 'Attach to send messages...' : disabled ? 'Connecting...' : isStreaming ? 'Interrupt...' : 'Message or /command...'}
+              aria-label={disabled ? 'Message input — connecting' : isStreaming ? 'Message input — streaming' : 'Message input'}
               disabled={disabled}
               rows={1}
               autoComplete="off"
@@ -436,32 +611,22 @@ export function ChatInput({
             />
 
             <div className="flex gap-1 shrink-0">
-              {onToggleVoice && (voiceAvailable || voiceLoading) && (
-                <button
-                  className={cn(
-                    'p-1.5 rounded transition-colors',
-                    voiceLoading
-                      ? 'text-muted-foreground bg-muted cursor-wait'
-                      : voiceMode
-                        ? 'text-accent bg-accent/20'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted',
-                  )}
-                  onClick={onToggleVoice}
-                  disabled={disabled || voiceLoading}
-                  title={voiceLoading ? 'Loading voice…' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
-                  aria-label={voiceLoading ? 'Loading voice' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
-                >
-                  {voiceLoading ? <SpinnerIcon /> : <MicIcon />}
-                </button>
-              )}
-              <Button size="icon" variant="primary" onClick={handleSubmit} disabled={!isStreaming && (disabled || !hasInput)}>
-                <SendIcon />
-              </Button>
-              {isStreaming && onStop && (
-                <Button size="icon" variant="outline" onClick={onStop} title="Stop generating">
-                  <StopIcon />
-                </Button>
-              )}
+              <button
+                ref={primaryButtonRef}
+                type="button"
+                className={primaryButtonClassName}
+                onClick={primaryButtonKind === 'mic-idle' || primaryButtonKind === 'mic-recording' ? undefined : handlePrimaryButtonClick}
+                onPointerDown={primaryButtonKind === 'mic-idle' || primaryButtonKind === 'mic-recording' ? handleMicPointerDown : undefined}
+                onPointerUp={primaryButtonKind === 'mic-idle' || primaryButtonKind === 'mic-recording' ? handleMicPointerUp : undefined}
+                onPointerMove={primaryButtonKind === 'mic-idle' || primaryButtonKind === 'mic-recording' ? handleMicPointerMove : undefined}
+                onPointerCancel={primaryButtonKind === 'mic-idle' || primaryButtonKind === 'mic-recording' ? handleMicPointerCancel : undefined}
+                title={primaryButtonLabel}
+                aria-label={primaryButtonLabel}
+                aria-pressed={primaryButtonKind === 'mic-recording' ? true : undefined}
+                disabled={primaryButtonDisabled}
+              >
+                {primaryButtonKind === 'stop' ? <StopIcon /> : primaryButtonKind === 'send' ? <SendIcon /> : <MicIcon />}
+              </button>
             </div>
           </div>
           {showObserveOverlay && (
@@ -516,14 +681,6 @@ function PaperclipIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  )
-}
-
-function SpinnerIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin">
-      <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="32" />
     </svg>
   )
 }

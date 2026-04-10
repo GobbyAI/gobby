@@ -79,6 +79,47 @@
   color: var(--text-primary);
 }
 
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.settings-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.settings-row__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.settings-row__label {
+  color: var(--text-primary);
+  font-size: calc(var(--font-size-base) * 0.9);
+  font-weight: 500;
+}
+
+.settings-row__hint {
+  color: var(--text-muted);
+  font-size: calc(var(--font-size-base) * 0.75);
+  line-height: 1.4;
+}
+
 .model-select {
   width: 100%;
   padding: 0.625rem 0.75rem;
