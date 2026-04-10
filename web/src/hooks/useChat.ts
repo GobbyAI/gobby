@@ -653,6 +653,7 @@ export function useChat() {
   const attachedSessionIdRef = useRef<string | null>(null);
   const [attachedSessionMeta, setAttachedSessionMeta] =
     useState<SessionObservationMeta | null>(null);
+  const attachedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
 
   // Keep a ref so onopen/reconnect can read the current agent
   const activeAgentRef = useRef(activeAgent);
@@ -1245,7 +1246,11 @@ export function useChat() {
           // Also set viewing state (attached implies viewing)
           setViewingSessionId(sid);
           setViewingSessionMeta(meta);
-          const nextMode = pendingSessionInteractionModeRef.current;
+          const requestedMode = pendingSessionInteractionModeRef.current;
+          const nextMode =
+            requestedMode === "proxy" && meta.sessionType !== "terminal"
+              ? "none"
+              : requestedMode;
           setSessionInteractionMode(nextMode);
           if (nextMode === "proxy") {
             setAttachedSessionId(sid);
@@ -1710,6 +1715,9 @@ export function useChat() {
   useEffect(() => {
     attachedSessionIdRef.current = attachedSessionId;
   }, [attachedSessionId]);
+  useEffect(() => {
+    attachedSessionMetaRef.current = attachedSessionMeta;
+  }, [attachedSessionMeta]);
   useEffect(() => {
     viewingSessionIdRef.current = viewingSessionId;
   }, [viewingSessionId]);
@@ -2263,7 +2271,8 @@ export function useChat() {
       // Route to a swapped terminal session when proxy mode is active.
       if (
         attachedSessionIdRef.current &&
-        sessionInteractionModeRef.current === "proxy"
+        sessionInteractionModeRef.current === "proxy" &&
+        attachedSessionMetaRef.current?.sessionType === "terminal"
       ) {
         const messageId = `user-${uuid()}`;
         setMessages((prev) => [
@@ -2671,6 +2680,10 @@ export function useChat() {
   const attachToViewed = useCallback(() => {
     const sid = viewingSessionIdRef.current;
     if (sid) {
+      const viewedMeta = viewingSessionMetaRef.current;
+      if (viewedMeta?.sessionType && viewedMeta.sessionType !== "terminal") {
+        return;
+      }
       if (observedSessionIdRef.current === sid) {
         setAttachedSessionId(sid);
         setAttachedSessionMeta(

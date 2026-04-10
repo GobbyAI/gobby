@@ -545,6 +545,85 @@ describe('useChat', () => {
     expect(result.current.attachedSessionId).toBe('sess-auto')
   })
 
+  it('does not attach viewed web chat sessions into proxy mode', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse('/api/sessions/sess-web/messages?limit=100&offset=0', {
+      messages: [],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-web', {
+      session: {
+        id: 'sess-web',
+        seq_num: 2313,
+        source: 'claude',
+        title: 'Other Web Chat',
+        status: 'paused',
+        model: 'sonnet',
+        external_id: 'claude-ext-web',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: 'web_chat',
+      },
+    })
+
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await act(async () => {
+      result.current.viewSession('sess-web')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const sendCountBeforeAttach = ws.send.mock.calls.length
+    act(() => {
+      result.current.attachToViewed?.()
+    })
+
+    expect(result.current.attachedSessionId).toBeNull()
+    expect(result.current.sessionInteractionMode).toBe('none')
+    expect(ws.send.mock.calls).toHaveLength(sendCountBeforeAttach)
+  })
+
+  it('keeps chat_message routing even if a web chat attach result is received', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-web',
+        external_id: 'web-ext',
+        source: 'claude',
+        title: 'Web Chat Session',
+        status: 'paused',
+        model: 'sonnet',
+        ref: '#2314',
+        session_type: 'web_chat',
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    expect(result.current.attachedSessionId).toBeNull()
+    expect(result.current.sessionInteractionMode).toBe('none')
+
+    act(() => {
+      result.current.sendMessage('Hello after swap')
+    })
+
+    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0])
+    expect(sentMsg.type).toBe('chat_message')
+    expect(sentMsg.content).toBe('Hello after swap')
+  })
+
   it('shows a queued proxy notice when CLI delivery falls back to hook piggyback', async () => {
     await loadModule()
     const { result } = renderHook(() => useChat())

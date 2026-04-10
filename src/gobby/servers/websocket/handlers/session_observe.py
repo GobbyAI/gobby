@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_terminal_session(session: Any) -> bool:
+    """Return True when a session supports live attach/proxy semantics."""
+    return getattr(session, "session_type", None) == "terminal"
+
+
 async def _resolve_agent_name_for_session(
     mixin: SessionControlMixin,
     session_id: str,
@@ -305,6 +310,13 @@ async def handle_attach_to_session(
     if not session:
         await mixin._send_error(websocket, f"Session not found: {session_id}", code="NOT_FOUND")
         return
+    if not _is_terminal_session(session):
+        await mixin._send_error(
+            websocket,
+            "attach_to_session only supports terminal sessions",
+            code="UNSUPPORTED_SESSION_TYPE",
+        )
+        return
 
     workflow_name = getattr(session, "workflow_name", None)
     agent_run_id = getattr(session, "agent_run_id", None)
@@ -394,6 +406,13 @@ async def handle_send_to_cli_session(
 
     if not session:
         await mixin._send_error(websocket, f"Session not found: {session_id}", code="NOT_FOUND")
+        return
+    if not _is_terminal_session(session):
+        await mixin._send_error(
+            websocket,
+            "send_to_cli_session only supports terminal sessions",
+            code="UNSUPPORTED_SESSION_TYPE",
+        )
         return
 
     # Persist the message via InterSessionMessageManager

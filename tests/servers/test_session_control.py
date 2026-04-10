@@ -355,3 +355,70 @@ class TestContinueInChatTerminalKill:
         assert response["workflow_name"] == "release-checks"
         assert response["agent_run_id"] == "run-auto-1"
         assert response["agent_name"] == "code-reviewer"
+
+    @pytest.mark.asyncio
+    async def test_attach_to_session_rejects_web_chat_sessions(self) -> None:
+        """Interactive attach should be limited to terminal sessions."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "web_chat"
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {}}
+        host._send_error = AsyncMock()
+
+        await SessionControlMixin._handle_attach_to_session(
+            host,
+            ws,
+            {"session_id": "source-uuid"},
+        )
+
+        host._send_error.assert_awaited_once_with(
+            ws,
+            "attach_to_session only supports terminal sessions",
+            code="UNSUPPORTED_SESSION_TYPE",
+        )
+        ws.send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_send_to_cli_session_rejects_web_chat_sessions(self) -> None:
+        """CLI proxy send should reject non-terminal targets."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "web_chat"
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {}}
+        host._send_error = AsyncMock()
+
+        await SessionControlMixin._handle_send_to_cli_session(
+            host,
+            ws,
+            {"session_id": "source-uuid", "content": "hello"},
+        )
+
+        host._send_error.assert_awaited_once_with(
+            ws,
+            "send_to_cli_session only supports terminal sessions",
+            code="UNSUPPORTED_SESSION_TYPE",
+        )
+        ws.send.assert_not_awaited()

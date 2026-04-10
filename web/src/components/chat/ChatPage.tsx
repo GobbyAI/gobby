@@ -204,6 +204,8 @@ export function ChatPage({
   );
   const showObserveOverlay =
     isAutonomousSession && chat.sessionInteractionMode !== "proxy";
+  const canAttachViewedSession =
+    viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
   const providerPickerDisabledReason = isAutonomousSession
     ? chat.sessionInteractionMode === "proxy"
       ? "Cannot change provider on a pipeline-managed session"
@@ -470,7 +472,7 @@ export function ChatPage({
           isAttached={!!chat.attachedSessionId}
           sessionInteractionMode={chat.sessionInteractionMode}
           isAutonomousSession={isAutonomousSession}
-          onAttach={isAutonomousSession ? undefined : chat.onAttachToViewed}
+          onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
           onDetach={
             isAutonomousSession ? handleAutonomousDetach : chat.clearViewingSession
           }
