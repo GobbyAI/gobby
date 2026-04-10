@@ -471,6 +471,125 @@ describe('useChat', () => {
     expect(result.current.messages[0].content).toBe('Updated output')
   })
 
+  it('keeps autonomous session observation read-only until explicitly attached', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse('/api/sessions/sess-auto/messages?limit=100&offset=0', {
+      messages: [],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-auto', {
+      session: {
+        id: 'sess-auto',
+        seq_num: 2311,
+        source: 'claude',
+        title: 'Autonomous session',
+        status: 'active',
+        model: 'sonnet',
+        external_id: 'claude-ext-auto',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: 'terminal',
+        workflow_name: 'release-checks',
+        agent_run_id: 'run-auto-1',
+      },
+    })
+    mockFetch.mockJsonResponse('/api/agents/runs/run-auto-1', {
+      run: { agent_name: 'code-reviewer', workflow_name: 'release-checks' },
+    })
+
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await act(async () => {
+      result.current.viewSession('sess-auto')
+      result.current.observeSession?.('sess-auto', 'observe')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-auto',
+        external_id: 'claude-ext-auto',
+        source: 'claude',
+        title: 'Autonomous session',
+        status: 'active',
+        model: 'sonnet',
+        ref: '#2311',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        session_type: 'terminal',
+        workflow_name: 'release-checks',
+        agent_run_id: 'run-auto-1',
+        agent_name: 'code-reviewer',
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    expect(result.current.sessionInteractionMode).toBe('observe')
+    expect(result.current.attachedSessionId).toBeNull()
+
+    act(() => {
+      result.current.attachToViewed?.()
+    })
+
+    expect(result.current.sessionInteractionMode).toBe('proxy')
+    expect(result.current.attachedSessionId).toBe('sess-auto')
+  })
+
+  it('shows a queued proxy notice when CLI delivery falls back to hook piggyback', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-proxy',
+        external_id: 'proxy-ext',
+        source: 'claude',
+        title: 'Proxy session',
+        status: 'active',
+        model: 'sonnet',
+        ref: '#2312',
+        session_type: 'terminal',
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    act(() => {
+      result.current.attachToViewed?.()
+      result.current.sendMessage('/plan')
+    })
+
+    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0])
+    expect(sentMsg.type).toBe('send_to_cli_session')
+    expect(sentMsg.content).toBe('/plan')
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'send_to_cli_session_result',
+        session_id: 'sess-proxy',
+        delivered: false,
+        delivery_method: 'hook_piggyback',
+      })
+    })
+
+    expect(result.current.proxyDeliveryNotice).toBe(
+      'Message queued until the session yields.',
+    )
+  })
+
   it('handles mode_changed messages', async () => {
     await loadModule()
     const { result } = renderHook(() => useChat())

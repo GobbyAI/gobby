@@ -180,4 +180,42 @@ describe('ChatInput', () => {
 
     expect(screen.getByLabelText('Select model')).toBeTruthy()
   })
+
+  it('forwards non-local slash commands in proxy mode', async () => {
+    const onSend = vi.fn()
+    const onPaletteSelect = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onPaletteSelect={onPaletteSelect}
+        proxySlashMode={true}
+        paletteItems={[
+          { kind: 'command' as const, name: 'settings', description: 'Settings', action: 'open_settings' },
+          { kind: 'command' as const, name: 'clear', description: 'Clear', action: 'clear_history' },
+        ]}
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, '/plan')
+    await userEvent.keyboard('{Enter}')
+
+    expect(onSend).toHaveBeenCalledWith('/plan', undefined)
+    expect(onPaletteSelect).not.toHaveBeenCalled()
+  })
+
+  it('renders the observe overlay and calls attach', async () => {
+    const onAttachObservedSession = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        showObserveOverlay={true}
+        onAttachObservedSession={onAttachObservedSession}
+      />,
+    )
+
+    await userEvent.click(screen.getByText('Attach'))
+    expect(onAttachObservedSession).toHaveBeenCalled()
+  })
 })

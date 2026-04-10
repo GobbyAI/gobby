@@ -137,6 +137,7 @@ CREATE TABLE agent_runs (
     parent_session_id TEXT NOT NULL REFERENCES sessions(id),
     child_session_id TEXT REFERENCES sessions(id),
     workflow_name TEXT,
+    agent_name TEXT,
     provider TEXT NOT NULL,
     model TEXT,
     status TEXT NOT NULL DEFAULT 'pending',

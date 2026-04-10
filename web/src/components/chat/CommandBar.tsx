@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import type { SessionObservationMeta } from '../../types/chat'
+import type { SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 
 interface RunningAgent {
@@ -16,6 +16,8 @@ interface CommandBarProps {
   title: string | null
   viewingMeta?: SessionObservationMeta | null
   isAttached?: boolean
+  sessionInteractionMode?: SessionInteractionMode
+  isAutonomousSession?: boolean
   onAttach?: () => void
   onDetach?: () => void
   onOpenPalette: () => void
@@ -56,6 +58,8 @@ export function CommandBar({
   title,
   viewingMeta,
   isAttached,
+  sessionInteractionMode = 'none',
+  isAutonomousSession = false,
   onAttach,
   onDetach,
   onOpenPalette,
@@ -86,6 +90,8 @@ export function CommandBar({
             sessionRef={sessionRef}
             viewingMeta={viewingMeta}
             isAttached={!!isAttached}
+            sessionInteractionMode={sessionInteractionMode}
+            isAutonomousSession={isAutonomousSession}
             onAttach={onAttach}
             onDetach={onDetach}
           />
@@ -135,12 +141,16 @@ function ObservationSegment({
   sessionRef,
   viewingMeta,
   isAttached,
+  sessionInteractionMode,
+  isAutonomousSession,
   onAttach,
   onDetach,
 }: {
   sessionRef: string | null
   viewingMeta: SessionObservationMeta
   isAttached: boolean
+  sessionInteractionMode: SessionInteractionMode
+  isAutonomousSession: boolean
   onAttach?: () => void
   onDetach?: () => void
 }) {
@@ -149,6 +159,9 @@ function ObservationSegment({
   const sourceDot = sourceConf?.dot ?? 'bg-neutral-400'
   const isLive = viewingMeta.status === 'active'
   const modeLabel = formatChatMode(viewingMeta.chatMode)
+
+  const statusLabel =
+    sessionInteractionMode === 'proxy' || isAttached ? 'Attached' : 'Observing'
 
   return (
     <div className="command-bar-observation">
@@ -167,10 +180,11 @@ function ObservationSegment({
       )}
       <span className="text-muted-foreground/60 text-[11px]">&middot;</span>
       <span className="text-muted-foreground text-[11px]">
-        {isAttached ? 'Attached' : 'Observing'}
-        {isLive && !isAttached && ' (live)'}
+        {statusLabel}
+        {isLive && statusLabel === 'Observing' && ' (live)'}
       </span>
       {(() => {
+        if (isAutonomousSession && !isAttached) return null
         if (isAttached && onDetach) return <button className="command-bar-obs-btn" onClick={onDetach}>Detach</button>
         if (!isAttached && onAttach) return <button className="command-bar-obs-btn command-bar-obs-btn--attach" onClick={onAttach}>Attach</button>
         return null

@@ -49,6 +49,21 @@ interface ChatInputProps {
   onProviderChange?: (provider: string | null) => void
   onSwitchProvider?: (provider: string) => void
   hasMessages?: boolean
+  onProviderSelectionChange?: (provider: string, model: string) => void
+  providerPickerDisabledReason?: string | null
+  proxySlashMode?: boolean
+  showObserveOverlay?: boolean
+  onAttachObservedSession?: () => void
+  proxyDeliveryNotice?: string | null
+}
+
+const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
+
+function shouldHandleSlashCommandLocally(input: string): boolean {
+  if (!input.startsWith('/')) return false
+  const commandToken = input.slice(1).split(/\s/)[0] || ''
+  const topLevelCommand = commandToken.split(':')[0] || commandToken
+  return LOCAL_ONLY_SLASH_COMMANDS.has(topLevelCommand)
 }
 
 export function ChatInput({
@@ -89,6 +104,12 @@ export function ChatInput({
   onProviderChange,
   onSwitchProvider,
   hasMessages = false,
+  onProviderSelectionChange,
+  providerPickerDisabledReason = null,
+  proxySlashMode = false,
+  showObserveOverlay = false,
+  onAttachObservedSession,
+  proxyDeliveryNotice = null,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -210,17 +231,19 @@ export function ChatInput({
         return
       }
       if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        const selected = paletteItems[selectedIndex]
-        if (selected) {
-          if (selected.kind === 'sub_item') {
-            // Complete the name, don't send
-            handlePaletteSelect(selected)
-          } else {
-            handlePaletteSelect(selected)
+        if (!(proxySlashMode && !shouldHandleSlashCommandLocally(input))) {
+          e.preventDefault()
+          const selected = paletteItems[selectedIndex]
+          if (selected) {
+            if (selected.kind === 'sub_item') {
+              // Complete the name, don't send
+              handlePaletteSelect(selected)
+            } else {
+              handlePaletteSelect(selected)
+            }
           }
+          return
         }
-        return
       }
     }
     if (isMobile) {
@@ -228,13 +251,18 @@ export function ChatInput({
     } else {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
     }
-  }, [handleSubmit, isStreaming, onStop, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
+  }, [handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pickerProviders = availableProviders.length > 0 ? availableProviders : [provider ?? 'claude']
   const canSelectModel = Boolean(onModelChange)
   const canSwitchProvider = pickerProviders.length >= 2 && Boolean(onSwitchProvider)
-  const pickerLabel = canSwitchProvider ? 'Select provider and model' : 'Select model'
+  const providerButtonDisabled = disabled || Boolean(providerPickerDisabledReason)
+  const pickerLabel = providerPickerDisabledReason
+    ? providerPickerDisabledReason
+    : canSwitchProvider
+      ? 'Select provider and model'
+      : 'Select model'
 
   return (
     <div
@@ -307,7 +335,7 @@ export function ChatInput({
                 size="icon"
                 variant="ghost"
                 onClick={() => setPickerOpen(true)}
-                disabled={disabled}
+                disabled={providerButtonDisabled}
                 title={pickerLabel}
                 aria-label={pickerLabel}
               >
@@ -322,6 +350,7 @@ export function ChatInput({
                 onModelChange={onModelChange ?? (() => {})}
                 onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
                 onSwitchProvider={onSwitchProvider}
+                onSelect={onProviderSelectionChange}
                 hasMessages={hasMessages}
               />
             </>
@@ -384,56 +413,72 @@ export function ChatInput({
         )}
 
         {/* Input row */}
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
-            value={input}
-            onChange={(e) => handleChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={viewingSession ? 'Attach to send messages...' : disabled ? 'Connecting...' : isStreaming ? 'Interrupt...' : voiceMode ? 'Voice mode on...' : 'Message or /command...'}
-            aria-label={disabled ? 'Message input — connecting' : isStreaming ? 'Message input — streaming' : voiceMode ? 'Message input — voice mode' : 'Message input'}
-            disabled={disabled}
-            rows={1}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            inputMode="text"
-            spellCheck={false}
-            data-form-type="other"
-            data-lpignore="true"
-            data-1p-ignore
-          />
+        <div className="chat-input-shell">
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
+              value={input}
+              onChange={(e) => handleChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={viewingSession ? 'Attach to send messages...' : disabled ? 'Connecting...' : isStreaming ? 'Interrupt...' : voiceMode ? 'Voice mode on...' : 'Message or /command...'}
+              aria-label={disabled ? 'Message input — connecting' : isStreaming ? 'Message input — streaming' : voiceMode ? 'Message input — voice mode' : 'Message input'}
+              disabled={disabled}
+              rows={1}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              inputMode="text"
+              spellCheck={false}
+              data-form-type="other"
+              data-lpignore="true"
+              data-1p-ignore
+            />
 
-          <div className="flex gap-1 shrink-0">
-            {onToggleVoice && (voiceAvailable || voiceLoading) && (
-              <button
-                className={cn(
-                  'p-1.5 rounded transition-colors',
-                  voiceLoading
-                    ? 'text-muted-foreground bg-muted cursor-wait'
-                    : voiceMode
-                      ? 'text-accent bg-accent/20'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted',
-                )}
-                onClick={onToggleVoice}
-                disabled={disabled || voiceLoading}
-                title={voiceLoading ? 'Loading voice…' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
-                aria-label={voiceLoading ? 'Loading voice' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
-              >
-                {voiceLoading ? <SpinnerIcon /> : <MicIcon />}
-              </button>
-            )}
-            <Button size="icon" variant="primary" onClick={handleSubmit} disabled={!isStreaming && (disabled || !hasInput)}>
-              <SendIcon />
-            </Button>
-            {isStreaming && onStop && (
-              <Button size="icon" variant="outline" onClick={onStop} title="Stop generating">
-                <StopIcon />
+            <div className="flex gap-1 shrink-0">
+              {onToggleVoice && (voiceAvailable || voiceLoading) && (
+                <button
+                  className={cn(
+                    'p-1.5 rounded transition-colors',
+                    voiceLoading
+                      ? 'text-muted-foreground bg-muted cursor-wait'
+                      : voiceMode
+                        ? 'text-accent bg-accent/20'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted',
+                  )}
+                  onClick={onToggleVoice}
+                  disabled={disabled || voiceLoading}
+                  title={voiceLoading ? 'Loading voice…' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
+                  aria-label={voiceLoading ? 'Loading voice' : voiceMode ? 'Disable voice mode' : 'Enable voice mode'}
+                >
+                  {voiceLoading ? <SpinnerIcon /> : <MicIcon />}
+                </button>
+              )}
+              <Button size="icon" variant="primary" onClick={handleSubmit} disabled={!isStreaming && (disabled || !hasInput)}>
+                <SendIcon />
               </Button>
-            )}
+              {isStreaming && onStop && (
+                <Button size="icon" variant="outline" onClick={onStop} title="Stop generating">
+                  <StopIcon />
+                </Button>
+              )}
+            </div>
           </div>
+          {showObserveOverlay && (
+            <div className="chat-input-overlay">
+              <button
+                type="button"
+                className="chat-input-overlay__button"
+                onClick={onAttachObservedSession}
+              >
+                Attach
+              </button>
+            </div>
+          )}
         </div>
+        {proxyDeliveryNotice && (
+          <div className="chat-input-notice">{proxyDeliveryNotice}</div>
+        )}
       </div>
     </div>
   )

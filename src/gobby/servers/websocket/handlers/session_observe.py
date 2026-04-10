@@ -22,6 +22,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _resolve_agent_name_for_session(
+    mixin: SessionControlMixin,
+    session_id: str,
+    workflow_name: str | None,
+    agent_run_id: str | None,
+) -> str | None:
+    """Resolve the UI-facing agent name for an observed session."""
+    if not agent_run_id:
+        return None
+
+    session_manager = getattr(mixin, "session_manager", None)
+    if not session_manager:
+        return workflow_name
+
+    try:
+        from gobby.storage.agents import LocalAgentRunManager
+
+        run = await asyncio.to_thread(LocalAgentRunManager(session_manager.db).get, agent_run_id)
+        if run and run.agent_name:
+            return run.agent_name
+    except Exception as exc:
+        logger.debug("Failed to resolve agent name for session %s: %s", session_id, exc)
+
+    return workflow_name
+
+
 async def handle_continue_in_chat(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:
@@ -49,6 +75,8 @@ async def handle_continue_in_chat(
 
     conversation_id = data.get("conversation_id") or str(uuid4())
     project_id = data.get("project_id")
+    target_provider = data.get("provider")
+    target_model = data.get("model")
 
     # Look up source session for project_id and SDK session ID
     session_manager = getattr(mixin, "session_manager", None)
@@ -75,13 +103,18 @@ async def handle_continue_in_chat(
     # --- Resolve SDK session ID for native resume ---
     sdk_resume_id: str | None = None
 
+    source_provider = getattr(source_session, "source", None) if source_session else None
+    can_sdk_resume = (
+        not target_provider or not source_provider or target_provider == source_provider
+    )
+
     # 1. Source session's external_id IS the SDK session ID
     #    (web chat sessions update external_id -> SDK session ID after first turn)
-    if source_session and source_session.external_id:
+    if can_sdk_resume and source_session and source_session.external_id:
         sdk_resume_id = source_session.external_id
 
     # 2. Check agent_runs for autonomous agents with sdk_session_id
-    if not sdk_resume_id:
+    if can_sdk_resume and not sdk_resume_id:
         agent_run_mgr = getattr(mixin, "agent_run_manager", None)
         if agent_run_mgr:
             try:
@@ -154,8 +187,10 @@ async def handle_continue_in_chat(
         try:
             session = await mixin._create_chat_session(
                 conversation_id,
+                model=target_model,
                 project_id=project_id,
                 resume_session_id=sdk_resume_id,
+                provider=target_provider,
             )
         except Exception as e:
             logger.error(f"Failed to create continuation session: {e}")
@@ -271,6 +306,15 @@ async def handle_attach_to_session(
         await mixin._send_error(websocket, f"Session not found: {session_id}", code="NOT_FOUND")
         return
 
+    workflow_name = getattr(session, "workflow_name", None)
+    agent_run_id = getattr(session, "agent_run_id", None)
+    agent_name = await _resolve_agent_name_for_session(
+        mixin,
+        session_id,
+        workflow_name,
+        agent_run_id,
+    )
+
     # Message loading via message_manager removed (session_messages table dropped)
     messages: list[dict[str, Any]] = []
     total_count = 0
@@ -302,6 +346,10 @@ async def handle_attach_to_session(
                 "chat_mode": getattr(session, "chat_mode", None),
                 "git_branch": getattr(session, "git_branch", None),
                 "context_window": getattr(session, "context_window", None),
+                "session_type": getattr(session, "session_type", None),
+                "workflow_name": workflow_name,
+                "agent_run_id": agent_run_id,
+                "agent_name": agent_name,
                 "messages": messages,
                 "total_count": total_count,
             }

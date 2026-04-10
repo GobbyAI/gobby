@@ -200,24 +200,28 @@ describe("SessionsTab", () => {
     expect(screen.getAllByText(/^web$/i)).toHaveLength(1);
   });
 
-  it("shows agent badge and lets a watched web chat attach into the main chat", async () => {
-    const onAttachSession = vi.fn();
+  it("shows agent badge and lets a watched session swap into the main chat", async () => {
+    const onSwapSession = vi.fn();
 
     render(
       <SessionsTab
         chatSessionId="web-current"
         focusSessionId="web-other"
-        onAttachSession={onAttachSession}
+        onSwapSession={onSwapSession}
       />,
     );
 
     await waitFor(() => {
       expect(screen.getByText(/^auto$/i)).toBeTruthy();
-      expect(screen.getByText("Attach")).toBeTruthy();
+      expect(screen.getByText("Swap")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByText("Attach"));
+    fireEvent.click(screen.getByText("Swap"));
 
-    expect(onAttachSession).toHaveBeenCalledWith("web-other");
+    expect(onSwapSession).toHaveBeenCalledWith({
+      sessionId: "web-other",
+      sessionType: "web_chat",
+      agentRunId: "run-auto-203",
+    });
   });
 });

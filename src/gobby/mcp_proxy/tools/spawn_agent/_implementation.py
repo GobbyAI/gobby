@@ -432,6 +432,7 @@ async def spawn_agent_impl(
         branch_name=isolation_ctx.branch_name,
         task_id=resolved_task_id,
         title=spawn_title,
+        agent_name=agent_display_name,
         session_manager=runner.child_session_manager,
         machine_id=get_machine_id() or "unknown",
         model=effective_model,

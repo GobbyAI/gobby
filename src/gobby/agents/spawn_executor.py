@@ -53,6 +53,7 @@ class SpawnRequest:
     branch_name: str | None = None  # Git branch for worktree/clone isolation
     task_id: str | None = None  # Task being worked on (for dedup tracking)
     title: str | None = None  # Session title (derived from agent/task name)
+    agent_name: str | None = None  # Agent definition name for UI/status surfaces
     agent_depth: int = 0
     max_agent_depth: int = 5
     session_manager: Any | None = None  # Required for Gemini/Codex preflight
@@ -140,6 +141,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         agent_run_id=request.agent_run_id,
         task_id=request.task_id,
         title=request.title,
+        agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
     )
 
@@ -256,6 +258,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         agent_run_id=request.agent_run_id,
         task_id=request.task_id,
         title=request.title,
+        agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
     )
 

@@ -6,6 +6,7 @@ Focuses on the terminal kill path in continue_in_chat.
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -119,6 +120,24 @@ class TestKillTerminalSession:
 
         assert result is True
         mock_kill.assert_called_once_with(5678, signal.SIGTERM)
+
+    @pytest.mark.asyncio
+    async def test_treats_missing_tmux_pane_as_already_cleaned_up(self) -> None:
+        """Missing panes should count as success during resume cleanup."""
+        ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 1
+        mock_proc.communicate = AsyncMock(return_value=(b"", b"can't find pane: %10"))
+
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+            patch("os.kill") as mock_kill,
+        ):
+            result = await kill_terminal_session(ctx, "test-session-id")
+
+        assert result is True
+        mock_kill.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_both_methods_fail(self) -> None:
@@ -285,3 +304,54 @@ class TestContinueInChatTerminalKill:
         # DB-driven kill_agent should have been used instead of terminal kill
         mock_kill_agent.assert_called_once()
         mock_kill_terminal.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_attach_to_session_returns_extended_metadata(self) -> None:
+        """Observed sessions should include session/agent metadata for the UI."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.external_id = "cli-session-123"
+        source_session.seq_num = 42
+        source_session.source = "claude"
+        source_session.title = "Observed Session"
+        source_session.status = "active"
+        source_session.model = "sonnet"
+        source_session.chat_mode = "accept_edits"
+        source_session.git_branch = "main"
+        source_session.context_window = 200000
+        source_session.session_type = "terminal"
+        source_session.workflow_name = "release-checks"
+        source_session.agent_run_id = "run-auto-1"
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {}}
+        host._send_error = AsyncMock()
+
+        mock_run = MagicMock()
+        mock_run.agent_name = "code-reviewer"
+
+        with patch("gobby.storage.agents.LocalAgentRunManager.get", return_value=mock_run):
+            await SessionControlMixin._handle_attach_to_session(
+                host,
+                ws,
+                {"session_id": "source-uuid"},
+            )
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["type"] == "attach_to_session_result"
+        assert response["session_type"] == "terminal"
+        assert response["workflow_name"] == "release-checks"
+        assert response["agent_run_id"] == "run-auto-1"
+        assert response["agent_name"] == "code-reviewer"

@@ -4,6 +4,7 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import type {
   ChatState,
   ConversationState,
+  SwappedSessionTarget,
   VoiceProps,
 } from "../../types/chat";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
@@ -19,8 +20,10 @@ import { ActiveSessionsModal } from "./ActiveSessionsModal";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
 import { VoiceStatusBar } from "./VoiceStatusBar";
+import { AgentStatusBar } from "./AgentStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
+import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 
 const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
@@ -90,6 +93,7 @@ export function ChatPage({
   const canvas = useCanvasPanel();
   const activity = useActivityPanel();
   const fileChanges = useFileChanges(chat.messages, projectId ?? null);
+  const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const {
     openCanvas,
     closeCanvas,
@@ -142,31 +146,125 @@ export function ChatPage({
     });
   }, []);
 
-  const handleAttachWatchedSession = useCallback(
-    (sessionId: string) => {
-      const targetSession = conversations.sessions.find(
-        (session) => session.id === sessionId,
-      );
-      if (!targetSession) return;
-      handleUnwatch(sessionId);
-      conversations.onSelectSession(targetSession);
+  const parkCurrentSession = useCallback(
+    (nextSessionId?: string) => {
+      const currentSessionId = chat.viewingSessionId ?? chat.dbSessionId;
+      if (
+        !currentSessionId ||
+        chat.messages.length === 0 ||
+        currentSessionId === nextSessionId
+      ) {
+        return;
+      }
+      setWatchingSessionIds((prev) => new Set(prev).add(currentSessionId));
+      setFocusSessionId(currentSessionId);
+      showTab("sessions");
     },
-    [conversations, handleUnwatch],
+    [chat.dbSessionId, chat.messages.length, chat.viewingSessionId, showTab],
+  );
+
+  const handleSwapSession = useCallback(
+    (target: SwappedSessionTarget) => {
+      parkCurrentSession(target.sessionId);
+      handleUnwatch(target.sessionId);
+
+      if (target.sessionType === "web_chat") {
+        const targetSession = conversations.sessions.find(
+          (session) => session.id === target.sessionId,
+        );
+        if (targetSession) {
+          conversations.onSelectSession(targetSession);
+        }
+        return;
+      }
+
+      chat.viewSession?.(target.sessionId);
+      chat.observeSession?.(
+        target.sessionId,
+        target.agentRunId ? "observe" : "proxy",
+      );
+    },
+    [chat, conversations, handleUnwatch, parkCurrentSession],
+  );
+
+  const handleAutonomousDetach = useCallback(() => {
+    if (chat.sessionInteractionMode === "proxy") {
+      chat.onDetachFromSession?.();
+      return;
+    }
+    if (chat.viewingSessionMeta?.sessionType === "terminal") {
+      chat.clearViewingSession?.();
+    }
+  }, [chat]);
+
+  const viewingMeta = chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
+  const isSwappedTerminal = viewingMeta?.sessionType === "terminal";
+  const isAutonomousSession = Boolean(
+    isSwappedTerminal && viewingMeta?.agentRunId,
+  );
+  const showObserveOverlay =
+    isAutonomousSession && chat.sessionInteractionMode !== "proxy";
+  const providerPickerDisabledReason = isAutonomousSession
+    ? chat.sessionInteractionMode === "proxy"
+      ? "Cannot change provider on a pipeline-managed session"
+      : "Observing autonomous session"
+    : null;
+  const effectiveInputProvider = isSwappedTerminal
+    ? viewingMeta?.source ?? chat.provider
+    : chat.provider;
+  const effectiveInputModel = isSwappedTerminal
+    ? viewingMeta?.model ?? currentModel
+    : currentModel;
+
+  const handleSwappedSessionProviderSelection = useCallback(
+    async (provider: string, model: string) => {
+      if (
+        !isSwappedTerminal ||
+        isAutonomousSession ||
+        !chat.viewingSessionId ||
+        !chat.continueSessionInChat
+      ) {
+        return;
+      }
+
+      const confirmChange =
+        viewingMeta?.status === "active"
+          ? await confirm({
+              title: "Change provider?",
+              description:
+                `This will end the terminal session and resume the conversation with ${provider} ${model}.`,
+              confirmLabel: "Change Provider",
+              destructive: true,
+            })
+          : true;
+      if (!confirmChange) return;
+
+      chat.onProviderChange?.(provider);
+      onModelChange?.(model);
+      await chat.continueSessionInChat(chat.viewingSessionId, projectId ?? undefined, {
+        provider,
+        model,
+      });
+    },
+    [
+      chat,
+      confirm,
+      currentModel,
+      isAutonomousSession,
+      isSwappedTerminal,
+      onModelChange,
+      projectId,
+      viewingMeta?.status,
+    ],
   );
 
   // Wrap onNewChat to park the current session as Watching
   const handleNewChat = useCallback(
     (agentName?: string) => {
-      const currentDbId = chat.dbSessionId;
-      if (currentDbId && chat.messages.length > 0) {
-        setWatchingSessionIds((prev) => new Set(prev).add(currentDbId));
-        // Auto-select the parked session in the Sessions tab
-        setFocusSessionId(currentDbId);
-        showTab("sessions");
-      }
+      parkCurrentSession();
       conversations.onNewChat(agentName);
     },
-    [chat.dbSessionId, chat.messages.length, conversations, showTab],
+    [conversations, parkCurrentSession],
   );
 
   // Available LLM providers — fetched from daemon API
@@ -359,24 +457,28 @@ export function ChatPage({
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
+      {ConfirmDialogElement}
       {/* Main chat column */}
       <div className="flex flex-col flex-1 min-w-[400px]">
         {/* Command Bar */}
         <CommandBar
           sessionRef={effectiveSessionRef}
           title={
-            chat.viewingSessionMeta?.title ??
-            chat.attachedSessionMeta?.title ??
+            viewingMeta?.title ??
             activeTitle
           }
-          viewingMeta={chat.viewingSessionMeta ?? chat.attachedSessionMeta}
+          viewingMeta={viewingMeta}
           isAttached={!!chat.attachedSessionId}
-          onAttach={chat.onAttachToViewed}
-          onDetach={chat.onDetachFromSession}
+          sessionInteractionMode={chat.sessionInteractionMode}
+          isAutonomousSession={isAutonomousSession}
+          onAttach={isAutonomousSession ? undefined : chat.onAttachToViewed}
+          onDetach={
+            isAutonomousSession ? handleAutonomousDetach : chat.clearViewingSession
+          }
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
-          onTogglePanel={activity.togglePanel}
+          onTogglePanel={togglePanel}
           agents={conversations.agents ?? []}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
@@ -384,7 +486,7 @@ export function ChatPage({
           agentShowScopeToggle={agentShowScopeToggle}
           agentHasGlobal={agentHasGlobal}
           agentHasProject={agentHasProject}
-          isPanelPinned={activity.isPinned}
+          isPanelPinned={isPinned}
         />
         {voice.voiceMode && (
           <VoiceStatusBar
@@ -420,16 +522,23 @@ export function ChatPage({
             />
           </div>
 
+          {isAutonomousSession && viewingMeta && (
+            <AgentStatusBar
+              viewingMeta={viewingMeta}
+              interactionMode={chat.sessionInteractionMode ?? "none"}
+            />
+          )}
+
           {/* Chat input */}
           <ChatInput
-            onSend={chat.onSend}
+            onSend={onSend}
             onStop={chat.onStop}
             isStreaming={chat.isStreaming}
             disabled={
               !chat.isConnected ||
-              (!!chat.viewingSessionId && !chat.attachedSessionId)
+              (isSwappedTerminal && chat.sessionInteractionMode !== "proxy")
             }
-            viewingSession={!!chat.viewingSessionId && !chat.attachedSessionId}
+            viewingSession={showObserveOverlay}
             onInputChange={chat.onInputChange}
             paletteItems={chat.paletteItems}
             onPaletteSelect={handlePaletteSelect}
@@ -455,13 +564,21 @@ export function ChatPage({
             onToggleVoice={voice.onToggleVoice}
             isMobile={isMobile}
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
-            provider={chat.provider}
+            provider={effectiveInputProvider}
             availableProviders={availableProviders}
-            currentModel={currentModel}
+            currentModel={effectiveInputModel}
             onModelChange={onModelChange}
             onProviderChange={chat.onProviderChange}
             onSwitchProvider={chat.onSwitchProvider}
+            onProviderSelectionChange={
+              isSwappedTerminal ? handleSwappedSessionProviderSelection : undefined
+            }
+            providerPickerDisabledReason={providerPickerDisabledReason}
             hasMessages={chat.messages.length > 0}
+            proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
+            showObserveOverlay={showObserveOverlay}
+            onAttachObservedSession={chat.onAttachToViewed}
+            proxyDeliveryNotice={chat.proxyDeliveryNotice}
           />
         </ArtifactContext.Provider>
       </div>
@@ -500,7 +617,7 @@ export function ChatPage({
         onFocusSessionHandled={handleFocusSessionHandled}
         watchingSessionIds={watchingSessionIds}
         onUnwatchSession={handleUnwatch}
-        onAttachSession={handleAttachWatchedSession}
+        onSwapSession={handleSwapSession}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
       />

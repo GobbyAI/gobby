@@ -2893,3 +2893,74 @@
   background: color-mix(in srgb, #2563eb 8%, transparent);
   color: #1d4ed8;
 }
+
+.chat-input-shell {
+  position: relative;
+}
+
+.chat-input-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
+  border-radius: 0.75rem;
+}
+
+.chat-input-overlay__button {
+  min-height: 40px;
+  padding: 0 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.chat-input-overlay__button:hover {
+  filter: brightness(1.05);
+}
+
+.chat-input-notice {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.agent-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: 0.8125rem;
+}
+
+.agent-status-bar__identity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-status-bar__name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.agent-status-bar__workflow {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-status-bar__status {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}

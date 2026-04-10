@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 200
+BASELINE_VERSION = 207
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -837,6 +837,13 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         206,
         "Narrow memories FTS update trigger to indexed columns only",
         lambda db: _narrow_memories_fts_update_trigger(db),
+    ),
+    (
+        207,
+        "Persist agent definition name on agent runs",
+        """
+        ALTER TABLE agent_runs ADD COLUMN agent_name TEXT;
+        """,
     ),
 ]
 

@@ -5,7 +5,7 @@ import type { GobbySession } from "../../hooks/useSessions";
 import { useSessionDetail } from "../../hooks/useSessionDetail";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { MessageItem } from "../chat/MessageItem";
-import type { ChatMessage } from "../../types/chat";
+import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import {
   SessionInteractionModal,
@@ -31,7 +31,7 @@ interface SessionsTabProps {
   onFocusHandled?: () => void;
   watchingSessionIds?: Set<string>;
   onUnwatch?: (sessionId: string) => void;
-  onAttachSession?: (sessionId: string) => void;
+  onSwapSession?: (target: SwappedSessionTarget) => void;
 }
 
 interface SessionEntry {
@@ -87,7 +87,7 @@ export const SessionsTab = memo(function SessionsTab({
   onFocusHandled,
   watchingSessionIds,
   onUnwatch,
-  onAttachSession,
+  onSwapSession,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
   const [activitySessions, setActivitySessions] = useState<GobbySession[]>([]);
@@ -486,41 +486,49 @@ export const SessionsTab = memo(function SessionsTab({
         <div className="flex-1 flex flex-col min-h-0">
           {/* Session header */}
           <div
-            className="flex items-center gap-2 px-3 border-b border-border"
+            className="flex items-center gap-3 px-3 border-b border-border"
             style={{ height: 40, background: "var(--bg-secondary)" }}
           >
-            <span className="text-xs text-muted-foreground">
-              Watching{" "}
-              {selectedEntry
-                ? selectedEntry.seqNum
-                  ? `#${selectedEntry.seqNum}: ${selectedEntry.label}`
-                  : selectedEntry.label
-                : "session"}
-            </span>
-            {selectedEntry?.sessionType === "web_chat" && onAttachSession && (
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-xs text-muted-foreground">
+                Watching{" "}
+                {selectedEntry
+                  ? selectedEntry.seqNum
+                    ? `#${selectedEntry.seqNum}: ${selectedEntry.label}`
+                    : selectedEntry.label
+                  : "session"}
+              </span>
+            </div>
+            <div className="flex flex-none items-center gap-3">
+              {selectedEntry && onSwapSession && (
+                <button
+                  className="text-xs text-accent hover:text-foreground"
+                  onClick={() => {
+                    if (selectedSessionId) {
+                      onSwapSession({
+                        sessionId: selectedSessionId,
+                        sessionType: selectedEntry.sessionType ?? null,
+                        agentRunId: selectedEntry.agentRunId ?? null,
+                      });
+                      setSelectedSessionId(null);
+                    }
+                  }}
+                >
+                  Swap
+                </button>
+              )}
               <button
-                className="text-xs text-accent hover:text-foreground"
+                className="text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => {
-                  if (selectedSessionId) {
-                    onAttachSession(selectedSessionId);
-                    setSelectedSessionId(null);
+                  if (selectedSessionId && watchingSessionIds?.has(selectedSessionId)) {
+                    onUnwatch?.(selectedSessionId);
                   }
+                  setSelectedSessionId(null);
                 }}
               >
-                Attach
+                Close
               </button>
-            )}
-            <button
-              className="text-xs text-muted-foreground hover:text-foreground ml-auto"
-              onClick={() => {
-                if (selectedSessionId && watchingSessionIds?.has(selectedSessionId)) {
-                  onUnwatch?.(selectedSessionId);
-                }
-                setSelectedSessionId(null);
-              }}
-            >
-              Close
-            </button>
+            </div>
           </div>
 
           {/* Messages */}

@@ -4,6 +4,8 @@ import type {
   ToolCall,
   ChatMode,
   ContentBlock,
+  SessionInteractionMode,
+  SessionObservationMeta,
   TokenUsage,
   ToolResult,
 } from "../types/chat";
@@ -627,18 +629,30 @@ export function useChat() {
   // Session viewing tracking (read-only observation of CLI sessions via REST)
   const [viewingSessionId, setViewingSessionId] = useState<string | null>(null);
   const viewingSessionIdRef = useRef<string | null>(null);
-  const [viewingSessionMeta, setViewingSessionMeta] = useState<
-    import("../types/chat").SessionObservationMeta | null
-  >(null);
+  const [viewingSessionMeta, setViewingSessionMeta] =
+    useState<SessionObservationMeta | null>(null);
+  const viewingSessionMetaRef = useRef<SessionObservationMeta | null>(null);
 
-  // Session attachment tracking (interactive observation via WS subscription)
+  // Live terminal observation is distinct from interactive proxy mode.
+  const [observedSessionId, setObservedSessionId] = useState<string | null>(null);
+  const observedSessionIdRef = useRef<string | null>(null);
+  const observedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
+  const [sessionInteractionMode, setSessionInteractionMode] =
+    useState<SessionInteractionMode>("none");
+  const sessionInteractionModeRef = useRef<SessionInteractionMode>("none");
+  const pendingSessionInteractionModeRef = useRef<"observe" | "proxy">("proxy");
+  const [proxyDeliveryNotice, setProxyDeliveryNotice] = useState<string | null>(
+    null,
+  );
+  const agentNameCacheRef = useRef<Map<string, string | null>>(new Map());
+
+  // Session attachment tracking (interactive proxy mode only)
   const [attachedSessionId, setAttachedSessionId] = useState<string | null>(
     null,
   );
   const attachedSessionIdRef = useRef<string | null>(null);
-  const [attachedSessionMeta, setAttachedSessionMeta] = useState<
-    import("../types/chat").SessionObservationMeta | null
-  >(null);
+  const [attachedSessionMeta, setAttachedSessionMeta] =
+    useState<SessionObservationMeta | null>(null);
 
   // Keep a ref so onopen/reconnect can read the current agent
   const activeAgentRef = useRef(activeAgent);
@@ -651,6 +665,30 @@ export function useChat() {
   const projectIdRef = useRef<string | null>(null);
   const setProjectIdRef = useCallback((id: string | null) => {
     projectIdRef.current = id;
+  }, []);
+
+  const resolveAgentName = useCallback(async (agentRunId: string) => {
+    const cached = agentNameCacheRef.current.get(agentRunId);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+    try {
+      const res = await fetch(`${baseUrl}/api/agents/runs/${agentRunId}`);
+      if (!res.ok) {
+        agentNameCacheRef.current.set(agentRunId, null);
+        return null;
+      }
+      const data = await res.json();
+      const resolved =
+        data?.run?.agent_name || data?.run?.workflow_name || null;
+      agentNameCacheRef.current.set(agentRunId, resolved);
+      return resolved;
+    } catch {
+      agentNameCacheRef.current.set(agentRunId, null);
+      return null;
+    }
   }, []);
 
   // Plan mode approval tracking
@@ -1094,6 +1132,8 @@ export function useChat() {
           const agentName = ac.agent_name as string | undefined;
           if (agentName) setActiveAgent(agentName);
         } else if (data.type === "session_continued") {
+          const continued = data as Record<string, unknown>;
+          setDbSessionId((continued.db_session_id as string) ?? null);
           console.log("Session continued:", data);
         } else if (data.type === "connection_established") {
           const serverConversations = (data.conversation_ids as string[]) || [];
@@ -1184,7 +1224,7 @@ export function useChat() {
         } else if (data.type === "attach_to_session_result") {
           const result = data as Record<string, unknown>;
           const sid = result.session_id as string;
-          const meta = {
+          const meta: SessionObservationMeta = {
             ref: (result.ref as string) ?? null,
             source: (result.source as string) ?? "unknown",
             title: (result.title as string) ?? null,
@@ -1194,12 +1234,26 @@ export function useChat() {
             chatMode: (result.chat_mode as string) ?? null,
             gitBranch: (result.git_branch as string) ?? null,
             contextWindow: (result.context_window as number) ?? null,
+            agentRunId: (result.agent_run_id as string) ?? null,
+            workflowName: (result.workflow_name as string) ?? null,
+            agentName: (result.agent_name as string) ?? null,
+            sessionType:
+              ((result.session_type as "terminal" | "web_chat" | null) ?? null),
           };
-          setAttachedSessionId(sid);
-          setAttachedSessionMeta(meta);
+          setObservedSessionId(sid);
+          observedSessionMetaRef.current = meta;
           // Also set viewing state (attached implies viewing)
           setViewingSessionId(sid);
           setViewingSessionMeta(meta);
+          const nextMode = pendingSessionInteractionModeRef.current;
+          setSessionInteractionMode(nextMode);
+          if (nextMode === "proxy") {
+            setAttachedSessionId(sid);
+            setAttachedSessionMeta(meta);
+          } else {
+            setAttachedSessionId(null);
+            setAttachedSessionMeta(null);
+          }
           // Map initial messages into chat format with proper tool call grouping
           const msgs = (result.messages as ApiMessage[]) || [];
           const mapped = mapApiMessages(msgs);
@@ -1225,9 +1279,31 @@ export function useChat() {
           setIsThinking(false);
           setSessionRef((result.ref as string) ?? null);
           setDbSessionId(sid);
+          if (!meta.agentName && meta.agentRunId) {
+            void resolveAgentName(meta.agentRunId).then((agentName) => {
+              if (!agentName || viewingSessionIdRef.current !== sid) return;
+              observedSessionMetaRef.current = {
+                ...(observedSessionMetaRef.current ?? meta),
+                agentName,
+              };
+              setViewingSessionMeta((prev) =>
+                prev && viewingSessionIdRef.current === sid
+                  ? { ...prev, agentName }
+                  : prev,
+              );
+              setAttachedSessionMeta((prev) =>
+                prev && attachedSessionIdRef.current === sid
+                  ? { ...prev, agentName }
+                  : prev,
+              );
+            });
+          }
         } else if (data.type === "detach_from_session_result") {
+          setObservedSessionId(null);
+          observedSessionMetaRef.current = null;
           setAttachedSessionId(null);
           setAttachedSessionMeta(null);
+          setSessionInteractionMode("none");
           // Keep viewingSessionId/Meta — return to view-only mode
         } else if (
           data.type === "session_message" &&
@@ -1237,7 +1313,7 @@ export function useChat() {
           const smSessionId = sm.session_id as string;
           const isObservedSession =
             smSessionId &&
-            (smSessionId === attachedSessionIdRef.current ||
+            (smSessionId === observedSessionIdRef.current ||
               smSessionId === viewingSessionIdRef.current);
           if (!isObservedSession) {
             return;
@@ -1262,6 +1338,11 @@ export function useChat() {
           });
         } else if (data.type === "send_to_cli_session_result") {
           const result = data as Record<string, unknown>;
+          setProxyDeliveryNotice(
+            result.delivered === false
+              ? "Message queued until the session yields."
+              : null,
+          );
           console.log("Message sent to CLI session:", result.delivery_method);
         } else if (data.type === "subscribe_success") {
           console.log("Subscribed to events:", data);
@@ -1617,8 +1698,11 @@ export function useChat() {
 
   // Persist dbSessionId to localStorage so next page load can fetch from DB immediately
   useEffect(() => {
+    if (viewingSessionMeta?.sessionType === "terminal") {
+      return;
+    }
     saveDbSessionId(dbSessionId);
-  }, [dbSessionId]);
+  }, [dbSessionId, viewingSessionMeta?.sessionType]);
 
   // Keep refs in sync
   useEffect(() => {
@@ -1627,6 +1711,15 @@ export function useChat() {
   useEffect(() => {
     viewingSessionIdRef.current = viewingSessionId;
   }, [viewingSessionId]);
+  useEffect(() => {
+    viewingSessionMetaRef.current = viewingSessionMeta;
+  }, [viewingSessionMeta]);
+  useEffect(() => {
+    observedSessionIdRef.current = observedSessionId;
+  }, [observedSessionId]);
+  useEffect(() => {
+    sessionInteractionModeRef.current = sessionInteractionMode;
+  }, [sessionInteractionMode]);
 
   // Switch to a different conversation
   const switchConversation = useCallback((id: string, dbSessionId?: string) => {
@@ -1876,7 +1969,11 @@ export function useChat() {
 
   // Continue a CLI/external session in the web chat UI with full history
   const continueSessionInChat = useCallback(
-    async (sourceDbSessionId: string, projectId?: string): Promise<string> => {
+    async (
+      sourceDbSessionId: string,
+      projectId?: string,
+      options?: { provider?: string | null; model?: string | null },
+    ): Promise<string> => {
       const newConversationId = uuid();
 
       // Switch to new conversation
@@ -1888,6 +1985,14 @@ export function useChat() {
       setIsStreaming(false);
       setIsThinking(false);
       setMessages([]);
+      setViewingSessionId(null);
+      setViewingSessionMeta(null);
+      setObservedSessionId(null);
+      observedSessionMetaRef.current = null;
+      setAttachedSessionId(null);
+      setAttachedSessionMeta(null);
+      setSessionInteractionMode("none");
+      setProxyDeliveryNotice(null);
 
       // Fetch source session's messages for display
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
@@ -1949,6 +2054,8 @@ export function useChat() {
             conversation_id: newConversationId,
             source_session_id: sourceDbSessionId,
             project_id: projectId,
+            provider: options?.provider,
+            model: options?.model,
           }),
         );
       }
@@ -2151,8 +2258,11 @@ export function useChat() {
         return true;
       }
 
-      // Route to CLI session if attached (bidirectional messaging)
-      if (attachedSessionIdRef.current) {
+      // Route to a swapped terminal session when proxy mode is active.
+      if (
+        attachedSessionIdRef.current &&
+        sessionInteractionModeRef.current === "proxy"
+      ) {
         const messageId = `user-${uuid()}`;
         setMessages((prev) => [
           ...prev,
@@ -2163,6 +2273,7 @@ export function useChat() {
             timestamp: new Date(),
           },
         ]);
+        setProxyDeliveryNotice(null);
         wsRef.current.send(
           JSON.stringify({
             type: "send_to_cli_session",
@@ -2358,23 +2469,26 @@ export function useChat() {
     // Skip if already viewing/attached to this session
     if (
       viewingSessionIdRef.current === sessionId ||
-      attachedSessionIdRef.current === sessionId
+      observedSessionIdRef.current === sessionId
     ) {
       return;
     }
 
     // Detach from any active WS subscription first
-    if (attachedSessionIdRef.current) {
+    if (observedSessionIdRef.current) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
             type: "detach_from_session",
-            session_id: attachedSessionIdRef.current,
+            session_id: observedSessionIdRef.current,
           }),
         );
       }
+      setObservedSessionId(null);
+      observedSessionMetaRef.current = null;
       setAttachedSessionId(null);
       setAttachedSessionMeta(null);
+      setSessionInteractionMode("none");
     }
 
     // Reset chat state
@@ -2382,6 +2496,8 @@ export function useChat() {
     setIsStreaming(false);
     setIsThinking(false);
     setMessages([]);
+    setIsLoadingMessages(true);
+    setProxyDeliveryNotice(null);
 
     // Set viewing state
     setViewingSessionId(sessionId);
@@ -2396,7 +2512,8 @@ export function useChat() {
         const mapped = mapApiMessages(data.messages);
         setMessages(mapped);
       })
-      .catch((err) => console.error("Failed to fetch session messages:", err));
+      .catch((err) => console.error("Failed to fetch session messages:", err))
+      .finally(() => setIsLoadingMessages(false));
 
     // Fetch session metadata
     fetch(`${baseUrl}/api/sessions/${sessionId}`)
@@ -2406,7 +2523,7 @@ export function useChat() {
         if (!s || viewingSessionIdRef.current !== sessionId) return;
         const ref = s.seq_num ? `#${s.seq_num}` : null;
         setSessionRef(ref);
-        setViewingSessionMeta({
+        const nextMeta: SessionObservationMeta = {
           ref,
           source: s.source || "unknown",
           title: s.title || null,
@@ -2416,7 +2533,22 @@ export function useChat() {
           chatMode: s.chat_mode || null,
           gitBranch: s.git_branch || null,
           contextWindow: s.context_window || null,
-        });
+          agentRunId: s.agent_run_id || null,
+          workflowName: s.workflow_name || null,
+          agentName: null,
+          sessionType: s.session_type || null,
+        };
+        setViewingSessionMeta(nextMeta);
+        if (nextMeta.agentRunId) {
+          void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
+            if (!agentName || viewingSessionIdRef.current !== sessionId) return;
+            setViewingSessionMeta((prev) =>
+              prev && viewingSessionIdRef.current === sessionId
+                ? { ...prev, agentName }
+                : prev,
+            );
+          });
+        }
         // Populate context usage from session metadata
         if (
           s.usage_input_tokens > 0 ||
@@ -2442,23 +2574,27 @@ export function useChat() {
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {
     // Detach from any active WS subscription
-    if (attachedSessionIdRef.current) {
+    if (observedSessionIdRef.current) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
             type: "detach_from_session",
-            session_id: attachedSessionIdRef.current,
+            session_id: observedSessionIdRef.current,
           }),
         );
       }
+      setObservedSessionId(null);
+      observedSessionMetaRef.current = null;
       setAttachedSessionId(null);
       setAttachedSessionMeta(null);
+      setSessionInteractionMode("none");
     }
 
     setViewingSessionId(null);
     setViewingSessionMeta(null);
     setMessages([]);
     setSessionRef(null);
+    setProxyDeliveryNotice(null);
     setContextUsage({
       totalInputTokens: 0,
       outputTokens: 0,
@@ -2495,59 +2631,61 @@ export function useChat() {
   }, []);
 
   // Attach to a CLI session (interactive mode with WS subscription)
-  const attachToSession = useCallback((sessionId: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+  const attachToSession = useCallback(
+    (sessionId: string, mode: "observe" | "proxy" = "proxy") => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      pendingSessionInteractionModeRef.current = mode;
+      setProxyDeliveryNotice(null);
 
-    // Don't reset messages if already viewing this session
-    if (viewingSessionIdRef.current !== sessionId) {
-      activeRequestIdRef.current = null;
-      setIsStreaming(false);
-      setIsThinking(false);
-      setMessages([]);
-      setContextUsage({
-        totalInputTokens: 0,
-        outputTokens: 0,
-        contextWindow: null,
-        uncachedInputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
-      });
-    }
+      // Don't reset messages if already viewing this session
+      if (viewingSessionIdRef.current !== sessionId) {
+        activeRequestIdRef.current = null;
+        setIsStreaming(false);
+        setIsThinking(false);
+        setMessages([]);
+        setContextUsage({
+          totalInputTokens: 0,
+          outputTokens: 0,
+          contextWindow: null,
+          uncachedInputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        });
+      }
 
-    wsRef.current.send(
-      JSON.stringify({
-        type: "attach_to_session",
-        session_id: sessionId,
-      }),
-    );
-  }, []);
+      wsRef.current.send(
+        JSON.stringify({
+          type: "attach_to_session",
+          session_id: sessionId,
+        }),
+      );
+    },
+    [],
+  );
 
   // Attach to the currently viewed session (button click from view-only mode)
   const attachToViewed = useCallback(() => {
     const sid = viewingSessionIdRef.current;
     if (sid) {
-      attachToSession(sid);
+      if (observedSessionIdRef.current === sid) {
+        setAttachedSessionId(sid);
+        setAttachedSessionMeta(
+          observedSessionMetaRef.current ?? viewingSessionMetaRef.current,
+        );
+        setSessionInteractionMode("proxy");
+        return;
+      }
+      attachToSession(sid, "proxy");
     }
   }, [attachToSession]);
 
-  // Detach from the attached session — returns to view-only mode
+  // Disable proxy mode but keep the live observation subscription.
   const detachFromSession = useCallback(() => {
-    const sid = attachedSessionIdRef.current;
-    if (!sid) return;
-
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "detach_from_session",
-          session_id: sid,
-        }),
-      );
-    }
+    if (!attachedSessionIdRef.current) return;
 
     setAttachedSessionId(null);
     setAttachedSessionMeta(null);
-    // Keep viewingSessionId and viewingSessionMeta — return to view-only mode
-    // Messages stay as-is (snapshot of what was loaded)
+    setSessionInteractionMode(observedSessionIdRef.current ? "observe" : "none");
   }, []);
 
   // Add a local system message to the chat (no backend round-trip)
@@ -2699,11 +2837,13 @@ export function useChat() {
     clearViewingSession,
     viewingSessionId,
     viewingSessionMeta,
-    attachToSession,
+    observeSession: attachToSession,
     attachToViewed,
     detachFromSession,
     attachedSessionId,
     attachedSessionMeta,
+    sessionInteractionMode,
+    proxyDeliveryNotice,
     wsRef,
     handleVoiceMessageRef,
     handleBinaryMessageRef,

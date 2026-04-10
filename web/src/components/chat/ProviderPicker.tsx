@@ -54,6 +54,7 @@ interface ProviderPickerProps {
   onModelChange: (model: string) => void;
   onProviderChange: (provider: string) => void;
   onSwitchProvider?: (provider: string) => void;
+  onSelect?: (provider: string, model: string) => void;
   hasMessages: boolean;
 }
 
@@ -66,6 +67,7 @@ export function ProviderPicker({
   onModelChange,
   onProviderChange,
   onSwitchProvider,
+  onSelect,
   hasMessages,
 }: ProviderPickerProps) {
   const [confirmSwitch, setConfirmSwitch] = useState<{
@@ -86,6 +88,13 @@ export function ProviderPicker({
 
   const handleSelect = useCallback(
     (provider: string, model: string) => {
+      if (onSelect) {
+        onSelect(provider, model);
+        onClose();
+        setConfirmSwitch(null);
+        return;
+      }
+
       const isSameProvider =
         provider === effectiveProvider ||
         (!currentProvider && provider === "claude");
@@ -120,6 +129,7 @@ export function ProviderPicker({
       onModelChange,
       onProviderChange,
       onSwitchProvider,
+      onSelect,
       onClose,
     ],
   );

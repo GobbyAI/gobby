@@ -152,6 +152,18 @@ export interface SessionObservationMeta {
   chatMode?: string | null;
   gitBranch?: string | null;
   contextWindow?: number | null;
+  agentRunId?: string | null;
+  workflowName?: string | null;
+  agentName?: string | null;
+  sessionType?: "terminal" | "web_chat" | null;
+}
+
+export type SessionInteractionMode = "none" | "observe" | "proxy";
+
+export interface SwappedSessionTarget {
+  sessionId: string;
+  sessionType?: string | null;
+  agentRunId?: string | null;
 }
 
 export interface ChatState {
@@ -188,6 +200,11 @@ export interface ChatState {
   activeAgent?: string;
   onAgentChange?: (agentName: string) => void;
   onSwitchProvider?: (provider: string) => void;
+  continueSessionInChat?: (
+    sourceDbSessionId: string,
+    projectId?: string,
+    options?: { provider?: string | null; model?: string | null },
+  ) => Promise<string>;
   planPendingApproval: boolean;
   onApprovePlan: () => void;
   onRequestPlanChanges: (feedback: string) => void;
@@ -204,10 +221,18 @@ export interface ChatState {
   onProviderChange?: (provider: string | null) => void;
   dbSessionId?: string | null;
   conversationSwitchKey?: number;
+  viewSession?: (sessionId: string) => void;
+  clearViewingSession?: () => void;
   viewingSessionId?: string | null;
   viewingSessionMeta?: SessionObservationMeta | null;
   attachedSessionId?: string | null;
   attachedSessionMeta?: SessionObservationMeta | null;
+  sessionInteractionMode?: SessionInteractionMode;
+  proxyDeliveryNotice?: string | null;
+  observeSession?: (
+    sessionId: string,
+    mode?: Exclude<SessionInteractionMode, "none">,
+  ) => void;
   onAttachToViewed?: () => void;
   onDetachFromSession?: () => void;
 }

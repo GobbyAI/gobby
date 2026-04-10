@@ -93,6 +93,7 @@ def prepare_terminal_spawn(
     source: str = "claude",
     agent_id: str | None = None,
     workflow_name: str | None = None,
+    agent_name: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     title: str | None = None,
     git_branch: str | None = None,
@@ -118,6 +119,7 @@ def prepare_terminal_spawn(
         source: CLI source (claude, gemini, codex)
         agent_id: Optional agent ID
         workflow_name: Optional workflow to activate
+        agent_name: Agent definition name used for the spawned session/run
         title: Optional session title
         git_branch: Optional git branch
         prompt: Optional initial prompt
@@ -175,6 +177,7 @@ def prepare_terminal_spawn(
         provider=source,
         prompt=prompt or "",
         workflow_name=workflow_name,
+        agent_name=agent_name,
         child_session_id=child_session.id,
         run_id=agent_run_id,
         task_id=task_id,
@@ -357,6 +360,7 @@ async def prepare_codex_spawn_with_preflight(
     machine_id: str,
     agent_id: str | None = None,
     workflow_name: str | None = None,
+    agent_name: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     title: str | None = None,
     git_branch: str | None = None,
@@ -380,6 +384,7 @@ async def prepare_codex_spawn_with_preflight(
         machine_id: Machine ID
         agent_id: Optional agent ID
         workflow_name: Optional workflow to activate
+        agent_name: Agent definition name used for the spawned session/run
         title: Optional session title
         git_branch: Optional git branch
         prompt: Optional initial prompt
