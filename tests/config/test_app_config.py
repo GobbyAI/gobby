@@ -573,6 +573,51 @@ class TestLoadConfig:
         # Bootstrap swallows the int() conversion error and returns defaults
         assert config.daemon_port == 60887
 
+    def test_load_config_migrates_legacy_session_title_db_keys(self, temp_dir: Path) -> None:
+        """Legacy session_title DB config is migrated into digest before validation."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "session_title.provider": "local",
+                    "session_title.model": "gemma-3",
+                    "session_title.timeout": 45,
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.digest.provider == "local"
+        assert config.digest.model == "gemma-3"
+        assert config.digest.timeout == 45
+
+    def test_load_config_prefers_explicit_digest_over_legacy_session_title(
+        self, temp_dir: Path
+    ) -> None:
+        """Explicit digest config should win when both old and new keys exist."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "session_title.provider": "local",
+                    "session_title.model": "gemma-3",
+                    "session_title.timeout": 45,
+                    "digest.provider": "claude",
+                    "digest.model": "haiku",
+                    "digest.timeout": 15,
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.digest.provider == "claude"
+        assert config.digest.model == "haiku"
+        assert config.digest.timeout == 15
+
 
 class TestBootstrapConfig:
     """Tests for bootstrap configuration loading."""

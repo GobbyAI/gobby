@@ -760,12 +760,20 @@ _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
     "backup_count": "backup_count",
 }
 
+_SESSION_TITLE_TO_DIGEST_FIELDS: dict[str, str] = {
+    "enabled": "enabled",
+    "provider": "provider",
+    "model": "model",
+    "timeout": "timeout",
+}
+
 
 def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Migrate legacy config keys that were renamed or removed.
 
     Handles:
     - logging.* → telemetry.* (field name remapping)
+    - session_title.* → digest.* (legacy title synthesis settings)
     - Removal of _meta, title_synthesis, rules, ui_settings
     """
     # Drop removed top-level keys
@@ -780,6 +788,13 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
             for old_field, new_field in _LOGGING_TO_TELEMETRY_FIELDS.items():
                 if old_field in old_logging and new_field not in telemetry:
                     telemetry[new_field] = old_logging[old_field]
+
+    legacy_session_title = config_dict.pop("session_title", None)
+    if isinstance(legacy_session_title, dict):
+        digest = config_dict.setdefault("digest", {})
+        for old_field, new_field in _SESSION_TITLE_TO_DIGEST_FIELDS.items():
+            if old_field in legacy_session_title and new_field not in digest:
+                digest[new_field] = legacy_session_title[old_field]
 
     return config_dict
 
