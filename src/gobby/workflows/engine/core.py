@@ -26,7 +26,7 @@ from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
     RuleDefinitionBody,
     RuleEffect,
-    RuleEvent,
+    RuleTriggerEvent,
 )
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.enforcement import EnforcementMixin
@@ -34,6 +34,13 @@ from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
+
+_TURN_END_EVENT_VALUES = frozenset(
+    {
+        HookEventType.AFTER_AGENT.value,
+        HookEventType.STOP.value,
+    }
+)
 
 
 def _get_tool_identity(event_data: dict[str, Any]) -> str:
@@ -54,16 +61,36 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
     return str(tool_name)
 
 
-# Map HookEventType to RuleEvent
-_EVENT_TYPE_MAP: dict[HookEventType, RuleEvent] = {
-    HookEventType.BEFORE_TOOL: RuleEvent.BEFORE_TOOL,
-    HookEventType.AFTER_TOOL: RuleEvent.AFTER_TOOL,
-    HookEventType.BEFORE_AGENT: RuleEvent.BEFORE_AGENT,
-    HookEventType.SESSION_START: RuleEvent.SESSION_START,
-    HookEventType.SESSION_END: RuleEvent.SESSION_END,
-    HookEventType.STOP: RuleEvent.STOP,
-    HookEventType.PRE_COMPACT: RuleEvent.PRE_COMPACT,
-}
+def _event_value(event_type: HookEventType | str) -> str:
+    if isinstance(event_type, HookEventType):
+        return event_type.value
+    return str(event_type)
+
+
+def _is_turn_end_event(event_type: HookEventType | str) -> bool:
+    return _event_value(event_type) in _TURN_END_EVENT_VALUES
+
+
+def _resolve_rule_events(event_type: HookEventType | str) -> list[RuleTriggerEvent]:
+    """Resolve an incoming hook event into rule trigger events."""
+    resolved: list[RuleTriggerEvent] = []
+    raw_value = _event_value(event_type)
+
+    if _is_turn_end_event(raw_value):
+        resolved.append(RuleTriggerEvent.TURN_END)
+
+    try:
+        resolved.append(RuleTriggerEvent(raw_value))
+    except ValueError:
+        pass
+
+    deduped: list[RuleTriggerEvent] = []
+    seen: set[RuleTriggerEvent] = set()
+    for trigger in resolved:
+        if trigger not in seen:
+            deduped.append(trigger)
+            seen.add(trigger)
+    return deduped
 
 
 def _clear_edit_write_state(variables: dict[str, Any]) -> None:
@@ -116,9 +143,15 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
             attributes={"event_type": str(event.event_type), "session_id": session_id},
         ) as span:
             try:
-                rule_event = _EVENT_TYPE_MAP.get(event.event_type)
-                if rule_event is None:
+                resolved_rule_events = _resolve_rule_events(event.event_type)
+                if not resolved_rule_events:
                     return HookResponse(decision="allow")
+
+                raw_event_value = _event_value(event.event_type)
+                is_before_tool = raw_event_value == HookEventType.BEFORE_TOOL.value
+                is_after_tool = raw_event_value == HookEventType.AFTER_TOOL.value
+                is_before_agent = raw_event_value == HookEventType.BEFORE_AGENT.value
+                is_turn_end = RuleTriggerEvent.TURN_END in resolved_rule_events
 
                 # Check global enforcement toggle
                 config_store = ConfigStore(self.db)
@@ -132,7 +165,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 # Auto-track consecutive tool blocks (universal safety — not configurable)
                 # Only escalate when the SAME tool is retried — different tools reset the counter
                 # so the agent can recover by using other tools (Read, Bash, etc.).
-                if rule_event == RuleEvent.BEFORE_TOOL and variables.get("tool_block_pending"):
+                if is_before_tool and variables.get("tool_block_pending"):
                     tool_name = _get_tool_identity(event.data)
                     last_blocked = variables.get("_last_blocked_tool", "")
                     if tool_name == last_blocked:
@@ -157,12 +190,12 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         # Different tool — reset counter, let it through to rule evaluation
                         variables["consecutive_tool_blocks"] = 0
                 # Track edit/write attempts — set pending on pre-tool
-                if rule_event == RuleEvent.BEFORE_TOOL:
+                if is_before_tool:
                     tool_name_lower = event.data.get("tool_name", "").lower()
                     if tool_name_lower in EDIT_TOOLS:
                         variables["edit_write_pending"] = True
 
-                elif rule_event == RuleEvent.BEFORE_AGENT:
+                elif is_before_agent:
                     variables["consecutive_tool_blocks"] = 0
                     variables["_last_blocked_tool"] = ""
                     variables["tool_block_pending"] = False
@@ -183,14 +216,14 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         variables["servers_listed"] = True
 
                 # Auto-increment stop attempts (universal — not configurable)
-                if rule_event == RuleEvent.STOP:
+                if is_turn_end:
                     variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
-                        f"STOP gate diagnostics: session_id={session_id}, auto_task_ref={variables.get('auto_task_ref')!r}, stop_attempts={variables['stop_attempts']}, task_claimed={variables.get('task_claimed')}, claimed_tasks={variables.get('claimed_tasks')}, errors_resolved={variables.get('errors_resolved')}, error_triage_blocks={variables.get('error_triage_blocks', 0)}, edit_write_pending={variables.get('edit_write_pending')}, tool_block_pending={variables.get('tool_block_pending')}",
+                        f"TURN_END gate diagnostics: session_id={session_id}, raw_event={raw_event_value}, auto_task_ref={variables.get('auto_task_ref')!r}, stop_attempts={variables['stop_attempts']}, task_claimed={variables.get('task_claimed')}, claimed_tasks={variables.get('claimed_tasks')}, errors_resolved={variables.get('errors_resolved')}, error_triage_blocks={variables.get('error_triage_blocks', 0)}, edit_write_pending={variables.get('edit_write_pending')}, tool_block_pending={variables.get('tool_block_pending')}",
                     )
 
                 # 1. Load enabled rules for this event, sorted by priority
-                rules = self._load_rules(rule_event)
+                rules = self._load_rules(resolved_rule_events)
 
                 # 2. Apply session overrides
                 overrides = self._load_session_overrides(session_id)
@@ -205,9 +238,13 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                 if span.is_recording():
                     span.set_attribute("rule_count", len(rules))
+                    span.set_attribute(
+                        "rules.resolved_events",
+                        [rule_event.value for rule_event in resolved_rule_events],
+                    )
 
                 # 4b. Agent-level tool enforcement (broadest scope, preempts everything)
-                if rule_event == RuleEvent.BEFORE_TOOL:
+                if is_before_tool:
                     agent_block = self._check_agent_tool_enforcement(event, session_id, variables)
                     if agent_block is not None:
                         variables["tool_block_pending"] = True
@@ -221,7 +258,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         return agent_block
 
                 # 4c. Step-level tool enforcement (preempts declarative rules)
-                if rule_event == RuleEvent.BEFORE_TOOL:
+                if is_before_tool:
                     step_block = self._check_step_tool_enforcement(event, session_id)
                     if step_block is not None:
                         variables["tool_block_pending"] = True
@@ -237,7 +274,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                 # 4c. Step workflow transition processing (after successful MCP tool calls)
                 _step_transition_msg: str | None = None
-                if rule_event == RuleEvent.AFTER_TOOL:
+                if is_after_tool:
                     _step_transition_msg = self._process_step_after_tool(
                         event, session_id, variables
                     )
@@ -249,7 +286,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 override_reason: str | None = None
 
                 # Force-allow stop (catastrophic failure bypass — self-clearing)
-                if rule_event == RuleEvent.STOP and variables.get("force_allow_stop"):
+                if is_turn_end and variables.get("force_allow_stop"):
                     variables["force_allow_stop"] = False
                     if variables.get("task_claimed"):
                         logger.warning(
@@ -259,7 +296,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         override_decision = "allow"
 
                 # Auto-block stop when a tool just failed (self-clearing)
-                elif rule_event == RuleEvent.STOP and variables.get("tool_block_pending"):
+                elif is_turn_end and variables.get("tool_block_pending"):
                     variables["tool_block_pending"] = False
                     override_decision = "block"
                     override_reason = (
@@ -268,7 +305,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     )
 
                 # Block stop when edit/write is pending (failed or in-flight)
-                elif rule_event == RuleEvent.STOP and variables.get("edit_write_pending"):
+                elif is_turn_end and variables.get("edit_write_pending"):
                     edit_stop_blocks = variables.get("edit_write_stop_blocks", 0)
                     if edit_stop_blocks < 3:  # Circuit breaker
                         variables["edit_write_stop_blocks"] = edit_stop_blocks + 1
@@ -285,7 +322,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if not rules:
                     # Auto-manage tool_block_pending on after_tool
                     # (Symmetric with auto-set on before_tool block at line ~164)
-                    if rule_event == RuleEvent.AFTER_TOOL:
+                    if is_after_tool:
                         is_failure = event.metadata.get("is_failure", False) or event.data.get(
                             "is_error", False
                         )
@@ -334,7 +371,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                 # Auto-manage tool_block_pending on after_tool before rule eval
                 # (Symmetric with auto-set on before_tool block at line ~164)
-                if rule_event == RuleEvent.AFTER_TOOL:
+                if is_after_tool:
                     is_failure = event.metadata.get("is_failure", False) or event.data.get(
                         "is_error", False
                     )
@@ -428,7 +465,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             block_reason = self._render_template(block_reason, ctx, allowed_funcs)
                             block_reason = f"Rule enforced by Gobby: [{_row.name}]\n{block_reason}"
                             # Auto-set tool_block_pending on before_tool blocks
-                            if rule_event == RuleEvent.BEFORE_TOOL:
+                            if is_before_tool:
                                 variables["tool_block_pending"] = True
                                 variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                                 # Blocked edit/write never executed — nothing to recover
@@ -525,21 +562,29 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 raise
 
     def _load_rules(
-        self, rule_event: RuleEvent
+        self, rule_events: list[RuleTriggerEvent]
     ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
-        """Load enabled rules matching the event type, sorted by priority."""
-        rows = self.definition_manager.list_rules_by_event(
-            event=rule_event.value,
-            enabled=True,
-        )
-        result: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]] = []
-        for row in rows:
-            try:
-                body = RuleDefinitionBody.model_validate_json(row.definition_json)
-                result.append((row, body))
-            except Exception as e:
-                logger.warning(f"Failed to parse rule {row.name}: {e}")
-        return result
+        """Load enabled rules matching any trigger event, sorted by priority."""
+        ordered: list[tuple[int, WorkflowDefinitionRow, RuleDefinitionBody]] = []
+        seen_rows: set[str] = set()
+
+        for trigger_index, rule_event in enumerate(rule_events):
+            rows = self.definition_manager.list_rules_by_event(
+                event=rule_event.value,
+                enabled=True,
+            )
+            for row in rows:
+                if row.id in seen_rows:
+                    continue
+                try:
+                    body = RuleDefinitionBody.model_validate_json(row.definition_json)
+                    ordered.append((trigger_index, row, body))
+                    seen_rows.add(row.id)
+                except Exception as e:
+                    logger.warning(f"Failed to parse rule {row.name}: {e}")
+
+        ordered.sort(key=lambda item: (item[1].priority, item[0], item[1].name))
+        return [(row, body) for _, row, body in ordered]
 
     def _load_session_overrides(self, session_id: str) -> dict[str, bool]:
         """Load session-scoped rule overrides."""

@@ -473,8 +473,8 @@ def reconcile_claimed_tasks(
     stored value.  This eliminates the class of bugs where the boolean and
     dict get out of sync.
 
-    Must run BEFORE rule evaluation on STOP so the require-task-close gate
-    sees accurate state.
+    Must run BEFORE rule evaluation on semantic turn-end so turn-end gates
+    see accurate claimed-task state across CLIs.
     """
     claimed_tasks: dict[str, str] = dict(variables.get("claimed_tasks") or {})
 

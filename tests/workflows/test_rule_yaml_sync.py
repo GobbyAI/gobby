@@ -107,6 +107,26 @@ rules:
         rows = manager.list_all(workflow_type="rule")
         assert rows[0].enabled is False
 
+    def test_turn_end_rule_syncs(self, db, manager, rules_dir) -> None:
+        """Semantic turn_end rules should sync like any other rule event."""
+        (rules_dir / "turn-end.yaml").write_text(
+            """
+rules:
+  loop-turn-end:
+    event: turn_end
+    effect:
+      type: block
+      reason: "Keep going."
+"""
+        )
+
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["synced"] == 1
+        rows = manager.list_all(workflow_type="rule")
+        body = json.loads(rows[0].definition_json)
+        assert body["event"] == "turn_end"
+
 
 class TestMultiRuleYamlWithDefaults:
     """Parse multi-rule YAML with file-level defaults."""

@@ -3,7 +3,7 @@ tags: [stop-gates, enforcement, lifecycle, gobby, default]
 rules:
   require-task-close:
     description: "Block stop if task is still in_progress"
-    event: stop
+    event: turn_end
     enabled: true
     priority: 50
     when: "not variables.get('plan_mode') and not variables.get('is_spawned_agent') and variables.get('mode_level', 2) >= 1 and variables.get('task_claimed') and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)"

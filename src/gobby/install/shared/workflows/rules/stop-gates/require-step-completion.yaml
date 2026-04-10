@@ -3,7 +3,7 @@ tags: [stop-gates, enforcement, lifecycle, gobby, default]
 rules:
   require-step-completion:
     description: "Block agent stop if step workflow is not complete"
-    event: stop
+    event: turn_end
     enabled: true
     priority: 49
     when: >-

@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_turn_end_event(event_type: HookEventType | str) -> bool:
+    value = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
+    return value in {HookEventType.AFTER_AGENT.value, HookEventType.STOP.value}
+
+
 class WorkflowHookHandler:
     """Integrates RuleEngine into the HookManager.
 
@@ -83,8 +88,8 @@ class WorkflowHookHandler:
             reconcile_claimed_tasks,
         )
 
-        # Reconcile stale claimed_tasks on STOP before rule evaluation
-        if event.event_type == HookEventType.STOP:
+        # Reconcile stale claimed_tasks on semantic turn-end before rule evaluation
+        if _is_turn_end_event(event.event_type):
             reconcile_claimed_tasks(
                 variables,
                 session_id,

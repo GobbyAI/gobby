@@ -11,7 +11,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent, RuleTriggerEvent
 from gobby.workflows.rule_engine import RuleEngine
 
 pytestmark = pytest.mark.unit
@@ -2222,6 +2222,82 @@ class TestUnmappedEventType:
         event.event_type = "custom_unmapped_type"  # type: ignore
         response = await engine.evaluate(event, session_id="sess-1", variables={})
         assert response.decision == "allow"
+
+
+class TestTurnEndResolution:
+    @pytest.mark.asyncio
+    async def test_turn_end_rule_fires_for_stop(self, db: LocalDatabase, manager) -> None:
+        _insert_rule(
+            manager,
+            "turn-end-stop",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_END,
+                effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.STOP)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["matched"] is True
+        assert variables["stop_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_turn_end_rule_fires_for_after_agent(self, db: LocalDatabase, manager) -> None:
+        _insert_rule(
+            manager,
+            "turn-end-after-agent",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_END,
+                effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.GEMINI)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["matched"] is True
+        assert variables["stop_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_raw_stop_rule_does_not_fire_for_after_agent(
+        self, db: LocalDatabase, manager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "raw-stop-only",
+            RuleDefinitionBody(
+                event=RuleEvent.STOP,
+                effects=[RuleEffect(type="set_variable", variable="raw_stop", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.CODEX)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables.get("raw_stop") is not True
+
+    @pytest.mark.asyncio
+    async def test_raw_after_agent_rule_does_not_fire_for_stop(
+        self, db: LocalDatabase, manager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "raw-after-agent-only",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_AGENT,
+                effects=[RuleEffect(type="set_variable", variable="raw_after_agent", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.STOP)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables.get("raw_after_agent") is not True
 
 
 class TestAgentScope:

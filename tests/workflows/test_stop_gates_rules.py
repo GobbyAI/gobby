@@ -206,14 +206,14 @@ class TestRequireTaskClose:
     """Verify require-task-close blocks stop if task in_progress."""
 
     def test_blocks_on_stop(self, db, manager) -> None:
-        """Should be a block effect on stop event."""
+        """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-task-close")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "stop"
+        assert body.event.value == "turn_end"
         assert body.effects[0].type == "block"
 
     def test_when_checks_mode_level_and_task(self, db, manager) -> None:
@@ -259,6 +259,28 @@ class TestRequireTaskClose:
             allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
         )
         assert evaluator.evaluate(body.when), "Rule should fire when task_claimed is set"
+
+    @pytest.mark.asyncio
+    async def test_blocks_on_after_agent_turn_end(self, db, manager) -> None:
+        """Bundled turn_end gate should also fire for Gemini/Codex after-agent hooks."""
+        _sync_bundled(db)
+
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "mode_level": 2,
+            "task_claimed": True,
+            "claimed_tasks": {"task-123": "#1"},
+            "stop_attempts": 0,
+        }
+
+        event = _make_event(
+            HookEventType.AFTER_AGENT,
+            source=SessionSource.GEMINI,
+        )
+        response = await engine.evaluate(event, "sess-1", variables)
+
+        assert response.decision == "block"
+        assert "require-task-close" in (response.reason or "")
 
 
 class TestCompactPreservesTriagedState:
@@ -356,12 +378,13 @@ def _make_event(
     event_type: HookEventType,
     data: dict | None = None,
     metadata: dict | None = None,
+    source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
     """Helper to create HookEvent for rule engine tests."""
     return HookEvent(
         event_type=event_type,
         session_id="test-session",
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data or {},
         metadata=metadata or {},

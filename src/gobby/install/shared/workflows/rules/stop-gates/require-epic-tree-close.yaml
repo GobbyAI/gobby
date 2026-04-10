@@ -3,7 +3,7 @@ tags: [stop-gates, enforcement, lifecycle, gobby, default]
 rules:
   require-epic-tree-close:
     description: "Block stop if epic or any subtask is not closed"
-    event: stop
+    event: turn_end
     enabled: true
     priority: 51
     agent_scope: [default, default-web-chat]

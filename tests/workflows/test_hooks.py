@@ -673,6 +673,19 @@ class TestVariablePersistence:
             data={},
         )
 
+    def _make_after_agent_event(
+        self,
+        session_id: str = "test-session",
+        source: SessionSource = SessionSource.GEMINI,
+    ) -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.AFTER_AGENT,
+            session_id=session_id,
+            source=source,
+            timestamp=datetime.now(),
+            data={},
+        )
+
     @pytest.mark.asyncio
     async def test_set_variable_persisted_to_session_variables(
         self, db, handler, session_var_manager
@@ -793,6 +806,37 @@ class TestVariablePersistence:
         assert variables.get("task_claimed") is True
         assert "task-uuid-observer" in variables.get("claimed_tasks", {})
         assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
+
+    @pytest.mark.asyncio
+    async def test_turn_end_reconciles_claimed_tasks_for_after_agent(
+        self, db, session_var_manager
+    ) -> None:
+        """AFTER_AGENT should run turn-end reconciliation before rule evaluation."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        mock_task_manager = MagicMock()
+        mock_task_manager.list_tasks.return_value = []
+
+        rule_engine = RuleEngine(db=db)
+        handler = WorkflowHookHandler(
+            rule_engine=rule_engine,
+            task_manager=mock_task_manager,
+        )
+
+        session_var_manager.merge_variables(
+            "test-session",
+            {
+                "task_claimed": True,
+                "claimed_tasks": {},
+            },
+        )
+
+        event = self._make_after_agent_event()
+        await handler._evaluate_rules(event)
+
+        variables = session_var_manager.get_variables("test-session")
+        assert variables.get("task_claimed") is False
+        assert variables.get("claimed_tasks") == {}
 
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:

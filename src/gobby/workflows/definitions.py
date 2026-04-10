@@ -49,21 +49,36 @@ class RuleDefinition(BaseModel):
             command_not_pattern=self.command_not_pattern,
         )
         return RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effect=effect,
         )
 
 
-class RuleEvent(str, Enum):
-    """Events that rules can respond to."""
+class RuleTriggerEvent(str, Enum):
+    """Events that workflow rules can respond to."""
 
-    BEFORE_TOOL = "before_tool"
-    AFTER_TOOL = "after_tool"
-    BEFORE_AGENT = "before_agent"
+    TURN_END = "turn_end"
+
     SESSION_START = "session_start"
     SESSION_END = "session_end"
+    BEFORE_AGENT = "before_agent"
+    AFTER_AGENT = "after_agent"
     STOP = "stop"
+    BEFORE_TOOL = "before_tool"
+    AFTER_TOOL = "after_tool"
+    BEFORE_TOOL_SELECTION = "before_tool_selection"
+    BEFORE_MODEL = "before_model"
+    AFTER_MODEL = "after_model"
     PRE_COMPACT = "pre_compact"
+    SUBAGENT_START = "subagent_start"
+    SUBAGENT_STOP = "subagent_stop"
+    PERMISSION_REQUEST = "permission_request"
+    NOTIFICATION = "notification"
+
+
+# Backward-compatible alias for older imports. This still resolves to the
+# unified rule trigger enum; there is no longer a separate filtered rule enum.
+RuleEvent = RuleTriggerEvent
 
 
 class RuleEffect(BaseModel):
@@ -171,7 +186,7 @@ class RuleEffect(BaseModel):
 class RuleDefinitionBody(BaseModel):
     """Stored as definition_json in workflow_definitions for workflow_type='rule'."""
 
-    event: RuleEvent
+    event: RuleTriggerEvent
     when: str | None = None
     match: dict[str, Any] | None = None
     tools: list[str] | None = None  # Pre-filter: skip rule if tool doesn't match
