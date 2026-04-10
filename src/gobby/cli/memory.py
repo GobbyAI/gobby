@@ -592,7 +592,7 @@ def rebuild_crossrefs(ctx: click.Context, project_ref: str | None) -> None:
     response = client.call_http_api(
         f"/api/memories/crossrefs/rebuild{params}", method="POST", timeout=600.0
     )
-    if not response.ok:
+    if not response.is_success:
         raise click.ClickException(f"Rebuild failed (HTTP {response.status_code}): {response.text}")
     try:
         data = response.json()
@@ -630,7 +630,7 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None) -> None:
     response = client.call_http_api(
         f"/api/memories/graph/rebuild{params}", method="POST", timeout=600.0
     )
-    if not response.ok:
+    if not response.is_success:
         raise click.ClickException(f"Rebuild failed (HTTP {response.status_code}): {response.text}")
     try:
         data = response.json()
@@ -649,8 +649,9 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None) -> None:
 def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
     """Wipe and rebuild ALL memory indices (embeddings, crossrefs, graph, FTS5).
 
-    Clears Qdrant vectors and Neo4j graph for the project, then rebuilds
-    everything from the SQLite source of truth.
+    Clears Qdrant vectors, Neo4j graph, crossrefs, and FTS5 for the
+    project, then starts a background rebuild from the SQLite source of
+    truth.  The command returns as soon as indices are cleared.
 
     Examples:
 
@@ -665,33 +666,41 @@ def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
     if not is_healthy:
         raise click.ClickException(f"Daemon not running: {err}")
 
-    project_id = resolve_project_ref(project_ref)
+    # Resolve project: auto-detect from CWD, explicit flag, or global with confirmation
+    project_id = resolve_project_ref(project_ref, exit_on_not_found=project_ref is not None)
+
     if not project_id:
-        if project_ref is None:
+        if project_ref is not None:
+            # Explicit --project that wasn't found (shouldn't reach here due to
+            # exit_on_not_found, but guard anyway)
             raise click.ClickException(
-                "No project was found for the current directory. Use -p to specify a project."
+                f"Project '{project_ref}' was not found. "
+                "Pass a valid -p value or check the identifier."
             )
-        raise click.ClickException(
-            f"Project '{project_ref}' was not found. Pass a valid -p value or check the identifier."
-        )
+        # No project context and no explicit flag — confirm global operation
+        if not yes:
+            click.confirm(
+                "No project detected. This will invalidate indices for ALL projects. Continue?",
+                abort=True,
+            )
+    else:
+        if not yes:
+            click.confirm(
+                "This will wipe and rebuild all memory indices for this project. Continue?",
+                abort=True,
+            )
 
-    if not yes:
-        click.confirm(
-            "This will wipe and rebuild all memory indices for this project. Continue?",
-            abort=True,
-        )
-
-    params = f"?project_id={urllib.parse.quote(str(project_id))}"
-    click.echo("Invalidating all memory indices (this may take several minutes)...")
+    params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
+    click.echo("Clearing memory indices...")
     try:
         response = client.call_http_api(
-            f"/api/memories/invalidate{params}", method="POST", timeout=1200.0
+            f"/api/memories/invalidate{params}", method="POST", timeout=30.0
         )
     except (httpx.HTTPError, ConnectionError, OSError, ValueError) as e:
         click.echo(f"Error: Could not reach daemon — is it running? ({e})")
         raise SystemExit(1) from e
 
-    if not response.ok:
+    if not response.is_success:
         raise click.ClickException(
             f"Invalidate failed (HTTP {response.status_code}): {response.text}"
         )
@@ -700,31 +709,22 @@ def invalidate(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
     except ValueError as e:
         raise click.ClickException(f"Invalid response from daemon: {e}") from e
 
-    embed = data.get("embeddings", {})
-    crossrefs = data.get("crossrefs", {})
     graph_cleared = data.get("graph_cleared", {})
-    graph_rebuilt = data.get("graph_rebuilt", {})
-    fts5 = data.get("fts5", {})
-
-    if graph_cleared:
+    if graph_cleared and not graph_cleared.get("skipped"):
         click.echo(
-            f"Graph cleared: {graph_cleared.get('memories_deleted', 0)} memory nodes, "
+            f"  Graph: {graph_cleared.get('memories_deleted', 0)} memory nodes, "
             f"{graph_cleared.get('entities_deleted', 0)} orphaned entities"
         )
-    click.echo(
-        f"Embeddings: {embed.get('embeddings_generated', '?')}/{embed.get('total_memories', '?')}"
-    )
-    click.echo(
-        f"Crossrefs: {crossrefs.get('crossrefs_created', '?')} created "
-        f"for {crossrefs.get('memories_processed', '?')} memories"
-    )
-    if graph_rebuilt:
-        click.echo(
-            f"Graph rebuilt: {graph_rebuilt.get('extracted', '?')} extracted, "
-            f"{graph_rebuilt.get('errors', '?')} errors"
-        )
-    click.echo(f"FTS5: {fts5.get('indexed', '?')} memories indexed")
-    click.echo("Done.")
+    if data.get("vectors_cleared"):
+        click.echo("  Vectors: cleared")
+    crossrefs = data.get("crossrefs_cleared")
+    if crossrefs is not None:
+        click.echo(f"  Crossrefs: {crossrefs} deleted")
+    if data.get("fts_cleared"):
+        click.echo("  FTS5: cleared")
+
+    click.echo("Indices cleared. Rebuild started in background.")
+    click.echo("Check daemon logs for rebuild progress.")
 
 
 def resolve_memory_id(

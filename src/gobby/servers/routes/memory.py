@@ -4,6 +4,7 @@ Memory routes for Gobby HTTP server.
 Provides CRUD, search, and stats endpoints for the memory system.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -285,10 +286,14 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/embeddings/reindex")
-    async def reindex_embeddings() -> dict[str, Any]:
-        """Regenerate embedding vectors for all stored memories."""
+    async def reindex_embeddings(
+        project_id: str | None = Query(
+            None, description="Project ID (optional, scopes to project)"
+        ),
+    ) -> dict[str, Any]:
+        """Regenerate embedding vectors for stored memories."""
         try:
-            result = await server.memory_manager.reindex_embeddings()
+            result = await server.memory_manager.reindex_embeddings(project_id=project_id)
             return cast(dict[str, Any], result)
         except Exception as e:
             logger.error(f"Failed to reindex embeddings: {e}")
@@ -296,18 +301,36 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/invalidate")
     async def invalidate_memories(
-        project_id: str = Query(..., description="Project ID (required)"),
+        project_id: str | None = Query(None, description="Project ID (optional, omit for global)"),
     ) -> dict[str, Any]:
-        """Wipe and rebuild all memory indices for a project.
+        """Clear all secondary memory indices and start background rebuild.
 
-        Order: clear KG → rebuild embeddings → rebuild crossrefs → rebuild KG → reindex FTS5.
+        Clears Qdrant vectors, Neo4j graph, crossrefs, and FTS5 immediately.
+        Rebuild runs in the background — the response returns as soon as
+        indices are cleared.
         """
         try:
-            result = await server.memory_manager.invalidate_all(project_id=project_id)
-            return cast(dict[str, Any], result)
+            report: dict[str, Any] = await server.memory_manager.clear_indices(
+                project_id=project_id
+            )
         except Exception as e:
-            logger.error(f"Failed to invalidate memory indices: {e}")
+            logger.error(f"Failed to clear memory indices: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+        # Fire off rebuild as a background task
+        async def _background_rebuild() -> None:
+            try:
+                result = await server.memory_manager.rebuild_indices(project_id=project_id)
+                logger.info(f"Background rebuild complete: {result}")
+            except Exception as e:
+                logger.error(f"Background rebuild failed: {e}", exc_info=True)
+
+        task = asyncio.create_task(_background_rebuild())
+        server._background_tasks.add(task)
+        task.add_done_callback(server._background_tasks.discard)
+
+        report["rebuild_status"] = "started"
+        return report
 
     @router.get("/{memory_id}")
     def get_memory(

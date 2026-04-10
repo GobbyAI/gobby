@@ -1156,25 +1156,41 @@ class MemoryManager:
     # Reindexing
     # =========================================================================
 
-    async def reindex_embeddings(self) -> dict[str, Any]:
-        """Regenerate embeddings for all stored memories.
+    async def reindex_embeddings(self, project_id: str | None = None) -> dict[str, Any]:
+        """Regenerate embeddings for stored memories.
 
-        Uses VectorStore.rebuild() to delete and recreate the collection,
-        which handles embedding dimension changes (e.g., 1536→768) cleanly.
+        When project_id is given, deletes vectors for that project and
+        re-embeds only its memories.  When None, uses VectorStore.rebuild()
+        to recreate the entire collection (handles dimension changes).
         """
         if not self._vector_store or not self._embed_fn:
             return {"success": False, "error": "Vector store or embedding function not configured"}
 
-        memories = self.list_memories(limit=MAX_REINDEX_LIMIT)
+        memories = self.list_memories(project_id=project_id, limit=MAX_REINDEX_LIMIT)
         total = len(memories)
-
-        # Convert Memory objects to dicts for VectorStore.rebuild()
-        memory_dicts = [
+        memory_dicts: list[dict[str, Any]] = [
             {"id": mem.id, "content": mem.content, "project_id": mem.project_id} for mem in memories
         ]
 
         try:
-            await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+            if project_id is None:
+                # Global: nuke and rebuild entire collection
+                await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+            else:
+                # Project-scoped: delete by filter, then re-embed
+                await self._vector_store.delete(filters={"project_id": project_id})
+                batch: list[tuple[str, list[float], dict[str, Any]]] = []
+                for mem in memory_dicts:
+                    mem_id: str = mem["id"]
+                    embedding = await self._embed_fn(mem["content"])
+                    payload = {k: v for k, v in mem.items() if k != "id"}
+                    batch.append((mem_id, embedding, payload))
+                    if len(batch) >= 500:
+                        await self._vector_store.batch_upsert(batch)
+                        logger.info(f"Reindex progress: {len(batch)}/{total} vectors")
+                        batch = []
+                if batch:
+                    await self._vector_store.batch_upsert(batch)
             generated = len(memory_dicts)
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
@@ -1182,28 +1198,91 @@ class MemoryManager:
 
         return {"success": True, "total_memories": total, "embeddings_generated": generated}
 
-    async def invalidate_all(self, project_id: str) -> dict[str, Any]:
-        """Wipe and rebuild all memory indices for a project.
+    async def clear_indices(self, project_id: str | None = None) -> dict[str, Any]:
+        """Fast wipe of all secondary indices for a project (or all projects).
 
-        Order: clear KG → rebuild embeddings → rebuild crossrefs → rebuild KG → reindex FTS5.
+        Clears Neo4j graph, Qdrant vectors, crossrefs, and FTS5.  Does NOT
+        delete memories from SQLite — that remains the source of truth.
 
-        Args:
-            project_id: Required — scopes the invalidation to a single project.
+        Returns immediately; the caller is responsible for scheduling a
+        rebuild via ``rebuild_indices`` if desired.
         """
         report: dict[str, Any] = {}
 
         # 1. Clear Neo4j graph
         if self._kg_service:
-            report["graph_cleared"] = await self._kg_service.clear_project_graph(project_id)
+            if project_id:
+                report["graph_cleared"] = await self._kg_service.clear_project_graph(project_id)
+            else:
+                # TODO: add clear_all_graphs when needed; for now per-project only
+                report["graph_cleared"] = {
+                    "skipped": True,
+                    "reason": "global clear not implemented",
+                }
 
-        # 2. Rebuild embeddings (wipes and recreates Qdrant collection)
-        report["embeddings"] = await self.reindex_embeddings()
+        # 2. Clear Qdrant vectors
+        if self._vector_store:
+            try:
+                if project_id:
+                    await self._vector_store.delete(filters={"project_id": project_id})
+                else:
+                    await self._vector_store.delete_collection(self._vector_store._collection_name)
+                report["vectors_cleared"] = True
+            except Exception as e:
+                logger.error(f"Failed to clear vectors: {e}")
+                report["vectors_cleared"] = False
+                report["vectors_error"] = str(e)
 
-        # 3. Fetch all memories for crossref + KG rebuild
-        all_memories = await self._fetch_all_project_memories(project_id)
+        # 3. Clear crossrefs
+        try:
+            if project_id:
+                deleted = await asyncio.to_thread(self.storage.delete_project_crossrefs, project_id)
+            else:
+                deleted = await asyncio.to_thread(
+                    lambda: self.storage.db.execute("DELETE FROM memory_crossrefs").rowcount
+                )
+            report["crossrefs_cleared"] = deleted
+        except Exception as e:
+            logger.error(f"Failed to clear crossrefs: {e}")
+            report["crossrefs_cleared"] = 0
+            report["crossrefs_error"] = str(e)
+
+        # 4. Clear FTS5 (fast — just a DELETE, no per-row work)
+        try:
+            fts = self._get_fts_searcher()
+            await asyncio.to_thread(lambda: fts._db.execute("DELETE FROM memories_fts"))
+            report["fts_cleared"] = True
+        except Exception as e:
+            logger.error(f"Failed to clear FTS5: {e}")
+            report["fts_cleared"] = False
+
+        scope = f"project {project_id}" if project_id else "all projects"
+        logger.info(f"Indices cleared for {scope}: {report}")
+        return report
+
+    async def rebuild_indices(self, project_id: str | None = None) -> dict[str, Any]:
+        """Rebuild all secondary indices from the SQLite source of truth.
+
+        This is the slow path — meant to run as a background task after
+        ``clear_indices``.  Rebuilds embeddings, crossrefs, KG, and FTS5.
+        """
+        report: dict[str, Any] = {}
+        scope = f"project {project_id}" if project_id else "all projects"
+        logger.info(f"Starting index rebuild for {scope}")
+
+        # 1. Rebuild embeddings
+        report["embeddings"] = await self.reindex_embeddings(project_id=project_id)
+
+        # 2. Fetch memories for crossref + KG rebuild
+        if project_id:
+            all_memories = await self._fetch_all_project_memories(project_id)
+        else:
+            all_memories = await asyncio.to_thread(
+                self.list_memories, None, None, MAX_REINDEX_LIMIT
+            )
         total = len(all_memories)
 
-        # 4. Rebuild crossrefs (concurrent, semaphore-limited)
+        # 3. Rebuild crossrefs (concurrent, semaphore-limited)
         crossref_sem = asyncio.Semaphore(10)
         crossref_done = 0
 
@@ -1228,7 +1307,7 @@ class MemoryManager:
             "crossrefs_created": crossrefs_created,
         }
 
-        # 5. Rebuild knowledge graph (concurrent, semaphore-limited)
+        # 4. Rebuild knowledge graph (concurrent, semaphore-limited)
         if self._kg_service:
             kg_service = self._kg_service
             kg_sem = asyncio.Semaphore(5)
@@ -1260,10 +1339,19 @@ class MemoryManager:
             )
             report["graph_rebuilt"] = {"extracted": extracted, "errors": errors}
 
-        # 6. Reindex FTS5
+        # 5. Reindex FTS5
         report["fts5"] = await asyncio.to_thread(self._get_fts_searcher().reindex)
 
+        logger.info(f"Index rebuild complete for {scope}: {report}")
         return report
+
+    async def invalidate_all(self, project_id: str | None = None) -> dict[str, Any]:
+        """Clear all secondary indices for a project (or globally).
+
+        Returns the clear report immediately.  The caller should schedule
+        ``rebuild_indices`` as a background task if a rebuild is desired.
+        """
+        return await self.clear_indices(project_id=project_id)
 
     async def _fetch_all_project_memories(self, project_id: str) -> list[Memory]:
         """Fetch all memories for a project using pagination."""

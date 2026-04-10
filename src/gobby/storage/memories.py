@@ -632,6 +632,26 @@ class LocalMemoryManager:
             )
             return cursor.rowcount
 
+    def delete_project_crossrefs(self, project_id: str) -> int:
+        """Delete all cross-references for memories belonging to a project.
+
+        Args:
+            project_id: The project ID whose crossrefs should be deleted.
+
+        Returns:
+            Number of crossrefs deleted.
+        """
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM memory_crossrefs
+                WHERE source_id IN (SELECT id FROM memories WHERE project_id = ?)
+                   OR target_id IN (SELECT id FROM memories WHERE project_id = ?)
+                """,
+                (project_id, project_id),
+            )
+            return cursor.rowcount
+
     def get_all_crossrefs(
         self,
         project_id: str | None = None,
