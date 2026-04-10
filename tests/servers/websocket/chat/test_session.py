@@ -292,6 +292,60 @@ class TestCreateChatSessionInner:
             mixin.session_manager.update_model.assert_called_once_with("db-id-meta", "opus")
 
     @pytest.mark.asyncio
+    async def test_create_gemini_chat_session_uses_identity_only_prompt(self, mixin: DummyMixin):
+        with (
+            patch(
+                "gobby.servers.gemini_cli_chat_session.GeminiCLIChatSession"
+            ) as MockSessionClass,
+            patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
+            patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
+            patch(
+                "gobby.servers.websocket.chat._session._inject_agent_skills",
+                return_value="## Skills\nCanvas",
+            ) as mock_inject_skills,
+        ):
+            agent_body = MagicMock()
+            agent_body.provider = "gemini"
+            agent_body.role = "You are Gobby"
+            agent_body.goal = "Fix the daemon"
+            agent_body.personality = "Blunt and technical"
+            agent_body.instructions = "Use tools"
+            agent_body.build_prompt_preamble.return_value = (
+                "## Role\nYou are Gobby\n\n## Instructions\nUse tools"
+            )
+            mock_resolve_agent.return_value = agent_body
+
+            mock_session = AsyncMock()
+            mock_session.chat_mode = "plan"
+            mock_session.db_session_id = None
+            mock_session.resume_session_id = None
+            mock_session.project_path = None
+            mock_session.project_id = None
+            mock_session.system_prompt_override = None
+            MockSessionClass.return_value = mock_session
+
+            mock_db_sess = MagicMock()
+            mock_db_sess.id = "db-id-gemini"
+            mock_db_sess.seq_num = 42
+            mock_db_sess.usage_output_tokens = 0
+            mock_db_sess.chat_mode = "plan"
+            mock_db_sess.approved_tools_json = None
+
+            mixin.session_manager = MagicMock()
+            mixin.session_manager.db = MagicMock()
+            mixin.session_manager.register.return_value = mock_db_sess
+
+            await mixin._create_chat_session_inner("conv-gemini", provider="gemini")
+
+            assert mock_session.system_prompt_override == (
+                "## Role\nYou are Gobby\n\n"
+                "## Goal\nFix the daemon\n\n"
+                "## Personality\nBlunt and technical"
+            )
+            agent_body.build_prompt_preamble.assert_not_called()
+            mock_inject_skills.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_fire_session_end(self, mixin: DummyMixin):
         mixin._fire_lifecycle = AsyncMock()
         await mixin._fire_session_end("conv-end")

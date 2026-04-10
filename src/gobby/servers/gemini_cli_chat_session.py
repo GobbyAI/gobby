@@ -216,6 +216,7 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
             self._is_first_turn = False
 
             try:
+                saw_content_delta = False
                 async for stream_event in self._client.send(full_prompt):
                     if stream_event.event_type == "init":
                         self.sdk_session_id = (
@@ -224,7 +225,13 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
                         model_name = stream_event.data.get("model")
                         if model_name:
                             self._model = model_name
-                    chat_event = self._translate_event(stream_event)
+                    elif stream_event.event_type == "content_delta":
+                        saw_content_delta = True
+
+                    chat_event = self._translate_event(
+                        stream_event,
+                        allow_message_fallback=not saw_content_delta,
+                    )
                     if chat_event is not None:
                         yield chat_event
 
@@ -243,11 +250,17 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
                 yield DoneEvent(tool_calls_count=0)
 
     @staticmethod
-    def _translate_event(event: StreamEvent) -> ChatEvent | None:
+    def _translate_event(
+        event: StreamEvent,
+        *,
+        allow_message_fallback: bool = True,
+    ) -> ChatEvent | None:
         """Translate a Gemini ACP StreamEvent to a ChatEvent.
 
         Args:
             event: A normalized StreamEvent from GeminiACPClient.
+            allow_message_fallback: Whether a non-delta assistant message should
+                be treated as the reply body when no streaming deltas were seen.
 
         Returns:
             A ChatEvent, or None if the event should be skipped.
@@ -255,6 +268,13 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
         if event.event_type == "content_delta":
             content = event.data.get("content", "")
             if content:
+                return TextChunk(content=content)
+            return None
+
+        if event.event_type == "message" and allow_message_fallback:
+            role = event.data.get("role", "")
+            content = event.data.get("content", "")
+            if role == "assistant" and content:
                 return TextChunk(content=content)
             return None
 

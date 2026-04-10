@@ -21,6 +21,24 @@ logger = logging.getLogger(__name__)
 _CANCEL_YIELD_DELAY = 0.1
 
 
+def _build_agent_identity_preamble(agent_body: Any) -> str | None:
+    """Build the non-duplicated identity preamble for web-chat sessions.
+
+    Gemini web chat injects instructions and skills through the first
+    BEFORE_AGENT lifecycle hook, so its session bootstrap should only carry
+    stable identity fields. Other providers can still use the full prompt
+    preamble plus skill injection.
+    """
+    parts: list[str] = []
+    if getattr(agent_body, "role", None):
+        parts.append(f"## Role\n{agent_body.role}")
+    if getattr(agent_body, "goal", None):
+        parts.append(f"## Goal\n{agent_body.goal}")
+    if getattr(agent_body, "personality", None):
+        parts.append(f"## Personality\n{agent_body.personality}")
+    return "\n\n".join(parts) if parts else None
+
+
 def _get_runtime_external_id(session: ChatSessionProtocol) -> str | None:
     """Return the provider-native session/thread id discovered during start()."""
     sdk_session_id = getattr(session, "sdk_session_id", None)
@@ -463,21 +481,26 @@ class ChatSessionMixin:
 
         if agent_body and session_manager:
             try:
-                cli_source = "claude"
+                cli_source = effective_provider or "claude"
                 context_parts: list[str] = []
-                preamble = agent_body.build_prompt_preamble()
+                if effective_provider == "gemini":
+                    preamble = _build_agent_identity_preamble(agent_body)
+                else:
+                    preamble = agent_body.build_prompt_preamble()
                 if preamble:
                     context_parts.append(preamble)
-                # Audience-aware skill injection (canvas, etc.)
-                skills_text = await asyncio.to_thread(
-                    _inject_agent_skills,
-                    agent_body,
-                    session_manager.db,
-                    project_id or PERSONAL_PROJECT_ID,
-                    cli_source,
-                )
-                if skills_text:
-                    context_parts.append(skills_text)
+                # Gemini web chat defers instructions + skills to BEFORE_AGENT
+                # so the first prompt does not duplicate heavy context blocks.
+                if effective_provider != "gemini":
+                    skills_text = await asyncio.to_thread(
+                        _inject_agent_skills,
+                        agent_body,
+                        session_manager.db,
+                        project_id or PERSONAL_PROJECT_ID,
+                        cli_source,
+                    )
+                    if skills_text:
+                        context_parts.append(skills_text)
                 if context_parts:
                     session.system_prompt_override = "\n\n".join(context_parts)
             except Exception as e:

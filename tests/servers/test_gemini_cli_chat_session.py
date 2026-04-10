@@ -218,6 +218,57 @@ class TestSendMessage:
         assert any("rate limit" in e.content for e in text_events)
 
     @pytest.mark.asyncio
+    async def test_non_delta_assistant_message_yields_text_chunk(self) -> None:
+        """Gemini can return a full assistant message without content deltas."""
+        client = _mock_acp_client(
+            stream_events=[
+                StreamEvent(
+                    event_type="message",
+                    data={"role": "assistant", "content": "Hello from Gemini"},
+                ),
+                StreamEvent(event_type="result", data={}),
+            ]
+        )
+
+        session = _make_session(project_path="/tmp/test")
+        with patch(
+            "gobby.servers.gemini_cli_chat_session.GeminiACPClient",
+            return_value=client,
+        ):
+            await session.start()
+            events = [e async for e in session.send_message("hello")]
+
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+        assert text_events[0].content == "Hello from Gemini"
+
+    @pytest.mark.asyncio
+    async def test_non_delta_assistant_message_does_not_duplicate_delta_stream(self) -> None:
+        """A final non-delta assistant message should not duplicate streamed chunks."""
+        client = _mock_acp_client(
+            stream_events=[
+                StreamEvent(event_type="content_delta", data={"content": "Hello "}),
+                StreamEvent(event_type="content_delta", data={"content": "world"}),
+                StreamEvent(
+                    event_type="message",
+                    data={"role": "assistant", "content": "Hello world"},
+                ),
+                StreamEvent(event_type="result", data={}),
+            ]
+        )
+
+        session = _make_session(project_path="/tmp/test")
+        with patch(
+            "gobby.servers.gemini_cli_chat_session.GeminiACPClient",
+            return_value=client,
+        ):
+            await session.start()
+            events = [e async for e in session.send_message("hello")]
+
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert [event.content for event in text_events] == ["Hello ", "world"]
+
+    @pytest.mark.asyncio
     async def test_content_list_input(self) -> None:
         """Content can be a list of content blocks."""
         client = _mock_acp_client(
@@ -245,6 +296,55 @@ class TestSendMessage:
         with pytest.raises(RuntimeError, match="not connected"):
             async for _ in session.send_message("hi"):
                 pass
+
+    @pytest.mark.asyncio
+    async def test_first_turn_prompt_avoids_duplicate_instructions(self) -> None:
+        """Gemini first turn should receive identity once and deferred instructions once."""
+        sent_messages: list[str] = []
+
+        client = AsyncMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.is_started = True
+        client.session_id = "gemini-session-1"
+
+        async def _send(message: str):  # type: ignore[no-untyped-def]
+            sent_messages.append(message)
+            yield StreamEvent(event_type="content_delta", data={"content": "ok"})
+            yield StreamEvent(event_type="result", data={})
+
+        client.send = _send
+
+        session = _make_session(
+            project_path="/tmp/test",
+            project_id="proj-1",
+            db_session_id="db-1",
+            seq_num=2410,
+        )
+        session.system_prompt_override = (
+            "## Role\nYou are Gobby\n\n## Personality\nBlunt and technical"
+        )
+        session._on_before_agent = AsyncMock(
+            return_value={"context": "## Instructions\nUse tools"}
+        )
+
+        with patch(
+            "gobby.servers.gemini_cli_chat_session.GeminiACPClient",
+            return_value=client,
+        ):
+            await session.start()
+            events = [e async for e in session.send_message("Hi Gobby")]
+
+        assert isinstance(events[-1], DoneEvent)
+        assert len(sent_messages) == 1
+        prompt = sent_messages[0]
+        assert prompt.count("## Instructions") == 1
+        assert "## Role\nYou are Gobby" in prompt
+        assert "## Personality\nBlunt and technical" in prompt
+        assert "## Instructions\nUse tools" in prompt
+        assert "Source: gemini_web_chat" in prompt
+        assert "<plan-mode status=\"active\">" in prompt
+        assert prompt.endswith("\n\nHi Gobby")
 
 
 # ---------------------------------------------------------------------------
