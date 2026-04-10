@@ -267,6 +267,23 @@ class TestTranslateToHookEvent:
 
         assert event.event_type == HookEventType.AFTER_MODEL
 
+    def test_after_agent_normalizes_prompt_response(self, adapter) -> None:
+        """Gemini AfterAgent prompt_response is normalized to response."""
+        native_event = {
+            "hook_type": "AfterAgent",
+            "input_data": {
+                "hook_event_name": "AfterAgent",
+                "session_id": "sess-after-agent",
+                "prompt_response": "Completed answer",
+            },
+        }
+
+        event = adapter.translate_to_hook_event(native_event)
+
+        assert event.event_type == HookEventType.AFTER_AGENT
+        assert event.data["prompt_response"] == "Completed answer"
+        assert event.data["response"] == "Completed answer"
+
     def test_before_tool_selection_event(self, adapter) -> None:
         """Translates BeforeToolSelection event (Gemini-specific)."""
         native_event = {
@@ -486,6 +503,7 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response)
 
         assert result["decision"] == "allow"
+        assert result["continue"] is True
         assert "reason" not in result
         assert "hookSpecificOutput" not in result
 
@@ -496,6 +514,7 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response)
 
         assert result["decision"] == "deny"
+        assert result["continue"] is False
         assert result["reason"] == "Policy violation"
 
     def test_block_decision(self, adapter) -> None:
@@ -505,6 +524,7 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response)
 
         assert result["decision"] == "block"
+        assert result["continue"] is True
         assert result["reason"] == "Blocked by workflow"
 
     def test_context_injection(self, adapter) -> None:
@@ -765,6 +785,51 @@ class TestHandleNative:
 
         # Should still process and return a response
         assert result["decision"] == "allow"
+
+    def test_handle_native_after_agent_block_retries_when_response_exists(
+        self, adapter, mock_hook_manager
+    ) -> None:
+        """Normal AfterAgent blocks should retry to enforce stop gates."""
+        mock_hook_manager.handle.return_value = HookResponse(
+            decision="block",
+            reason="Tasks still in_progress",
+        )
+
+        native_event = {
+            "hook_type": "AfterAgent",
+            "input_data": {
+                "hook_event_name": "AfterAgent",
+                "session_id": "sess-after-agent",
+                "prompt_response": "hello",
+            },
+        }
+
+        result = adapter.handle_native(native_event, mock_hook_manager)
+
+        assert result["decision"] == "block"
+        assert result["continue"] is True
+
+    def test_handle_native_after_agent_block_stops_when_cancelled(
+        self, adapter, mock_hook_manager
+    ) -> None:
+        """Cancelled AfterAgent turn should not get trapped in a retry loop."""
+        mock_hook_manager.handle.return_value = HookResponse(
+            decision="block",
+            reason="Tasks still in_progress",
+        )
+
+        native_event = {
+            "hook_type": "AfterAgent",
+            "input_data": {
+                "hook_event_name": "AfterAgent",
+                "session_id": "sess-after-agent",
+            },
+        }
+
+        result = adapter.handle_native(native_event, mock_hook_manager)
+
+        assert result["decision"] == "block"
+        assert result["continue"] is False
 
 
 class TestEdgeCases:

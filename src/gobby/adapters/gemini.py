@@ -161,7 +161,29 @@ class GeminiAdapter(BaseAdapter):
         if "tool_name" in data:
             data["tool_name"] = self.normalize_tool_name(data["tool_name"])
 
+        # Gemini AfterAgent hooks expose the model reply as ``prompt_response``.
+        # Normalize it so downstream transcript and hook consumers can rely on
+        # the same ``response`` field used by other CLIs.
+        if "prompt_response" in data and "response" not in data:
+            data["response"] = data["prompt_response"]
+
         return data
+
+    @staticmethod
+    def _is_cancelled_after_agent(input_data: dict[str, Any]) -> bool:
+        """Heuristic for Gemini ESC/user-interrupt AfterAgent turns.
+
+        Context7 docs show normal AfterAgent hooks expose ``prompt_response``.
+        When Gemini fires AfterAgent without any response payload, treat that
+        as a cancelled/interrupted turn and stop the loop instead of retrying
+        a block forever.
+        """
+        response = input_data.get("prompt_response") or input_data.get("response")
+        if response is None:
+            return True
+        if isinstance(response, str):
+            return response.strip() == ""
+        return False
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
         """Convert Gemini CLI native event to unified HookEvent.
@@ -272,8 +294,10 @@ class GeminiAdapter(BaseAdapter):
         Returns:
             Dict in Gemini CLI's expected format.
         """
+        should_continue = response.decision != "deny"
         result: dict[str, Any] = {
             "decision": response.decision,
+            "continue": should_continue,
         }
 
         # Add reason if present
@@ -403,9 +427,25 @@ class GeminiAdapter(BaseAdapter):
         hook_type = native_event.get("hook_type", "")
         if not hook_type:
             hook_type = native_event.get("input_data", {}).get("hook_event_name", "")
+        input_data = native_event.get("input_data", {}) or {}
+        if not input_data and "hook_event_name" in native_event:
+            input_data = native_event
 
         # Process through HookManager
         hook_response = hook_manager.handle(hook_event)
 
         # Translate response back to Gemini format
-        return self.translate_from_hook_response(hook_response, hook_type=hook_type)
+        result = self.translate_from_hook_response(hook_response, hook_type=hook_type)
+
+        # Normal AfterAgent blocks should retry so stop gates keep the agent
+        # alive. But when the user interrupts the turn (ESC) Gemini still fires
+        # AfterAgent without a completed prompt_response; in that case, kill the
+        # loop so the cancel doesn't get trapped in a retry cycle.
+        if (
+            hook_type == "AfterAgent"
+            and hook_response.decision == "block"
+            and self._is_cancelled_after_agent(input_data)
+        ):
+            result["continue"] = False
+
+        return result
