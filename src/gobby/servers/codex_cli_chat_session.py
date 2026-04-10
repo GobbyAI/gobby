@@ -419,16 +419,16 @@ class CodexCLIChatSession:
                 break
 
     async def interrupt(self) -> None:
-        """Send cancel request to interrupt current turn."""
+        """Send an interrupt request for the active turn."""
         if self._process and self._process.stdin and self._thread_id:
             try:
-                cancel_request = {
+                interrupt_request = {
                     "jsonrpc": "2.0",
-                    "method": "turn/cancel",
+                    "method": "turn/interrupt",
                     "params": {"threadId": self._thread_id},
                     "id": next(self._request_id),
                 }
-                line = json.dumps(cancel_request) + "\n"
+                line = json.dumps(interrupt_request) + "\n"
                 self._process.stdin.write(line.encode())
                 await self._process.stdin.drain()
             except Exception as e:

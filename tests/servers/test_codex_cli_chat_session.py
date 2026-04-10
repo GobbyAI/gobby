@@ -319,7 +319,7 @@ class TestCodexCLIChatSession:
         assert session.model == "gpt-4"
 
     @pytest.mark.asyncio
-    async def test_interrupt_sends_cancel(self) -> None:
+    async def test_interrupt_sends_interrupt(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         with (
             patch(
@@ -331,10 +331,9 @@ class TestCodexCLIChatSession:
             await session.start()
             await session.interrupt()
 
-        # Should have sent turn/cancel
-        cancel_req = json.loads(proc.stdin.write.call_args_list[-1][0][0].decode())
-        assert cancel_req["method"] == "turn/cancel"
-        assert cancel_req["params"]["threadId"] == "thread-1"
+        interrupt_req = json.loads(proc.stdin.write.call_args_list[-1][0][0].decode())
+        assert interrupt_req["method"] == "turn/interrupt"
+        assert interrupt_req["params"]["threadId"] == "thread-1"
 
     @pytest.mark.asyncio
     async def test_interrupt_noop_when_no_process(self) -> None:
