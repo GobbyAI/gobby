@@ -1295,6 +1295,7 @@ class MemoryManager:
         # 3. Rebuild crossrefs (concurrent, semaphore-limited)
         crossref_sem = asyncio.Semaphore(10)
         crossref_done = 0
+        crossref_done_lock = asyncio.Lock()
 
         async def _rebuild_crossref(mem: Memory) -> int:
             nonlocal crossref_done
@@ -1304,9 +1305,10 @@ class MemoryManager:
                 except (CrossrefRebuildError, ValueError) as e:
                     logger.warning(f"Crossref failed for {mem.id}: {e}")
                     result = 0
-                crossref_done += 1
-                if crossref_done % 50 == 0 or crossref_done == total:
-                    logger.info(f"Crossref progress: {crossref_done}/{total}")
+                async with crossref_done_lock:
+                    crossref_done += 1
+                    if crossref_done % 50 == 0 or crossref_done == total:
+                        logger.info(f"Crossref progress: {crossref_done}/{total}")
                 return result
 
         crossref_results = await asyncio.gather(*[_rebuild_crossref(m) for m in all_memories])
@@ -1322,6 +1324,7 @@ class MemoryManager:
             kg_service = self._kg_service
             kg_sem = asyncio.Semaphore(5)
             kg_done = 0
+            kg_done_lock = asyncio.Lock()
 
             async def _rebuild_kg(mem: Memory) -> bool:
                 nonlocal kg_done
@@ -1336,9 +1339,10 @@ class MemoryManager:
                     except Exception as e:
                         logger.warning(f"KG extraction failed for {mem.id}: {e}")
                         success = False
-                    kg_done += 1
-                    if kg_done % 50 == 0 or kg_done == total:
-                        logger.info(f"KG extraction progress: {kg_done}/{total}")
+                    async with kg_done_lock:
+                        kg_done += 1
+                        if kg_done % 50 == 0 or kg_done == total:
+                            logger.info(f"KG extraction progress: {kg_done}/{total}")
                     return success
 
             kg_results = await asyncio.gather(*[_rebuild_kg(m) for m in all_memories])

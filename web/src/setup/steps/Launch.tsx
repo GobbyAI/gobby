@@ -133,9 +133,8 @@ function writeInitialSetupMd(state: typeof import("../utils/state.js").loadState
 
   const allTools = [
     "python", "node", "uv", "claude", "tmux",
-    "git", "docker", "tailscale", "gemini", "codex", "copilot", "windsurf", "cursor",
+    "git", "docker", "tailscale", "gemini", "codex",
   ];
-  const _required = ["python", "node", "uv", "claude", "tmux"];
 
   const cliRows = allTools
     .map((t) => {

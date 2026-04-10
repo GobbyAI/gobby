@@ -202,7 +202,7 @@ class TestCodexCLIChatSession:
             events = [e async for e in session.send_message("say hello")]
 
         # Should get 2 TextChunks + 1 DoneEvent
-        from gobby.llm.claude_models import TextChunk, DoneEvent
+        from gobby.llm.claude_models import DoneEvent, TextChunk
 
         text_chunks = [e for e in events if isinstance(e, TextChunk)]
         done_events = [e for e in events if isinstance(e, DoneEvent)]
@@ -291,7 +291,7 @@ class TestCodexCLIChatSession:
             await session.start()
             events = [e async for e in session.send_message("test")]
 
-        from gobby.llm.claude_models import TextChunk, DoneEvent
+        from gobby.llm.claude_models import DoneEvent, TextChunk
 
         assert any(isinstance(e, TextChunk) and "Server overloaded" in e.content for e in events)
         assert any(isinstance(e, DoneEvent) for e in events)

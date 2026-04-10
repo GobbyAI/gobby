@@ -59,15 +59,21 @@ class CodexProvider(LLMProvider):
         self._client = None
 
         # Resolve default model from provider config → global config.
-        # Pydantic defaults guarantee llm_providers.default_model is never None.
+        # Pydantic defaults guarantee llm_providers is set with a non-None
+        # default_model, but we still guard against config mutation/tests
+        # passing partial objects by walking the chain through the local
+        # `providers` variable rather than re-accessing config.llm_providers.
         providers = getattr(config, "llm_providers", None)
         codex_cfg = getattr(providers, "codex", None) if providers else None
-        self._default_model: str = cast(
-            str,
-            getattr(codex_cfg, "default_model", None)
-            or getattr(providers, "default_model", None)
-            or config.llm_providers.default_model,
+        resolved_model: str | None = getattr(codex_cfg, "default_model", None) or getattr(
+            providers, "default_model", None
         )
+        if not resolved_model:
+            raise ValueError(
+                "CodexProvider requires a default model. Set "
+                "llm_providers.codex.default_model or llm_providers.default_model."
+            )
+        self._default_model: str = resolved_model
 
         # Determine auth mode from config or parameter
         self._auth_mode: AuthMode = "subscription"  # Default

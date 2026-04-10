@@ -1870,7 +1870,7 @@ class TestInlineMcpCallDispatch:
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_raise)
         variables: dict[str, Any] = {}
         event = _make_event(data={"tool_name": "Read"})
-        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         # Variable should NOT be set
         assert variables.get("injected") is None

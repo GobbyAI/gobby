@@ -519,7 +519,7 @@ class TestDeEscalateTaskTool:
     @pytest.mark.asyncio
     async def test_de_escalate_task_requires_reason(
         self, mock_task_manager, task_registry_with_patches
-    ):
+    ) -> None:
         """Test that de_escalate_task requires a reason."""
         escalated_task = Task(
             id="t1",
@@ -566,7 +566,7 @@ class TestDeEscalateTaskTool:
     @pytest.mark.asyncio
     async def test_de_escalate_task_task_not_found(
         self, mock_task_manager, task_registry_with_patches
-    ):
+    ) -> None:
         """Test de_escalate_task with non-existent task."""
         mock_task_manager.get_task.return_value = None
 

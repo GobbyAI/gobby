@@ -471,7 +471,9 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         if reset_validation:
             update_kwargs["validation_fail_count"] = 0
 
-        ctx.task_manager.update_task(resolved_id, **update_kwargs)
+        updated = ctx.task_manager.update_task(resolved_id, **update_kwargs)
+        if not updated:
+            return {"error": f"Failed to de-escalate task {task_id}"}
         logger.info("Task %s de-escalated: %s", resolved_id, reason)
 
         notify_parent_on_status_change(

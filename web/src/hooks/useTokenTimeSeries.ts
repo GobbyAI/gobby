@@ -16,6 +16,7 @@ export function useTokenTimeSeries(hours: number, projectId?: string) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
 
   const fetchData = useCallback(async () => {
     abortRef.current?.abort()
@@ -25,6 +26,7 @@ export function useTokenTimeSeries(hours: number, projectId?: string) {
       let url = `/api/admin/tokens/timeseries?hours=${hours}`
       if (projectId) url += `&project_id=${encodeURIComponent(projectId)}`
       const resp = await fetch(url, { signal: controller.signal })
+      if (!mountedRef.current) return
       if (resp.ok) {
         setData(await resp.json())
         setError(null)
@@ -34,18 +36,23 @@ export function useTokenTimeSeries(hours: number, projectId?: string) {
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') return
+      if (!mountedRef.current) return
       setError(String(e))
       setData(null)
     }
   }, [hours, projectId])
 
   useEffect(() => {
+    mountedRef.current = true
     setIsLoading(true)
     fetchData()
       .catch((err) => { console.error('Token timeseries fetch failed:', err) })
-      .finally(() => setIsLoading(false))
+      .finally(() => {
+        if (mountedRef.current) setIsLoading(false)
+      })
     const interval = setInterval(fetchData, 30_000)
     return () => {
+      mountedRef.current = false
       clearInterval(interval)
       abortRef.current?.abort()
     }

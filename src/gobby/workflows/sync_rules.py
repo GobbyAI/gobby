@@ -1,8 +1,9 @@
 """Rule definition synchronization from bundled YAML templates.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly. Installed rows are overwritten when the template changes
-(preserving the user's enabled toggle). Soft-deleted rows are not restored.
+directly. **Existing installed rows are never overwritten** by sync — drift
+between the on-disk template and the DB row is detected via hash comparison
+at runtime, not corrected here. Soft-deleted rows are not restored.
 """
 
 import json
@@ -229,8 +230,9 @@ def _sync_single_rule(
 ) -> None:
     """Sync a single rule to workflow_definitions.
 
-    Creates an installed row if none exists. Overwrites existing installed
-    rows when the template changes (preserving the user's enabled toggle).
+    Creates an installed row if none exists. **Existing active installed rows
+    are left intact** — drift between the on-disk template and the DB row is
+    detected via hash comparison at runtime, not corrected during sync.
     Soft-deleted rows are not restored.
     """
     # Build the RuleDefinitionBody dict

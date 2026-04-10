@@ -430,11 +430,10 @@ def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby")
         result["success"] = True
         return result
 
-    # Read and parse TOML
+    # Read and parse TOML (single read; reuse buffer for backup + parse)
     try:
         existing_text = config_path.read_text(encoding="utf-8")
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
+        config = tomllib.loads(existing_text)
     except tomllib.TOMLDecodeError as e:
         result["error"] = f"Failed to parse TOML {config_path}: {e}"
         return result
@@ -502,11 +501,10 @@ def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dic
         result["success"] = True
         return result
 
-    # Read existing TOML file
+    # Read existing TOML file (single read; reuse buffer for backup + parse)
     try:
         existing_text = config_path.read_text(encoding="utf-8")
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
+        config = tomllib.loads(existing_text)
     except tomllib.TOMLDecodeError as e:
         result["error"] = f"Failed to parse TOML {config_path}: {e}"
         return result

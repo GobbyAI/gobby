@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 import pytest
+
 from gobby.llm.stream_json_parser import (
     ContentBlockDelta,
     ErrorEvent,

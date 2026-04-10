@@ -154,7 +154,9 @@ def _get_compression_config() -> tuple[bool, str]:
             cc = getattr(ctx.config, "context_compression", None)
             if cc is not None:
                 return cc.enabled, cc.level
-    except Exception:
+    except (ImportError, AttributeError, TypeError):
+        # Fail-open to defaults if app context isn't wired up (e.g. in tests
+        # or one-shot scripts that import this module without a daemon).
         pass
     return True, "standard"
 

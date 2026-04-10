@@ -1,11 +1,11 @@
 ## Decouple Title Synthesis From CLI Account State
 
 ### Summary
-Keep session title synthesis as a feature-routed LLM capability, but harden it across Claude, Gemini, and Codex so provider outages, quota exhaustion, or account switches do not break the chat flow. Preserve configurability through [`SessionTitleConfig`](/Users/josh/Projects/gobby/src/gobby/config/sessions.py#L179), and make it practical to point titles at a local model later without more code changes.
+Keep session title synthesis as a feature-routed LLM capability, but harden it across Claude, Gemini, and Codex so provider outages, quota exhaustion, or account switches do not break the chat flow. Preserve configurability through [`SessionTitleConfig`](../../src/gobby/config/sessions.py#L179), and make it practical to point titles at a local model later without more code changes.
 
 ### Implementation Changes
 - Standardize title synthesis on feature-level provider routing everywhere it is used, using the existing `session_title.provider`, `session_title.model`, and `session_title.timeout` fields instead of any implicit default-provider fallback.
-- Audit all internal title-generation paths, starting with [`analytics.py`](/Users/josh/Projects/gobby/src/gobby/servers/routes/sessions/analytics.py) and [`_actions.py`](/Users/josh/Projects/gobby/src/gobby/mcp_proxy/tools/sessions/_actions.py), so they share one failure policy and one provider-selection path.
+- Audit all internal title-generation paths, starting with [`analytics.py`](../../src/gobby/servers/routes/sessions/analytics.py) and [`_actions.py`](../../src/gobby/mcp_proxy/tools/sessions/_actions.py), so they share one failure policy and one provider-selection path.
 - Treat title synthesis as non-critical background enrichment:
   - timeouts, quota errors, auth/account errors, and transient provider failures should log compact warnings
   - the session/chat request should continue normally

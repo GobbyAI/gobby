@@ -77,6 +77,23 @@ function getAgentBadge(agentRunId: string | null | undefined): {
   return { label: "auto", className: "session-kind-badge--auto" };
 }
 
+function renderBadges(entry: SessionEntry) {
+  const typeBadge = getSessionTypeBadge(entry.sessionType);
+  const agentBadge = getAgentBadge(entry.agentRunId);
+  return (
+    <>
+      <span className={`session-kind-badge ${typeBadge.className}`}>
+        {typeBadge.label}
+      </span>
+      {agentBadge && (
+        <span className={`session-kind-badge ${agentBadge.className}`}>
+          {agentBadge.label}
+        </span>
+      )}
+    </>
+  );
+}
+
 export const SessionsTab = memo(function SessionsTab({
   projectId,
   onKillAgent,
@@ -406,23 +423,7 @@ export const SessionsTab = memo(function SessionsTab({
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                {(() => {
-                  const typeBadge = getSessionTypeBadge(entry.sessionType);
-                  return (
-                    <span className={`session-kind-badge ${typeBadge.className}`}>
-                      {typeBadge.label}
-                    </span>
-                  );
-                })()}
-                {(() => {
-                  const agentBadge = getAgentBadge(entry.agentRunId);
-                  if (!agentBadge) return null;
-                  return (
-                    <span className={`session-kind-badge ${agentBadge.className}`}>
-                      {agentBadge.label}
-                    </span>
-                  );
-                })()}
+                {renderBadges(entry)}
                 {isMobile ? (
                   <button
                     className="session-more-btn"

@@ -249,7 +249,6 @@ export function ChatPage({
     [
       chat,
       confirm,
-      currentModel,
       isAutonomousSession,
       isSwappedTerminal,
       onModelChange,

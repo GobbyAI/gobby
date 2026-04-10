@@ -10,18 +10,12 @@ const CLI_LABELS: Record<string, string> = {
   claude: "Claude Code",
   gemini: "Gemini CLI",
   codex: "Codex",
-  cursor: "Cursor",
-  windsurf: "Windsurf",
-  copilot: "Copilot CLI",
 };
 
 const CLI_FLAGS: Record<string, string> = {
   claude: "--claude",
   gemini: "--gemini",
   codex: "--codex",
-  cursor: "--cursor",
-  windsurf: "--windsurf",
-  copilot: "--copilot",
 };
 
 export function CliHooks({ state, setState, onNext }: StepProps): React.ReactElement {

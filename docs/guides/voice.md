@@ -40,7 +40,7 @@ voice:
   enabled: true
   tts_provider: chatterbox   # or "kokoro" for fixed voices
   tts_reference_audio: ~/.gobby/voice/reference.wav
-  tts_temperature: 0.8       # sampling randomness (0.1-1.0)
+  tts_temperature: 0.55      # sampling randomness (0.1-1.0, default 0.55)
   tts_device: auto            # auto, cuda, mps, cpu
 ```
 
@@ -67,7 +67,15 @@ Use yt-dlp to extract a voice sample from any video:
 
 ```bash
 # Install tools
+
+# macOS
 brew install yt-dlp ffmpeg
+
+# Linux (Debian/Ubuntu)
+sudo apt install yt-dlp ffmpeg
+
+# Any platform (pip)
+pip install yt-dlp  # ffmpeg still needs to be installed via your system package manager
 
 # Download full audio as WAV
 yt-dlp -x --audio-format wav -o "output.wav" "https://youtube.com/watch?v=VIDEO_ID"

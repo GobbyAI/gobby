@@ -1,3 +1,4 @@
+import type React from 'react'
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, act } from '@testing-library/react'
 import { TasksTab } from '../TasksTab'
@@ -11,6 +12,12 @@ vi.mock('../../../hooks/useWebSocketEvent', () => ({
   },
 }))
 
+interface TaskTreeNode {
+  id: string
+  task: { title: string }
+  children?: TaskTreeNode[]
+}
+
 beforeAll(() => {
   globalThis.ResizeObserver = class {
     observe() {}
@@ -19,7 +26,7 @@ beforeAll(() => {
   } as unknown as typeof ResizeObserver
 })
 
-function renderNodes(nodes: Array<{ id: string; task: { title: string }; children?: any[] }>) {
+function renderNodes(nodes: TaskTreeNode[]): React.ReactNode {
   return nodes.map((node) => (
     <div key={node.id}>
       <div>{node.task.title}</div>
@@ -29,7 +36,7 @@ function renderNodes(nodes: Array<{ id: string; task: { title: string }; childre
 }
 
 vi.mock('react-arborist', () => ({
-  Tree: ({ data }: { data: Array<{ id: string; task: { title: string }; children?: any[] }> }) => (
+  Tree: ({ data }: { data: TaskTreeNode[] }) => (
     <div data-testid="task-tree">{renderNodes(data)}</div>
   ),
 }))
@@ -112,6 +119,8 @@ describe('TasksTab', () => {
   afterEach(() => {
     mockFetch.restore()
     vi.restoreAllMocks()
+    // Clear the captured WebSocket handler so it doesn't leak between tests
+    wsHandler = null
   })
 
   it('includes review-approved tasks by default and paginates the list in batches of ten', async () => {

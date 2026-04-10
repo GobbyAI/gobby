@@ -18,6 +18,10 @@ let mockFetch: MockFetchInstance
 
 describe('PipelinesTab', () => {
   beforeEach(() => {
+    // Fake timers prevent the component's 3s polling interval from firing
+    // unpredictably while the test runs. We never advance time in this test
+    // — we just want polls to be deterministic, not to fire spontaneously.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch = createMockFetch()
     mockFetch.mockJsonResponse(/\/api\/pipelines\/executions\?/, {
       executions: [
@@ -32,6 +36,8 @@ describe('PipelinesTab', () => {
   })
 
   afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
     mockFetch.restore()
     vi.restoreAllMocks()
   })
@@ -40,8 +46,8 @@ describe('PipelinesTab', () => {
     render(<PipelinesTab projectId="proj-1" />)
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('All')).toBeTruthy()
-      expect(screen.getByText('Nightly sync')).toBeTruthy()
+      expect(screen.getByDisplayValue('All')).toBeInTheDocument()
+      expect(screen.getByText('Nightly sync')).toBeInTheDocument()
     })
 
     const executionCalls = mockFetch.fn.mock.calls

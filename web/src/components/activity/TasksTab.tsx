@@ -192,6 +192,9 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   // Fetch tasks filtered by active status filters (server-side)
   const abortRef = useRef<AbortController | null>(null)
   const debouncedRefetchRef = useRef<number | null>(null)
+  // Abort any in-flight WebSocket-triggered detail fetch when a newer one
+  // arrives or when the component unmounts.
+  const detailFetchControllerRef = useRef<AbortController | null>(null)
 
   const fetchTasks = useCallback(() => {
     abortRef.current?.abort()
@@ -214,6 +217,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     fetchTasks()
     return () => {
       abortRef.current?.abort()
+      detailFetchControllerRef.current?.abort()
       if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
     }
   }, [fetchTasks])
@@ -243,15 +247,30 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
       setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updated } : t))
     }
 
-    // Re-fetch detail if the affected task is currently selected
+    // Re-fetch detail if the affected task is currently selected.
+    // Abort any previous in-flight detail fetch so a stale response can't
+    // overwrite a newer one (or land after the component unmounts).
     if (taskId === selectedTaskId && event !== 'task_deleted') {
+      detailFetchControllerRef.current?.abort()
+      const controller = new AbortController()
+      detailFetchControllerRef.current = controller
       setDetailLoading(true)
       const baseUrl = getBaseUrl()
-      fetch(`${baseUrl}/api/tasks/${taskId}`)
+      fetch(`${baseUrl}/api/tasks/${taskId}`, { signal: controller.signal })
         .then(res => res.ok ? res.json() : null)
-        .then(data => setTaskDetail(data?.id ? data : (data?.task ?? null)))
-        .catch(() => {})
-        .finally(() => setDetailLoading(false))
+        .then(data => {
+          if (controller.signal.aborted) return
+          setTaskDetail(data?.id ? data : (data?.task ?? null))
+        })
+        .catch((err) => {
+          if (err?.name !== 'AbortError') {
+            // Swallow non-abort errors quietly — the periodic refetch
+            // below will retry shortly.
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setDetailLoading(false)
+        })
     }
 
     // Debounced full refetch to sync server truth

@@ -34,8 +34,23 @@ class WhisperSTT:
         self._loading = False
         self._load_lock = asyncio.Lock()
 
+    async def warmup(self) -> None:
+        """Public entry point for preloading the STT model.
+
+        Wraps the lazy loader so callers (e.g. the websocket warmup task) do
+        not need to reach into the private ``_ensure_model`` API.
+        """
+        await self._ensure_model()
+
     def unload(self) -> None:
-        """Release the model to reclaim memory."""
+        """Release the model to reclaim memory.
+
+        Safe to call from sync contexts: ``transcribe()`` captures the model
+        in a local variable after ``_ensure_model()`` returns, so clearing
+        ``self._model`` here cannot pull the rug out from an in-flight
+        transcription. Python attribute assignment is GIL-atomic, so no
+        explicit lock is required.
+        """
         self._model = None
 
     def _build_initial_prompt(self) -> str | None:

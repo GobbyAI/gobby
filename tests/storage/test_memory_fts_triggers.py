@@ -88,9 +88,7 @@ def _drop_fts_table_keep_triggers(db: LocalDatabase) -> None:
 class TestFTSTriggerScoping:
     """Verify the update trigger only fires on indexed columns."""
 
-    def test_access_stats_update_succeeds_without_fts(
-        self, db, memory_manager
-    ) -> None:
+    def test_access_stats_update_succeeds_without_fts(self, db, memory_manager) -> None:
         """access_count/last_accessed_at updates must not invoke the FTS trigger.
 
         With the FTS table dropped but triggers retained, a non-indexed
@@ -114,9 +112,7 @@ class TestFTSTriggerScoping:
                 (datetime.now(UTC).isoformat(), mem_id),
             )
 
-    def test_mark_graph_processed_succeeds_without_fts(
-        self, db, memory_manager
-    ) -> None:
+    def test_mark_graph_processed_succeeds_without_fts(self, db, memory_manager) -> None:
         """graph_processed updates must not invoke the FTS trigger."""
         mem_id = _create_test_memory(memory_manager, "graphproc")
 

@@ -41,11 +41,17 @@ class TestTTSPipeline:
         pipeline.feed_text("First sentence. Second sentence. ")
         await pipeline.flush()
 
-        sent_messages = [call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], str)]
+        sent_messages = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], str)
+        ]
         payloads = [json.loads(message) for message in sent_messages]
-        chunk_indices = [payload["chunk_index"] for payload in payloads if payload["type"] == "tts_audio"]
+        chunk_indices = [
+            payload["chunk_index"] for payload in payloads if payload["type"] == "tts_audio"
+        ]
 
-        binary_frames = [call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)]
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
         assert chunk_indices == [0, 1]
         assert binary_frames == [b"First sentence.", b"Second sentence."]
 
@@ -63,7 +69,9 @@ class TestTTSPipeline:
         pipeline.feed_text("First sentence. Tail fragment")
         await pipeline.flush()
 
-        binary_frames = [call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)]
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
         assert binary_frames == [b"First sentence.", b"Tail fragment"]
 
         await pipeline.cancel()

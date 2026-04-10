@@ -86,6 +86,9 @@ def extract_keywords(
 
         return None
 
+    except ImportError as e:
+        logger.debug(f"YAKE not installed or failed to import: {e}")
+        return None
     except Exception as e:
         logger.debug(f"YAKE extraction failed: {e}")
         return None

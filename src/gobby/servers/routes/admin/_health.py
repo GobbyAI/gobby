@@ -346,7 +346,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             from gobby.storage.agents import LocalAgentRunManager
 
             arm = LocalAgentRunManager(server.services.database)
-            runs = arm.list_active_runs()
+            runs = arm.list_running()
             agent_stats["running"] = len(runs)
         except Exception:
             pass

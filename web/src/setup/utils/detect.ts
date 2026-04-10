@@ -1,5 +1,4 @@
 import { execSync } from "child_process";
-import { existsSync } from "fs";
 
 const VERSION_CMDS: Record<string, string[]> = {
   uv: ["uv", "--version"],
@@ -20,9 +19,6 @@ export const OPTIONAL_TOOLS = [
   "tailscale",
   "gemini",
   "codex",
-  "copilot",
-  "windsurf",
-  "cursor",
   "clawhub",
 ];
 
@@ -80,36 +76,6 @@ export function detectTool(tool: string): string | null {
     } catch {
       return null;
     }
-  }
-
-  // --- GUI apps ---
-  if (tool === "cursor") {
-    if (process.platform === "darwin" && existsSync("/Applications/Cursor.app"))
-      return "installed";
-    return which("cursor") ? "installed" : null;
-  }
-  if (tool === "windsurf") {
-    if (
-      process.platform === "darwin" &&
-      existsSync("/Applications/Windsurf.app")
-    )
-      return "installed";
-    return which("windsurf") ? "installed" : null;
-  }
-
-  // --- Copilot (gh extension) ---
-  if (tool === "copilot") {
-    if (!which("gh")) return null;
-    try {
-      const out = execSync("gh extension list", {
-        encoding: "utf-8",
-        timeout: 10000,
-      });
-      if (out.toLowerCase().includes("copilot")) return "installed";
-    } catch {
-      /* not installed */
-    }
-    return null;
   }
 
   // --- Standard CLI tools ---

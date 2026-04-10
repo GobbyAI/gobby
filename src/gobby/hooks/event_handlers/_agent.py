@@ -164,7 +164,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             if session_row:
                 project_id = session_row.project_id
         except Exception as e:
-            logger.debug(
+            self.logger.debug(
                 "Failed to resolve session %s while injecting agent context: %s",
                 session_id,
                 e,

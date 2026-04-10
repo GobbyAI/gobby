@@ -20,10 +20,16 @@ export function VoiceStatusBar({
         </>
       ) : isListening && isSpeechDetected ? (
         <>
-          <div className="flex gap-0.5 items-end h-3">
+          <div
+            className="flex gap-0.5 items-end h-3"
+            role="status"
+            aria-live="polite"
+            aria-label="Microphone listening"
+          >
             {[8, 11, 6, 10].map((h, i) => (
               <span
                 key={i}
+                aria-hidden="true"
                 className="w-0.5 bg-green-400 rounded-full animate-pulse"
                 style={{ height: `${h}px`, animationDelay: `${i * 0.1}s` }}
               />

@@ -129,8 +129,8 @@ def lookup_context_window(model: str, db: DatabaseProtocol | None = None) -> int
 
             store = ModelCostStore(ctx.database)
             return store.get_context_window(model)
-    except Exception:
-        pass
+    except (ImportError, AttributeError) as e:
+        logger.debug(f"App context fallback failed for model {model}: {e}")
 
     return None
 

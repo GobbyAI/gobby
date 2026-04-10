@@ -6,6 +6,8 @@ columns, indexes, and constraints after running migrations on a fresh DB.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from gobby.storage.database import LocalDatabase
@@ -98,8 +100,6 @@ def test_pending_interactions_unique_partial_index(fresh_db: LocalDatabase) -> N
 
     # Verify the partial index by testing the constraint: inserting two rows with
     # same (session_id, kind) and status='pending' should fail
-    import sqlite3
-
     with fresh_db.transaction() as conn:
         # Create stub project and session to satisfy FK constraints
         conn.execute(

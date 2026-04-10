@@ -5,8 +5,8 @@ from unittest.mock import patch
 import pytest
 
 from gobby.llm.sdk_utils import (
-    ADDITIONAL_CONTEXT_LIMIT,
     _STATS_RE,
+    ADDITIONAL_CONTEXT_LIMIT,
     compress_and_truncate,
     compress_context,
     format_exception_group,

@@ -197,11 +197,16 @@ class LocalLLMProvider(LLMProvider):
             raise ValueError("Empty response from local LLM")
 
         # Strip markdown fences that some models wrap JSON in.
+        # Only strip the *outermost* opening/closing fences — internal fence
+        # lines (e.g. inside a code block embedded in a JSON string) must be
+        # preserved.
         stripped = content.strip()
         if stripped.startswith("```"):
             lines = stripped.splitlines()
-            # Drop opening ``` line and closing ``` line
-            lines = [ln for ln in lines if not ln.strip().startswith("```")]
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
             stripped = "\n".join(lines)
 
         try:

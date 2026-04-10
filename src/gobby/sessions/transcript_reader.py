@@ -370,8 +370,14 @@ class TranscriptReader:
                 self._session_manager.update, session_id, transcript_path=derived
             )
             logger.info(f"Re-derived transcript path for session {session_id}: {derived}")
-        except Exception as e:
-            logger.debug(f"Failed to persist re-derived transcript path: {e}")
+        except (OSError, ValueError) as e:
+            # Persistence is best-effort — failure to update transcript_path
+            # shouldn't break the read path. Anything other than expected
+            # storage/validation errors should still surface.
+            logger.warning(
+                f"Failed to persist re-derived transcript path for session {session_id} "
+                f"({derived}): {e}"
+            )
         return derived
 
     async def _get_parsed_messages_from_file(self, session_id: str) -> list[ParsedMessage]:

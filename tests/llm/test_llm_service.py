@@ -302,17 +302,13 @@ class TestLLMServiceLocalProvider:
         p2 = service.get_provider("local")
         assert p1 is p2
 
-    def test_get_provider_local_not_configured_raises(
-        self, llm_config: DaemonConfig
-    ) -> None:
+    def test_get_provider_local_not_configured_raises(self, llm_config: DaemonConfig) -> None:
         """local=None in config should raise ValueError."""
         service = LLMService(llm_config)
         with pytest.raises(ValueError, match="local"):
             service.get_provider("local")
 
-    def test_enabled_providers_includes_local(
-        self, llm_config_with_local: DaemonConfig
-    ) -> None:
+    def test_enabled_providers_includes_local(self, llm_config_with_local: DaemonConfig) -> None:
         service = LLMService(llm_config_with_local)
         assert "local" in service.enabled_providers
 
@@ -365,18 +361,22 @@ class TestLLMServiceCallFeature:
 
         service = LLMService(llm_config_with_local)
         local_provider = service.get_provider("local")
-        local_provider.generate_text = AsyncMock(
-            side_effect=ConnectionError("local server down")
-        )
+        local_provider.generate_text = AsyncMock(side_effect=ConnectionError("local server down"))
 
         config = SessionTitleConfig(provider="local", model="test-model")
         result = await service.call_feature(config, "prompt text")
 
         assert result == "Fallback Title"
-        # Should fall back to haiku (LOW tier)
+        # Should fall back to haiku (LOW tier). Inspect by inspecting bound
+        # arguments rather than positional index so the assertion survives
+        # signature changes.
         mock_claude_instance.generate_text.assert_awaited_once()
         call_args = mock_claude_instance.generate_text.call_args
-        assert call_args.args[2] == "haiku"  # model positional arg
+        # generate_text signature: (prompt, system_prompt, model, max_tokens)
+        bound_model = call_args.kwargs.get("model")
+        if bound_model is None and len(call_args.args) >= 3:
+            bound_model = call_args.args[2]
+        assert bound_model == "haiku"
 
     @pytest.mark.asyncio
     @patch("gobby.llm.claude.ClaudeLLMProvider")
@@ -402,7 +402,10 @@ class TestLLMServiceCallFeature:
         result = await service.call_feature(config, "prompt text")
         assert result == "Summary"
         call_args = mock_claude_instance.generate_text.call_args
-        assert call_args.args[2] == "sonnet"
+        bound_model = call_args.kwargs.get("model")
+        if bound_model is None and len(call_args.args) >= 3:
+            bound_model = call_args.args[2]
+        assert bound_model == "sonnet"
 
     @pytest.mark.asyncio
     @patch("gobby.llm.claude.ClaudeLLMProvider")
@@ -411,9 +414,7 @@ class TestLLMServiceCallFeature:
     ) -> None:
         """Non-local provider failures propagate normally."""
         mock_claude_instance = MagicMock()
-        mock_claude_instance.generate_text = AsyncMock(
-            side_effect=RuntimeError("claude error")
-        )
+        mock_claude_instance.generate_text = AsyncMock(side_effect=RuntimeError("claude error"))
         mock_claude_cls.return_value = mock_claude_instance
 
         service = LLMService(llm_config)

@@ -265,7 +265,8 @@ class LLMService:
         """Get list of enabled provider names."""
         if not self._config.llm_providers:
             return []
-        providers = self._config.llm_providers.get_enabled_providers()
+        # Copy before mutating — get_enabled_providers may return a cached list
+        providers = list(self._config.llm_providers.get_enabled_providers())
         if self._config.local:
             providers.append("local")
         return providers

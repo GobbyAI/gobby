@@ -156,21 +156,29 @@ class ChatterboxTurboProvider:
     def __init__(self, config: VoiceConfig) -> None:
         self._config = config
         self._model: Any | None = None
-        self._load_lock: asyncio.Lock | None = None
+        # Initialize the lock eagerly so two coroutines arriving in
+        # _ensure_model concurrently cannot create separate locks.
+        self._load_lock: asyncio.Lock = asyncio.Lock()
         self._sample_rate = 24000  # Chatterbox outputs 24kHz
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
 
+    async def warmup(self) -> None:
+        """Public entry point for preloading the TTS model."""
+        await self._ensure_model()
+
     def unload(self) -> None:
-        """Release the model to reclaim memory."""
+        """Release the model to reclaim memory.
+
+        Safe to call from sync contexts: ``synthesize_stream`` captures the
+        model in a local variable, so clearing ``self._model`` cannot affect
+        an in-flight synthesis. Python attribute assignment is GIL-atomic.
+        """
         self._model = None
 
     async def _ensure_model(self) -> Any:
         """Lazy-load the Chatterbox Turbo model (thread-safe, async)."""
         if self._model is not None:
             return self._model
-
-        if self._load_lock is None:
-            self._load_lock = asyncio.Lock()
 
         async with self._load_lock:
             if self._model is not None:
@@ -200,11 +208,10 @@ class ChatterboxTurboProvider:
         SentenceBuffer) and yields the audio as one chunk. Turbo's sub-200ms
         latency makes this real-time for sentence-level synthesis.
         """
-        try:
-            model = await self._ensure_model()
-        except Exception:
-            logger.error("Failed to load Chatterbox Turbo model", exc_info=True)
-            return
+        # Re-raise model-load failures so callers see them instead of getting
+        # an empty iterator with no signal of what went wrong. The websocket
+        # warmup task and synthesize_stream consumers both need to know.
+        model = await self._ensure_model()
 
         try:
             ref_path = str(self._reference_audio) if self._reference_audio.exists() else None

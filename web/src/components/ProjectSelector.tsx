@@ -44,16 +44,29 @@ export function ProjectSelector({
   );
   const triggerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
 
   const updatePosition = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    setDropdownPos({
-      top: dropDirection === "up" ? rect.top : rect.bottom + 4,
-      left: rect.right - DROPDOWN_WIDTH,
-      width: DROPDOWN_WIDTH,
-    });
+    const margin = 8;
+    const desiredLeft = rect.right - DROPDOWN_WIDTH;
+    // Clamp horizontally so the dropdown can't escape the viewport when the
+    // trigger sits near the right edge or on a narrow screen.
+    const left = Math.max(
+      margin,
+      Math.min(desiredLeft, window.innerWidth - DROPDOWN_WIDTH - margin),
+    );
+    const desiredTop = dropDirection === "up" ? rect.top : rect.bottom + 4;
+    // Vertical clamp uses an estimated max height — the dropdown content is
+    // capped via max-h-32 inside the search results plus the input row, so
+    // 200px is a safe upper bound.
+    const estimatedHeight = 200;
+    const top = Math.max(
+      margin,
+      Math.min(desiredTop, window.innerHeight - estimatedHeight - margin),
+    );
+    setDropdownPos({ top, left });
   }, [dropDirection]);
 
   useEffect(() => {

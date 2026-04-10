@@ -98,15 +98,21 @@ class TaskDescriptionConfig(FeatureDefaultConfig):
 
 
 class MergeResolutionConfig(FeatureDefaultConfig):
-    """Configuration for merge conflict resolution LLM calls."""
+    """Configuration for merge conflict resolution LLM calls.
+
+    `model` is the primary model choice (e.g. "sonnet"). `tier` (ModelTier) is
+    only consulted as a fallback selector when the primary/local provider fails
+    — see LLMService.call_feature() for the fallback path. `model` is
+    authoritative for normal operation.
+    """
 
     model: str = Field(
         default="sonnet",
-        description="Model to use for merge resolution",
+        description="Primary model for merge resolution. Authoritative under normal operation.",
     )
     tier: ModelTier = Field(
         default=ModelTier.MID,
-        description="Complexity tier — determines fallback model when local provider fails",
+        description="Fallback complexity tier — determines fallback model when the primary/local provider fails",
     )
 
 

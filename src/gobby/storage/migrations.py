@@ -830,7 +830,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
               SELECT 1 FROM config_store
               WHERE key = 'embeddings.api_base'
                 AND value LIKE '%1234%'
-          )
+          );
         """,
     ),
     (

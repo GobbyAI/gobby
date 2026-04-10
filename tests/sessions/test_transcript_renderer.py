@@ -124,9 +124,26 @@ def test_render_transcript_strips_proposed_plan_tags():
     assert rendered[0].content == "My detailed plan here"
 
 
+def test_render_transcript_strips_proposed_implementation_tags():
+    msgs = [
+        make_msg(
+            0,
+            "assistant",
+            "<proposed_implementation>Code implementation</proposed_implementation>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "Code implementation"
+
+
 def test_render_transcript_strips_search_quality_reflection_tags():
     msgs = [
-        make_msg(0, "assistant", "Result: <search_quality_reflection>thinking...</search_quality_reflection> done"),
+        make_msg(
+            0,
+            "assistant",
+            "Result: <search_quality_reflection>thinking...</search_quality_reflection> done",
+        ),
     ]
     rendered = render_transcript(msgs)
     assert len(rendered) == 1

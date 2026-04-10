@@ -15,7 +15,7 @@ interface SessionUsage {
 // =============================================================================
 
 function getBaseUrl(): string {
-  return ''
+  return import.meta.env.VITE_API_BASE_URL || ''
 }
 
 function formatTokens(n: number): string {
@@ -52,6 +52,8 @@ export function TokenTracker({ sessionId }: TokenTrackerProps) {
         )
         if (!response.ok) {
           console.warn(`Session usage fetch returned ${response.status}`)
+          // Reset usage so we don't show stale tokens for an unrelated session
+          if (!cancelled) setUsage(null)
         } else {
           const data = await response.json()
           const session = data.session
@@ -64,7 +66,10 @@ export function TokenTracker({ sessionId }: TokenTrackerProps) {
           }
         }
       } catch (e) {
-        if (!cancelled) console.error('Failed to fetch session usage:', e)
+        if (!cancelled) {
+          console.error('Failed to fetch session usage:', e)
+          setUsage(null)
+        }
       }
       if (!cancelled) setIsLoading(false)
     }

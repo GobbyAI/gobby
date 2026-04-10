@@ -510,6 +510,18 @@ class TestSetConfigBatch:
         assert result["success"] is False
         assert "dict" in result["error"].lower()
 
+    def test_batch_set_rejects_list_values(self, config_registry) -> None:
+        """List values are rejected (the validation check covers list and dict)."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "session_title.providers", "value": ["claude", "local"]},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "list" in result["error"].lower()
+
     def test_batch_set_rejects_missing_key(self, config_registry) -> None:
         """Entries without 'key' are rejected."""
         tool = config_registry.get_tool("set_config_batch")

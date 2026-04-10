@@ -36,6 +36,12 @@ _TTS_DEPS: dict[str, list[tuple[str, str]]] = {
 # Guard against concurrent install attempts
 _install_lock = asyncio.Lock()
 
+# Maximum time to wait for `uv pip install` to finish before killing it.
+# Voice deps include large wheels (PyTorch, faster-whisper, chatterbox), so
+# the timeout is generous — but bounded so a hung install doesn't wedge the
+# daemon forever.
+VOICE_PIP_TIMEOUT_SECONDS = 600.0
+
 
 def _check_imports(deps: list[tuple[str, str]]) -> list[str]:
     """Return pip package names for deps that fail to import."""
@@ -49,7 +55,11 @@ def _check_imports(deps: list[tuple[str, str]]) -> list[str]:
 
 
 async def _install_packages(packages: list[str]) -> bool:
-    """Install packages via uv pip install. Returns True on success."""
+    """Install packages via uv pip install. Returns True on success.
+
+    Bounded by ``VOICE_PIP_TIMEOUT_SECONDS`` — if the install hangs, the
+    subprocess is killed and reaped, and the function returns False.
+    """
     logger.info(f"Installing voice packages: {', '.join(packages)}")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -61,7 +71,22 @@ async def _install_packages(packages: list[str]) -> bool:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
+    try:
+        _stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=VOICE_PIP_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        proc.kill()
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        logger.error(
+            "Voice package install timed out after %.0fs (packages: %s) — killed",
+            VOICE_PIP_TIMEOUT_SECONDS,
+            ", ".join(packages),
+        )
+        return False
 
     if proc.returncode == 0:
         importlib.invalidate_caches()

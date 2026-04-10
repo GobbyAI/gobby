@@ -52,6 +52,7 @@ class TTSPipeline:
         self.sentence_buffer = SentenceBuffer()
         self._chunk_index = 0
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._flush_called = False
         self._worker_task: asyncio.Task[None] = asyncio.create_task(
             self._run_worker(),
             name=f"tts-pipeline-{conversation_id[:8]}",
@@ -64,7 +65,15 @@ class TTSPipeline:
             self._queue.put_nowait(sentence)
 
     async def flush(self) -> None:
-        """Flush remaining buffer at end of stream in FIFO order."""
+        """Flush remaining buffer at end of stream in FIFO order.
+
+        Idempotent: a second call is a no-op so we never enqueue the sentinel
+        twice (which would leave the second sentinel hanging in the queue
+        after the worker has already exited on the first one).
+        """
+        if self._flush_called:
+            return
+        self._flush_called = True
         remaining = self.sentence_buffer.flush()
         if remaining:
             await self._queue.put(remaining)
@@ -173,6 +182,22 @@ class VoiceMixin:
         self._stt_warmup_error = ""
         self._tts_warmup_error = ""
 
+        # Long-lived references to fire-and-forget background tasks so the
+        # GC doesn't reap them mid-flight. Tasks remove themselves on done.
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+
+    def _spawn_background_task(self, coro: Any, name: str | None = None) -> asyncio.Task[Any]:
+        """Schedule a fire-and-forget task and retain a reference to it.
+
+        asyncio holds only weak references to tasks, so unstored tasks can
+        be garbage-collected mid-execution. We add the task to a set and
+        remove it on completion via add_done_callback.
+        """
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     def _get_voice_config(self) -> VoiceConfig | None:
         """Get voice config from daemon_config if available."""
         config = getattr(self, "daemon_config", None)
@@ -193,7 +218,7 @@ class VoiceMixin:
         # Auto-install STT deps if missing (fire-and-forget on first call)
         if not self._stt_deps_checked:
             self._stt_deps_checked = True
-            asyncio.create_task(self._ensure_stt_deps(voice_config))
+            self._spawn_background_task(self._ensure_stt_deps(voice_config), name="ensure-stt-deps")
 
         from gobby.voice.stt import WhisperSTT
 
@@ -226,7 +251,7 @@ class VoiceMixin:
         # Auto-install TTS deps if missing
         if not self._tts_deps_checked:
             self._tts_deps_checked = True
-            asyncio.create_task(self._ensure_tts_deps(voice_config))
+            self._spawn_background_task(self._ensure_tts_deps(voice_config), name="ensure-tts-deps")
 
         tts: KokoroTTS | ChatterboxTurboProvider
         provider = getattr(voice_config, "tts_provider", "kokoro")
@@ -402,7 +427,7 @@ class VoiceMixin:
             if not stt.is_available:
                 raise RuntimeError("faster-whisper not installed (uv sync --extra voice)")
             logger.info("Starting Whisper STT warmup")
-            await stt._ensure_model()
+            await stt.warmup()
             self._stt_warmup_status = _WARMUP_READY
             self._stt_warmup_error = ""
             logger.info(f"Whisper STT warmup complete in {time.perf_counter() - started_at:.2f}s")
@@ -420,7 +445,7 @@ class VoiceMixin:
                 available, reason = self._get_tts_availability()
                 raise RuntimeError(reason if not available else "TTS is not configured")
             logger.info("Starting TTS warmup")
-            await tts._ensure_model()
+            await tts.warmup()
             self._tts_warmup_status = _WARMUP_READY
             self._tts_warmup_error = ""
             logger.info(f"TTS warmup complete in {time.perf_counter() - started_at:.2f}s")
@@ -762,5 +787,12 @@ class VoiceMixin:
         # Cancel all active TTS pipelines
         for conv_id in list(self._active_tts_pipelines):
             await self._cancel_tts(conv_id)
+        # Cancel any in-flight background tasks (dep installs, etc.)
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
         self._voice_enabled.clear()
         logger.debug("Voice subsystem cleaned up")

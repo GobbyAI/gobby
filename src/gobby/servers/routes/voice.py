@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, UploadFile
@@ -60,8 +61,8 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 import faster_whisper  # noqa: F401
 
                 stt_available = True
-            except Exception:
-                stt_reason = "faster-whisper not installed (uv sync --extra voice)"
+            except ImportError as e:
+                stt_reason = f"faster-whisper not installed (uv sync --extra voice): {e}"
 
         # Check TTS availability
         tts_available = False
@@ -75,23 +76,19 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 import chatterbox  # noqa: F401
 
                 tts_available = True
-            except Exception:
-                tts_reason = "chatterbox not installed (uv sync --extra voice)"
+            except ImportError as e:
+                tts_reason = f"chatterbox not installed (uv sync --extra voice): {e}"
 
             if tts_available:
-                from pathlib import Path
-
                 ref = Path(voice_config.tts_reference_audio).expanduser()
                 if not ref.exists():
                     tts_reason = f"Reference audio not found: {ref}"
         else:
             try:
                 import kokoro_onnx  # noqa: F401
-            except Exception:
-                tts_reason = "kokoro-onnx not installed (uv sync --extra voice)"
+            except ImportError as e:
+                tts_reason = f"kokoro-onnx not installed (uv sync --extra voice): {e}"
             else:
-                from pathlib import Path
-
                 model_path = Path(voice_config.tts_model_path).expanduser()
                 voices_path = Path(voice_config.tts_voices_path).expanduser()
                 if model_path.exists() and voices_path.exists():
@@ -118,8 +115,6 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         }
 
         if tts_provider == "chatterbox":
-            from pathlib import Path
-
             ref = Path(voice_config.tts_reference_audio).expanduser()
             result["tts_reference_audio"] = str(ref)
             result["tts_reference_audio_exists"] = ref.exists()

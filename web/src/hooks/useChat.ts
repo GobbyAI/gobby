@@ -1375,7 +1375,9 @@ export function useChat() {
         console.error("Failed to parse WebSocket message:", e);
       }
     };
-  }, []);
+    // resolveAgentName is a stable useCallback (its own deps are []) — safe
+    // to reference here without re-creating connect every render.
+  }, [resolveAgentName]);
 
   // Handle streaming chat chunks
   const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
@@ -2569,7 +2571,9 @@ export function useChat() {
         }
       })
       .catch((err) => console.error("Failed to fetch session metadata:", err));
-  }, []);
+    // resolveAgentName is a stable useCallback (its own deps are []) — safe
+    // to reference here without re-creating the callback every render.
+  }, [resolveAgentName]);
 
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {

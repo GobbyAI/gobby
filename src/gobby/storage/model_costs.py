@@ -86,9 +86,7 @@ class ModelCostStore:
         return {
             row["model"]: ModelMetadata(
                 context_length=row["context_length"],
-                max_completion_tokens=row["max_completion_tokens"]
-                if "max_completion_tokens" in row.keys()
-                else None,
+                max_completion_tokens=row["max_completion_tokens"],
             )
             for row in rows
         }

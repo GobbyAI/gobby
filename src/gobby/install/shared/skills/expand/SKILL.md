@@ -91,8 +91,10 @@ seen_phase_numbers = set()
 for phase in phases:
     phase_number = phase.get("number")
     if not isinstance(phase_number, int) or phase_number in seen_phase_numbers:
+        label = phase.get("name") or phase.get("heading") or "<unnamed>"
         raise ValueError(
-            f"Invalid phase number for {phase.get('name') or phase.get('heading')}: {phase_number}"
+            f"Invalid phase number for phase '{label}' "
+            f"(number={phase_number!r}): {phase!r}"
         )
     seen_phase_numbers.add(phase_number)
     phase_epic = call_tool("gobby-tasks", "create_task", {

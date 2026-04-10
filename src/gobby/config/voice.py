@@ -31,7 +31,7 @@ class VoiceConfig(BaseModel):
         description="Path to voice clone reference audio (10-20s WAV, for Chatterbox).",
     )
     tts_temperature: float = Field(
-        default=0.8,
+        default=0.55,
         ge=0.1,
         le=1.0,
         description="TTS sampling randomness (0.1–1.0, Chatterbox).",

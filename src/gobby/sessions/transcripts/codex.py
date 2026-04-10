@@ -254,11 +254,16 @@ def _extract_text_from_blocks(content_blocks: Any) -> str:
 
 
 def _parse_timestamp(data: dict[str, Any]) -> datetime:
-    """Parse ISO timestamp from top-level envelope data."""
+    """Parse ISO timestamp from top-level envelope data.
+
+    Python 3.11+ ``datetime.fromisoformat`` handles the ``Z`` suffix natively,
+    so the previous ``replace("Z", "+00:00")`` is unnecessary on the supported
+    runtime (Python 3.13+).
+    """
     ts_str = data.get("timestamp")
     if ts_str:
         try:
-            return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return datetime.fromisoformat(ts_str)
         except (ValueError, AttributeError):
             pass
     return datetime.now(UTC)

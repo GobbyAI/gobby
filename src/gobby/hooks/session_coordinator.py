@@ -233,12 +233,20 @@ class SessionCoordinator:
                     self._message_processor.register_session(
                         session.id, transcript_path, source=source
                     )
-                    # Reset _agent_context_injected so the next before_agent
-                    # re-injects instructions lost when the daemon restarted.
-                    self._reset_deferred_injection_flags(session.id)
                     registered_count += 1
                 except Exception as e:
                     self.logger.warning(f"Failed to re-register session {session.id}: {e}")
+                    continue
+
+                # Reset _agent_context_injected so the next before_agent
+                # re-injects instructions lost when the daemon restarted.
+                # Failure here must not affect the registered_count above.
+                try:
+                    self._reset_deferred_injection_flags(session.id)
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to reset deferred injection flags for {session.id}: {e}"
+                    )
 
             if registered_count > 0:
                 self.logger.info(

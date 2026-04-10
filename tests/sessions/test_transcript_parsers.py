@@ -972,9 +972,7 @@ class TestCodexTranscriptParser:
 
     @staticmethod
     def _session_meta(session_id: str = "abc-123", ts: str = "2024-06-15T10:30:00Z") -> str:
-        return json.dumps(
-            {"timestamp": ts, "type": "session_meta", "payload": {"id": session_id}}
-        )
+        return json.dumps({"timestamp": ts, "type": "session_meta", "payload": {"id": session_id}})
 
     @staticmethod
     def _turn_context(turn_id: str = "turn-1", ts: str = "2024-06-15T10:30:00Z") -> str:
@@ -1043,9 +1041,7 @@ class TestCodexTranscriptParser:
     # -- parse_line: function calls --
 
     def test_parse_function_call(self, parser) -> None:
-        line = self._function_call(
-            "exec_command", '{"cmd":"ls","workdir":"/tmp"}', "call_abc"
-        )
+        line = self._function_call("exec_command", '{"cmd":"ls","workdir":"/tmp"}', "call_abc")
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.role == "assistant"
@@ -1240,9 +1236,7 @@ class TestCodexTranscriptParser:
             "role": "user",
             "content": [{"type": "input_text", "text": "hi"}],
         }
-        line = json.dumps(
-            {"timestamp": "not-a-date", "type": "response_item", "payload": payload}
-        )
+        line = json.dumps({"timestamp": "not-a-date", "type": "response_item", "payload": payload})
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.timestamp is not None

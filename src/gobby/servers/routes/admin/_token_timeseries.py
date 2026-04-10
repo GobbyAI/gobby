@@ -1,5 +1,7 @@
 """Token time-series endpoint — hourly buckets of spent and saved tokens."""
 
+from __future__ import annotations
+
 import logging
 import sqlite3
 from typing import TYPE_CHECKING, Any
@@ -8,11 +10,12 @@ from fastapi import APIRouter, Query
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+    from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
 
 
-def register_token_timeseries_routes(router: APIRouter, server: "HTTPServer") -> None:
+def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> None:
     @router.get("/tokens/timeseries")
     async def get_token_timeseries(
         hours: int = Query(24, ge=0, le=8760),
@@ -24,7 +27,7 @@ def register_token_timeseries_routes(router: APIRouter, server: "HTTPServer") ->
             hours: Time window in hours. 0 = all time.
             project_id: Filter to a specific project.
         """
-        db = server.services.database
+        db: DatabaseProtocol = server.services.database
 
         clauses: list[str] = []
         params: list[str] = []

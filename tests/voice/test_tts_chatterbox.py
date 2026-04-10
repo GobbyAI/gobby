@@ -13,6 +13,8 @@ import pytest
 
 from gobby.config.voice import VoiceConfig
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def voice_config(tmp_path: Path) -> VoiceConfig:
@@ -302,19 +304,23 @@ class TestChatterboxTurboProvider:
         assert mock_model.ve.embeds_from_mels is original_embeds_from_mels
 
     @pytest.mark.asyncio
-    async def test_synthesize_stream_handles_model_load_failure(
+    async def test_synthesize_stream_propagates_model_load_failure(
         self, voice_config: VoiceConfig
     ) -> None:
-        """Model load failure should return empty iterator."""
+        """Model load failure must propagate so callers see it.
+
+        Previously the provider swallowed the error and returned an empty
+        iterator, which made warmup failures invisible to the websocket
+        warmup task and to interactive consumers. The provider now re-raises.
+        """
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
 
         provider = ChatterboxTurboProvider(voice_config)
 
         with patch.object(provider, "_ensure_model", side_effect=RuntimeError("boom")):
-            chunks = []
-            async for chunk in provider.synthesize_stream("Hello"):
-                chunks.append(chunk)
-            assert chunks == []
+            with pytest.raises(RuntimeError, match="boom"):
+                async for _ in provider.synthesize_stream("Hello"):
+                    pass
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_handles_cancellation(self, voice_config: VoiceConfig) -> None:
@@ -408,7 +414,7 @@ class TestVoiceConfigChatterbox:
         config = VoiceConfig()
         assert config.tts_provider == "chatterbox"
         assert config.tts_reference_audio == "~/.gobby/voice/reference.wav"
-        assert config.tts_temperature == 0.8
+        assert config.tts_temperature == 0.55
         assert config.tts_device == "auto"
 
     def test_chatterbox_custom_values(self) -> None:

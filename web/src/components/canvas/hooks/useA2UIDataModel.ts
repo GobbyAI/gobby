@@ -13,7 +13,7 @@ export const useA2UIDataModel = (initialDataModel: Record<string, any>) => {
       // Create a deep copy to allow mutation without altering previous state references directly
       const next = JSON.parse(JSON.stringify(prev));
 
-      const parts = path.replace(/^\//, "").split(/[/.]/);;
+      const parts = path.replace(/^\//, "").split(/[/.]/);
       let current = next;
 
       for (let i = 0; i < parts.length - 1; i++) {

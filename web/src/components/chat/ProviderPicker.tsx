@@ -17,15 +17,22 @@ interface ProviderModelEntry {
 
 /** Fetch the canonical model catalog from the daemon. */
 let _cachedModels: ProviderModelEntry[] | null = null;
+let _cachedModelsTimestamp = 0;
+// Cache TTL — 5 minutes. After this, the next call refetches from the backend.
+const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 async function fetchModelCatalog(): Promise<ProviderModelEntry[]> {
-  if (_cachedModels) return _cachedModels;
+  const now = Date.now();
+  const cacheFresh =
+    _cachedModels !== null && now - _cachedModelsTimestamp < MODELS_CACHE_TTL_MS;
+  if (cacheFresh) return _cachedModels!;
   try {
     const res = await fetch("/api/providers/models");
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data?.providers)) {
         _cachedModels = data.providers;
+        _cachedModelsTimestamp = now;
         return _cachedModels!;
       }
     }
