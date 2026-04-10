@@ -148,6 +148,24 @@ def create_app(server: "HTTPServer") -> FastAPI:
             ws_server.hook_broadcaster = server.broadcaster
             logger.debug("Hook event broadcaster connected to WebSocket server")
 
+        if server.session_manager is not None:
+            listener_loop = asyncio.get_running_loop()
+
+            def _broadcast_title_update(session_id: str, _title: str) -> None:
+                if not ws_server or listener_loop.is_closed():
+                    return
+
+                def _schedule() -> None:
+                    listener_loop.create_task(
+                        ws_server.broadcast_session_event("session_updated", session_id)
+                    )
+
+                listener_loop.call_soon_threadsafe(_schedule)
+
+            server.session_manager.register_title_listener(_broadcast_title_update)
+            app.state.title_update_listener = _broadcast_title_update
+            logger.debug("Title update listener connected to session manager")
+
         # Wire inter-session message manager for message piggyback delivery
         if (
             ws_server
@@ -287,6 +305,11 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
         # Shutdown operations
         logger.debug("Shutting down Gobby HTTP server")
+
+        if hasattr(app.state, "title_update_listener") and server.session_manager is not None:
+            server.session_manager.unregister_title_listener(app.state.title_update_listener)
+            del app.state.title_update_listener
+            logger.debug("Title update listener disconnected from session manager")
 
         if ws_server and hasattr(ws_server, "stop_voice_warmup"):
             try:

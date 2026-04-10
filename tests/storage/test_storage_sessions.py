@@ -263,6 +263,122 @@ class TestLocalSessionManager:
         assert updated is not None
         assert updated.title == "New Title"
 
+    def test_update_title_notifies_listeners(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Listeners receive successful title changes."""
+        session = session_manager.register(
+            external_id="title-listener-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title(session.id, "Listener Title")
+
+        assert updated is not None
+        assert calls == [(session.id, "Listener Title")]
+
+    def test_update_title_skips_noop_listener_notifications(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """No-op title updates do not notify listeners or rewrite updated_at."""
+        session = session_manager.register(
+            external_id="title-noop-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Stable Title",
+        )
+        original_updated_at = session.updated_at
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title(session.id, "Stable Title")
+
+        assert updated is not None
+        assert updated.title == "Stable Title"
+        assert updated.updated_at == original_updated_at
+        assert calls == []
+
+    def test_update_title_missing_session_does_not_notify_listener(
+        self,
+        session_manager: LocalSessionManager,
+    ) -> None:
+        """Missing sessions return None and do not notify listeners."""
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title("missing-session", "Nope")
+
+        assert updated is None
+        assert calls == []
+
+    def test_update_title_listener_failure_does_not_break_update(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """One broken listener cannot block the title update or later listeners."""
+        session = session_manager.register(
+            external_id="title-failure-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+
+        def _broken_listener(session_id: str, title: str) -> None:
+            raise RuntimeError("listener failed")
+
+        session_manager.register_title_listener(_broken_listener)
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title(session.id, "Recovered Title")
+
+        assert updated is not None
+        assert updated.title == "Recovered Title"
+        assert calls == [(session.id, "Recovered Title")]
+
+    def test_unregister_title_listener(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Unregistered listeners are not called."""
+        session = session_manager.register(
+            external_id="title-unregister-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+
+        def _listener(session_id: str, title: str) -> None:
+            calls.append((session_id, title))
+
+        session_manager.register_title_listener(_listener)
+        session_manager.unregister_title_listener(_listener)
+
+        updated = session_manager.update_title(session.id, "Detached Title")
+
+        assert updated is not None
+        assert calls == []
+
     def test_update_stats(
         self,
         session_manager: LocalSessionManager,

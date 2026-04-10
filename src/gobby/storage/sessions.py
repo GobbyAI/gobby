@@ -7,6 +7,7 @@ import json
 import logging
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -26,6 +27,18 @@ class LocalSessionManager:
     def __init__(self, db: DatabaseProtocol):
         """Initialize with database connection."""
         self.db = db
+        self._title_listeners: list[Callable[[str, str], None]] = []
+
+    def register_title_listener(self, listener: Callable[[str, str], None]) -> None:
+        """Register a sync callback fired after successful title changes."""
+        self._title_listeners.append(listener)
+
+    def unregister_title_listener(self, listener: Callable[[str, str], None]) -> None:
+        """Remove a previously-registered title listener if present."""
+        try:
+            self._title_listeners.remove(listener)
+        except ValueError:
+            return
 
     def register(
         self,
@@ -448,12 +461,28 @@ class LocalSessionManager:
 
     def update_title(self, session_id: str, title: str) -> Session | None:
         """Update session title."""
+        current = self.get(session_id)
+        if current is None:
+            return None
+        if current.title == title:
+            return current
+
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             (title, now, session_id),
         )
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is None:
+            return None
+
+        for listener in list(self._title_listeners):
+            try:
+                listener(session_id, title)
+            except Exception:
+                logger.warning("Title listener failed for session %s", session_id, exc_info=True)
+
+        return updated
 
     def update_model(self, session_id: str, model: str) -> Session | None:
         """Update session model (LLM model used)."""

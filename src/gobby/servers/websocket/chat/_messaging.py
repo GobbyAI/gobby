@@ -405,8 +405,8 @@ class ChatMessagingMixin:
                         type="session_info",
                         conversation_id=conversation_id,
                     )
-                    # Include DB session ID so frontend can call session APIs
-                    # (e.g. synthesize-title) without waiting for sessions list poll
+                    # Include DB session ID so frontend can address session APIs
+                    # before the sessions list has refreshed.
                     db_sid = getattr(session, "db_session_id", None)
                     if db_sid:
                         session_info_msg["db_session_id"] = db_sid

@@ -9,10 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
 
-from gobby.servers.routes.sessions.analytics import (
-    _sanitize_title,
-    register_analytics_routes,
-)
+from gobby.servers.routes.sessions.analytics import register_analytics_routes
 from gobby.servers.routes.sessions.core import (
     _compute_resumability,
     _get_commit_count,
@@ -34,7 +31,6 @@ __all__ = [
     "_compute_resumability",
     "_get_commit_count",
     "_get_session_stats",
-    "_sanitize_title",
     "create_sessions_router",
 ]
 

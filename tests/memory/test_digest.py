@@ -11,6 +11,7 @@ from gobby.memory.digest import (
     _get_next_turn_number,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
+    _synthesize_title,
     build_turn_and_digest,
     memory_sync_export,
     memory_sync_import,
@@ -194,6 +195,7 @@ class TestBuildTurnAndDigest:
         session.transcript_path = None
         session.source = "claude"
         session.digest_markdown = None
+        session.title = None
         session.seq_num = 42
         session.terminal_context = None
         sm.get.return_value = session
@@ -319,6 +321,32 @@ class TestBuildTurnAndDigest:
 
     @pytest.mark.asyncio
     @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
+    async def test_skips_rename_when_title_is_unchanged(
+        self,
+        mock_rename,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Digest title synthesis is a no-op when the title is already current."""
+        session = mock_session_manager.get.return_value
+        session.title = "Fix Auth Bug"
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Fix the authentication bug in auth.py",
+            llm_service=mock_llm_service,
+        )
+
+        assert result is not None
+        assert "title" not in result
+        mock_session_manager.update_title.assert_not_called()
+        mock_rename.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_appends_to_existing_digest(
         self,
         mock_rename,
@@ -407,6 +435,36 @@ class TestBuildTurnAndDigest:
         call_args = provider.generate_text.call_args_list[0]
         prompt = call_args[0][0]
         assert "Implement the feature" in prompt or "feature" in prompt.lower()
+
+    @pytest.mark.asyncio
+    async def test_synthesize_title_respects_digest_timeout(self):
+        """Digest title synthesis uses digest.timeout to bound LLM latency."""
+        provider = MagicMock()
+        provider.generate_text = AsyncMock(return_value="unused")
+        session_manager = MagicMock()
+        session = MagicMock()
+        llm_service = MagicMock()
+
+        async def _slow_call(*args, **kwargs):
+            import asyncio as _asyncio
+
+            await _asyncio.sleep(0.05)
+            return "Too Slow"
+
+        llm_service.call_feature = AsyncMock(side_effect=_slow_call)
+        digest_config = MagicMock(timeout=0.01)
+
+        with pytest.raises(TimeoutError):
+            await _synthesize_title(
+                provider=provider,
+                model=None,
+                updated_digest="### Turn 1\nSomething happened",
+                session_id="session-123",
+                session_manager=session_manager,
+                session=session,
+                llm_service=llm_service,
+                digest_config=digest_config,
+            )
 
 
 class TestBuildTurnAndDigestIdempotency:

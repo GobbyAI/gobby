@@ -457,38 +457,52 @@ class TestSetConfigBatch:
         assert result["success"] is False
         assert "error" in result
 
-    def test_batch_set_session_title_provider(
+    def test_batch_set_digest_provider(
         self, config_registry, config_state: dict[str, DaemonConfig]
     ) -> None:
-        """Test setting session_title.provider to 'local'."""
+        """Test setting digest.provider to 'local'."""
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
-                {"key": "session_title.provider", "value": "local"},
+                {"key": "digest.provider", "value": "local"},
             ]
         )
 
         assert result["success"] is True
-        assert config_state["config"].session_title.provider == "local"
+        assert config_state["config"].digest.provider == "local"
 
-    def test_batch_set_local_config_and_title_provider(
+    def test_batch_set_local_config_and_digest_settings(
         self, config_registry, config_state: dict[str, DaemonConfig]
     ) -> None:
-        """Test setting local endpoint and session_title.provider together."""
+        """Test setting local endpoint and digest routing together."""
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
                 {"key": "local.url", "value": "http://localhost:1234/v1"},
                 {"key": "local.model", "value": "qwen2.5-coder-7b"},
-                {"key": "session_title.provider", "value": "local"},
+                {"key": "digest.provider", "value": "local"},
+                {"key": "digest.timeout", "value": 45},
             ]
         )
 
         assert result["success"] is True
-        assert result["count"] == 3
+        assert result["count"] == 4
         assert config_state["config"].local is not None
         assert config_state["config"].local.model == "qwen2.5-coder-7b"
-        assert config_state["config"].session_title.provider == "local"
+        assert config_state["config"].digest.provider == "local"
+        assert config_state["config"].digest.timeout == 45
+
+    def test_batch_set_removed_session_title_provider_fails(self, config_registry) -> None:
+        """Removed session_title.* keys are rejected."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "session_title.provider", "value": "local"},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "session_title config has been removed" in result["error"]
 
     def test_batch_set_empty_entries(self, config_registry) -> None:
         """Empty entries list returns error."""
@@ -515,7 +529,7 @@ class TestSetConfigBatch:
         tool = config_registry.get_tool("set_config_batch")
         result = tool(
             entries=[
-                {"key": "session_title.providers", "value": ["claude", "local"]},
+                {"key": "digest.providers", "value": ["claude", "local"]},
             ]
         )
 

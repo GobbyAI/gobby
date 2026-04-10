@@ -7,7 +7,7 @@ import pytest
 from gobby.config.app import DaemonConfig, LocalConfig
 from gobby.config.feature_base import ModelTier
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
-from gobby.config.sessions import SessionSummaryConfig, SessionTitleConfig
+from gobby.config.sessions import DigestConfig, SessionSummaryConfig
 from gobby.llm.service import LLMService
 
 pytestmark = pytest.mark.unit
@@ -341,7 +341,7 @@ class TestLLMServiceCallFeature:
         local_provider = service.get_provider("local")
         local_provider.generate_text = AsyncMock(return_value="Fix Auth Bug")
 
-        config = SessionTitleConfig(provider="local", model="test-model")
+        config = DigestConfig(provider="local", model="test-model")
         result = await service.call_feature(config, "prompt text")
         assert result == "Fix Auth Bug"
 
@@ -363,7 +363,7 @@ class TestLLMServiceCallFeature:
         local_provider = service.get_provider("local")
         local_provider.generate_text = AsyncMock(side_effect=ConnectionError("local server down"))
 
-        config = SessionTitleConfig(provider="local", model="test-model")
+        config = DigestConfig(provider="local", model="test-model")
         result = await service.call_feature(config, "prompt text")
 
         assert result == "Fallback Title"
@@ -418,7 +418,7 @@ class TestLLMServiceCallFeature:
         mock_claude_cls.return_value = mock_claude_instance
 
         service = LLMService(llm_config)
-        config = SessionTitleConfig(provider="claude", model="haiku")
+        config = DigestConfig(provider="claude", model="haiku")
 
         with pytest.raises(RuntimeError, match="claude error"):
             await service.call_feature(config, "prompt text")

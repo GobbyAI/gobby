@@ -769,6 +769,17 @@ class TestDigestConfig:
         assert config.enabled is True
         assert config.provider == "claude"
         assert config.model == "haiku"
+        assert config.timeout == 30
+
+    def test_timeout_validation(self) -> None:
+        """Test digest timeout must be positive."""
+        with pytest.raises(ValidationError):
+            DigestConfig(timeout=0)
+
+    def test_rejects_removed_session_title_section(self) -> None:
+        """Legacy session_title config is a hard validation failure."""
+        with pytest.raises(ValidationError, match="session_title config has been removed"):
+            DaemonConfig(session_title={"provider": "local"})
 
 
 class TestWebSocketBroadcastConfig:

@@ -55,20 +55,13 @@ class TestFeatureDefaultConfig:
 class TestFeatureConfigInheritance:
     """Verify that production feature configs inherit from FeatureDefaultConfig."""
 
-    def test_session_title_config(self) -> None:
-        from gobby.config.sessions import SessionTitleConfig
-
-        assert issubclass(SessionTitleConfig, FeatureDefaultConfig)
-        cfg = SessionTitleConfig()
-        assert cfg.tier == ModelTier.LOW
-        assert cfg.model == "haiku"
-
     def test_digest_config(self) -> None:
         from gobby.config.sessions import DigestConfig
 
         assert issubclass(DigestConfig, FeatureDefaultConfig)
         cfg = DigestConfig()
         assert cfg.tier == ModelTier.LOW
+        assert cfg.model == "haiku"
 
     def test_session_summary_config(self) -> None:
         from gobby.config.sessions import SessionSummaryConfig

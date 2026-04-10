@@ -7,6 +7,7 @@ session boundary summaries, and sync operations.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -74,7 +75,6 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
         from gobby.sessions.transcripts import get_parser
 
         parser = get_parser(source)
-        import asyncio
 
         def _read_lines() -> list[str]:
             with open(transcript_file, encoding="utf-8") as f:
@@ -367,22 +367,31 @@ async def _synthesize_title(
         title_prompt = _build_title_synthesis_prompt(updated_digest)
 
     # Prefer call_feature for tier-based fallback when available.
+    llm_timeout = getattr(digest_config, "timeout", 30) if digest_config is not None else 30
     if (
         llm_service is not None
         and digest_config is not None
         and hasattr(llm_service, "call_feature")
     ):
-        title = await llm_service.call_feature(digest_config, title_prompt)
+        title = await asyncio.wait_for(
+            llm_service.call_feature(digest_config, title_prompt), llm_timeout
+        )
     else:
-        title = await provider.generate_text(title_prompt, model=model)
+        title = await asyncio.wait_for(
+            provider.generate_text(title_prompt, model=model), llm_timeout
+        )
 
     title_str = str(title).strip().strip('"').strip("'")
     if title_str and len(title_str) < 80:
-        session_manager.update_title(session_id, title_str)
+        if getattr(session, "title", None) == title_str:
+            return None
+        updated_session = session_manager.update_title(session_id, title_str)
+        if updated_session is None:
+            return None
 
         from gobby.workflows.summary_actions import _rename_tmux_window
 
-        await _rename_tmux_window(session, title_str)
+        await _rename_tmux_window(updated_session, title_str)
         return title_str
     return None
 

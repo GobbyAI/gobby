@@ -54,7 +54,6 @@ from gobby.config.sessions import (
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
-    SessionTitleConfig,
 )
 from gobby.config.skills import SkillsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
@@ -305,6 +304,17 @@ class DaemonConfig(BaseModel):
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_session_title_config(cls, data: Any) -> Any:
+        """Reject the removed session_title config section explicitly."""
+        if isinstance(data, dict) and "session_title" in data:
+            raise ValueError(
+                "session_title config has been removed. Use digest.provider, digest.model, "
+                "and digest.timeout instead."
+            )
+        return data
+
     # Daemon settings
     daemon_port: int = Field(
         default=60887,
@@ -494,10 +504,6 @@ class DaemonConfig(BaseModel):
     review: ReviewConfig = Field(
         default_factory=ReviewConfig,
         description="Code review configuration",
-    )
-    session_title: SessionTitleConfig = Field(
-        default_factory=SessionTitleConfig,
-        description="Session title synthesis LLM configuration",
     )
     merge_resolution: MergeResolutionConfig = Field(
         default_factory=MergeResolutionConfig,

@@ -23,7 +23,6 @@ __all__ = [
     "ContextInjectionConfig",
     "DigestConfig",
     "SessionSummaryConfig",
-    "SessionTitleConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
 ]
@@ -168,15 +167,10 @@ class DigestConfig(FeatureDefaultConfig):
         default=True,
         description="Enable background digest and title generation",
     )
-
-
-class SessionTitleConfig(FeatureDefaultConfig):
-    """Configuration for session title synthesis LLM calls."""
-
     timeout: int = Field(
         default=30,
         gt=0,
-        description="Timeout in seconds for the LLM call (default 30s to accommodate CLI subprocess cold start)",
+        description="Timeout in seconds for digest/title LLM calls (default 30s).",
     )
 
 

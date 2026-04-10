@@ -383,68 +383,11 @@ export default function App() {
     setActiveTab("traces");
   }, []);
 
-  // Auto-synthesize chat title when streaming completes
-  const wasStreamingRef = useRef(false);
-  const titleSynthesisCountRef = useRef(0); // messages since last synthesis
-  const sessionsRef = useRef(sessionsHook.sessions);
-  const refreshSessionsRef = useRef(sessionsHook.refresh);
   const setSessionFilters = sessionsHook.setFilters;
   const confirmSessionDeleted = sessionsHook.confirmSessionDeleted;
   const markSessionDeleting = sessionsHook.markSessionDeleting;
   const restoreSession = sessionsHook.restoreSession;
   const refreshTmuxSessions = tmux.refreshSessions;
-
-  useEffect(() => {
-    sessionsRef.current = sessionsHook.sessions;
-    refreshSessionsRef.current = sessionsHook.refresh;
-  }, [sessionsHook.refresh, sessionsHook.sessions]);
-
-  useEffect(() => {
-    // Detect streaming transition: true → false (response completed)
-    if (wasStreamingRef.current && !isStreaming) {
-      titleSynthesisCountRef.current += 1;
-
-      // Use dbSessionId directly (set by backend session_info message) to avoid
-      // race condition where the sessions list hasn't polled since registration
-      const sessionId = dbSessionId;
-
-      if (sessionId) {
-        // Check sessions list for current title (may be stale for new chats — that's OK)
-        const currentSession = sessionsRef.current.find(
-          (s) => s.id === sessionId,
-        );
-        const needsTitle = !currentSession?.title;
-        const periodicUpdate = titleSynthesisCountRef.current >= 4;
-
-        if (needsTitle || periodicUpdate) {
-          titleSynthesisCountRef.current = 0;
-          const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-          fetch(`${baseUrl}/api/sessions/${sessionId}/synthesize-title`, {
-            method: "POST",
-          })
-            .then((res) => {
-              if (!res.ok) {
-                console.warn(`Title synthesis returned ${res.status}`);
-                return null;
-              }
-              return res.json();
-            })
-            .then((data) => {
-              if (data?.title) refreshSessionsRef.current();
-            })
-            .catch(() => {
-              /* title synthesis is non-critical */
-            });
-        }
-      }
-    }
-    wasStreamingRef.current = isStreaming;
-  }, [isStreaming, conversationId, dbSessionId]);
-
-  // Reset title synthesis counter on conversation switch
-  useEffect(() => {
-    titleSynthesisCountRef.current = 0;
-  }, [conversationSwitchKey]);
 
   // Global keyboard: Cmd+K opens command palette (or chord Cmd+K → t for quick capture)
   const chordPendingRef = useRef(false);

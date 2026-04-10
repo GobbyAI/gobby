@@ -9,12 +9,16 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.adapters.gemini_acp_client import GeminiACPClient
+from gobby.adapters.gemini_acp_client import (
+    DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
+    GeminiACPClient,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -97,10 +101,31 @@ class TestConstruction:
         assert not client.is_started
         assert client._cli_path is None
         assert client.session_id is None
+        assert client._prompt_timeout == DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS
 
     def test_custom_cli_path(self) -> None:
         client = GeminiACPClient(cli_path="/usr/local/bin/gemini")
         assert client._cli_path == "/usr/local/bin/gemini"
+
+    def test_prompt_timeout_can_be_overridden_by_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS": "75"},
+            clear=False,
+        ):
+            client = GeminiACPClient()
+
+        assert client._prompt_timeout == 75.0
+
+    def test_invalid_prompt_timeout_env_falls_back_to_default(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS": "not-a-number"},
+            clear=False,
+        ):
+            client = GeminiACPClient()
+
+        assert client._prompt_timeout == DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +420,33 @@ class TestSend:
 
         assert events[0].event_type == "init"
         assert events[0].data["session_id"] == "s1"
+
+    @pytest.mark.asyncio
+    async def test_send_uses_prompt_timeout_for_slow_first_response(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
+        handshake_iter = iter(_handshake_lines())
+
+        async def _slow_readline() -> bytes:
+            try:
+                return next(handshake_iter).encode()
+            except StopIteration:
+                pass
+            await asyncio.sleep(1)
+            return b""
+
+        proc.stdout.readline = AsyncMock(side_effect=_slow_readline)
+
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient(prompt_timeout=0.01)
+                await client.start()
+                with pytest.raises(TimeoutError, match="after 0.0s"):
+                    async for _ in client.send("slow"):
+                        pass
 
 
 # ---------------------------------------------------------------------------

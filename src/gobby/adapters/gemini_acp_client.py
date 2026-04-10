@@ -27,9 +27,35 @@ logger = logging.getLogger(__name__)
 # JSON-RPC request ID counter
 _next_id = itertools.count(1)
 
+DEFAULT_ACP_REQUEST_TIMEOUT_SECONDS = 30.0
+DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS = 120.0
+ACP_PROMPT_TIMEOUT_ENV = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS"
+
 
 def _make_id() -> int:
     return next(_next_id)
+
+
+def _resolve_timeout(value: float | None, *, env_name: str, default: float) -> float:
+    """Resolve a timeout from an explicit value or environment override."""
+    if value is not None:
+        return value
+
+    raw = os.getenv(env_name)
+    if not raw:
+        return default
+
+    try:
+        parsed = float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid %s=%r; using %.1fs", env_name, raw, default)
+        return default
+
+    if parsed <= 0:
+        logger.warning("Ignoring non-positive %s=%r; using %.1fs", env_name, raw, default)
+        return default
+
+    return parsed
 
 
 @dataclass
@@ -66,11 +92,17 @@ class GeminiACPClient:
         cli_path: str | None = None,
         *,
         cwd: str | None = None,
-        request_timeout: float = 30.0,
+        request_timeout: float = DEFAULT_ACP_REQUEST_TIMEOUT_SECONDS,
+        prompt_timeout: float | None = None,
     ) -> None:
         self._cli_path = cli_path
         self._cwd = cwd
         self._request_timeout = request_timeout
+        self._prompt_timeout = _resolve_timeout(
+            prompt_timeout,
+            env_name=ACP_PROMPT_TIMEOUT_ENV,
+            default=DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
+        )
         self._process: asyncio.subprocess.Process | None = None
         self._started = False
         self._session_id: str | None = None
@@ -285,14 +317,14 @@ class GeminiACPClient:
             try:
                 line = await asyncio.wait_for(
                     self._process.stdout.readline(),
-                    timeout=self._request_timeout,
+                    timeout=self._prompt_timeout,
                 )
             except asyncio.CancelledError:
                 return
             except TimeoutError as exc:
                 raise TimeoutError(
                     "Timed out waiting for ACP session/prompt response "
-                    f"after {self._request_timeout:.1f}s"
+                    f"after {self._prompt_timeout:.1f}s"
                 ) from exc
 
             if not line:

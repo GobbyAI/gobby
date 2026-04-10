@@ -375,8 +375,6 @@ def register_lifecycle_routes(
             if result is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
-            await broadcast_session("session_updated", session_id)
-
             return {"status": "success", "title": title}
 
         except HTTPException:
