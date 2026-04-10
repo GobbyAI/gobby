@@ -2,7 +2,7 @@
 
 import pytest
 
-from gobby.utils.status import format_status_message
+from gobby.utils.status import format_startup_summary, format_status_message
 
 pytestmark = pytest.mark.unit
 
@@ -11,195 +11,225 @@ class TestFormatStatusMessage:
     """Tests for format_status_message function."""
 
     def test_stopped_status(self) -> None:
-        """Test formatting stopped daemon status."""
         result = format_status_message(running=False)
 
         assert "GOBBY DAEMON STATUS" in result
-        assert "Status: Stopped" in result
+        assert "Stopped" in result
         assert "=" * 70 in result
 
     def test_running_status_minimal(self) -> None:
-        """Test running status with minimal info."""
         result = format_status_message(running=True)
 
-        assert "Status: Running" in result
-        assert "(PID:" not in result  # No PID provided
+        assert "Running" in result
+        assert "PID:" not in result
 
     def test_running_status_with_pid(self) -> None:
-        """Test running status with PID."""
         result = format_status_message(running=True, pid=12345)
 
-        assert "Status: Running (PID: 12345)" in result
+        assert "Running (PID: 12345)" in result
 
     def test_running_status_with_uptime(self) -> None:
-        """Test running status with uptime."""
         result = format_status_message(running=True, uptime="1h 23m 45s")
 
-        assert "Uptime: 1h 23m 45s" in result
+        assert "1h 23m 45s" in result
 
-    def test_running_status_with_pid_file(self) -> None:
-        """Test running status with PID file path."""
-        result = format_status_message(running=True, pid_file="/var/run/gobby.pid")
-
-        assert "PID file: /var/run/gobby.pid" in result
-        assert "Paths:" in result
-
-    def test_running_status_with_log_files(self) -> None:
-        """Test running status with log files path."""
-        result = format_status_message(running=True, log_files="/var/log/gobby/")
-
-        assert "Logs: /var/log/gobby/" in result
-        assert "Paths:" in result
-
-    def test_server_configuration_with_http_port(self) -> None:
-        """Test server configuration section with HTTP port."""
+    def test_network_section_with_http_port(self) -> None:
         result = format_status_message(running=True, http_port=60887)
 
-        assert "Server Configuration:" in result
-        assert "HTTP: localhost:60887" in result
+        assert "Network:" in result
+        assert "localhost:60887" in result
 
-    def test_server_configuration_with_websocket_port(self) -> None:
-        """Test server configuration section with WebSocket port."""
+    def test_network_section_with_websocket_port(self) -> None:
         result = format_status_message(running=True, websocket_port=60888)
 
-        assert "Server Configuration:" in result
-        assert "WebSocket: localhost:60888" in result
+        assert "Network:" in result
+        assert "localhost:60888" in result
 
-    def test_server_configuration_with_both_ports(self) -> None:
-        """Test server configuration with both ports."""
+    def test_network_section_with_both_ports(self) -> None:
         result = format_status_message(running=True, http_port=60887, websocket_port=60888)
 
-        assert "HTTP: localhost:60887" in result
-        assert "WebSocket: localhost:60888" in result
+        assert "localhost:60887" in result
+        assert "localhost:60888" in result
 
-    def test_no_server_configuration_when_no_ports(self) -> None:
-        """Test that server configuration section is hidden when no ports."""
+    def test_no_network_section_when_no_ports(self) -> None:
         result = format_status_message(running=True, pid=123)
 
-        assert "Server Configuration:" not in result
+        assert "Network:" not in result
 
     def test_full_status_message(self) -> None:
-        """Test full status message with all fields."""
         result = format_status_message(
             running=True,
             pid=54321,
-            pid_file="/home/user/.gobby/daemon.pid",
-            log_files="/home/user/.gobby/logs/",
             uptime="2h 30m 15s",
             http_port=60887,
             websocket_port=60888,
+            log_files="/home/user/.gobby/logs/",
         )
 
-        # Header
         assert "=" * 70 in result
         assert "GOBBY DAEMON STATUS" in result
-
-        # Status section (PID now on status line)
-        assert "Status: Running (PID: 54321)" in result
-        assert "Uptime: 2h 30m 15s" in result
-
-        # Paths section (renamed from inline log_files)
-        assert "Paths:" in result
-        assert "PID file: /home/user/.gobby/daemon.pid" in result
-        assert "Logs: /home/user/.gobby/logs/" in result
-
-        # Server configuration section
-        assert "Server Configuration:" in result
-        assert "HTTP: localhost:60887" in result
-        assert "WebSocket: localhost:60888" in result
+        assert "Running (PID: 54321)" in result
+        assert "2h 30m 15s" in result
+        assert "localhost:60887" in result
+        assert "localhost:60888" in result
 
     def test_stopped_status_no_details(self) -> None:
-        """Test stopped status doesn't show running details."""
         result = format_status_message(
             running=False,
-            pid=12345,  # Should be ignored
-            uptime="1h",  # Should be ignored
+            pid=12345,
+            uptime="1h",
         )
 
-        assert "Status: Stopped" in result
+        assert "Stopped" in result
         assert "PID: 12345" not in result
         assert "Uptime:" not in result
 
     def test_extra_kwargs_ignored(self) -> None:
-        """Test that extra kwargs are silently ignored."""
-        # Should not raise any exception
         result = format_status_message(running=True, unknown_field="value", another_unknown=123)
 
-        assert "Status: Running" in result
+        assert "Running" in result
 
     def test_output_is_string(self) -> None:
-        """Test that output is a string."""
         result = format_status_message(running=True)
 
         assert isinstance(result, str)
 
     def test_output_has_newlines(self) -> None:
-        """Test that output uses newlines for formatting."""
         result = format_status_message(running=True, pid=123)
 
         assert "\n" in result
         lines = result.split("\n")
-        assert len(lines) > 5  # Should have multiple lines
+        assert len(lines) > 5
 
-    def test_mcp_proxy_section(self) -> None:
-        """Test MCP proxy section with server stats."""
-        result = format_status_message(
-            running=True, mcp_connected=3, mcp_total=5, mcp_tools_cached=42
-        )
-
-        assert "MCP Proxy:" in result
-        assert "Servers: 3 connected / 5 total" in result
-        assert "Tools cached: 42" in result
-
-    def test_mcp_proxy_unhealthy(self) -> None:
-        """Test MCP proxy with unhealthy servers."""
+    def test_mcp_health_issues(self) -> None:
         result = format_status_message(
             running=True,
-            mcp_connected=2,
-            mcp_total=4,
-            mcp_unhealthy=[("server1", "retry"), ("server2", "failed")],
+            api_data={
+                "mcp_servers": {
+                    "server1": {"health": "error", "consecutive_failures": 3},
+                    "server2": {"health": "healthy", "consecutive_failures": 0},
+                },
+            },
         )
 
-        assert "Unhealthy: server1 (retry), server2 (failed)" in result
+        assert "Health Issues:" in result
+        assert "server1" in result
+        assert "server2" not in result.split("Health Issues:")[1]
 
-    def test_sessions_section(self) -> None:
-        """Test sessions section."""
-        result = format_status_message(
-            running=True, sessions_active=2, sessions_paused=3, sessions_handoff_ready=1
-        )
-
-        assert "Sessions:" in result
-        assert "Active: 2" in result
-        assert "Paused: 3" in result
-        assert "Handoff Ready: 1" in result
-
-    def test_tasks_section(self) -> None:
-        """Test tasks section."""
-        result = format_status_message(
-            running=True, tasks_open=10, tasks_in_progress=2, tasks_ready=5, tasks_blocked=3
-        )
-
-        assert "Tasks:" in result
-        assert "Open: 10" in result
-        assert "In Progress: 2" in result
-        assert "Ready: 5" in result
-        assert "Blocked: 3" in result
-
-    def test_memory_section(self) -> None:
-        """Test memory section."""
+    def test_sessions_in_active_work(self) -> None:
         result = format_status_message(
             running=True,
-            memories_count=50,
+            api_data={
+                "sessions": {"active": 2, "paused": 3},
+            },
         )
 
-        assert "Memory:" in result
-        assert "Memories: 50" in result
+        assert "Active Work:" in result
+        assert "2 active" in result
+        assert "3 paused" in result
 
     def test_process_metrics(self) -> None:
-        """Test process metrics (memory, CPU)."""
         result = format_status_message(
-            running=True, uptime="1h 0m 0s", memory_mb=45.5, cpu_percent=2.3
+            running=True,
+            uptime="1h 0m 0s",
+            api_data={
+                "process": {"memory_rss_mb": 45.5, "cpu_percent": 2.3},
+            },
         )
 
-        assert "Memory: 45.5 MB" in result
+        assert "45.5 MB" in result
         assert "CPU: 2.3%" in result
+
+    def test_services_section(self) -> None:
+        result = format_status_message(
+            running=True,
+            api_data={
+                "memory": {
+                    "qdrant": {"configured": True, "healthy": True},
+                    "neo4j": {
+                        "configured": True,
+                        "installed": True,
+                        "healthy": True,
+                        "url": "bolt://localhost:7687",
+                    },
+                },
+            },
+        )
+
+        assert "Services:" in result
+        assert "Qdrant" in result
+        assert "healthy" in result
+        assert "Neo4j" in result
+
+    def test_config_issues(self) -> None:
+        result = format_status_message(
+            running=True,
+            config_issues=[
+                {"subsystem": "Codex", "error": "provider configured but codex CLI not in PATH"},
+            ],
+        )
+
+        assert "Health Issues:" in result
+        assert "Codex" in result
+
+    def test_deps_info(self) -> None:
+        result = format_status_message(
+            running=True,
+            deps_info={
+                "gobby": {
+                    "gobby": "0.3.6",
+                    "gcode": "0.2.1",
+                    "gcode_path": None,
+                    "gsqz": None,
+                    "gsqz_path": None,
+                },
+                "coding_clis": {"claude": "1.0.12", "gemini": None, "codex": None, "hooks": {}},
+                "dependencies": {
+                    "tmux": "3.4",
+                    "docker": None,
+                    "docker_running": False,
+                    "git": "2.44.0",
+                    "node": None,
+                    "tailscale": None,
+                    "ollama": None,
+                    "lmstudio": None,
+                },
+            },
+        )
+
+        assert "Gobby:" in result
+        assert "0.3.6" in result
+        assert "Coding CLIs:" in result
+        assert "1.0.12" in result
+        assert "Dependencies:" in result
+        assert "3.4" in result
+
+
+class TestFormatStartupSummary:
+    def test_basic(self) -> None:
+        result = format_startup_summary(pid=1, http_port=8080, websocket_port=8081)
+
+        assert "Gobby daemon ready (PID: 1)" in result
+        assert "localhost:8080" in result
+        assert "localhost:8081" in result
+
+    def test_with_ui(self) -> None:
+        result = format_startup_summary(
+            pid=1,
+            http_port=8080,
+            websocket_port=8081,
+            ui_url="http://localhost:5173",
+            ui_mode="dev",
+        )
+
+        assert "http://localhost:5173 (dev)" in result
+
+    def test_with_logs(self) -> None:
+        result = format_startup_summary(
+            pid=1,
+            http_port=8080,
+            websocket_port=8081,
+            log_files="/tmp/logs",
+        )
+
+        assert "/tmp/logs" in result

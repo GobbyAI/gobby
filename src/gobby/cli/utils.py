@@ -733,6 +733,14 @@ def stop_ui_server(quiet: bool = False) -> bool:
         return False
 
 
+def _stop_step(msg: str, *, error: bool = False) -> None:
+    """Print a shutdown step with consistent formatting."""
+    if error:
+        click.echo(f"  ! {msg}", err=True)
+    else:
+        click.echo(f"  + {msg}")
+
+
 def stop_daemon(quiet: bool = False) -> bool:
     """Stop the daemon process. Returns True on success, False on failure.
 
@@ -747,6 +755,9 @@ def stop_daemon(quiet: bool = False) -> bool:
         logger.warning("stop_daemon called during test - skipping")
         return True
 
+    if not quiet:
+        click.echo("Stopping Gobby daemon...")
+
     # Stop UI server first
     stop_ui_server(quiet=True)
 
@@ -760,11 +771,10 @@ def stop_daemon(quiet: bool = False) -> bool:
                 pid = int(f.read().strip())
         except Exception as e:
             if not quiet:
-                click.echo(f"Error reading PID file: {e}", err=True)
+                _stop_step(f"Error reading PID file: {e}", error=True)
             pid_file.unlink(missing_ok=True)
 
     if pid is None:
-        # No PID file — check if running as a launchctl service
         from gobby.cli.installers.service import get_service_status
 
         svc = get_service_status()
@@ -772,39 +782,35 @@ def stop_daemon(quiet: bool = False) -> bool:
             pid = svc["pid"]
         else:
             if not quiet:
-                click.echo("Gobby daemon is not running (no PID file found)")
+                _stop_step("Daemon is not running")
             return True
 
     # Check if process is actually running (handles zombies correctly)
     if not _is_process_alive(pid):
-        if not quiet:
-            click.echo(f"Stale PID file (PID {pid} not running), scanning for orphaned daemons...")
         pid_file.unlink(missing_ok=True)
-        # Don't return early — scan for daemons on the port in case a different
-        # PID is running the daemon (e.g. crash + restart)
         killed = kill_all_gobby_daemons()
-        if killed > 0 and not quiet:
-            click.echo(f"Cleaned up {killed} orphaned daemon process(es)")
+        if not quiet:
+            if killed > 0:
+                _stop_step(f"Cleaned up {killed} orphaned process(es)")
+            else:
+                _stop_step("Daemon is not running (stale PID file removed)")
         return True
 
     # Verify the PID is actually a gobby daemon before sending signals
-    # (PID reuse could mean it's a completely different process now)
     try:
         proc = psutil.Process(pid)
         cmdline_str = " ".join(proc.cmdline())
         if "gobby" not in cmdline_str.lower():
-            if not quiet:
-                click.echo(
-                    f"PID {pid} is not a gobby process (cmdline: {cmdline_str[:80]}), "
-                    f"removing stale PID file and scanning for orphaned daemons..."
-                )
             pid_file.unlink(missing_ok=True)
             killed = kill_all_gobby_daemons()
-            if killed > 0 and not quiet:
-                click.echo(f"Cleaned up {killed} orphaned daemon process(es)")
+            if not quiet:
+                if killed > 0:
+                    _stop_step(f"Cleaned up {killed} orphaned process(es)")
+                else:
+                    _stop_step("PID file pointed to non-gobby process, removed")
             return True
     except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass  # Process died or can't read cmdline — proceed with kill attempt
+        pass
 
     # Write shutdown source before any stop mechanism
     try:
@@ -814,82 +820,80 @@ def stop_daemon(quiet: bool = False) -> bool:
     except Exception as e:
         logger.debug(f"Failed to write shutdown source: {e}")
 
-    # If running under launchctl, use bootout instead of SIGTERM to prevent
-    # KeepAlive from immediately respawning the process
+    stop_start = time.time()
+
+    # If running under launchctl, use bootout instead of SIGTERM
     from gobby.cli.installers.service import get_service_status, service_stop
 
     svc = get_service_status()
     if svc.get("installed") and svc.get("running"):
         result = service_stop()
         if result.get("success"):
-            if not quiet:
-                click.echo(f"Stopped Gobby daemon via {svc.get('platform', 'OS')} service manager")
             pid_file.unlink(missing_ok=True)
-            # Wait for process to actually exit after bootout
             for _ in range(200):  # 20 seconds
                 time.sleep(0.1)
                 if not _is_process_alive(pid):
                     break
             kill_all_gobby_daemons()
+            elapsed = time.time() - stop_start
+            if not quiet:
+                _stop_step(f"Stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")
             return True
         if not quiet:
-            click.echo("Service stop failed, falling back to direct signal...")
+            _stop_step("Service stop failed, falling back to direct signal...", error=True)
 
     try:
-        # Send SIGTERM signal for graceful shutdown (non-service-managed daemons)
         os.kill(pid, signal.SIGTERM)
         if not quiet:
-            click.echo(f"Sent shutdown signal to Gobby daemon (PID {pid})")
+            _stop_step(f"Sent shutdown signal (PID: {pid})")
 
-        # Wait for graceful shutdown
-        # Match daemon's uvicorn timeout_graceful_shutdown (15s) + buffer
+        # Wait for graceful shutdown (match uvicorn timeout + buffer)
         max_wait = 20
         for _ in range(max_wait * 10):
             time.sleep(0.1)
             if not _is_process_alive(pid):
+                elapsed = time.time() - stop_start
                 if not quiet:
-                    click.echo("Gobby daemon stopped successfully")
+                    _stop_step(f"Daemon stopped ({elapsed:.1f}s)")
                 pid_file.unlink(missing_ok=True)
-                # Sweep for orphaned daemon processes that could respawn
                 kill_all_gobby_daemons()
                 return True
 
-        # Process didn't stop gracefully - try force kill
+        # Force kill
         if not quiet:
-            click.echo(f"Process didn't stop gracefully after {max_wait}s, force killing...")
+            _stop_step(f"Did not stop within {max_wait}s, force killing...", error=True)
 
         try:
             os.kill(pid, signal.SIGKILL)
             time.sleep(0.5)
         except ProcessLookupError:
-            pass  # Already dead
+            pass
 
-        # Final check
         if not _is_process_alive(pid):
+            elapsed = time.time() - stop_start
             if not quiet:
-                click.echo("Gobby daemon force killed successfully")
+                _stop_step(f"Force killed ({elapsed:.1f}s)")
             pid_file.unlink(missing_ok=True)
-            # Sweep for orphaned daemon processes that could respawn
             kill_all_gobby_daemons()
             return True
 
         if not quiet:
-            click.echo("Warning: Failed to stop process", err=True)
+            _stop_step("Failed to stop process", error=True)
         return False
 
     except PermissionError:
         if not quiet:
-            click.echo(f"Error: Permission denied to stop process (PID {pid})", err=True)
+            _stop_step(f"Permission denied to stop process (PID {pid})", error=True)
         return False
 
     except ProcessLookupError:
-        # Process died between our check and sending signal - that's fine
+        elapsed = time.time() - stop_start
         if not quiet:
-            click.echo("Gobby daemon stopped")
+            _stop_step(f"Daemon stopped ({elapsed:.1f}s)")
         pid_file.unlink(missing_ok=True)
         return True
 
     except Exception as e:
         if not quiet:
-            click.echo(f"Error stopping daemon: {e}", err=True)
+            _stop_step(f"Error stopping daemon: {e}", error=True)
         return False

@@ -3,7 +3,11 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from gobby.utils.status import fetch_rich_status, format_status_message
+from gobby.utils.status import (
+    fetch_rich_status,
+    format_startup_summary,
+    format_status_message,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -26,16 +30,13 @@ class TestStatusUtils:
         }
         mock_get.return_value = mock_response
 
-        status = await fetch_rich_status(8080)
+        data = await fetch_rich_status(8080)
 
-        assert status["memory_mb"] == 100.5
-        assert status["mcp_total"] == 2
-        assert status["mcp_connected"] == 1
-        assert status["mcp_tools_cached"] == 5
-        assert status["mcp_unhealthy"] == [("server2", "error")]
-        assert status["sessions_active"] == 1
-        assert status["tasks_open"] == 2
-        assert status["memories_count"] == 10
+        # fetch_rich_status now returns the raw API response dict
+        assert data["process"]["memory_rss_mb"] == 100.5
+        assert len(data["mcp_servers"]) == 2
+        assert data["sessions"]["active"] == 1
+        assert data["tasks"]["open"] == 2
 
     @patch("httpx.AsyncClient.get")
     async def test_fetch_rich_status_failure(self, mock_get) -> None:
@@ -64,49 +65,119 @@ class TestStatusUtils:
             pid=1234,
             uptime="1h",
             http_port=8080,
-            memory_mb=100.0,
-            cpu_percent=5.0,
-            mcp_total=2,
-            mcp_connected=1,
-            sessions_active=1,
+            api_data={
+                "process": {"memory_rss_mb": 100.0, "cpu_percent": 5.0},
+            },
         )
-        assert "Status: Running (PID: 1234)" in msg
-        assert "Uptime: 1h" in msg
-        assert "Memory: 100.0 MB" in msg
-        assert "HTTP: localhost:8080" in msg
-        assert "Servers: 1 connected / 2 total" in msg
-        assert "Active: 1" in msg
+        assert "Running (PID: 1234)" in msg
+        assert "1h" in msg
+        assert "100.0 MB" in msg
+        assert "localhost:8080" in msg
 
     def test_format_status_message_stopped(self) -> None:
         msg = format_status_message(running=False)
-        assert "Status: Stopped" in msg
+        assert "Stopped" in msg
 
-    def test_format_status_message_unhealthy_mcp(self) -> None:
-        msg = format_status_message(running=True, mcp_total=1, mcp_unhealthy=[("s1", "error")])
-        assert "Unhealthy: s1 (error)" in msg
-
-    def test_format_status_message_paths(self) -> None:
-        msg = format_status_message(running=True, pid_file="/tmp/pid", log_files="/tmp/logs")
-        assert "PID file: /tmp/pid" in msg
-        assert "Logs: /tmp/logs" in msg
-
-    def test_format_status_message_full(self) -> None:
+    def test_format_status_message_health_issues(self) -> None:
         msg = format_status_message(
             running=True,
-            tasks_open=1,
-            tasks_in_progress=2,
-            tasks_ready=3,
-            tasks_blocked=4,
-            memories_count=10,
-            sessions_paused=1,
-            sessions_handoff_ready=1,
+            api_data={
+                "mcp_servers": {
+                    "s1": {"health": "error", "consecutive_failures": 3},
+                },
+            },
         )
-        assert "Tasks:" in msg
-        assert "Open: 1" in msg
-        assert "In Progress: 2" in msg
-        assert "Ready: 3" in msg
-        assert "Blocked: 4" in msg
-        assert "Memory:" in msg
-        assert "Memories: 10" in msg
-        assert "Paused: 1" in msg
-        assert "Handoff Ready: 1" in msg
+        assert "Health Issues:" in msg
+        assert "s1" in msg
+
+    def test_format_status_message_log_files(self) -> None:
+        msg = format_status_message(
+            running=True,
+            log_files="/tmp/logs",
+        )
+        # Log files not shown in status (only in startup summary)
+        # Status focuses on runtime health, not paths
+        assert "GOBBY DAEMON STATUS" in msg
+
+    def test_format_status_message_active_work(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "sessions": {"active": 2, "paused": 1},
+                "agents": {"running": 1},
+                "pipelines": {"running": 1, "waiting_approval": 0},
+            },
+        )
+        assert "Active Work:" in msg
+        assert "2 active" in msg
+        assert "1 paused" in msg
+
+    def test_format_status_message_deps(self) -> None:
+        msg = format_status_message(
+            running=True,
+            deps_info={
+                "gobby": {
+                    "gobby": "0.3.6",
+                    "gcode": "0.2.1",
+                    "gcode_path": None,
+                    "gsqz": None,
+                    "gsqz_path": None,
+                },
+                "coding_clis": {
+                    "claude": "1.0.12",
+                    "gemini": None,
+                    "codex": None,
+                    "hooks": {"claude": True, "gemini": False, "codex": False},
+                },
+                "dependencies": {
+                    "tmux": "3.4",
+                    "docker": None,
+                    "docker_running": False,
+                    "git": "2.44.0",
+                    "node": None,
+                    "tailscale": None,
+                    "ollama": None,
+                    "lmstudio": None,
+                },
+            },
+        )
+        assert "0.3.6" in msg
+        assert "0.2.1" in msg
+        assert "1.0.12" in msg
+        assert "3.4" in msg
+        assert "2.44.0" in msg
+
+    def test_format_status_message_config_issues(self) -> None:
+        msg = format_status_message(
+            running=True,
+            config_issues=[
+                {"subsystem": "Codex", "error": "provider configured but codex CLI not in PATH"},
+            ],
+        )
+        assert "Health Issues:" in msg
+        assert "Codex" in msg
+
+    def test_format_startup_summary(self) -> None:
+        msg = format_startup_summary(
+            pid=12345,
+            http_port=60887,
+            websocket_port=60888,
+            ui_url="http://localhost:5173",
+            ui_mode="dev",
+            log_files="/tmp/logs",
+        )
+        assert "Gobby daemon ready (PID: 12345)" in msg
+        assert "localhost:60887" in msg
+        assert "localhost:60888" in msg
+        assert "http://localhost:5173 (dev)" in msg
+        assert "/tmp/logs" in msg
+
+    def test_format_startup_summary_minimal(self) -> None:
+        msg = format_startup_summary(
+            pid=1,
+            http_port=8080,
+            websocket_port=8081,
+        )
+        assert "Gobby daemon ready (PID: 1)" in msg
+        assert "Web UI" not in msg
+        assert "Logs" not in msg

@@ -25,6 +25,22 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         """Lightweight health check for startup probing. No I/O."""
         return {"status": "ok"}
 
+    @router.get("/startup-progress")
+    async def startup_progress() -> dict[str, Any]:
+        """Return subsystem initialization progress for CLI display."""
+        from gobby.runner_lifecycle import get_startup_tracker
+
+        tracker = get_startup_tracker()
+        if tracker is None:
+            return {
+                "steps_completed": [],
+                "steps_scheduled": [],
+                "errors": [],
+                "done": True,
+                "elapsed_seconds": 0,
+            }
+        return tracker.to_dict()
+
     @router.get("/status")
     async def status_check() -> dict[str, Any]:
         """
@@ -282,6 +298,59 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         except Exception as e:
             logger.warning(f"Failed to get savings stats: {e}")
 
+        # File descriptor usage
+        fd_usage: dict[str, Any] = {}
+        try:
+            import resource
+
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            # Count open FDs via /dev/fd or /proc
+            import pathlib
+
+            fd_dir = pathlib.Path("/dev/fd")
+            if not fd_dir.exists():
+                fd_dir = pathlib.Path(f"/proc/{os.getpid()}/fd")
+            current = len(list(fd_dir.iterdir())) if fd_dir.exists() else None
+            fd_usage = {"current": current, "soft_limit": soft, "hard_limit": hard}
+        except Exception:
+            pass
+
+        # Database size
+        db_size_bytes: int | None = None
+        try:
+            from gobby.cli.utils import get_gobby_home as _ghome
+
+            db_path = _ghome() / "gobby-hub.db"
+            if db_path.exists():
+                db_size_bytes = db_path.stat().st_size
+        except Exception:
+            pass
+
+        # Last shutdown source
+        last_shutdown: str | None = None
+        try:
+            import json as _json
+
+            from gobby.cli.utils import get_gobby_home as _ghome2
+
+            source_file = _ghome2() / "shutdown_source.json"
+            if source_file.exists():
+                data = _json.loads(source_file.read_text())
+                last_shutdown = data.get("source", "unknown")
+        except Exception:
+            pass
+
+        # Agent run statistics
+        agent_stats: dict[str, int] = {"running": 0}
+        try:
+            from gobby.storage.agents import LocalAgentRunManager
+
+            arm = LocalAgentRunManager(server.services.database)
+            runs = arm.list_active_runs()
+            agent_stats["running"] = len(runs)
+        except Exception:
+            pass
+
         # Calculate response time
         response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -307,6 +376,10 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "skills": skills_stats,
             "pipelines": pipeline_stats,
             "savings": savings_stats,
+            "agents": agent_stats,
+            "fd_usage": fd_usage,
+            "db_size_bytes": db_size_bytes,
+            "last_shutdown": last_shutdown,
             "response_time_ms": response_time_ms,
         }
 

@@ -181,6 +181,11 @@ class TestStatusCommand:
         result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 0
 
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
     @patch("gobby.cli.daemon.asyncio.run", return_value={})
     @patch("gobby.cli.daemon.format_status_message", return_value="Running PID 123")
     @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
@@ -195,6 +200,8 @@ class TestStatusCommand:
         _uptime: MagicMock,
         _fmt: MagicMock,
         _async: MagicMock,
+        _deps: MagicMock,
+        _mismatches: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:

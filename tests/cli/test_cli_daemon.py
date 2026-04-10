@@ -89,7 +89,7 @@ class TestStartCommand:
             result = runner.invoke(cli, ["start"], env={"HOME": str(temp_dir)})
 
             assert result.exit_code == 0
-            assert "Initializing local storage" in result.output
+            assert "Local storage initialized" in result.output
             mock_init_storage.assert_called_once()
             mock_popen.assert_called_once()
 
@@ -217,7 +217,6 @@ class TestStartCommand:
                 patch("gobby.cli.daemon.is_port_available", return_value=True),
                 patch("gobby.cli.daemon.subprocess.Popen") as mock_popen,
                 patch("gobby.cli.daemon.httpx.get") as mock_httpx_get,
-                patch("gobby.cli.daemon.fetch_rich_status", return_value={}),
                 patch("gobby.cli.daemon.time.sleep"),
             ):
                 mock_process = MagicMock()
@@ -231,7 +230,9 @@ class TestStartCommand:
 
                 result = runner.invoke(cli, ["start"])
 
-                assert "Removing stale PID file" in result.output
+                # Stale PID file is silently removed, daemon starts successfully
+                assert result.exit_code == 0
+                assert "Daemon process launched" in result.output
 
     @patch("gobby.cli.daemon.wait_for_port_available")
     @patch("gobby.cli.daemon.is_port_available")
@@ -349,7 +350,7 @@ class TestStartCommand:
             result = runner.invoke(cli, ["start"])
 
             assert result.exit_code == 1
-            assert "Process exited immediately" in result.output
+            assert "Daemon process exited immediately" in result.output
 
     @pytest.mark.skip(
         reason="Flaky: FD leak from earlier tests causes OSError in isolated_filesystem"
@@ -657,7 +658,7 @@ class TestStatusCommand:
         """Test status --help displays help text."""
         result = runner.invoke(cli, ["status", "--help"])
         assert result.exit_code == 0
-        assert "Show Gobby daemon status" in result.output
+        assert "Show Gobby daemon operational health dashboard" in result.output
 
     @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
     @patch("gobby.cli.daemon.get_gobby_home")
@@ -743,6 +744,11 @@ class TestStatusCommand:
             assert "Stopped" in result.output
             assert "Stale PID file found" in result.output
 
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
@@ -753,17 +759,15 @@ class TestStatusCommand:
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
         mock_get_gobby_home: MagicMock,
+        mock_collect_deps: MagicMock,
+        mock_check_mismatches: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
     ) -> None:
         """Test status when daemon is running."""
         mock_load_config.return_value = mock_daemon_config
-        mock_fetch_status.return_value = {
-            "mcp_total": 5,
-            "mcp_connected": 3,
-            "sessions_active": 2,
-        }
+        mock_fetch_status.return_value = {}
 
         # Mock psutil.Process
         mock_proc = MagicMock()
@@ -786,6 +790,11 @@ class TestStatusCommand:
             assert "Running" in result.output
             mock_fetch_status.assert_called_once()
 
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
     @patch("gobby.cli.load_config")
@@ -794,6 +803,8 @@ class TestStatusCommand:
         mock_load_config: MagicMock,
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
+        mock_collect_deps: MagicMock,
+        mock_check_mismatches: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
@@ -841,8 +852,6 @@ class TestDaemonCommandsIntegration:
         if pid_file.exists():
             pid_file.unlink()
 
-    @patch("gobby.cli.daemon.fetch_rich_status")
-    @patch("gobby.cli.daemon.format_status_message")
     @patch("gobby.cli.daemon.httpx.get")
     @patch("gobby.cli.daemon.subprocess.Popen")
     @patch("gobby.cli.daemon.is_port_available")
@@ -850,7 +859,7 @@ class TestDaemonCommandsIntegration:
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.load_config")
-    def test_start_displays_status_message(
+    def test_start_displays_startup_summary(
         self,
         mock_load_config: MagicMock,
         mock_sleep: MagicMock,
@@ -859,19 +868,15 @@ class TestDaemonCommandsIntegration:
         mock_is_port_available: MagicMock,
         mock_popen: MagicMock,
         mock_httpx_get: MagicMock,
-        mock_format_status: MagicMock,
-        mock_fetch_status: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
         clean_pid_file,
     ) -> None:
-        """Test that start command displays status message."""
+        """Test that start command displays startup summary."""
         mock_load_config.return_value = mock_daemon_config
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
-        mock_fetch_status.return_value = {}
-        mock_format_status.return_value = "STATUS MESSAGE"
 
         mock_process = MagicMock()
         mock_process.pid = 12345
@@ -893,8 +898,7 @@ class TestDaemonCommandsIntegration:
             result = runner.invoke(cli, ["start"])
 
             assert result.exit_code == 0
-            assert "STATUS MESSAGE" in result.output
-            mock_format_status.assert_called()
+            assert "Gobby daemon ready" in result.output
 
     def test_cli_has_all_daemon_commands(self, runner: CliRunner) -> None:
         """Test that CLI has all daemon management commands."""
@@ -1073,7 +1077,11 @@ class TestEdgeCases:
             assert result.exit_code == 1
             assert "Error starting daemon" in result.output
 
-    @patch("gobby.cli.daemon.format_status_message")
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
     @patch("gobby.cli.load_config")
@@ -1082,25 +1090,18 @@ class TestEdgeCases:
         mock_load_config: MagicMock,
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
-        mock_format_status: MagicMock,
+        mock_collect_deps: MagicMock,
+        mock_check_mismatches: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
     ) -> None:
         """Test status command with rich daemon data."""
         mock_load_config.return_value = mock_daemon_config
-        mock_format_status.return_value = "FULL STATUS"
-
-        # Rich status data
         mock_fetch_status.return_value = {
-            "memory_mb": 128.5,
-            "cpu_percent": 2.5,
-            "mcp_total": 10,
-            "mcp_connected": 8,
-            "mcp_tools_cached": 50,
-            "sessions_active": 3,
-            "tasks_open": 5,
-            "tasks_in_progress": 2,
+            "process": {"memory_rss_mb": 128.5, "cpu_percent": 2.5},
+            "sessions": {"active": 3, "paused": 0},
+            "tasks": {"open": 5, "in_progress": 2},
         }
 
         mock_proc = MagicMock()
@@ -1121,7 +1122,7 @@ class TestEdgeCases:
             result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
-            mock_fetch_status.assert_called_once_with(mock_daemon_config.daemon_port, timeout=2.0)
+            mock_fetch_status.assert_called_once_with(mock_daemon_config.daemon_port, timeout=3.0)
 
 
 class TestCommandBuilding:
