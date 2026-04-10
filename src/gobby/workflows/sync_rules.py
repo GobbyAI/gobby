@@ -1,9 +1,9 @@
 """Rule definition synchronization from bundled YAML templates.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly. **Existing installed rows are never overwritten** by sync — drift
-between the on-disk template and the DB row is detected via hash comparison
-at runtime, not corrected here. Soft-deleted rows are not restored.
+directly. Bundled ``gobby`` rows are refreshed in place when the on-disk YAML
+changes, while user/custom rows remain protected. Soft-deleted rows are not
+restored.
 """
 
 import json
@@ -41,8 +41,9 @@ def sync_bundled_rules(
 ) -> dict[str, Any]:
     """Sync rule YAML files to workflow_definitions table with workflow_type='rule'.
 
-    Creates installed rows directly from template files. Existing rows are
-    never overwritten — drift is detected via hash comparison at runtime.
+    Creates installed rows directly from template files. Existing bundled
+    ``gobby`` rows are refreshed when the YAML changes, preserving the
+    user's enabled toggle. User/custom rows are not overwritten.
 
     Args:
         db: Database connection.
@@ -139,6 +140,7 @@ def sync_bundled_rules(
                         file_group=file_group,
                         file_tags=file_tags,
                         file_sources=file_sources,
+                        sync_tag=tag,
                         result=result,
                     )
                 except Exception as e:
@@ -226,14 +228,14 @@ def _sync_single_rule(
     file_group: str | None,
     file_tags: list[str] | None,
     file_sources: list[str] | None,
+    sync_tag: str,
     result: dict[str, Any],
 ) -> None:
     """Sync a single rule to workflow_definitions.
 
-    Creates an installed row if none exists. **Existing active installed rows
-    are left intact** — drift between the on-disk template and the DB row is
-    detected via hash comparison at runtime, not corrected during sync.
-    Soft-deleted rows are not restored.
+    Creates an installed row if none exists. Existing bundled ``gobby`` rows
+    are refreshed when the YAML changes, preserving the user's enabled toggle.
+    Soft-deleted rows and user/custom rows are not restored or overwritten.
     """
     # Build the RuleDefinitionBody dict
     body_dict: dict[str, Any] = {
@@ -274,9 +276,20 @@ def _sync_single_rule(
             result["skipped"] += 1
             return
 
-        # Row exists and is active — skip (no overwrite).
-        # Drift between the on-disk template and the DB row is detected
-        # via hash comparison at runtime, not corrected during sync.
+        if _is_sync_managed_bundled_rule(existing, sync_tag):
+            update_fields = _build_rule_update_fields(
+                existing=existing,
+                definition_json=definition_json,
+                description=description,
+                priority=priority,
+                sources=file_sources,
+                tags=file_tags,
+            )
+            if update_fields:
+                manager.update(existing.id, **update_fields)
+                result["updated"] += 1
+                return
+
         result["skipped"] += 1
         return
 
@@ -294,3 +307,40 @@ def _sync_single_rule(
         source="installed",
     )
     result["synced"] += 1
+
+
+def _is_sync_managed_bundled_rule(existing: Any, sync_tag: str) -> bool:
+    """Return whether an existing row is safe for bundled sync to overwrite."""
+    if sync_tag != "gobby":
+        return False
+    return (
+        existing.source == "installed"
+        and existing.project_id is None
+        and sync_tag in (existing.tags or [])
+    )
+
+
+def _build_rule_update_fields(
+    *,
+    existing: Any,
+    definition_json: str,
+    description: str | None,
+    priority: int,
+    sources: list[str] | None,
+    tags: list[str] | None,
+) -> dict[str, Any]:
+    """Build the minimal field set needed to refresh a bundled rule row."""
+    update_fields: dict[str, Any] = {}
+
+    if existing.definition_json != definition_json:
+        update_fields["definition_json"] = definition_json
+    if existing.description != description:
+        update_fields["description"] = description
+    if existing.priority != priority:
+        update_fields["priority"] = priority
+    if existing.sources != sources:
+        update_fields["sources"] = sources
+    if existing.tags != tags:
+        update_fields["tags"] = tags
+
+    return update_fields

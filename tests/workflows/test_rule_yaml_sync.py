@@ -291,6 +291,9 @@ rules:
         rows = manager.list_all(workflow_type="rule")
         body1 = json.loads(rows[0].definition_json)
         assert body1["effects"][0]["reason"] == "Version 1."
+        original_enabled = rows[0].enabled
+
+        manager.update(rows[0].id, enabled=True)
 
         (rules_dir / "changing.yaml").write_text(
             """
@@ -302,14 +305,72 @@ rules:
       reason: "Version 2."
 """
         )
-        # Sync no longer overwrites — existing rows are preserved
         result2 = sync_bundled_rules(db, rules_dir)
-        assert result2["skipped"] == 1
+        assert result2["updated"] == 1
 
-        # Original version preserved (drift detected at runtime, not overwritten)
+        # Bundled row is refreshed, but user toggle is preserved.
         rows = manager.list_all(workflow_type="rule")
         body2 = json.loads(rows[0].definition_json)
-        assert body2["effects"][0]["reason"] == "Version 1."
+        assert body2["effects"][0]["reason"] == "Version 2."
+        assert original_enabled is False
+        assert rows[0].enabled is True
+
+    def test_user_or_custom_rule_not_overwritten(self, db, manager, rules_dir) -> None:
+        """Only bundled gobby rows should be refreshed on re-sync."""
+        manager.create(
+            name="user-owned-rule",
+            definition_json=json.dumps(
+                {
+                    "event": "stop",
+                    "effects": [{"type": "block", "reason": "Keep original user rule"}],
+                }
+            ),
+            workflow_type="rule",
+            source="installed",
+            tags=["user"],
+            enabled=True,
+        )
+        manager.create(
+            name="custom-owned-rule",
+            definition_json=json.dumps(
+                {
+                    "event": "stop",
+                    "effects": [{"type": "block", "reason": "Keep original custom rule"}],
+                }
+            ),
+            workflow_type="rule",
+            source="custom",
+            tags=["gobby"],
+            enabled=True,
+        )
+
+        (rules_dir / "protected.yaml").write_text(
+            """
+rules:
+  user-owned-rule:
+    event: turn_end
+    effect:
+      type: block
+      reason: "bundled replacement"
+  custom-owned-rule:
+    event: turn_end
+    effect:
+      type: block
+      reason: "bundled replacement"
+"""
+        )
+
+        result = sync_bundled_rules(db, rules_dir)
+
+        assert result["updated"] == 0
+        assert result["skipped"] == 2
+
+        user_row = manager.get_by_name("user-owned-rule")
+        custom_row = manager.get_by_name("custom-owned-rule")
+        assert user_row is not None
+        assert custom_row is not None
+        assert json.loads(user_row.definition_json)["event"] == "stop"
+        assert json.loads(custom_row.definition_json)["event"] == "stop"
 
     def test_soft_deleted_template_restored_on_resync(self, db, manager, rules_dir) -> None:
         """A soft-deleted template rule should be restored on re-sync."""
