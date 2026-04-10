@@ -47,10 +47,10 @@ class LLMProvidersConfig(BaseModel):
       claude:
         models: haiku,sonnet,opus
       codex:
-        models: gpt-5.4,gpt-5.3-codex,gpt-5.3-codex-spark
+        models: gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.3-codex-spark
         auth_mode: subscription
       gemini:
-        models: gemini-3-flash,gemini-3.1-pro
+        models: gemini-3.1-pro,gemini-3-flash
         auth_mode: subscription
     ```
     """

@@ -8,25 +8,6 @@ import {
 import { SourceIcon } from "../shared/SourceIcon";
 import { cn } from "../../lib/utils";
 
-/** Static fallback catalog used when the daemon API is unavailable. */
-const STATIC_MODELS: Record<string, { value: string; label: string }[]> = {
-  claude: [
-    { value: "opus", label: "Opus" },
-    { value: "sonnet", label: "Sonnet" },
-    { value: "haiku", label: "Haiku" },
-    { value: "local", label: "Local" },
-  ],
-  gemini: [
-    { value: "gemini-3.1-pro", label: "pro-3.1" },
-    { value: "gemini-3-flash", label: "flash-3" },
-  ],
-  codex: [
-    { value: "gpt-5.4", label: "codex-5.4" },
-    { value: "gpt-5.3-codex", label: "codex-5.3" },
-    { value: "gpt-5.3-codex-spark", label: "spark-5.3" },
-  ],
-};
-
 interface ProviderModelEntry {
   provider: string;
   available: boolean;
@@ -34,7 +15,7 @@ interface ProviderModelEntry {
   source: "static" | "dynamic" | "config";
 }
 
-/** Fetch model catalog from daemon, falling back to static catalog. */
+/** Fetch the canonical model catalog from the daemon. */
 let _cachedModels: ProviderModelEntry[] | null = null;
 
 async function fetchModelCatalog(): Promise<ProviderModelEntry[]> {
@@ -49,22 +30,19 @@ async function fetchModelCatalog(): Promise<ProviderModelEntry[]> {
       }
     }
   } catch {
-    // Fall through to static
+    // Use empty catalog when the daemon is unavailable.
   }
-  return Object.entries(STATIC_MODELS).map(([provider, models]) => ({
-    provider,
-    available: true,
-    models,
-    source: "static" as const,
-  }));
+  return [];
 }
 
 function getModelsForProvider(
   catalog: ProviderModelEntry[],
   provider: string,
+  currentModel: string,
 ): { value: string; label: string }[] {
   const entry = catalog.find((e) => e.provider === provider);
-  return entry?.models ?? STATIC_MODELS[provider] ?? [{ value: "default", label: "Default" }];
+  if (entry?.models?.length) return entry.models;
+  return [{ value: currentModel, label: currentModel || "Default" }];
 }
 
 interface ProviderPickerProps {
@@ -215,7 +193,7 @@ export function ProviderPicker({
             </div>
             <div className="px-2 pb-2 max-h-[60vh] overflow-y-auto">
               {visibleProviders.map((provider) => {
-                const models = getModelsForProvider(catalog, provider);
+                const models = getModelsForProvider(catalog, provider, currentModel);
                 const isActive =
                   provider === effectiveProvider ||
                   (!currentProvider && provider === "claude");

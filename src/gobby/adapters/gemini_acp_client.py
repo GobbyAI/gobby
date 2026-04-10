@@ -84,11 +84,16 @@ class GeminiACPClient:
         """The ACP session ID obtained from newSession/loadSession."""
         return self._session_id
 
-    async def start(self, session_id: str | None = None) -> None:
+    async def start(
+        self,
+        session_id: str | None = None,
+        model: str | None = None,
+    ) -> None:
         """Launch ``gemini --acp``, perform initialize handshake, and create/resume session.
 
         Args:
             session_id: Optional session ID to resume a previous conversation.
+            model: Optional model override to apply to the Gemini CLI subprocess.
 
         Raises:
             FileNotFoundError: If the Gemini CLI binary cannot be found.
@@ -102,6 +107,8 @@ class GeminiACPClient:
             raise FileNotFoundError("Gemini CLI not found in PATH")
 
         cmd = [path, "--acp"]
+        if model:
+            cmd.extend(["--model", model])
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,

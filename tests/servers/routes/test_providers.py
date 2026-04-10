@@ -102,10 +102,16 @@ class TestProviderModelsRoute:
         codex = providers["codex"]["models"]
         assert [m["value"] for m in codex] == [
             "gpt-5.4",
+            "gpt-5.4-mini",
             "gpt-5.3-codex",
             "gpt-5.3-codex-spark",
         ]
-        assert [m["label"] for m in codex] == ["codex-5.4", "codex-5.3", "spark-5.3"]
+        assert [m["label"] for m in codex] == [
+            "codex-5.4",
+            "mini-5.4",
+            "codex-5.3",
+            "spark-5.3",
+        ]
 
         # Each entry should have source field
         for p in data["providers"]:
@@ -139,8 +145,8 @@ class TestProviderModelsRoute:
 
         assert claude_models["local"] == "Local (qwen-coder-32b)"
 
-    def test_prefers_configured_codex_and_gemini_models(self) -> None:
-        """Configured model lists override the static Gemini/Codex fallback catalog."""
+    def test_current_catalog_ignores_partial_configured_lists(self) -> None:
+        """Configured model lists do not alter the web-chat picker contract."""
         app = FastAPI()
         config = DaemonConfig(
             llm_providers=LLMProvidersConfig(
@@ -155,10 +161,69 @@ class TestProviderModelsRoute:
         response = client.get("/api/providers/models")
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
-        assert providers["gemini"]["source"] == "config"
-        assert providers["codex"]["source"] == "config"
-        assert [m["label"] for m in providers["gemini"]["models"]] == ["pro-3.1", "flash-3"]
+        assert providers["gemini"]["source"] == "static"
+        assert providers["codex"]["source"] == "static"
+        assert [m["value"] for m in providers["gemini"]["models"]] == [
+            "gemini-3.1-pro",
+            "gemini-3-flash",
+        ]
+        assert [m["value"] for m in providers["codex"]["models"]] == [
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-spark",
+        ]
         assert [m["label"] for m in providers["codex"]["models"]] == [
             "codex-5.4",
+            "mini-5.4",
             "codex-5.3",
+            "spark-5.3",
+        ]
+
+    def test_ignores_legacy_gemini_preview_models(self) -> None:
+        """Legacy Gemini preview IDs do not leak into the web-chat picker."""
+        app = FastAPI()
+        config = DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                gemini=LLMProviderConfig(
+                    models="gemini-3-pro-preview,gemini-3-flash-preview",
+                ),
+            )
+        )
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        response = client.get("/api/providers/models")
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+
+        assert [m["value"] for m in providers["gemini"]["models"]] == [
+            "gemini-3.1-pro",
+            "gemini-3-flash",
+        ]
+        assert [m["label"] for m in providers["gemini"]["models"]] == [
+            "pro-3.1",
+            "flash-3",
+        ]
+
+    def test_ignores_legacy_codex_config_entries(self) -> None:
+        """Legacy Codex config models do not leak into the web-chat picker."""
+        app = FastAPI()
+        config = DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                codex=LLMProviderConfig(models="gpt-5.2,gpt-5,gpt-5-mini,o3"),
+            )
+        )
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        response = client.get("/api/providers/models")
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+
+        assert [m["value"] for m in providers["codex"]["models"]] == [
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-spark",
         ]

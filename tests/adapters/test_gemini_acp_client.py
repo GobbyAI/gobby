@@ -129,6 +129,26 @@ class TestStart:
                 assert call_args[0][0] == "/usr/bin/gemini"
                 assert "--acp" in call_args[0]
 
+    @pytest.mark.asyncio
+    async def test_start_with_model_includes_cli_flag(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ) as mock_exec:
+                client = GeminiACPClient()
+                await client.start(model="gemini-3.1-pro")
+
+                call_args = mock_exec.call_args
+                assert call_args[0] == (
+                    "/usr/bin/gemini",
+                    "--acp",
+                    "--model",
+                    "gemini-3.1-pro",
+                )
+
         # Verify initialize and newSession requests were sent
         assert proc.stdin.write.call_count == 2
         init_req = json.loads(proc.stdin.write.call_args_list[0][0][0].decode())

@@ -25,6 +25,7 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
     ],
     "codex": [
         {"value": "gpt-5.4", "label": "codex-5.4"},
+        {"value": "gpt-5.4-mini", "label": "mini-5.4"},
         {"value": "gpt-5.3-codex", "label": "codex-5.3"},
         {"value": "gpt-5.3-codex-spark", "label": "spark-5.3"},
     ],
@@ -44,6 +45,8 @@ def _friendly_label(provider: str, model: str) -> str:
     if provider == "codex":
         if model == "gpt-5.4":
             return "codex-5.4"
+        if model == "gpt-5.4-mini":
+            return "mini-5.4"
         if model == "gpt-5.3-codex":
             return "codex-5.3"
         if model == "gpt-5.3-codex-spark":
@@ -51,28 +54,17 @@ def _friendly_label(provider: str, model: str) -> str:
     return model
 
 
-def _config_entries(provider: str, models: list[str]) -> list[dict[str, str]]:
-    """Convert configured model IDs into picker entries."""
-    return [{"value": model, "label": _friendly_label(provider, model)} for model in models]
-
-
 def _build_model_catalog(
     server: HTTPServer | None = None,
 ) -> dict[str, tuple[list[dict[str, str]], str]]:
-    """Return the provider model catalog enriched with runtime config."""
+    """Return the canonical web-chat provider model catalog.
+
+    For web chat, the backend owns the supported model picker contract.
+    We intentionally do not mirror arbitrary daemon config model strings into
+    the picker because that reintroduces stale or retired model IDs.
+    """
     catalog = {provider: ([*models], "static") for provider, models in _BASE_MODEL_CATALOG.items()}
     config = getattr(getattr(server, "services", None), "config", None)
-    llm_cfg = getattr(config, "llm_providers", None) if config is not None else None
-    if llm_cfg is not None:
-        for provider_name in ("gemini", "codex"):
-            provider_config = getattr(llm_cfg, provider_name, None)
-            if provider_config:
-                models = provider_config.get_models_list()
-                if models:
-                    catalog[provider_name] = (
-                        _config_entries(provider_name, models),
-                        "config",
-                    )
     local_cfg = getattr(config, "local", None) if config is not None else None
     if local_cfg and getattr(local_cfg, "model", None):
         claude_entries, source = catalog["claude"]

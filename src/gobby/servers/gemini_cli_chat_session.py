@@ -117,7 +117,7 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
         """Start the GeminiACPClient subprocess.
 
         Args:
-            model: Optional model name (stored but not passed to Gemini ACP).
+            model: Optional model name for the Gemini ACP subprocess.
 
         Raises:
             FileNotFoundError: If the Gemini CLI binary is not found.
@@ -133,7 +133,8 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
         # Create and start the ACP client
         self._client = GeminiACPClient(cwd=cwd)
 
-        await self._client.start(session_id=self.resume_session_id)
+        await self._client.start(session_id=self.resume_session_id, model=self._model)
+        self.sdk_session_id = self._client.session_id
 
         self._connected = True
         self.last_activity = datetime.now(UTC)
@@ -216,6 +217,13 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
 
             try:
                 async for stream_event in self._client.send(full_prompt):
+                    if stream_event.event_type == "init":
+                        self.sdk_session_id = (
+                            stream_event.data.get("session_id") or self.sdk_session_id
+                        )
+                        model_name = stream_event.data.get("model")
+                        if model_name:
+                            self._model = model_name
                     chat_event = self._translate_event(stream_event)
                     if chat_event is not None:
                         yield chat_event
@@ -291,8 +299,18 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
         return self._model
 
     async def switch_model(self, new_model: str) -> None:
-        """Switch model. Applied on the next send() call."""
+        """Switch model, restarting Gemini ACP when a live session exists."""
+        if new_model == self._model:
+            return
+
         self._model = new_model
+        if not self._connected:
+            return
+
+        resume_session_id = self.sdk_session_id or self.resume_session_id
+        await self.stop()
+        self.resume_session_id = resume_session_id
+        await self.start(model=new_model)
 
     @property
     def is_connected(self) -> bool:

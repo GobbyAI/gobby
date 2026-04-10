@@ -28,12 +28,14 @@ pytestmark = pytest.mark.unit
 
 def _mock_acp_client(
     stream_events: list[StreamEvent] | None = None,
+    session_id: str = "gemini-session-1",
 ) -> AsyncMock:
     """Create a mock GeminiACPClient."""
     client = AsyncMock()
     client.start = AsyncMock()
     client.stop = AsyncMock()
     client.is_started = True
+    client.session_id = session_id
 
     # send() returns an async iterator of StreamEvent
     events = list(stream_events or [])
@@ -109,7 +111,8 @@ class TestStart:
 
         assert session.is_connected
         assert session.model == "gemini-2.5-pro"
-        client.start.assert_awaited_once_with(session_id=None)
+        assert session.sdk_session_id == "gemini-session-1"
+        client.start.assert_awaited_once_with(session_id=None, model="gemini-2.5-pro")
 
     @pytest.mark.asyncio
     async def test_start_with_resume(self) -> None:
@@ -122,7 +125,7 @@ class TestStart:
         ):
             await session.start()
 
-        client.start.assert_awaited_once_with(session_id="prev-session-id")
+        client.start.assert_awaited_once_with(session_id="prev-session-id", model=None)
 
     @pytest.mark.asyncio
     async def test_start_raises_when_cli_not_found(self) -> None:
@@ -286,15 +289,23 @@ class TestStop:
 
 class TestModelSwitching:
     @pytest.mark.asyncio
-    async def test_switch_model_stores_value(self) -> None:
-        client = _mock_acp_client()
+    async def test_switch_model_restarts_live_session_with_new_model(self) -> None:
+        first_client = _mock_acp_client(session_id="gemini-session-1")
+        second_client = _mock_acp_client(session_id="gemini-session-2")
         session = _make_session(project_path="/tmp/test")
 
         with patch(
             "gobby.servers.gemini_cli_chat_session.GeminiACPClient",
-            return_value=client,
+            side_effect=[first_client, second_client],
         ):
             await session.start(model="gemini-2.5-pro")
             assert session.model == "gemini-2.5-pro"
             await session.switch_model("gemini-2.5-flash")
             assert session.model == "gemini-2.5-flash"
+            assert session.sdk_session_id == "gemini-session-2"
+
+        first_client.stop.assert_awaited_once()
+        second_client.start.assert_awaited_once_with(
+            session_id="gemini-session-1",
+            model="gemini-2.5-flash",
+        )

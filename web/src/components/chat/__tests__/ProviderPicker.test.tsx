@@ -34,6 +34,7 @@ describe('ProviderPicker', () => {
             available: true,
             models: [
               { value: 'gpt-5.4', label: 'codex-5.4' },
+              { value: 'gpt-5.4-mini', label: 'mini-5.4' },
               { value: 'gpt-5.3-codex', label: 'codex-5.3' },
             ],
             source: 'static',
@@ -67,6 +68,7 @@ describe('ProviderPicker', () => {
       expect(screen.getByText('pro-3.1')).toBeTruthy()
       expect(screen.getByText('flash-3')).toBeTruthy()
       expect(screen.getByText('codex-5.4')).toBeTruthy()
+      expect(screen.getByText('mini-5.4')).toBeTruthy()
       expect(screen.getByText('codex-5.3')).toBeTruthy()
     })
   })

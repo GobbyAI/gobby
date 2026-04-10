@@ -130,11 +130,11 @@ class TestCodexCLIChatSession:
             ),
             patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
         ):
-            session = CodexCLIChatSession(conversation_id="conv-1", model="o4-mini")
+            session = CodexCLIChatSession(conversation_id="conv-1", model="gpt-5.4-mini")
             await session.start()
 
         thread_req = json.loads(proc.stdin.write.call_args_list[1][0][0].decode())
-        assert thread_req["params"]["model"] == "o4-mini"
+        assert thread_req["params"]["model"] == "gpt-5.4-mini"
 
     @pytest.mark.asyncio
     async def test_start_cli_not_found(self) -> None:

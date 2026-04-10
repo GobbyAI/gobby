@@ -80,6 +80,7 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
               available: true,
               models: [
                 { value: "gpt-5.4", label: "codex-5.4" },
+                { value: "gpt-5.4-mini", label: "mini-5.4" },
                 { value: "gpt-5.3-codex", label: "codex-5.3" },
                 { value: "gpt-5.3-codex-spark", label: "spark-5.3" },
               ],
@@ -351,6 +352,7 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
 
   await page.getByLabel("Select provider and model").click();
   await expect(page.getByText("codex-5.4")).toBeVisible();
+  await expect(page.getByText("mini-5.4")).toBeVisible();
   await expect(page.getByText("codex-5.3")).toBeVisible();
   await expect(page.getByText("spark-5.3")).toBeVisible();
   await expect(page.getByText("Default")).toHaveCount(0);
