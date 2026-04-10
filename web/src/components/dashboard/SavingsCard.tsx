@@ -1,5 +1,20 @@
 import { useSavings } from '../../hooks/useSavings'
 import { useUsage } from '../../hooks/useUsage'
+import { cn } from '../../lib/utils'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardBigStatClass,
+  dashboardBreakdownClass,
+  dashboardBreakdownLabelClass,
+  dashboardBreakdownRowClass,
+  dashboardBreakdownValueClass,
+  dashboardEfficiencyClass,
+  dashboardMetaTextClass,
+  dashboardSingleStatGridClass,
+  dashboardStatClass,
+  dashboardStatLabelClass,
+  dashboardStatValueClass,
+} from './dashboardStyles'
 
 function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
@@ -34,48 +49,40 @@ export function SavingsCard({ hours, projectId }: Props) {
   const categories = data?.categories ?? {}
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Savings</h3>
+    <DashboardCard title="Savings">
+      <div className={cn(dashboardBigStatClass, 'text-success-foreground')}>
+        {formatTokens(tokensSaved)}
       </div>
-      <div className="dash-card-body">
-        <div className="dash-big-stat" style={{ color: '#22c55e' }}>
-          {formatTokens(tokensSaved)}
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12 }}>
+      <div className={dashboardMetaTextClass}>
           Tokens Saved
           {efficiencyPct > 0 && (
-            <span style={{
-              marginLeft: 8,
-              color: efficiencyPct > 20 ? '#22c55e' : efficiencyPct > 10 ? '#f59e0b' : 'var(--text-secondary)',
-            }}>
+            <span className={cn('ml-2', dashboardEfficiencyClass(efficiencyPct))}>
               {efficiencyPct}% efficiency
             </span>
           )}
-        </div>
-        <div className="dash-stat-grid" style={{ gridTemplateColumns: '1fr' }}>
-          <div className="dash-stat">
-            <span className="dash-stat-value">{data?.total_events ?? 0}</span>
-            <span className="dash-stat-label">Savings Events</span>
-          </div>
-        </div>
-        {Object.keys(categories).length > 0 && (
-          <div className="dash-breakdown">
-            {Object.entries(categories)
-              .filter(([, catData]) => catData.tokens_saved > 0)
-              .map(([cat, catData]) => (
-              <div key={cat} className="dash-breakdown-row">
-                <span className="dash-breakdown-label">
-                  {CATEGORY_LABELS[cat] ?? cat}
-                </span>
-                <span className="dash-breakdown-value">
-                  {formatTokens(catData.tokens_saved)} tokens
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
-    </div>
+      <div className={dashboardSingleStatGridClass}>
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>{data?.total_events ?? 0}</span>
+          <span className={dashboardStatLabelClass}>Savings Events</span>
+        </div>
+      </div>
+      {Object.keys(categories).length > 0 && (
+        <div className={dashboardBreakdownClass}>
+          {Object.entries(categories)
+            .filter(([, catData]) => catData.tokens_saved > 0)
+            .map(([cat, catData]) => (
+            <div key={cat} className={dashboardBreakdownRowClass}>
+              <span className={dashboardBreakdownLabelClass}>
+                {CATEGORY_LABELS[cat] ?? cat}
+              </span>
+              <span className={dashboardBreakdownValueClass}>
+                {formatTokens(catData.tokens_saved)} tokens
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </DashboardCard>
   )
 }

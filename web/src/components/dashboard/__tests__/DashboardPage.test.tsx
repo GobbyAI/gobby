@@ -10,9 +10,6 @@ vi.mock('../../../hooks/useMetrics', () => ({
   useMetricSnapshots: vi.fn(() => ({ data: [], isLoading: false, error: null })),
 }))
 
-// Mock CSS
-vi.mock('../DashboardPage.css', () => ({}))
-
 // Mock sub-components
 vi.mock('../SystemHealthCard', () => ({
   SystemHealthCard: () => <div data-testid="system-health">Health</div>,

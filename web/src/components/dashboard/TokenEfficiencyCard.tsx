@@ -12,6 +12,17 @@ import {
 import { useTokenTimeSeries } from '../../hooks/useTokenTimeSeries'
 import { useSavings } from '../../hooks/useSavings'
 import { useUsage } from '../../hooks/useUsage'
+import { cn } from '../../lib/utils'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardBreakdownClass,
+  dashboardBreakdownLabelClass,
+  dashboardBreakdownRowClass,
+  dashboardBreakdownValueClass,
+  dashboardChartEmptyClass,
+  dashboardEfficiencyClass,
+  dashboardFullCardClass,
+} from './dashboardStyles'
 
 interface ChartPoint {
   time: string
@@ -81,28 +92,20 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
   const hasData = chartData.length > 0
   const categories = savingsData?.categories ?? {}
 
-  const efficiencyColor =
-    efficiencyPct > 20 ? '#22c55e' :
-    efficiencyPct > 10 ? '#f59e0b' :
-    'var(--text-secondary)'
-
   return (
-    <div className="dash-card dash-card--full">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Token Efficiency</h3>
-        {efficiencyPct > 0 && (
-          <span style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: efficiencyColor,
-          }}>
+    <DashboardCard
+      title="Token Efficiency"
+      className={dashboardFullCardClass}
+      action={
+        efficiencyPct > 0 ? (
+          <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
             {efficiencyPct}% efficiency
           </span>
-        )}
-      </div>
-      <div className="dash-card-body">
+        ) : undefined
+      }
+    >
         {isLoading && !hasData ? (
-          <div className="dash-chart-empty">Loading token data...</div>
+          <div className={dashboardChartEmptyClass}>Loading token data...</div>
         ) : hasData ? (
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={chartData} margin={CHART_MARGIN}>
@@ -113,13 +116,13 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
                 width={45}
                 tickFormatter={formatTokensShort}
               />
-              <Tooltip
-                contentStyle={{
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border-color)',
-                  fontSize: 12,
-                }}
-                formatter={(value, name) => [
+                <Tooltip
+                  contentStyle={{
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border)',
+                    fontSize: 12,
+                  }}
+                  formatter={(value, name) => [
                   formatTokens(Number(value)),
                   String(name) === 'tokens_spent' ? 'Spent' : 'Saved',
                 ]}
@@ -150,29 +153,28 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <div className="dash-chart-empty">
+          <div className={dashboardChartEmptyClass}>
             No token data yet.
           </div>
         )}
 
         {Object.keys(categories).length > 0 && (
-          <div className="dash-breakdown">
+          <div className={dashboardBreakdownClass}>
             {Object.entries(categories)
               .filter(([, catData]) => catData.tokens_saved > 0)
               .sort(([, a], [, b]) => b.tokens_saved - a.tokens_saved)
               .map(([cat, catData]) => (
-              <div key={cat} className="dash-breakdown-row">
-                <span className="dash-breakdown-label">
+              <div key={cat} className={dashboardBreakdownRowClass}>
+                <span className={dashboardBreakdownLabelClass}>
                   {CATEGORY_LABELS[cat] ?? cat}
                 </span>
-                <span className="dash-breakdown-value" style={{ color: '#22c55e' }}>
+                <span className={cn(dashboardBreakdownValueClass, 'text-success-foreground')}>
                   {formatTokens(catData.tokens_saved)} saved
                 </span>
               </div>
             ))}
           </div>
         )}
-      </div>
-    </div>
+    </DashboardCard>
   )
 }

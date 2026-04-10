@@ -30,9 +30,12 @@ import { ProjectSelector } from "./components/ProjectSelector";
 import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
+import { Badge } from "./components/chat/ui/Badge";
+import { Button } from "./components/chat/ui/Button";
 import type { GobbySession } from "./hooks/useSessions";
 import type { CommandPaletteAction } from "./components/chat/CommandPalette";
 import { FilesProvider } from "./contexts/FilesContext";
+import { cn } from "./lib/utils";
 
 const CONVERSATION_ID_STORAGE_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_STORAGE_KEY = "gobby-db-session-id";
@@ -1147,20 +1150,22 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="header-brand">
-          <button
-            className="hamburger-button"
+      <header className="relative z-[100] flex items-center justify-between gap-4 border-b border-border px-4 py-4">
+        <div className="flex min-w-0 items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             title="Toggle menu"
             aria-label="Toggle navigation menu"
           >
             <HamburgerIcon />
-          </button>
-          <img src="/logo.png" alt="Gobby logo" className="header-logo" />
-          <span className="header-title">Gobby</span>
+          </Button>
+          <img src="/logo.png" alt="Gobby logo" className="h-9 w-auto" />
+          <span className="truncate text-lg font-semibold text-foreground">Gobby</span>
         </div>
-        <div className="header-actions">
+        <div className="flex flex-wrap items-center justify-end gap-3">
           {projectOptions.length > 0 && (
             <ProjectSelector
               projects={projectOptions}
@@ -1169,27 +1174,32 @@ export default function App() {
               dropDirection="down"
             />
           )}
-          <span
-            className={`status ${isConnected ? "connected" : "disconnected"}`}
+          <Badge
+            variant={isConnected ? "success" : "error"}
+            className="gap-2 px-3 py-1 uppercase tracking-[0.05em]"
           >
-            {isConnected ? "Connected" : "Disconnected"}
-          </span>
+            <span
+              aria-hidden="true"
+              className={cn(
+                "size-2 rounded-full",
+                isConnected ? "bg-success-foreground" : "bg-destructive-foreground",
+              )}
+            />
+            <span className="hidden sm:inline">
+              {isConnected ? "Connected" : "Disconnected"}
+            </span>
+            <span className="sm:hidden">{isConnected ? "Up" : "Down"}</span>
+          </Badge>
           {authRequired && authenticated && (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
               onClick={logout}
               title="Sign out"
-              style={{
-                padding: "0.3rem 0.7rem",
-                borderRadius: 4,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "0.8rem",
-              }}
             >
               Logout
-            </button>
+            </Button>
           )}
         </div>
       </header>
@@ -1209,15 +1219,7 @@ export default function App() {
         >
           <Suspense
             fallback={
-              <main
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flex: 1,
-                  color: "var(--text-secondary)",
-                }}
-              >
+              <main className="flex flex-1 items-center justify-center text-muted-foreground">
                 Loading...
               </main>
             }

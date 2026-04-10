@@ -1,4 +1,16 @@
 import type { AdminStatus } from '../../hooks/useDashboard'
+import { Badge } from '../chat/ui/Badge'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardHealthBadgeVariant,
+  dashboardHealthDotClass,
+  dashboardServicesClass,
+  dashboardServiceRowClass,
+  dashboardStatClass,
+  dashboardStatGridClass,
+  dashboardStatLabelClass,
+  dashboardStatValueClass,
+} from './dashboardStyles'
 
 function formatUptime(seconds: number | null): string {
   if (seconds == null) return '—'
@@ -26,67 +38,66 @@ export function SystemHealthCard({ data }: Props) {
   const externalTotal = externalMcps.length
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">System Health</h3>
-        <span className={`dash-status-badge dash-status-badge--${status}`}>
+    <DashboardCard
+      title="System Health"
+      action={
+        <Badge variant={dashboardHealthBadgeVariant(status)} className="capitalize">
           {status}
-        </span>
-      </div>
-      <div className="dash-card-body">
-        <div className="dash-stat-grid">
-          <div className="dash-stat">
-            <span className="dash-stat-value">{formatUptime(server.uptime_seconds)}</span>
-            <span className="dash-stat-label">Uptime</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">
-              {process ? `${process.memory_rss_mb}` : '—'}
-            </span>
-            <span className="dash-stat-label">Memory (MB)</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">
-              {process ? `${process.cpu_percent}%` : '—'}
-            </span>
-            <span className="dash-stat-label">CPU</span>
-          </div>
-          {background_tasks.active > 0 && (
-            <div className="dash-stat">
-              <span className="dash-stat-value">{background_tasks.active}</span>
-              <span className="dash-stat-label">Background Tasks</span>
-            </div>
-          )}
+        </Badge>
+      }
+    >
+      <div className={dashboardStatGridClass}>
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>{formatUptime(server.uptime_seconds)}</span>
+          <span className={dashboardStatLabelClass}>Uptime</span>
         </div>
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>
+            {process ? `${process.memory_rss_mb}` : '—'}
+          </span>
+          <span className={dashboardStatLabelClass}>Memory (MB)</span>
+        </div>
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>
+            {process ? `${process.cpu_percent}%` : '—'}
+          </span>
+          <span className={dashboardStatLabelClass}>CPU</span>
+        </div>
+        {background_tasks.active > 0 && (
+          <div className={dashboardStatClass}>
+            <span className={dashboardStatValueClass}>{background_tasks.active}</span>
+            <span className={dashboardStatLabelClass}>Background Tasks</span>
+          </div>
+        )}
+      </div>
 
-        <div className="dash-services-status">
-          {[
-            qdrant && {
-              id: 'qdrant',
-              label: `Qdrant ${qdrant.healthy ? 'connected' : qdrant.configured ? 'disconnected' : 'not configured'}`,
-              status: qdrant.healthy ? 'healthy' : qdrant.configured ? 'unhealthy' : 'unknown',
-            },
-            neo4j && {
-              id: 'neo4j',
-              label: `Neo4j ${neo4j.healthy ? 'connected' : neo4j.configured ? 'disconnected' : 'not configured'}`,
-              status: neo4j.healthy ? 'healthy' : neo4j.configured ? 'unhealthy' : 'unknown',
-            },
-            externalTotal > 0 && {
-              id: 'external-mcps',
-              label: `External MCPs ${externalHealthy}/${externalTotal} connected`,
-              status: externalHealthy === externalTotal ? 'healthy' : externalHealthy > 0 ? 'degraded' : 'unhealthy',
-            },
-          ]
-            .filter((s): s is { id: string; label: string; status: string } => !!s)
-            .sort((a, b) => a.label.localeCompare(b.label))
-            .map(s => (
-              <div key={s.id} className="dash-service-row">
-                <span className={`dash-health-dot dash-health-dot--${s.status}`} />
-                <span>{s.label}</span>
-              </div>
-            ))}
-        </div>
+      <div className={dashboardServicesClass}>
+        {[
+          qdrant && {
+            id: 'qdrant',
+            label: `Qdrant ${qdrant.healthy ? 'connected' : qdrant.configured ? 'disconnected' : 'not configured'}`,
+            status: qdrant.healthy ? 'healthy' : qdrant.configured ? 'unhealthy' : 'unknown',
+          },
+          neo4j && {
+            id: 'neo4j',
+            label: `Neo4j ${neo4j.healthy ? 'connected' : neo4j.configured ? 'disconnected' : 'not configured'}`,
+            status: neo4j.healthy ? 'healthy' : neo4j.configured ? 'unhealthy' : 'unknown',
+          },
+          externalTotal > 0 && {
+            id: 'external-mcps',
+            label: `External MCPs ${externalHealthy}/${externalTotal} connected`,
+            status: externalHealthy === externalTotal ? 'healthy' : externalHealthy > 0 ? 'degraded' : 'unhealthy',
+          },
+        ]
+          .filter((s): s is { id: string; label: string; status: string } => !!s)
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .map(s => (
+            <div key={s.id} className={dashboardServiceRowClass}>
+              <span className={`size-2 shrink-0 rounded-full ${dashboardHealthDotClass(s.status)}`} />
+              <span>{s.label}</span>
+            </div>
+          ))}
       </div>
-    </div>
+    </DashboardCard>
   )
 }

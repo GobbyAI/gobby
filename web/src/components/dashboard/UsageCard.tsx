@@ -1,5 +1,17 @@
 import { useUsage } from '../../hooks/useUsage'
 import { SOURCE_LABELS } from '../shared/sourceTheme'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardBreakdownClass,
+  dashboardBreakdownLabelClass,
+  dashboardBreakdownMonoLabelClass,
+  dashboardBreakdownRowClass,
+  dashboardBreakdownValueClass,
+  dashboardStatClass,
+  dashboardStatGridClass,
+  dashboardStatLabelClass,
+  dashboardStatValueClass,
+} from './dashboardStyles'
 
 function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000_000) return `${(tokens / 1_000_000_000).toFixed(1)}B`
@@ -39,60 +51,55 @@ export function UsageCard({ hours, projectId }: Props) {
     .slice(0, 5)
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Usage</h3>
-      </div>
-      <div className="dash-card-body">
-        <div className="dash-stat-grid">
-          <div className="dash-stat">
-            <span className="dash-stat-value">{formatTokens(totalTokens)}</span>
-            <span className="dash-stat-label">Total Tokens</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">{totals.session_count}</span>
-            <span className="dash-stat-label">Sessions</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">{formatTokens(totals.input_tokens)}</span>
-            <span className="dash-stat-label">Input Tokens</span>
-          </div>
-          <div className="dash-stat">
-            <span className="dash-stat-value">{formatTokens(totals.output_tokens)}</span>
-            <span className="dash-stat-label">Output Tokens</span>
-          </div>
+    <DashboardCard title="Usage">
+      <div className={dashboardStatGridClass}>
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>{formatTokens(totalTokens)}</span>
+          <span className={dashboardStatLabelClass}>Total Tokens</span>
         </div>
-
-        {sourceEntries.length > 0 && (
-          <div className="dash-breakdown">
-            {sourceEntries.map(([src, usage]) => (
-              <div key={src} className="dash-breakdown-row">
-                <span className="dash-breakdown-label">
-                  {SOURCE_LABELS[src] ?? src}
-                </span>
-                <span className="dash-breakdown-value">
-                  {formatTokens(usage.input_tokens + usage.output_tokens)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {topModels.length > 0 && (
-          <div className="dash-breakdown">
-            {topModels.map(([model, usage]) => (
-              <div key={model} className="dash-breakdown-row">
-                <span className="dash-breakdown-label dash-breakdown-label--mono">
-                  {model.length > 28 ? model.slice(0, 28) + '...' : model}
-                </span>
-                <span className="dash-breakdown-value">
-                  {formatTokens(usage.input_tokens + usage.output_tokens)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>{totals.session_count}</span>
+          <span className={dashboardStatLabelClass}>Sessions</span>
+        </div>
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>{formatTokens(totals.input_tokens)}</span>
+          <span className={dashboardStatLabelClass}>Input Tokens</span>
+        </div>
+        <div className={dashboardStatClass}>
+          <span className={dashboardStatValueClass}>{formatTokens(totals.output_tokens)}</span>
+          <span className={dashboardStatLabelClass}>Output Tokens</span>
+        </div>
       </div>
-    </div>
+
+      {sourceEntries.length > 0 && (
+        <div className={dashboardBreakdownClass}>
+          {sourceEntries.map(([src, usage]) => (
+            <div key={src} className={dashboardBreakdownRowClass}>
+              <span className={dashboardBreakdownLabelClass}>
+                {SOURCE_LABELS[src] ?? src}
+              </span>
+              <span className={dashboardBreakdownValueClass}>
+                {formatTokens(usage.input_tokens + usage.output_tokens)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {topModels.length > 0 && (
+        <div className={dashboardBreakdownClass}>
+          {topModels.map(([model, usage]) => (
+            <div key={model} className={dashboardBreakdownRowClass}>
+              <span className={dashboardBreakdownMonoLabelClass}>
+                {model.length > 28 ? model.slice(0, 28) + '...' : model}
+              </span>
+              <span className={dashboardBreakdownValueClass}>
+                {formatTokens(usage.input_tokens + usage.output_tokens)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </DashboardCard>
   )
 }

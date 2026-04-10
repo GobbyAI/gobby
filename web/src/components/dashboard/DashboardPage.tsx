@@ -11,7 +11,16 @@ import { MetricsChartsCard } from './MetricsChartsCard'
 import { TokenEfficiencyCard } from './TokenEfficiencyCard'
 import { TimeRangePills } from './TimeRangePills'
 import { rangeToHours, type TimeRange } from './timeRangeUtils'
-import './DashboardPage.css'
+import {
+  dashboardContentClass,
+  dashboardErrorClass,
+  dashboardGridClass,
+  dashboardLoadingClass,
+  dashboardPageClass,
+  dashboardToolbarClass,
+  dashboardToolbarControlsClass,
+  dashboardToolbarUpdatedClass,
+} from './dashboardStyles'
 
 function formatTime(date: Date | null): string {
   if (!date) return ''
@@ -27,13 +36,13 @@ export function DashboardPage() {
   const projectId = showAllProjects ? undefined : data?.project_id
 
   return (
-    <main className="dash-page">
-      <div className="dash-toolbar">
-        <div className="dash-toolbar-left">
-          <h2 className="dash-toolbar-title">Dashboard</h2>
+    <main className={dashboardPageClass}>
+      <div className={dashboardToolbarClass}>
+        <div className="flex items-center gap-3">
+          <h2 className="m-0 text-lg font-semibold text-foreground">Dashboard</h2>
         </div>
-        <div className="dash-toolbar-right">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between md:justify-end">
+          <div className={dashboardToolbarControlsClass}>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
               <button
                 role="switch"
@@ -56,20 +65,20 @@ export function DashboardPage() {
             <TimeRangePills value={timeRange} onChange={setTimeRange} />
           </div>
           {lastUpdated && (
-            <span className="dash-toolbar-updated">
+            <span className={dashboardToolbarUpdatedClass}>
               Updated {formatTime(lastUpdated)}
             </span>
           )}
         </div>
       </div>
 
-      <div className="dash-content">
+      <div className={dashboardContentClass}>
         {isLoading && !data ? (
-          <div className="dash-loading">Loading dashboard...</div>
+          <div className={dashboardLoadingClass}>Loading dashboard...</div>
         ) : error && !data ? (
-          <div className="dash-error">Failed to load: {error.slice(0, 200)}</div>
+          <div className={dashboardErrorClass}>Failed to load: {error.slice(0, 200)}</div>
         ) : data ? (
-          <div className="dash-grid">
+          <div className={dashboardGridClass}>
             {/* Row 1: System + donut cards */}
             <SystemHealthCard data={data} />
             <TasksCard hours={hours} projectId={projectId} />
