@@ -23,6 +23,8 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
 
+const CHAT_MESSAGES_POLL_MS = 2000
+
 function mapRenderedRecordToSessionMessage(message: Record<string, unknown>): SessionMessage {
   return {
     id: String(message.id ?? message.message_index ?? `hist-${Math.random()}`),
@@ -71,6 +73,7 @@ export function useSessionDetail(sessionId: string | null) {
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
+  const messageSourceRef = useRef<'session' | 'chat' | null>(null)
 
   // Fetch session detail and all messages
   useEffect(() => {
@@ -78,6 +81,7 @@ export function useSessionDetail(sessionId: string | null) {
       setSession(null)
       setMessages([])
       setTotalMessages(0)
+      messageSourceRef.current = null
       return
     }
 
@@ -96,41 +100,84 @@ export function useSessionDetail(sessionId: string | null) {
           const sessionData = data.session || null
           setSession(sessionData)
 
-          let mapped: SessionMessage[] = []
-          let totalCount = 0
-
-          if (sessionData?.session_type === 'web_chat' && sessionData.external_id) {
-            const chatRes = await fetch(`${baseUrl}/api/chat/${sessionData.external_id}/messages`)
-            if (cancelled) return
-            if (chatRes.ok) {
-              const chatData = await chatRes.json()
-              const rawMessages = Array.isArray(chatData?.messages) ? chatData.messages : []
-              mapped = rawMessages.map((m: Record<string, unknown>) =>
-                mapWebChatRecordToSessionMessage(m),
-              )
-              totalCount = mapped.length
-            } else {
-              console.warn(`Web chat messages fetch returned ${chatRes.status}`)
-            }
-          } else {
+          const loadRenderedMessages = async (): Promise<{
+            mapped: SessionMessage[]
+            totalCount: number
+            ok: boolean
+          }> => {
             const messagesRes = await fetch(
               `${baseUrl}/api/sessions/${sessionId}/messages?limit=10000&offset=0`,
             )
-            if (cancelled) return
-            if (messagesRes.ok) {
-              const messageData = await messagesRes.json()
-              const rawMessages = Array.isArray(messageData?.messages) ? messageData.messages : []
-              mapped = rawMessages.map((m: Record<string, unknown>) =>
-                mapRenderedRecordToSessionMessage(m),
-              )
-              totalCount = messageData.total_count || mapped.length
-            } else {
+            if (!messagesRes.ok) {
               console.warn(`Messages fetch returned ${messagesRes.status}`)
+              return { mapped: [], totalCount: 0, ok: false }
+            }
+            const messageData = await messagesRes.json()
+            const rawMessages = Array.isArray(messageData?.messages) ? messageData.messages : []
+            return {
+              mapped: rawMessages.map((m: Record<string, unknown>) =>
+                mapRenderedRecordToSessionMessage(m),
+              ),
+              totalCount: messageData.total_count || rawMessages.length,
+              ok: true,
             }
           }
 
-          setMessages(mapped)
-          setTotalMessages(totalCount)
+          const loadChatMessages = async (): Promise<{
+            mapped: SessionMessage[]
+            totalCount: number
+            ok: boolean
+          }> => {
+            if (!sessionData?.external_id) {
+              return { mapped: [], totalCount: 0, ok: false }
+            }
+            const chatRes = await fetch(`${baseUrl}/api/chat/${sessionData.external_id}/messages`)
+            if (!chatRes.ok) {
+              console.warn(`Web chat messages fetch returned ${chatRes.status}`)
+              return { mapped: [], totalCount: 0, ok: false }
+            }
+            const chatData = await chatRes.json()
+            const rawMessages = Array.isArray(chatData?.messages) ? chatData.messages : []
+            return {
+              mapped: rawMessages.map((m: Record<string, unknown>) =>
+                mapWebChatRecordToSessionMessage(m),
+              ),
+              totalCount: rawMessages.length,
+              ok: true,
+            }
+          }
+
+          const renderedResult = await loadRenderedMessages()
+          if (cancelled) return
+
+          const shouldUseChatMessages =
+            sessionData?.session_type === 'web_chat' &&
+            !!sessionData?.external_id &&
+            !sessionData?.transcript_path &&
+            renderedResult.mapped.length === 0
+
+          if (shouldUseChatMessages) {
+            const chatResult = await loadChatMessages()
+            if (cancelled) return
+
+            messageSourceRef.current = 'chat'
+            setMessages(chatResult.mapped)
+            setTotalMessages(chatResult.totalCount)
+
+            const pollId = window.setInterval(async () => {
+              if (cancelled || messageSourceRef.current !== 'chat') return
+              const nextChatResult = await loadChatMessages()
+              if (cancelled || messageSourceRef.current !== 'chat' || !nextChatResult.ok) return
+              setMessages(nextChatResult.mapped)
+              setTotalMessages(nextChatResult.totalCount)
+            }, CHAT_MESSAGES_POLL_MS)
+
+            return () => window.clearInterval(pollId)
+          }
+
+          messageSourceRef.current = 'session'
+          setMessages(renderedResult.mapped)
+          setTotalMessages(renderedResult.totalCount)
         } else {
           console.warn(`Session fetch returned ${sessionRes.status}`)
         }
@@ -141,8 +188,20 @@ export function useSessionDetail(sessionId: string | null) {
       }
     }
 
-    fetchDetail()
-    return () => { cancelled = true }
+    let cleanup: (() => void) | undefined
+
+    fetchDetail().then((teardown) => {
+      if (cancelled) {
+        teardown?.()
+        return
+      }
+      cleanup = teardown
+    })
+
+    return () => {
+      cancelled = true
+      cleanup?.()
+    }
   }, [sessionId])
 
   // Track current sessionId in a ref for the WebSocket handler
@@ -161,6 +220,7 @@ export function useSessionDetail(sessionId: string | null) {
     const msg = data.message as Record<string, unknown> | undefined
     if (!msg) return
 
+    messageSourceRef.current = 'session'
     const newMessage = mapRenderedRecordToSessionMessage(msg)
 
     setMessages((prev) => {
