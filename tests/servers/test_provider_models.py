@@ -15,6 +15,55 @@ pytestmark = pytest.mark.unit
 
 class TestProviderModelCatalog:
     @pytest.mark.asyncio
+    async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:
+        catalog = ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
+        process = AsyncMock()
+        process.communicate = AsyncMock(
+            return_value=(
+                (
+                    json.dumps(
+                        {
+                            "modelUsage": {
+                                "claude-sonnet-4-6-20260410": {"inputTokens": 1, "outputTokens": 1}
+                            }
+                        }
+                    ).encode(),
+                    b"",
+                )
+            )
+        )
+        process.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=process):
+            result = await catalog._probe_claude_model("sonnet", "Sonnet")
+
+        assert result == {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "canonical_id": "claude-sonnet-4-6-20260410",
+        }
+
+    @pytest.mark.asyncio
+    async def test_discover_claude_models_keeps_successful_alias_probes(self, temp_dir: Path) -> None:
+        catalog = ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
+
+        async def probe(alias: str, label: str) -> dict[str, str]:
+            if alias == "haiku":
+                raise RuntimeError("haiku failed")
+            return {"value": alias, "label": label, "canonical_id": f"claude-{alias}"}
+
+        with (
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/local/bin/claude"),
+            patch.object(catalog, "_probe_claude_model", side_effect=probe),
+        ):
+            models = await catalog._discover_claude_models()
+
+        assert models == [
+            {"value": "sonnet", "label": "Sonnet", "canonical_id": "claude-sonnet"},
+            {"value": "opus", "label": "Opus", "canonical_id": "claude-opus"},
+        ]
+
+    @pytest.mark.asyncio
     async def test_refresh_falls_back_to_cached_models_per_provider(self, temp_dir: Path) -> None:
         cache_path = temp_dir / "provider-model-catalog.json"
         catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
