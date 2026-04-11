@@ -190,6 +190,30 @@ class LocalSessionManager:
             raise RuntimeError(f"Session {session_id} not found after creation")
         return session
 
+    def create_web_chat_session(
+        self,
+        *,
+        machine_id: str,
+        project_id: str,
+        source: str,
+        title: str | None = None,
+    ) -> Session:
+        """Create a new web-chat session with a temporary runtime identity.
+
+        The durable identity for web chat is the DB session ID. A temporary
+        ``external_id`` is still required at row creation time and is later
+        replaced with the provider-native runtime/session identifier when known.
+        """
+        bootstrap_external_id = f"web-chat-bootstrap:{uuid.uuid4()}"
+        return self.register(
+            external_id=bootstrap_external_id,
+            machine_id=machine_id,
+            source=source,
+            project_id=project_id,
+            title=title,
+            session_type="web_chat",
+        )
+
     def get(self, session_id: str) -> Session | None:
         """Get session by ID."""
         row = self.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session_id,))
@@ -569,6 +593,7 @@ class LocalSessionManager:
         session_id: str,
         *,
         external_id: str | None = None,
+        source: str | None = None,
         transcript_path: str | None = None,
         status: str | None = None,
         title: str | None = None,
@@ -582,6 +607,7 @@ class LocalSessionManager:
         Args:
             session_id: Session ID to update
             external_id: New external ID (optional)
+            source: New provider/source (optional)
             transcript_path: New transcript path (optional)
             status: New status (optional)
             title: New title (optional)
@@ -596,6 +622,8 @@ class LocalSessionManager:
 
         if external_id is not None:
             values["external_id"] = external_id
+        if source is not None:
+            values["source"] = source
         if transcript_path is not None:
             values["transcript_path"] = transcript_path
         if status is not None:

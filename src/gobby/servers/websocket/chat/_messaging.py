@@ -341,10 +341,11 @@ class ChatMessagingMixin:
 
                 sm = getattr(self, "session_manager", None)
                 if sm and sm.db:
+                    chat_session_id = getattr(session, "db_session_id", None) or conversation_id
                     await asyncio.to_thread(
                         cm_store.save_message,
                         sm.db,
-                        conversation_id=conversation_id,
+                        conversation_id=chat_session_id,
                         role=role,
                         content=text,
                     )
@@ -673,12 +674,12 @@ class ChatMessagingMixin:
                         f"DoneEvent context_window={event.context_window} total_input={event.total_input_tokens} (uncached={event.input_tokens} cache_read={event.cache_read_input_tokens} cache_creation={event.cache_creation_input_tokens}) output={event.output_tokens}",
                     )
 
-                    # Adopt SDK session_id as external_id (replaces temp frontend UUID)
+                    # Provider-native identity is persisted for resume/transcript
+                    # linkage, but it no longer mutates the frontend/session key.
                     sdk_sid = event.sdk_session_id
                     if sdk_sid:
                         done_msg["sdk_session_id"] = sdk_sid
-                    if sdk_sid and sdk_sid != conversation_id:
-                        # Update DB external_id
+                    if sdk_sid:
                         db_sid = getattr(session, "db_session_id", None)
                         session_mgr = getattr(self, "session_manager", None)
                         if db_sid and session_mgr:
@@ -691,53 +692,6 @@ class ChatMessagingMixin:
                                     f"Failed to update external_id to SDK session_id for {db_sid}",
                                     exc_info=True,
                                 )
-                        # Re-key in-memory dicts
-                        self._chat_sessions[sdk_sid] = self._chat_sessions.pop(
-                            conversation_id, session
-                        )
-                        if conversation_id in self._active_chat_tasks:
-                            self._active_chat_tasks[sdk_sid] = self._active_chat_tasks.pop(
-                                conversation_id
-                            )
-                        # Update client metadata so broadcasts use the new ID
-                        old_cid = conversation_id
-                        for _ws_client, ws_meta in list(self.clients.items()):
-                            if ws_meta and ws_meta.get("conversation_id") == old_cid:
-                                ws_meta["conversation_id"] = sdk_sid
-
-                        logger.info(
-                            f"Re-keyed web chat session {conversation_id[:8]} → {sdk_sid[:8]}",
-                        )
-                        conversation_id = sdk_sid
-
-                        # Re-key voice state so future operations
-                        # (cancel, barge-in) use the new conversation ID.
-                        if hasattr(self, "_active_tts_pipelines"):
-                            _tts_pl = self._active_tts_pipelines.pop(old_cid, None)
-                            if _tts_pl is not None:
-                                _tts_pl.conversation_id = sdk_sid
-                                self._active_tts_pipelines[sdk_sid] = _tts_pl
-                        if hasattr(self, "_voice_enabled"):
-                            _ve = self._voice_enabled.pop(old_cid, None)
-                            if _ve is not None:
-                                self._voice_enabled[sdk_sid] = _ve
-
-                        # Notify all connected clients to update their conversation_id
-                        rekey_msg = json.dumps(
-                            {
-                                "type": "conversation_id_changed",
-                                "old_id": old_cid,
-                                "new_id": sdk_sid,
-                            }
-                        )
-                        for ws_client, ws_meta in list(self.clients.items()):
-                            cid = ws_meta.get("conversation_id") if ws_meta else None
-                            if cid is not None and cid != sdk_sid:
-                                continue
-                            try:
-                                await ws_client.send(rekey_msg)
-                            except (ConnectionClosed, ConnectionClosedError):
-                                pass
 
                     await _safe_send(done_msg)
 

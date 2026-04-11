@@ -205,9 +205,9 @@ export function useSessions() {
   }, []);
 
   // Backend confirmed deletion — remove from list and clear deleting state
-  const confirmSessionDeleted = useCallback((externalId: string) => {
+  const confirmSessionDeleted = useCallback((sessionId: string) => {
     setSessions((prev) => {
-      const session = prev.find((s) => s.external_id === externalId);
+      const session = prev.find((s) => s.id === sessionId);
       if (session) {
         setDeletingIds((ids) => {
           const next = new Set(ids);
@@ -215,7 +215,7 @@ export function useSessions() {
           return next;
         });
       }
-      return prev.filter((s) => s.external_id !== externalId);
+      return prev.filter((s) => s.id !== sessionId);
     });
   }, []);
 

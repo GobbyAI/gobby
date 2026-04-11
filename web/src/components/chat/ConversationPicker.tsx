@@ -151,7 +151,7 @@ export function ConversationPicker({
                 const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
                 const titleText = session.title || `Chat ${session.ref}`;
                 const title = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
-                const isActive = session.external_id === activeSessionId && !viewingSessionId;
+                const isActive = session.id === activeSessionId && !viewingSessionId;
                 const isDeleting = deletingIds?.has(session.id) ?? false;
                 return (
                   <div

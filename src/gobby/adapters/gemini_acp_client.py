@@ -189,7 +189,11 @@ class GeminiACPClient:
         else:
             session_result = await self._send_request("session/new", session_params)
 
-        self._session_id = session_result.get("sessionId") if session_result else None
+        self._session_id = (
+            session_result.get("sessionId")
+            if session_result and session_result.get("sessionId")
+            else session_id
+        )
         logger.debug(f"ACP session ID: {self._session_id}")
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -250,8 +254,8 @@ class GeminiACPClient:
                 if "error" in data:
                     err = data["error"]
                     raise RuntimeError(f"ACP {method} error: {err.get('message', err)}")
-                result: dict[str, Any] = data.get("result", {})
-                return result
+                result = data.get("result", {})
+                return result if isinstance(result, dict) else {}
 
             # Skip notifications during handshake
             logger.debug(f"Skipping notification during {method}: {data.get('method', 'unknown')}")
@@ -356,6 +360,8 @@ class GeminiACPClient:
                 else:
                     # Final response — extract stats if present
                     result = data.get("result", {})
+                    if not isinstance(result, dict):
+                        result = {}
                     yield StreamEvent(
                         event_type="result",
                         data={"stats": result.get("stats", result)},
@@ -404,6 +410,46 @@ class GeminiACPClient:
                 event_type="message",
                 data=params,
             )
+
+        if method == "session/update":
+            update = params.get("update", {})
+            if not isinstance(update, dict):
+                return StreamEvent(event_type="session/update", data=params or raw)
+
+            update_type = update.get("sessionUpdate", "")
+            content = update.get("content")
+            text = GeminiACPClient._extract_text_content(content)
+
+            if update_type == "agent_message_chunk":
+                return StreamEvent(
+                    event_type="content_delta",
+                    data={
+                        "content": text,
+                        "role": "assistant",
+                        "message_id": update.get("messageId"),
+                    },
+                )
+
+            if update_type == "agent_thought_chunk":
+                return StreamEvent(
+                    event_type="thinking_delta",
+                    data={
+                        "content": text,
+                        "message_id": update.get("messageId"),
+                    },
+                )
+
+            if update_type == "user_message_chunk":
+                return StreamEvent(
+                    event_type="message",
+                    data={
+                        "role": "user",
+                        "content": text,
+                        "message_id": update.get("messageId"),
+                    },
+                )
+
+            return StreamEvent(event_type=update_type or method, data=update)
 
         if method == "session/result" or method == "result":
             return StreamEvent(
@@ -473,6 +519,27 @@ class GeminiACPClient:
             )
 
         return StreamEvent(event_type=event_type, data=raw)
+
+    @staticmethod
+    def _extract_text_content(content: Any) -> str:
+        """Extract text from ACP content payloads."""
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, dict):
+            if content.get("type") == "text":
+                return str(content.get("text", ""))
+            if "text" in content:
+                return str(content.get("text", ""))
+            if "content" in content:
+                return str(content.get("content", ""))
+            return ""
+
+        if isinstance(content, list):
+            parts = [GeminiACPClient._extract_text_content(item) for item in content]
+            return "".join(part for part in parts if part)
+
+        return ""
 
     async def stop(self) -> None:
         """Terminate the subprocess and clean up.

@@ -90,6 +90,14 @@ def _resume_handshake_lines(session_id: str = "prev-123") -> list[str]:
     ]
 
 
+def _resume_handshake_lines_without_session_id() -> list[str]:
+    """Return stdout lines for session/load where ACP responds with null result."""
+    return [
+        json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}) + "\n",
+        json.dumps({"jsonrpc": "2.0", "id": 2, "result": None}) + "\n",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -209,6 +217,20 @@ class TestStart:
         assert session_req["params"]["mcpServers"] == []
 
     @pytest.mark.asyncio
+    async def test_start_with_resume_preserves_requested_session_id_on_null_result(self) -> None:
+        proc = _mock_process(stdout_lines=_resume_handshake_lines_without_session_id())
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                await client.start(session_id="prev-123")
+
+        assert client.session_id == "prev-123"
+
+    @pytest.mark.asyncio
     async def test_start_raises_when_cli_not_found(self) -> None:
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value=None):
             client = GeminiACPClient()
@@ -315,6 +337,41 @@ class TestSend:
         assert len(deltas) == 2
         assert deltas[0].data["content"] == "Hello "
         assert deltas[1].data["content"] == "world!"
+
+    @pytest.mark.asyncio
+    async def test_send_yields_content_delta_from_session_update_notifications(self) -> None:
+        notification_lines = [
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "sess-1",
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"type": "text", "text": "Hello from update"},
+                        },
+                    },
+                }
+            )
+            + "\n",
+            json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {"tokens": 10}}}) + "\n",
+        ]
+        proc = _mock_process(stdout_lines=_handshake_lines() + notification_lines)
+
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                await client.start()
+                events = [e async for e in client.send("say hello")]
+
+        deltas = [e for e in events if e.event_type == "content_delta"]
+        assert len(deltas) == 1
+        assert deltas[0].data["content"] == "Hello from update"
 
     @pytest.mark.asyncio
     async def test_send_yields_error_from_response(self) -> None:
@@ -543,6 +600,38 @@ class TestNormalizeNotification:
         assert event.event_type == "error"
         assert event.data["message"] == "bad request"
         assert event.data["code"] == 400
+
+    def test_session_update_agent_message_chunk(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {
+                "method": "session/update",
+                "params": {
+                    "sessionId": "abc",
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": "hi from update"},
+                    },
+                },
+            }
+        )
+        assert event.event_type == "content_delta"
+        assert event.data["content"] == "hi from update"
+
+    def test_session_update_agent_thought_chunk(self) -> None:
+        event = GeminiACPClient._normalize_notification(
+            {
+                "method": "session/update",
+                "params": {
+                    "sessionId": "abc",
+                    "update": {
+                        "sessionUpdate": "agent_thought_chunk",
+                        "content": {"type": "text", "text": "thinking"},
+                    },
+                },
+            }
+        )
+        assert event.event_type == "thinking_delta"
+        assert event.data["content"] == "thinking"
 
     def test_legacy_type_based_init(self) -> None:
         """Legacy format with 'type' field instead of 'method'."""

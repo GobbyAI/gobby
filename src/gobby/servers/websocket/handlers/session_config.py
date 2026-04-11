@@ -315,6 +315,7 @@ async def handle_set_provider(
                     await asyncio.to_thread(
                         session_manager.update,
                         session.db_session_id,
+                        source=provider,
                         status="paused",
                     )
                 except Exception as e:

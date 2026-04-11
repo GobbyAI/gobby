@@ -43,7 +43,10 @@ const DB_SESSION_ID_STORAGE_KEY = "gobby-db-session-id";
 
 function loadPersistedConversationId(): string | null {
   try {
-    return localStorage.getItem(CONVERSATION_ID_STORAGE_KEY);
+    return (
+      localStorage.getItem(DB_SESSION_ID_STORAGE_KEY) ||
+      localStorage.getItem(CONVERSATION_ID_STORAGE_KEY)
+    );
   } catch {
     return null;
   }
@@ -586,17 +589,14 @@ export default function App() {
     const persistedConversationId = loadPersistedConversationId();
     const persistedDbSessionId = loadPersistedDbSessionId();
 
-    // Prefer an exact external_id match, then fall back to the persisted DB row
-    // because provider-backed web chats may re-key external_id after the first turn.
     const match =
-      webChatSessions.find((s) => s.external_id === conversationId) ||
+      webChatSessions.find((s) => s.id === dbSessionId) ||
       (persistedDbSessionId
         ? webChatSessions.find((s) => s.id === persistedDbSessionId)
         : undefined);
 
     if (match) {
-      // Valid session — hydrate messages from server (replaces stale localStorage)
-      switchConversation(match.external_id, match.id);
+      switchConversation(match.id);
     } else if (persistedConversationId && !persistedDbSessionId) {
       // Preserve an explicit local fresh-chat ID so reloads do not jump back
       // to the most recent saved session before the user sends a first message.
@@ -604,7 +604,7 @@ export default function App() {
     } else if (webChatSessions.length > 0) {
       // Unknown conversation_id — switch to most recent session
       const mostRecent = webChatSessions[0]; // sorted newest-first
-      switchConversation(mostRecent.external_id, mostRecent.id);
+      switchConversation(mostRecent.id);
     } else {
       // No sessions for this project — clear any stale messages from mount effect
       startNewChat();
@@ -614,7 +614,7 @@ export default function App() {
     effectiveProjectId,
     sessionsHook.isLoading,
     webChatSessions,
-    conversationId,
+    dbSessionId,
     switchConversation,
     startNewChat,
   ]);
@@ -669,7 +669,7 @@ export default function App() {
       } else if (attachedSessionId) {
         detachFromSession();
       }
-      switchConversation(session.external_id, session.id);
+      switchConversation(session.id);
     },
     [
       switchConversation,
@@ -689,26 +689,26 @@ export default function App() {
     );
   }, []);
 
-  // Track pending delete timeouts: externalId → { sessionId, timerId }
+  // Track pending delete timeouts: sessionId → timerId
   const deleteTimeoutsRef = useRef<
     Map<string, { sessionId: string; timerId: number }>
   >(new Map());
 
   // Wire backend chat_deleted ACK to confirmed removal
   useEffect(() => {
-    setOnChatDeleted((externalId: string) => {
-      const entry = deleteTimeoutsRef.current.get(externalId);
+    setOnChatDeleted((sessionId: string) => {
+      const entry = deleteTimeoutsRef.current.get(sessionId);
       if (entry) {
         window.clearTimeout(entry.timerId);
-        deleteTimeoutsRef.current.delete(externalId);
+        deleteTimeoutsRef.current.delete(sessionId);
       }
-      confirmSessionDeleted(externalId);
+      confirmSessionDeleted(sessionId);
     });
   }, [confirmSessionDeleted, setOnChatDeleted]);
 
   const handleDeleteConversation = useCallback(
     (session: GobbySession) => {
-      const sent = deleteConversation(session.external_id, session.id);
+      const sent = deleteConversation(session.id, session.id);
       if (!sent) {
         showToast("Cannot delete: disconnected from server");
         return;
@@ -718,10 +718,10 @@ export default function App() {
       // Timeout: if backend doesn't confirm within 5s, restore and show error
       const timerId = window.setTimeout(() => {
         restoreSession(session.id);
-        deleteTimeoutsRef.current.delete(session.external_id);
+        deleteTimeoutsRef.current.delete(session.id);
         showToast("Delete failed: server did not respond");
       }, 5000);
-      deleteTimeoutsRef.current.set(session.external_id, {
+      deleteTimeoutsRef.current.set(session.id, {
         sessionId: session.id,
         timerId,
       });
@@ -878,14 +878,12 @@ export default function App() {
   // — does NOT reset the user's mode back to the default.
   useEffect(() => {
     if (sessionsHook.isLoading) return;
-    const session = webChatSessions.find(
-      (s) => s.external_id === conversationId,
-    );
+    const session = webChatSessions.find((s) => s.id === dbSessionId);
     const restoredMode =
       (session?.chat_mode as ChatMode | null) || settings.defaultChatMode;
     updateChatMode(restoredMode);
     sendMode(restoredMode);
-  }, [conversationSwitchKey, sessionsHook.isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversationSwitchKey, sessionsHook.isLoading, dbSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = useCallback(
     (value: string) => {
@@ -1240,7 +1238,7 @@ export default function App() {
                 }}
                 conversations={{
                   sessions: webChatSessions,
-                  activeSessionId: conversationId,
+                  activeSessionId: dbSessionId,
                   deletingIds: sessionsHook.deletingIds,
                   onNewChat: startNewChat,
                   onSelectSession: handleSelectConversation,

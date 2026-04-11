@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.adapters.gemini_acp_client import StreamEvent
-from gobby.llm.claude_models import DoneEvent, TextChunk
+from gobby.llm.claude_models import DoneEvent, TextChunk, ThinkingEvent
 from gobby.servers.gemini_cli_chat_session import GeminiCLIChatSession
 
 pytestmark = pytest.mark.unit
@@ -218,6 +218,26 @@ class TestSendMessage:
         assert any("rate limit" in e.content for e in text_events)
 
     @pytest.mark.asyncio
+    async def test_thinking_delta_yields_thinking_event(self) -> None:
+        client = _mock_acp_client(
+            stream_events=[
+                StreamEvent(event_type="thinking_delta", data={"content": "thinking..."})
+            ]
+        )
+
+        session = _make_session(project_path="/tmp/test")
+        with patch(
+            "gobby.servers.gemini_cli_chat_session.GeminiACPClient",
+            return_value=client,
+        ):
+            await session.start()
+            events = [e async for e in session.send_message("think")]
+
+        thinking_events = [e for e in events if isinstance(e, ThinkingEvent)]
+        assert len(thinking_events) == 1
+        assert thinking_events[0].content == "thinking..."
+
+    @pytest.mark.asyncio
     async def test_non_delta_assistant_message_yields_text_chunk(self) -> None:
         """Gemini can return a full assistant message without content deltas."""
         client = _mock_acp_client(
@@ -267,6 +287,31 @@ class TestSendMessage:
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert [event.content for event in text_events] == ["Hello ", "world"]
+
+    @pytest.mark.asyncio
+    async def test_init_event_adopts_camel_case_session_id(self) -> None:
+        client = _mock_acp_client(
+            stream_events=[
+                StreamEvent(
+                    event_type="init",
+                    data={"sessionId": "gemini-session-2", "model": "gemini-2.5-flash"},
+                ),
+                StreamEvent(event_type="result", data={}),
+            ],
+            session_id="gemini-session-1",
+        )
+
+        session = _make_session(project_path="/tmp/test")
+        with patch(
+            "gobby.servers.gemini_cli_chat_session.GeminiACPClient",
+            return_value=client,
+        ):
+            await session.start()
+            events = [e async for e in session.send_message("hello")]
+
+        assert isinstance(events[-1], DoneEvent)
+        assert session.sdk_session_id == "gemini-session-2"
+        assert session.model == "gemini-2.5-flash"
 
     @pytest.mark.asyncio
     async def test_content_list_input(self) -> None:

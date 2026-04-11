@@ -112,6 +112,7 @@ class CodexCLIChatSession:
         # Codex internals
         self._model = model
         self._thread_id = thread_id
+        self._turn_id: str | None = None
         self._process: asyncio.subprocess.Process | None = None
         self._connected = False
         self._request_id = itertools.count(1)
@@ -341,6 +342,7 @@ class CodexCLIChatSession:
         await self._process.stdin.drain()
         self.message_index += 1
         self.last_activity = datetime.now(UTC)
+        self._turn_id = None
         logger.debug(f"Sent turn/start to Codex: {text[:80]!r}")
         transcript_offset = await self._get_transcript_offset()
         saw_text_output = False
@@ -373,6 +375,15 @@ class CodexCLIChatSession:
                     yield TextChunk(content=f"Error: {err.get('message', err)}")
                     yield DoneEvent(tool_calls_count=0)
                     break
+                result = data.get("result", {})
+                if isinstance(result, dict):
+                    turn_id = result.get("turnId")
+                    if not turn_id:
+                        turn = result.get("turn")
+                        if isinstance(turn, dict):
+                            turn_id = turn.get("id")
+                    if turn_id:
+                        self._turn_id = str(turn_id)
                 # turn/start response just acknowledges — keep reading notifications
                 continue
 
@@ -390,6 +401,7 @@ class CodexCLIChatSession:
             elif method == "turn/completed":
                 # Turn finished — extract usage data
                 usage = params.get("usage", {})
+                self._turn_id = None
                 if not saw_text_output:
                     fallback_text = await self._get_transcript_assistant_text_since(
                         transcript_offset
@@ -407,7 +419,10 @@ class CodexCLIChatSession:
 
             elif method == "turn/started":
                 # Turn started notification — informational, skip
-                logger.debug(f"Codex turn started: {params.get('turnId', 'unknown')}")
+                turn_id = params.get("turnId")
+                if turn_id:
+                    self._turn_id = str(turn_id)
+                logger.debug(f"Codex turn started: {turn_id or 'unknown'}")
 
             elif method == "item/started" or method == "item/completed":
                 # Item lifecycle — skip for now
@@ -420,19 +435,22 @@ class CodexCLIChatSession:
 
     async def interrupt(self) -> None:
         """Send an interrupt request for the active turn."""
-        if self._process and self._process.stdin and self._thread_id:
+        if self._process and self._process.stdin and self._thread_id and self._turn_id:
             try:
                 interrupt_request = {
                     "jsonrpc": "2.0",
                     "method": "turn/interrupt",
-                    "params": {"threadId": self._thread_id},
+                    "params": {"threadId": self._thread_id, "turnId": self._turn_id},
                     "id": next(self._request_id),
                 }
                 line = json.dumps(interrupt_request) + "\n"
                 self._process.stdin.write(line.encode())
                 await self._process.stdin.drain()
+                self._turn_id = None
             except Exception as e:
                 logger.debug(f"Codex interrupt error: {e}")
+        elif self._thread_id:
+            logger.debug("Codex interrupt skipped: no active turn for %s", self._thread_id)
 
     async def drain_pending_response(self) -> None:
         pass
@@ -462,6 +480,7 @@ class CodexCLIChatSession:
                 self._connected = False
                 self.sdk_session_id = None
                 self._thread_id = None
+                self._turn_id = None
 
     async def switch_model(self, new_model: str) -> None:
         self._model = new_model

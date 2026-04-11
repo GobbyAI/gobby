@@ -165,7 +165,7 @@ export function SessionSidebar({
                   <SessionItem
                     key={session.id}
                     session={session}
-                    isActive={session.external_id === activeSessionId}
+                    isActive={session.id === activeSessionId}
                     onSelect={onSelectSession}
                   />
                 ))}
@@ -179,7 +179,7 @@ export function SessionSidebar({
                   <SessionItem
                     key={session.id}
                     session={session}
-                    isActive={session.external_id === activeSessionId}
+                    isActive={session.id === activeSessionId}
                     onSelect={onSelectSession}
                   />
                 ))}

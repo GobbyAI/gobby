@@ -128,10 +128,10 @@ export function useSessionDetail(sessionId: string | null) {
             totalCount: number
             ok: boolean
           }> => {
-            if (!sessionData?.external_id) {
+            if (!sessionId) {
               return { mapped: [], totalCount: 0, ok: false }
             }
-            const chatRes = await fetch(`${baseUrl}/api/chat/${sessionData.external_id}/messages`)
+            const chatRes = await fetch(`${baseUrl}/api/chat/${sessionId}/messages`)
             if (!chatRes.ok) {
               console.warn(`Web chat messages fetch returned ${chatRes.status}`)
               return { mapped: [], totalCount: 0, ok: false }
@@ -152,7 +152,6 @@ export function useSessionDetail(sessionId: string | null) {
 
           const shouldUseChatMessages =
             sessionData?.session_type === 'web_chat' &&
-            !!sessionData?.external_id &&
             !sessionData?.transcript_path &&
             renderedResult.mapped.length === 0
 

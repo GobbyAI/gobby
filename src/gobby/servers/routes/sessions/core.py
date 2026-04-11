@@ -176,6 +176,64 @@ def register_core_routes(
 ) -> None:
     """Register core session CRUD routes on the router."""
 
+    @router.post("/web-chat")
+    async def create_web_chat_session(body: dict[str, Any]) -> dict[str, Any]:
+        """Create a durable web-chat session row owned by the server."""
+        try:
+            if server.session_manager is None:
+                raise HTTPException(status_code=503, detail="Session manager not available")
+
+            provider = body.get("provider") or "claude"
+            if provider not in {"claude", "gemini", "codex"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid provider. Must be one of: claude, gemini, codex",
+                )
+
+            project_id = server.resolve_project_id(body.get("project_id"), body.get("cwd"))
+
+            from gobby.utils.machine_id import get_machine_id
+
+            machine_id = get_machine_id() or "unknown-machine"
+            session = server.session_manager.create_web_chat_session(
+                machine_id=machine_id,
+                project_id=project_id,
+                source=provider,
+                title=body.get("title"),
+            )
+
+            model = body.get("model")
+            if isinstance(model, str) and model:
+                server.session_manager.update_model(session.id, model)
+                refreshed = server.session_manager.get(session.id)
+                if refreshed is not None:
+                    session = refreshed
+
+            chat_mode = body.get("chat_mode")
+            if isinstance(chat_mode, str) and chat_mode:
+                server.session_manager.update_chat_mode(session.id, chat_mode)
+                refreshed = server.session_manager.get(session.id)
+                if refreshed is not None:
+                    session = refreshed
+
+            inc_counter("session_registrations_total")
+            await broadcast_session("session_created", session.id)
+
+            return {
+                "status": "created",
+                "session": session.to_dict(),
+            }
+
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error(f"Error creating web chat session: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500, detail="Internal server error while creating web chat session"
+            ) from e
+
     @router.post("/register")
     async def register_session(request_data: SessionRegisterRequest) -> dict[str, Any]:
         """

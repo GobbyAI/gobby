@@ -65,6 +65,11 @@ def _get_runtime_transcript_path(session: ChatSessionProtocol) -> str | None:
     return None
 
 
+def _is_bootstrap_external_id(external_id: str | None) -> bool:
+    """Return True when external_id is still a temporary web-chat bootstrap value."""
+    return bool(external_id and external_id.startswith("web-chat-bootstrap:"))
+
+
 async def _resolve_git_branch(project_path: str | None) -> tuple[str | None, str | None]:
     """Resolve the current git branch for a project directory.
 
@@ -174,13 +179,14 @@ class ChatSessionMixin:
         turn.
         """
         session = self._chat_sessions.get(conversation_id)
-        if session:
-            try:
-                await asyncio.wait_for(session.interrupt(), timeout=0.5)
-            except Exception as e:
-                logger.debug(f"Interrupt failed: {e}")
-
         active_task = self._active_chat_tasks.pop(conversation_id, None)
+        if session:
+            if active_task and not active_task.done():
+                try:
+                    await asyncio.wait_for(session.interrupt(), timeout=0.5)
+                except Exception as e:
+                    logger.debug(f"Interrupt failed: {e}")
+
         if active_task and not active_task.done():
             active_task.cancel()
             try:
@@ -239,12 +245,22 @@ class ChatSessionMixin:
         provider: str | None = None,
     ) -> ChatSessionProtocol:
         """Inner implementation — must be called under the per-conversation lock from _session_create_locks."""
+        session_key = conversation_id
+        session_manager = getattr(self, "session_manager", None)
+        existing_db_session = None
+        if session_manager:
+            try:
+                candidate = await asyncio.to_thread(session_manager.get, session_key)
+                if candidate and getattr(candidate, "session_type", None) == "web_chat":
+                    existing_db_session = candidate
+            except Exception as e:
+                logger.debug(f"Failed to resolve existing web-chat session {session_key}: {e}")
+
         # Early agent resolution to determine provider (Codex vs Claude SDK)
         pending_agents = getattr(self, "_pending_agents", {})
-        pending_agent = pending_agents.pop(conversation_id, None)
+        pending_agent = pending_agents.pop(session_key, None)
         agent_name = pending_agent or "default-web-chat"
         agent_body = None
-        session_manager = getattr(self, "session_manager", None)
         if session_manager:
             try:
                 from gobby.workflows.agent_resolver import resolve_agent
@@ -254,16 +270,20 @@ class ChatSessionMixin:
                     agent_name,
                     session_manager.db,
                     cli_source="claude",
-                    project_id=project_id or PERSONAL_PROJECT_ID,
+                    project_id=project_id
+                    or getattr(existing_db_session, "project_id", None)
+                    or PERSONAL_PROJECT_ID,
                 )
             except Exception as e:
                 logger.warning(f"Failed to resolve agent '{agent_name}' for provider check: {e}")
 
         # Provider precedence: queued UI override > explicit message provider
-        # > agent definition > resumed session > default.
+        # > existing DB session source > agent definition > default.
         pending_providers = getattr(self, "_pending_providers", {})
-        pending_provider = pending_providers.pop(conversation_id, None)
+        pending_provider = pending_providers.pop(session_key, None)
         effective_provider = pending_provider or provider
+        if not effective_provider and existing_db_session:
+            effective_provider = getattr(existing_db_session, "source", None)
         if not effective_provider and agent_body:
             effective_provider = getattr(agent_body, "provider", None)
 
@@ -291,19 +311,19 @@ class ChatSessionMixin:
 
         # Wire lifecycle callbacks before start() so hooks are registered with the SDK
         session._on_before_agent = lambda data: self._fire_lifecycle(
-            conversation_id, HookEventType.BEFORE_AGENT, data
+            session_key, HookEventType.BEFORE_AGENT, data
         )
         session._on_pre_tool = lambda data: self._fire_lifecycle(
-            conversation_id, HookEventType.BEFORE_TOOL, data
+            session_key, HookEventType.BEFORE_TOOL, data
         )
         session._on_post_tool = lambda data: self._fire_lifecycle(
-            conversation_id, HookEventType.AFTER_TOOL, data
+            session_key, HookEventType.AFTER_TOOL, data
         )
         session._on_pre_compact = lambda data: self._fire_lifecycle(
-            conversation_id, HookEventType.PRE_COMPACT, data
+            session_key, HookEventType.PRE_COMPACT, data
         )
         session._on_stop = lambda data: self._fire_lifecycle(
-            conversation_id, HookEventType.STOP, data
+            session_key, HookEventType.STOP, data
         )
 
         # Wire mode-change callback so agent-initiated plan mode transitions
@@ -312,7 +332,7 @@ class ChatSessionMixin:
             msg = json.dumps(
                 {
                     "type": "mode_changed",
-                    "conversation_id": conversation_id,
+                    "conversation_id": session_key,
                     "mode": mode,
                     "reason": reason,
                 }
@@ -320,7 +340,7 @@ class ChatSessionMixin:
             for ws, meta in list(self.clients.items()):
                 # Only send to clients in this conversation (or untracked clients for compat)
                 cid = meta.get("conversation_id") if meta else None
-                if cid is not None and cid != conversation_id:
+                if cid is not None and cid != session_key:
                     continue
                 try:
                     await ws.send(msg)
@@ -334,14 +354,14 @@ class ChatSessionMixin:
             msg = json.dumps(
                 {
                     "type": "plan_pending_approval",
-                    "conversation_id": conversation_id,
+                    "conversation_id": session_key,
                     "plan_content": content,
                     "allowed_prompts": input_data.get("allowedPrompts"),
                 }
             )
             for ws, meta in list(self.clients.items()):
                 cid = meta.get("conversation_id") if meta else None
-                if cid is not None and cid != conversation_id:
+                if cid is not None and cid != session_key:
                     continue
                 try:
                     await ws.send(msg)
@@ -371,37 +391,75 @@ class ChatSessionMixin:
         # are correctly configured for the CLI subprocess.
         # Precedence: explicit message project_id > pending from set_project > fallback
         pending_projects = getattr(self, "_pending_projects", {})
-        pending_project = pending_projects.pop(conversation_id, None)
-        effective_pid = project_id or pending_project or PERSONAL_PROJECT_ID
+        pending_project = pending_projects.pop(session_key, None)
+        effective_pid = (
+            project_id
+            or pending_project
+            or getattr(existing_db_session, "project_id", None)
+            or PERSONAL_PROJECT_ID
+        )
         session.project_id = effective_pid
 
-        # Register in database BEFORE start() so that db_session_id is available
-        # for the CLI subprocess env vars (GOBBY_SESSION_ID) during start().
-        session_manager = getattr(self, "session_manager", None)
-        if session_manager:
+        # Bind to the durable web-chat DB row if one already exists. This is
+        # the canonical identity for selection/open/swap flows.
+        if existing_db_session:
+            session.db_session_id = existing_db_session.id
+            session.seq_num = existing_db_session.seq_num
+            session._session_manager_ref = session_manager
+
+            if (
+                not resume_session_id
+                and existing_db_session.usage_output_tokens > 0
+                and existing_db_session.external_id
+                and not _is_bootstrap_external_id(existing_db_session.external_id)
+            ):
+                session.resume_session_id = existing_db_session.external_id
+
+            if existing_db_session.chat_mode and existing_db_session.chat_mode != "plan":
+                session.chat_mode = existing_db_session.chat_mode
+            if existing_db_session.usage_output_tokens:
+                session._accumulated_output_tokens = existing_db_session.usage_output_tokens
+            if existing_db_session.approved_tools_json:
+                try:
+                    session._approved_tools = set(
+                        json.loads(existing_db_session.approved_tools_json)
+                    )
+                except (ValueError, TypeError):
+                    logger.debug("Malformed approved_tools_json, ignoring")
+
+            logger.info(
+                f"Hydrated web-chat session {existing_db_session.id} "
+                f"(source={existing_db_session.source}, project={effective_pid})"
+            )
+        elif session_manager:
             try:
                 db_session = await asyncio.to_thread(
                     session_manager.register,
-                    external_id=conversation_id,
+                    external_id=session_key,
                     machine_id=get_machine_id(),
                     source=effective_provider or "claude",
-                    project_id=project_id or PERSONAL_PROJECT_ID,
+                    project_id=effective_pid,
                     session_type="web_chat",
                 )
                 session.db_session_id = db_session.id
                 session.seq_num = db_session.seq_num
                 session._session_manager_ref = session_manager
 
-                # Auto-resume for returning sessions: if the DB row has prior
-                # usage (meaning at least one turn completed) and no explicit
-                # resume was requested, enable SDK resume.  After re-keying,
-                # conversation_id IS the SDK session ID the transcript lives under.
-                if not resume_session_id and db_session.usage_output_tokens > 0:
-                    session.resume_session_id = conversation_id
+                # Compatibility path for callers that still lazily create web
+                # chats without pre-creating the DB row first.
+                resume_identity = getattr(db_session, "external_id", None)
+                if not isinstance(resume_identity, str) or not resume_identity:
+                    resume_identity = session_key
+                if (
+                    not resume_session_id
+                    and db_session.usage_output_tokens > 0
+                    and not _is_bootstrap_external_id(resume_identity)
+                ):
+                    session.resume_session_id = resume_identity
                     logger.info(
                         f"Auto-resume enabled for returning session {db_session.id} "
                         f"(output_tokens={db_session.usage_output_tokens}, "
-                        f"sdk_id={conversation_id[:8]})"
+                        f"sdk_id={resume_identity[:8]})"
                     )
 
                 # Restore persisted state from DB (safe for both new and returning
@@ -417,14 +475,14 @@ class ChatSessionMixin:
                         logger.debug("Malformed approved_tools_json, ignoring")
                 logger.info(
                     f"Registered web-chat session {db_session.id} "
-                    f"(conv={conversation_id[:8]}, project={project_id or PERSONAL_PROJECT_ID})"
+                    f"(key={session_key[:8]}, project={effective_pid})"
                 )
             except Exception as e:
                 logger.warning(f"Failed to register web-chat session in DB: {e}")
 
         # Override with pending mode (highest priority — user toggled before session existed)
         pending_modes = getattr(self, "_pending_modes", {})
-        pending_mode = pending_modes.pop(conversation_id, None)
+        pending_mode = pending_modes.pop(session_key, None)
         if pending_mode:
             session.chat_mode = pending_mode
 
@@ -470,7 +528,7 @@ class ChatSessionMixin:
 
         # Override project_path with pending worktree path (from set_worktree)
         pending_wt = getattr(self, "_pending_worktree_paths", {})
-        wt_override = pending_wt.pop(conversation_id, None)
+        wt_override = pending_wt.pop(session_key, None)
         if wt_override:
             session.project_path = wt_override
 
@@ -496,7 +554,7 @@ class ChatSessionMixin:
                         _inject_agent_skills,
                         agent_body,
                         session_manager.db,
-                        project_id or PERSONAL_PROJECT_ID,
+                        effective_pid,
                         cli_source,
                     )
                     if skills_text:
@@ -521,7 +579,7 @@ class ChatSessionMixin:
         if session_manager and session.db_session_id:
             update_kwargs: dict[str, str] = {}
             runtime_external_id = _get_runtime_external_id(session)
-            if runtime_external_id and runtime_external_id != conversation_id:
+            if runtime_external_id and runtime_external_id != session_key:
                 update_kwargs["external_id"] = runtime_external_id
 
             runtime_transcript_path = _get_runtime_transcript_path(session)
@@ -551,7 +609,7 @@ class ChatSessionMixin:
             except Exception:
                 logger.debug("Failed to persist selected model for web-chat session", exc_info=True)
 
-        self._chat_sessions[conversation_id] = session
+        self._chat_sessions[session_key] = session
 
         # History injection via message_manager removed (session_messages table dropped)
 
@@ -568,7 +626,7 @@ class ChatSessionMixin:
                 logger.warning(f"SESSION_START lifecycle hook failed: {exc}")
 
         t = asyncio.create_task(
-            self._fire_lifecycle(conversation_id, HookEventType.SESSION_START, start_data)
+            self._fire_lifecycle(session_key, HookEventType.SESSION_START, start_data)
         )
         t.add_done_callback(_log_session_start_error)
 
@@ -579,14 +637,14 @@ class ChatSessionMixin:
             mode_msg = json.dumps(
                 {
                     "type": "mode_changed",
-                    "conversation_id": conversation_id,
+                    "conversation_id": session_key,
                     "mode": session.chat_mode,
                     "reason": "session_restored",
                 }
             )
             for ws, meta in list(self.clients.items()):
                 cid = meta.get("conversation_id") if meta else None
-                if cid is not None and cid != conversation_id:
+                if cid is not None and cid != session_key:
                     continue
                 try:
                     await ws.send(mode_msg)

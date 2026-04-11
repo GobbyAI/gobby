@@ -214,9 +214,10 @@ class TestStreamChatResponse:
         assert "chat_stream" in types
         assert "tool_status" in types
 
-        # Verify done event handling rekeys the session dict
-        assert "c1" not in mixin._chat_sessions
-        assert "sdk" in mixin._chat_sessions
+        # Web-chat sessions stay keyed by DB/UI session identity; sdk_session_id
+        # is metadata only and must not mutate the in-memory/frontend key.
+        assert "c1" in mixin._chat_sessions
+        assert "sdk" not in mixin._chat_sessions
 
     @pytest.mark.asyncio
     async def test_stream_cancellation_safely(self, mixin: DummyMessagingMixin, ws: AsyncMock):

@@ -115,6 +115,18 @@ class TestCancelActiveChat:
         session.drain_pending_response.assert_awaited_once()
         mixin._cancel_tts.assert_awaited_once_with("conv-xyz")
 
+    @pytest.mark.asyncio
+    async def test_cancel_active_chat_skips_interrupt_without_live_task(self, mixin: DummyMixin):
+        session = AsyncMock()
+        mixin._chat_sessions["conv-xyz"] = session
+        mixin._cancel_tts = AsyncMock()
+
+        await mixin._cancel_active_chat("conv-xyz")
+
+        session.interrupt.assert_not_awaited()
+        session.drain_pending_response.assert_awaited_once()
+        mixin._cancel_tts.assert_awaited_once_with("conv-xyz")
+
 
 class TestCreateChatSessionInner:
     @pytest.mark.asyncio

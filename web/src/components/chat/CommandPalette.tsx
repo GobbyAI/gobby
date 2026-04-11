@@ -198,7 +198,7 @@ export function CommandPalette({
                   <SessionItem
                     key={s.id}
                     session={s}
-                    isActive={s.external_id === activeSessionId}
+                    isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
                     onSelect={() => handleSelect(idx)}
                     onHover={() => setSelectedIndex(idx)}
@@ -216,7 +216,7 @@ export function CommandPalette({
                   <SessionItem
                     key={s.id}
                     session={s}
-                    isActive={s.external_id === activeSessionId}
+                    isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
                     onSelect={() => handleSelect(idx)}
                     onHover={() => setSelectedIndex(idx)}
@@ -234,7 +234,7 @@ export function CommandPalette({
                   <SessionItem
                     key={s.id}
                     session={s}
-                    isActive={s.external_id === activeSessionId}
+                    isActive={s.id === activeSessionId}
                     isSelected={idx === selectedIndex}
                     onSelect={() => handleSelect(idx)}
                     onHover={() => setSelectedIndex(idx)}

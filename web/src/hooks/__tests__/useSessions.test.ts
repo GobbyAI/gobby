@@ -203,12 +203,12 @@ describe('useSessions', () => {
     expect(result.current.deletingIds.has('sess-1')).toBe(true)
   })
 
-  it('confirmSessionDeleted removes by external_id', async () => {
+  it('confirmSessionDeleted removes by session id', async () => {
     const { result } = renderHook(() => useSessions())
 
     await waitFor(() => expect(result.current.sessions).toHaveLength(2))
 
-    act(() => result.current.confirmSessionDeleted('ext-1'))
+    act(() => result.current.confirmSessionDeleted('sess-1'))
 
     expect(result.current.sessions).toHaveLength(1)
     expect(result.current.sessions[0].external_id).toBe('ext-2')

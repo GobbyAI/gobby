@@ -15,6 +15,7 @@ import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
+const DB_SESSION_ID_KEY = "gobby-db-session-id";
 
 interface WebSocketMessage {
   type: string;
@@ -105,22 +106,69 @@ function uuid(): string {
 }
 
 function loadConversationId(): string {
-  return localStorage.getItem(CONVERSATION_ID_KEY) || uuid();
+  return (
+    localStorage.getItem(DB_SESSION_ID_KEY) ||
+    localStorage.getItem(CONVERSATION_ID_KEY) ||
+    ""
+  );
 }
 
 function saveConversationId(id: string): void {
+  if (!id) {
+    localStorage.removeItem(CONVERSATION_ID_KEY);
+    localStorage.removeItem(DB_SESSION_ID_KEY);
+    return;
+  }
   localStorage.setItem(CONVERSATION_ID_KEY, id);
+  localStorage.setItem(DB_SESSION_ID_KEY, id);
 }
-
-const DB_SESSION_ID_KEY = "gobby-db-session-id";
 
 function loadDbSessionId(): string | null {
   return localStorage.getItem(DB_SESSION_ID_KEY);
 }
 
 function saveDbSessionId(id: string | null): void {
-  if (id) localStorage.setItem(DB_SESSION_ID_KEY, id);
-  else localStorage.removeItem(DB_SESSION_ID_KEY);
+  if (id) {
+    localStorage.setItem(DB_SESSION_ID_KEY, id);
+    localStorage.setItem(CONVERSATION_ID_KEY, id);
+  } else {
+    localStorage.removeItem(DB_SESSION_ID_KEY);
+  }
+}
+
+interface CreatedWebChatSession {
+  id: string;
+  source: string;
+  model: string | null;
+  chat_mode: string | null;
+  seq_num: number | null;
+  title: string | null;
+}
+
+async function createWebChatSession(params?: {
+  projectId?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  chatMode?: ChatMode | null;
+}): Promise<CreatedWebChatSession> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+  const response = await fetch(`${baseUrl}/api/sessions/web-chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      project_id: params?.projectId ?? null,
+      provider: params?.provider ?? null,
+      model: params?.model ?? null,
+      chat_mode: params?.chatMode ?? null,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to create web chat session: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.session as CreatedWebChatSession;
 }
 
 interface ApiMessage {
@@ -585,6 +633,8 @@ export function useChat() {
   const [dbSessionId, setDbSessionId] = useState<string | null>(() =>
     loadDbSessionId(),
   );
+  const dbSessionIdRef = useRef<string | null>(dbSessionId);
+  const creatingSessionIdRef = useRef<Promise<string | null> | null>(null);
 
   // Branch/worktree tracking
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
@@ -765,8 +815,96 @@ export function useChat() {
       model?: string | null,
       files?: QueuedFile[],
       projectId?: string | null,
+      injectContext?: string,
     ) => boolean) | null
   >(null);
+
+  const bindActiveSession = useCallback((sessionId: string | null) => {
+    const nextId = sessionId ?? "";
+    conversationIdRef.current = nextId;
+    setConversationId(nextId);
+    setDbSessionId(sessionId);
+    dbSessionIdRef.current = sessionId;
+    saveConversationId(nextId);
+  }, []);
+
+  const resetMainChatState = useCallback(() => {
+    activeRequestIdRef.current = null;
+    setIsStreaming(false);
+    setIsThinking(false);
+    setSessionRef(null);
+    setSessionTitle(null);
+    setCurrentBranch(null);
+    setWorktreePath(null);
+    setCanvasSurfaces(new Map());
+    setCanvasPanel(null);
+    setPlanPendingApproval(false);
+    planContentRef.current = null;
+    setContextUsage({
+      totalInputTokens: 0,
+      outputTokens: 0,
+      contextWindow: null,
+      uncachedInputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+    setMessages([]);
+    setIsLoadingMessages(false);
+  }, []);
+
+  const ensureMainSession = useCallback(
+    async (options?: {
+      projectId?: string | null;
+      provider?: string | null;
+      model?: string | null;
+      forceNew?: boolean;
+    }): Promise<string | null> => {
+      if (!options?.forceNew && dbSessionIdRef.current) {
+        return dbSessionIdRef.current;
+      }
+      if (!options?.forceNew && creatingSessionIdRef.current) {
+        return await creatingSessionIdRef.current;
+      }
+
+      const pending = createWebChatSession({
+        projectId: options?.projectId ?? projectIdRef.current,
+        provider: options?.provider ?? selectedProviderRef.current,
+        model: options?.model ?? null,
+        chatMode: currentModeRef.current,
+      })
+        .then((session) => {
+          bindActiveSession(session.id);
+          if (session.seq_num != null) {
+            setSessionRef(`#${session.seq_num}`);
+          }
+          setSessionTitle(session.title ?? null);
+          if (
+            wsRef.current?.readyState === WebSocket.OPEN &&
+            activeAgentRef.current
+          ) {
+            wsRef.current.send(
+              JSON.stringify({
+                type: "set_agent",
+                conversation_id: session.id,
+                agent_name: activeAgentRef.current,
+              }),
+            );
+          }
+          return session.id;
+        })
+        .catch((error) => {
+          console.error("Failed to create web chat session:", error);
+          return null;
+        })
+        .finally(() => {
+          creatingSessionIdRef.current = null;
+        });
+
+      creatingSessionIdRef.current = pending;
+      return await pending;
+    },
+    [bindActiveSession],
+  );
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -775,6 +913,10 @@ export function useChat() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    dbSessionIdRef.current = dbSessionId;
+  }, [dbSessionId]);
 
   // Context usage tracking — accumulated across turns.
   // totalInputTokens = uncached + cacheRead + cacheCreation (the real context size).
@@ -1361,20 +1503,6 @@ export function useChat() {
             .conversation_id as string;
           console.log("Chat cleared confirmed:", cid);
           onChatClearedRef.current?.(cid);
-        } else if (data.type === "conversation_id_changed") {
-          const d = data as Record<string, unknown>;
-          const newId = d.new_id as string;
-          if (newId && newId !== conversationIdRef.current) {
-            console.log(
-              "Conversation ID changed:",
-              conversationIdRef.current,
-              "→",
-              newId,
-            );
-            conversationIdRef.current = newId;
-            setConversationId(newId);
-            saveConversationId(newId);
-          }
         }
       } catch (e) {
         console.error("Failed to parse WebSocket message:", e);
@@ -1445,15 +1573,6 @@ export function useChat() {
       // Pick up session_ref from done message (fallback if session_info was missed)
       if (chunk.session_ref) {
         setSessionRef(chunk.session_ref);
-      }
-      // Adopt SDK session_id as the canonical conversation ID
-      if (
-        chunk.sdk_session_id &&
-        chunk.sdk_session_id !== conversationIdRef.current
-      ) {
-        conversationIdRef.current = chunk.sdk_session_id;
-        setConversationId(chunk.sdk_session_id);
-        saveConversationId(chunk.sdk_session_id);
       }
       // Update context usage from usage data in done message.
       // Each turn sends the full conversation to Claude, so the latest turn's
@@ -1731,73 +1850,43 @@ export function useChat() {
     sessionInteractionModeRef.current = sessionInteractionMode;
   }, [sessionInteractionMode]);
 
-  // Switch to a different conversation
-  const switchConversation = useCallback((id: string, dbSessionId?: string) => {
-    if (!id) return;
-    // Skip if already on this conversation with messages loaded
-    if (
-      id === conversationIdRef.current &&
-      messagesRef.current.length > 0 &&
-      !dbSessionId
-    )
-      return;
+  // Switch to an existing server-owned web-chat session by DB session ID.
+  const switchConversation = useCallback(
+    (id: string) => {
+      if (!id) return;
+      if (id === dbSessionIdRef.current && messagesRef.current.length > 0) {
+        return;
+      }
 
-    // Stop partial streaming first
-    activeRequestIdRef.current = null;
-    setIsStreaming(false);
-    setIsThinking(false);
-    setSessionRef(null);
-    setSessionTitle(null);
-    setDbSessionId(dbSessionId ?? null);
-    setCurrentBranch(null);
-    setWorktreePath(null);
-    setCanvasSurfaces(new Map());
-    setCanvasPanel(null);
-    setPlanPendingApproval(false);
-    planContentRef.current = null;
-    setContextUsage({
-      totalInputTokens: 0,
-      outputTokens: 0,
-      contextWindow: null,
-      uncachedInputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-    });
+      resetMainChatState();
+      bindActiveSession(id);
+      setConversationSwitchKey((k) => k + 1);
 
-    conversationIdRef.current = id;
-    setConversationId(id);
-    setConversationSwitchKey((k) => k + 1);
-    saveConversationId(id);
-
-    // Clear messages; DB fetch below will populate
-    setMessages([]);
-
-    // Fetch from server when dbSessionId is available
-    if (dbSessionId) {
       setIsLoadingMessages(true);
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(
-        `${baseUrl}/api/sessions/${dbSessionId}/messages?limit=100&offset=0`,
-      )
+      fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (!data?.messages?.length || conversationIdRef.current !== id)
-            return;
-          const mapped = mapApiMessages(data.messages);
+          if (!data?.messages?.length || conversationIdRef.current !== id) return;
+          const mapped = data.messages.map(
+            (m: Record<string, unknown>) =>
+              mapRenderedMessageToChatMessage(m),
+          );
           if (mapped.length > 0) {
             setMessages(mapped);
           }
+          if (data.max_seq) {
+            lastSeqRef.current = data.max_seq as number;
+          }
         })
-        .catch((err) => console.error("Failed to fetch session messages:", err))
+        .catch((err) => console.error("Failed to fetch chat messages:", err))
         .finally(() => setIsLoadingMessages(false));
 
-      // Hydrate context usage and chat mode from persisted session data
-      fetch(`${baseUrl}/api/sessions/${dbSessionId}`)
+      fetch(`${baseUrl}/api/sessions/${id}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           const s = data?.session;
           if (!s || conversationIdRef.current !== id) return;
-          // Store title and ref so they survive filtered session list races
           if (s.title) setSessionTitle(s.title);
           if (s.seq_num != null) setSessionRef(`#${s.seq_num}`);
           if (
@@ -1817,16 +1906,12 @@ export function useChat() {
               cacheCreationTokens: cacheCreation,
             });
           }
-          // Restore chat mode from DB (corrects stale sessions list data)
           if (s.chat_mode) {
             const restored = s.chat_mode as ChatMode;
-            // Only apply if mode actually differs from current
             if (restored !== currentModeRef.current) {
               currentModeRef.current = restored;
               onModeChangedRef.current?.(restored);
             }
-            // Sync restored mode to backend — but skip if the server
-            // just sent an authoritative mode_changed (avoids loop)
             if (
               wsRef.current?.readyState === WebSocket.OPEN &&
               Date.now() - lastServerModeTimestampRef.current > 2000
@@ -1835,67 +1920,37 @@ export function useChat() {
                 JSON.stringify({
                   type: "set_mode",
                   mode: restored,
-                  conversation_id: conversationIdRef.current,
+                  conversation_id: id,
                 }),
               );
             }
           }
         })
         .catch(() => {});
-    }
-  }, []);
+    },
+    [bindActiveSession, resetMainChatState],
+  );
 
   // Start a new chat conversation, optionally with a specific agent
-  const startNewChat = useCallback((agentName?: string) => {
-    const newId = uuid();
-    conversationIdRef.current = newId;
-    setConversationId(newId);
-    setConversationSwitchKey((k) => k + 1);
-    saveConversationId(newId);
-    setMessages([]);
-    setSessionRef(null);
-    setSessionTitle(null);
-    setDbSessionId(null);
-    setCurrentBranch(null);
-    setWorktreePath(null);
-    setCanvasSurfaces(new Map());
-    setCanvasPanel(null);
-    setPlanPendingApproval(false);
-    planContentRef.current = null;
-    setContextUsage({
-      totalInputTokens: 0,
-      outputTokens: 0,
-      contextWindow: null,
-      uncachedInputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-    });
+  const startNewChat = useCallback(
+    (agentName?: string) => {
+      const effectiveAgent = agentName || "default-web-chat";
+      setActiveAgent(effectiveAgent);
+      resetMainChatState();
+      bindActiveSession(null);
+      setConversationSwitchKey((k) => k + 1);
+      void ensureMainSession({
+        projectId: projectIdRef.current,
+        provider: selectedProviderRef.current,
+        forceNew: true,
+      });
+    },
+    [bindActiveSession, ensureMainSession, resetMainChatState],
+  );
 
-    activeRequestIdRef.current = null;
-    setIsStreaming(false);
-    setIsThinking(false);
-    setIsLoadingMessages(false);
-
-    // Set active agent and always send set_agent so the backend resolves
-    // the agent definition (preamble, rules, skills) for the web chat session.
-    const effectiveAgent = agentName || "default-web-chat";
-    setActiveAgent(effectiveAgent);
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "set_agent",
-          conversation_id: newId,
-          agent_name: effectiveAgent,
-        }),
-      );
-    }
-  }, []);
-
-  // Switch to a different provider by stopping the current stream and starting
-  // a new conversation keyed to the new provider.
+  // Switch provider by starting a new server-owned web-chat session.
   const switchProvider = useCallback(
     (newProvider: string) => {
-      // 1. Stop any active streaming
       if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -1904,55 +1959,16 @@ export function useChat() {
           }),
         );
       }
-
-      // 2. Create a new conversation
-      const newId = uuid();
-      conversationIdRef.current = newId;
-      setConversationId(newId);
+      resetMainChatState();
+      bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
-      saveConversationId(newId);
-      setMessages([]);
-      setSessionRef(null);
-      setSessionTitle(null);
-      setDbSessionId(null);
-      setCurrentBranch(null);
-      setWorktreePath(null);
-      setCanvasSurfaces(new Map());
-      setCanvasPanel(null);
-      setPlanPendingApproval(false);
-      planContentRef.current = null;
-      setContextUsage({
-        totalInputTokens: 0,
-        outputTokens: 0,
-        contextWindow: null,
-        uncachedInputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
+      void ensureMainSession({
+        projectId: projectIdRef.current,
+        provider: newProvider,
+        forceNew: true,
       });
-      activeRequestIdRef.current = null;
-      setIsStreaming(false);
-      setIsThinking(false);
-      setIsLoadingMessages(false);
-
-      // 3. Tell the backend which provider to use for this conversation
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "set_provider",
-            conversation_id: newId,
-            provider: newProvider,
-          }),
-        );
-        wsRef.current.send(
-          JSON.stringify({
-            type: "set_agent",
-            conversation_id: newId,
-            agent_name: activeAgentRef.current,
-          }),
-        );
-      }
     },
-    [isStreaming],  
+    [bindActiveSession, ensureMainSession, isStreaming, resetMainChatState],
   );
 
   // Resume a CLI session (e.g., Claude) — sets the conversation ID
@@ -1984,17 +2000,9 @@ export function useChat() {
       projectId?: string,
       options?: { provider?: string | null; model?: string | null },
     ): Promise<string> => {
-      const newConversationId = uuid();
-
-      // Switch to new conversation
-      conversationIdRef.current = newConversationId;
-      setConversationId(newConversationId);
+      resetMainChatState();
+      bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
-      saveConversationId(newConversationId);
-      activeRequestIdRef.current = null;
-      setIsStreaming(false);
-      setIsThinking(false);
-      setMessages([]);
       setViewingSessionId(null);
       setViewingSessionMeta(null);
       setObservedSessionId(null);
@@ -2003,6 +2011,16 @@ export function useChat() {
       setAttachedSessionMeta(null);
       setSessionInteractionMode("none");
       setProxyDeliveryNotice(null);
+
+      const newConversationId = await ensureMainSession({
+        projectId: projectId ?? projectIdRef.current,
+        provider: options?.provider ?? selectedProviderRef.current,
+        model: options?.model ?? null,
+        forceNew: true,
+      });
+      if (!newConversationId) {
+        return "";
+      }
 
       // Fetch source session's messages for display
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
@@ -2072,7 +2090,7 @@ export function useChat() {
 
       return newConversationId;
     },
-    [],
+    [bindActiveSession, ensureMainSession, resetMainChatState],
   );
 
   // Clear chat history — notifies backend to teardown session, then resets frontend.
@@ -2089,29 +2107,9 @@ export function useChat() {
         conversation_id: oldConversationId,
       }),
     );
-    // Reset frontend state
-    setMessages([]);
-    setCanvasSurfaces(new Map());
-    setCanvasPanel(null);
-    setDbSessionId(null);
-    saveDbSessionId(null);
-    setContextUsage({
-      totalInputTokens: 0,
-      outputTokens: 0,
-      contextWindow: null,
-      uncachedInputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-    });
-    activeRequestIdRef.current = null;
-    // Start a fresh conversation
-    const newId = uuid();
-    conversationIdRef.current = newId;
-    setConversationId(newId);
-    setConversationSwitchKey((k) => k + 1);
-    saveConversationId(newId);
+    startNewChat();
     return true;
-  }, []);
+  }, [startNewChat]);
 
   // Delete a conversation — sends WS message, returns true if sent.
   // Caller is responsible for UI updates (via onChatDeleted callback).
@@ -2129,40 +2127,18 @@ export function useChat() {
       }
       wsRef.current.send(JSON.stringify(payload));
 
-      // If deleting the active conversation, start a new one
       if (id === conversationIdRef.current) {
-        const newId = uuid();
-        conversationIdRef.current = newId;
-        setConversationId(newId);
-        setConversationSwitchKey((k) => k + 1);
-        saveConversationId(newId);
-        setMessages([]);
-        setSessionRef(null);
-        setDbSessionId(null);
-        setCurrentBranch(null);
-        setWorktreePath(null);
-        setCanvasSurfaces(new Map());
-        setCanvasPanel(null);
-        setContextUsage({
-          totalInputTokens: 0,
-          outputTokens: 0,
-          contextWindow: null,
-          uncachedInputTokens: 0,
-          cacheReadTokens: 0,
-          cacheCreationTokens: 0,
-        });
-        activeRequestIdRef.current = null;
-        setIsStreaming(false);
-        setIsThinking(false);
+        startNewChat();
       }
       return true;
     },
-    [],
+    [startNewChat],
   );
 
   // Stop the current streaming response
   const stopStreaming = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
     wsRef.current.send(
       JSON.stringify({
         type: "stop_chat",
@@ -2178,6 +2154,7 @@ export function useChat() {
   const sendMode = useCallback((mode: ChatMode) => {
     currentModeRef.current = mode; // Always track latest intended mode
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
     setPlanPendingApproval(false);
     wsRef.current.send(
       JSON.stringify({
@@ -2192,6 +2169,7 @@ export function useChat() {
   // so the next chat_message recreates it with the correct CWD.
   const sendProjectChange = useCallback((projectId: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
     wsRef.current.send(
       JSON.stringify({
         type: "set_project",
@@ -2205,6 +2183,7 @@ export function useChat() {
   // so the next chat_message recreates it with the new agent context.
   const sendAgentChange = useCallback((agentName: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
     setActiveAgent(agentName);
     wsRef.current.send(
       JSON.stringify({
@@ -2220,6 +2199,7 @@ export function useChat() {
   const sendWorktreeChange = useCallback(
     (worktreePath: string, worktreeId?: string) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      if (!conversationIdRef.current) return;
       wsRef.current.send(
         JSON.stringify({
           type: "set_worktree",
@@ -2249,6 +2229,32 @@ export function useChat() {
         "files:",
         files?.length,
       );
+
+      const needsSession =
+        !conversationIdRef.current || !dbSessionIdRef.current;
+      const isProxyTerminal =
+        attachedSessionIdRef.current &&
+        sessionInteractionModeRef.current === "proxy" &&
+        attachedSessionMetaRef.current?.sessionType === "terminal";
+
+      if (needsSession && !isProxyTerminal) {
+        void ensureMainSession({
+          projectId: projectId ?? projectIdRef.current,
+          provider: selectedProviderRef.current,
+          model: model ?? null,
+        }).then((sessionId) => {
+          if (!sessionId) return;
+          sendMessageRef.current?.(
+            content,
+            model,
+            files,
+            projectId,
+            injectContext,
+          );
+        });
+        return true;
+      }
+
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         // Queue the message to send on reconnect
         console.warn("WebSocket disconnected — queuing message for reconnect");
@@ -2269,11 +2275,7 @@ export function useChat() {
       }
 
       // Route to a swapped terminal session when proxy mode is active.
-      if (
-        attachedSessionIdRef.current &&
-        sessionInteractionModeRef.current === "proxy" &&
-        attachedSessionMetaRef.current?.sessionType === "terminal"
-      ) {
+      if (isProxyTerminal) {
         const messageId = `user-${uuid()}`;
         setMessages((prev) => [
           ...prev,
@@ -2440,6 +2442,7 @@ export function useChat() {
   // then sends a follow-up message to prompt the agent to begin execution.
   const approvePlan = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
     if (!planContentRef.current) return;
     pendingPlanExecutionRef.current = true;
     // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
@@ -2460,6 +2463,7 @@ export function useChat() {
   // Request changes to the plan with feedback
   const requestPlanChanges = useCallback((feedback: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
     if (!planContentRef.current) return;
     pendingPlanFeedbackRef.current = feedback;
     // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
@@ -2621,11 +2625,13 @@ export function useChat() {
     const prevDbSid = loadDbSessionId();
     if (prevDbSid) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/api/sessions/${prevDbSid}/messages?limit=100&offset=0`)
+      fetch(`${baseUrl}/api/chat/${prevDbSid}/messages?limit=100&after_seq=0`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!data?.messages?.length) return;
-          const mapped = mapApiMessages(data.messages);
+          const mapped = data.messages.map((m: Record<string, unknown>) =>
+            mapRenderedMessageToChatMessage(m),
+          );
           if (mapped.length > 0) setMessages(mapped);
         })
         .catch((err) => console.error("Failed to restore messages:", err));

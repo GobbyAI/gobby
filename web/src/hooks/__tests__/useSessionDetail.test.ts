@@ -44,7 +44,7 @@ describe('useSessionDetail', () => {
       messages: [],
       total_count: 0,
     })
-    mockFetch.mockJsonResponse('/api/chat/chat-ext-1/messages', {
+    mockFetch.mockJsonResponse('/api/chat/sess-web/messages', {
       messages: [
         {
           id: 'chat-msg-1',
@@ -64,7 +64,7 @@ describe('useSessionDetail', () => {
     expect(result.current.messages[0].content).toBe('Recovered after reboot')
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
-        String(url).includes('/api/chat/chat-ext-1/messages'),
+        String(url).includes('/api/chat/sess-web/messages'),
       ),
     ).toBe(true)
     expect(
@@ -194,7 +194,7 @@ describe('useSessionDetail', () => {
         )
       }
 
-      if (url.includes('/api/chat/chat-ext-2/messages')) {
+      if (url.includes('/api/chat/sess-web/messages')) {
         chatFetchCount += 1
         const content =
           chatFetchCount === 1 ? 'First parked reply' : 'Updated parked reply'

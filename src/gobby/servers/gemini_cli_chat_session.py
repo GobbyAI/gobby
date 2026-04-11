@@ -23,6 +23,7 @@ from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
+    ThinkingEvent,
     TextChunk,
 )
 from gobby.servers.chat_session_helpers import (
@@ -220,7 +221,9 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
                 async for stream_event in self._client.send(full_prompt):
                     if stream_event.event_type == "init":
                         self.sdk_session_id = (
-                            stream_event.data.get("session_id") or self.sdk_session_id
+                            stream_event.data.get("session_id")
+                            or stream_event.data.get("sessionId")
+                            or self.sdk_session_id
                         )
                         model_name = stream_event.data.get("model")
                         if model_name:
@@ -276,6 +279,12 @@ class GeminiCLIChatSession(GeminiCLIChatSessionPermissionsMixin):
             content = event.data.get("content", "")
             if role == "assistant" and content:
                 return TextChunk(content=content)
+            return None
+
+        if event.event_type == "thinking_delta":
+            content = event.data.get("content", "")
+            if content:
+                return ThinkingEvent(content=content)
             return None
 
         if event.event_type == "error":

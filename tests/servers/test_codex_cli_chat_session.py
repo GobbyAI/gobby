@@ -329,13 +329,31 @@ class TestCodexCLIChatSession:
         ):
             session = CodexCLIChatSession(conversation_id="conv-1")
             await session.start()
+            session._turn_id = "turn-1"
             await session.interrupt()
 
         interrupt_req = json.loads(proc.stdin.write.call_args_list[-1][0][0].decode())
         assert interrupt_req["method"] == "turn/interrupt"
         assert interrupt_req["params"]["threadId"] == "thread-1"
+        assert interrupt_req["params"]["turnId"] == "turn-1"
 
     @pytest.mark.asyncio
     async def test_interrupt_noop_when_no_process(self) -> None:
         session = CodexCLIChatSession(conversation_id="conv-1")
         await session.interrupt()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_interrupt_noop_without_active_turn(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
+        with (
+            patch(
+                "gobby.servers.codex_cli_chat_session.shutil.which", return_value="/usr/bin/codex"
+            ),
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc),
+        ):
+            session = CodexCLIChatSession(conversation_id="conv-1")
+            await session.start()
+            writes_before_interrupt = proc.stdin.write.call_count
+            await session.interrupt()
+
+        assert proc.stdin.write.call_count == writes_before_interrupt

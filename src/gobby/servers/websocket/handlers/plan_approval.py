@@ -119,17 +119,24 @@ async def handle_recovered_plan_approval(
         logger.warning("Recovered plan approval: no session_manager available")
         return
 
-    # Look up DB session by external_id (= conversation_id for web-chat)
+    # Primary path: conversation_id is the canonical DB session ID for web chat.
     db_session = None
-    for source in ("claude", "gemini", "codex"):
-        try:
-            db_session = await asyncio.to_thread(
-                session_manager.find_active_by_external_id, conversation_id, source
-            )
-            if db_session:
-                break
-        except Exception as e:
-            logger.debug(f"Failed to find session for source={source}: {e}", exc_info=True)
+    try:
+        db_session = await asyncio.to_thread(session_manager.get, conversation_id)
+    except Exception as e:
+        logger.debug(f"Failed to load recovered web-chat session {conversation_id}: {e}")
+
+    # Compatibility fallback for older clients that still send external_id.
+    if not db_session:
+        for source in ("claude", "gemini", "codex"):
+            try:
+                db_session = await asyncio.to_thread(
+                    session_manager.find_active_by_external_id, conversation_id, source
+                )
+                if db_session:
+                    break
+            except Exception as e:
+                logger.debug(f"Failed to find session for source={source}: {e}", exc_info=True)
 
     if not db_session:
         logger.warning(

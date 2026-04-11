@@ -71,7 +71,7 @@ export function ChatPage({
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const activeSession = conversations.sessions.find(
-    (s) => s.external_id === conversations.activeSessionId,
+    (s) => s.id === conversations.activeSessionId,
   );
   const activeTitle = activeSession?.title ?? null;
   const effectiveSessionRef =
