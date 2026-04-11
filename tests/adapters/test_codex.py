@@ -593,6 +593,37 @@ class TestCodexAppServerClientThreadManagement:
 
         assert "thr-delete" not in client._threads
 
+    @pytest.mark.asyncio
+    async def test_list_models_follows_pagination(self) -> None:
+        """list_models requests model/list until nextCursor is exhausted."""
+        client = CodexAppServerClient()
+
+        with patch.object(
+            client,
+            "_send_request",
+            new_callable=AsyncMock,
+            side_effect=[
+                {
+                    "data": [{"model": "gpt-5.4"}],
+                    "nextCursor": "cursor-1",
+                },
+                {
+                    "data": [{"model": "gpt-5.4-mini"}],
+                },
+            ],
+        ) as mock_send:
+            models = await client.list_models(limit=10, include_hidden=True)
+
+        assert models == [{"model": "gpt-5.4"}, {"model": "gpt-5.4-mini"}]
+        assert mock_send.call_args_list[0].args == (
+            "model/list",
+            {"limit": 10, "includeHidden": True},
+        )
+        assert mock_send.call_args_list[1].args == (
+            "model/list",
+            {"limit": 10, "includeHidden": True, "cursor": "cursor-1"},
+        )
+
 
 class TestCodexAppServerClientTurnManagement:
     """Tests for turn management methods."""

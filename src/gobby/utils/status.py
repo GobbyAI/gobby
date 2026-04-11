@@ -227,6 +227,15 @@ def format_status_message(
         elif isinstance(lmstudio, dict):
             lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (stopped)")
 
+        provider_models = data.get("provider_models", {})
+        for provider, info in provider_models.items():
+            source = info.get("source", "failed")
+            count = info.get("model_count", 0)
+            detail = f"{count} models ({source})"
+            if info.get("error"):
+                detail += f" - {info['error']}"
+            lines.append(f"  {('Models ' + provider + ':'):<{_LW}}{detail}")
+
         lines.append("")
 
     # ---- Dependencies ----
@@ -307,6 +316,15 @@ def format_status_message(
             health_issues.append(
                 f"MCP: {name} — {info['consecutive_failures']} consecutive failures"
             )
+
+    provider_models = data.get("provider_models", {})
+    for name, info in provider_models.items():
+        source = info.get("source")
+        error = info.get("error")
+        if source == "cache":
+            health_issues.append(f"Provider models: {name} — using cache ({error or 'probe failed'})")
+        elif source == "failed":
+            health_issues.append(f"Provider models: {name} — {error or 'discovery failed'}")
 
     if health_issues:
         lines.append("Health Issues:")

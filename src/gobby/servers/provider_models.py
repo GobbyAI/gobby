@@ -66,7 +66,7 @@ class ProviderModelCatalog:
 
     def __init__(
         self,
-        config: "DaemonConfig | None",
+        config: DaemonConfig | None,
         *,
         cache_path: Path | None = None,
     ) -> None:
@@ -172,7 +172,7 @@ class ProviderModelCatalog:
     async def refresh(
         self,
         *,
-        codex_client: "CodexAppServerClient | None" = None,
+        codex_client: CodexAppServerClient | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Refresh provider catalogs, falling back to last-good cache per provider."""
         old = copy.deepcopy(self._providers)
@@ -219,7 +219,7 @@ class ProviderModelCatalog:
         self,
         provider: str,
         *,
-        codex_client: "CodexAppServerClient | None" = None,
+        codex_client: CodexAppServerClient | None = None,
     ) -> list[dict[str, Any]]:
         if provider == "claude":
             return await self._discover_claude_models()
@@ -232,7 +232,7 @@ class ProviderModelCatalog:
     async def _discover_codex_models(
         self,
         *,
-        codex_client: "CodexAppServerClient | None" = None,
+        codex_client: CodexAppServerClient | None = None,
     ) -> list[dict[str, Any]]:
         if not shutil.which("codex"):
             raise FileNotFoundError("codex CLI not found in PATH")
@@ -321,7 +321,8 @@ class ProviderModelCatalog:
             if isinstance(probe, Exception):
                 errors.append(_short_error(probe))
                 continue
-            models.append(probe)
+            if isinstance(probe, dict):
+                models.append(probe)
 
         if not models:
             raise RuntimeError("; ".join(errors) or "Claude model probes failed")

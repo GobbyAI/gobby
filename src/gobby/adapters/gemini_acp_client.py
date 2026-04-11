@@ -370,7 +370,7 @@ class GeminiACPClient:
 
         await self._io_lock.acquire()
         try:
-            request = {
+            request: dict[str, Any] = {
                 "jsonrpc": "2.0",
                 "method": "session/prompt",
                 "params": {

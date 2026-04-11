@@ -75,6 +75,32 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
     global _startup_tracker
     tracker = _startup_tracker
 
+    provider_catalog = getattr(runner.http_server.services, "provider_model_catalog", None)
+    if provider_catalog is not None:
+        try:
+            status = await provider_catalog.refresh(codex_client=runner.http_server.codex_client)
+            if tracker:
+                tracker.complete("Provider model catalogs updated")
+                for provider, info in status.items():
+                    source = info.get("source", "failed")
+                    error = info.get("error")
+                    if source == "live":
+                        continue
+                    if source == "cache":
+                        tracker.error(
+                            f"Provider models ({provider})",
+                            f"using cache: {error or 'live probe failed'}",
+                        )
+                    else:
+                        tracker.error(
+                            f"Provider models ({provider})",
+                            error or "model discovery failed",
+                        )
+        except Exception as e:
+            logger.warning(f"Provider model discovery failed: {e}")
+            if tracker:
+                tracker.error("Provider models", str(e))
+
     # Connect MCP servers
     try:
         await asyncio.wait_for(runner.mcp_proxy.connect_all(), timeout=10.0)

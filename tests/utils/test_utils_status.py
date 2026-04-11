@@ -161,6 +161,26 @@ class TestFormatStatusMessage:
         assert "healthy" in result
         assert "Neo4j" in result
 
+    def test_provider_model_services_and_health_issues(self) -> None:
+        result = format_status_message(
+            running=True,
+            api_data={
+                "provider_models": {
+                    "claude": {"source": "live", "model_count": 3, "error": None},
+                    "codex": {
+                        "source": "cache",
+                        "model_count": 4,
+                        "error": "probe failed",
+                    },
+                },
+            },
+        )
+
+        assert "Models claude:" in result
+        assert "3 models (live)" in result
+        assert "Models codex:" in result
+        assert "using cache (probe failed)" in result
+
     def test_config_issues(self) -> None:
         result = format_status_message(
             running=True,

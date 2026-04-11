@@ -354,6 +354,14 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         # Calculate response time
         response_time_ms = (time.perf_counter() - start_time) * 1000
 
+        provider_model_status = {}
+        provider_model_catalog = getattr(server.services, "provider_model_catalog", None)
+        if provider_model_catalog is not None:
+            try:
+                provider_model_status = provider_model_catalog.status_snapshot()
+            except Exception as e:
+                logger.warning(f"Failed to get provider model catalog status: {e}")
+
         return {
             "status": "healthy" if server._running else "degraded",
             "dev_mode": getattr(server.services, "dev_mode", False),
@@ -375,6 +383,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "memory": memory_stats,
             "skills": skills_stats,
             "pipelines": pipeline_stats,
+            "provider_models": provider_model_status,
             "savings": savings_stats,
             "agents": agent_stats,
             "fd_usage": fd_usage,

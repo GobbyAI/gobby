@@ -128,6 +128,7 @@ class TestAdminEndpoints:
         assert "server" in data
         assert "port" in data["server"]
         assert data["server"]["test_mode"] is True
+        assert "provider_models" in data
 
     def test_config_endpoint(self, client: TestClient) -> None:
         """Test /admin/config endpoint returns configuration."""

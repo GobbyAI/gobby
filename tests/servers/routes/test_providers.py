@@ -178,6 +178,34 @@ class TestProviderModelsRoute:
         assert providers["codex"]["available"] is False
         assert providers["codex"]["startup_error"] == "codex failed"
 
+    def test_models_route_prefers_provider_model_catalog_when_available(self) -> None:
+        app = FastAPI()
+        provider_model_catalog = MagicMock()
+        provider_model_catalog.get_provider_snapshot.side_effect = lambda provider: {
+            "source": "live",
+            "models": [{"value": f"{provider}-model", "label": f"{provider}-label"}],
+        }
+        server = SimpleNamespace(
+            services=SimpleNamespace(
+                config=DaemonConfig(),
+                provider_model_catalog=provider_model_catalog,
+            )
+        )
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        with patch(
+            "gobby.servers.routes.providers.shutil.which",
+            side_effect=lambda b: f"/usr/local/bin/{b}",
+        ):
+            response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        assert providers["claude"]["models"][0]["value"] == "claude-model"
+        assert providers["gemini"]["models"][0]["value"] == "gemini-model"
+        assert providers["codex"]["models"][0]["value"] == "codex-model"
+        assert providers["codex"]["source"] == "live"
+
     def test_includes_local_claude_model_when_configured(self) -> None:
         """Claude model catalog exposes a local option when daemon local config exists."""
         app = FastAPI()

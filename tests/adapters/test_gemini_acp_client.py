@@ -170,6 +170,42 @@ class TestStart:
                 assert "--acp" in call_args[0]
 
     @pytest.mark.asyncio
+    async def test_start_stores_session_info(self) -> None:
+        proc = _mock_process(
+            stdout_lines=[
+                json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}) + "\n",
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "result": {
+                            "sessionId": "sess-1",
+                            "models": {
+                                "availableModels": [
+                                    {"modelId": "gemini-3.1-pro-preview", "name": "Pro"}
+                                ]
+                            },
+                        },
+                    }
+                )
+                + "\n",
+            ]
+        )
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                await client.start()
+
+        assert client.session_info["sessionId"] == "sess-1"
+        assert client.session_info["models"]["availableModels"][0]["modelId"] == (
+            "gemini-3.1-pro-preview"
+        )
+
+    @pytest.mark.asyncio
     async def test_start_with_model_includes_cli_flag(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
