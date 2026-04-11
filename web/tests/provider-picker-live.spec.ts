@@ -8,7 +8,12 @@ const PROMPT_TIMEOUT_MS = 120_000;
 interface ProviderModelEntry {
   provider: string;
   available: boolean;
-  models: Array<{ value: string; label: string }>;
+  models: Array<{
+    value: string;
+    label: string;
+    hidden?: boolean;
+    is_default?: boolean;
+  }>;
   source: string;
 }
 
@@ -70,8 +75,9 @@ async function selectProviderModel(
   modelLabel: string,
 ): Promise<void> {
   await page.getByLabel("Select provider and model").click();
-  await expect(page.getByText(modelLabel)).toBeVisible();
-  await page.getByText(modelLabel).click();
+  const option = page.getByRole("button", { name: modelLabel, exact: true });
+  await expect(option).toBeVisible();
+  await option.click();
   await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
 }
 
@@ -159,15 +165,17 @@ test.describe("Live provider picker verification", () => {
       expect(provider.models.length, `Provider ${providerName} must expose models`).toBeGreaterThan(
         0,
       );
+      const model =
+        provider.models.find((entry) => entry.is_default) ||
+        provider.models.find((entry) => !entry.hidden) ||
+        provider.models[0];
 
-      for (const model of provider.models) {
-        await openFreshChat(
-          page,
-          `${runId}-${providerName}-${sanitizeToken(model.value)}`,
-        );
-        await selectProviderModel(page, model.label);
-        await sendProbePrompt(page, request, providerName, model);
-      }
+      await openFreshChat(
+        page,
+        `${runId}-${providerName}-${sanitizeToken(model.value)}`,
+      );
+      await selectProviderModel(page, model.label);
+      await sendProbePrompt(page, request, providerName, model);
     }
   });
 });

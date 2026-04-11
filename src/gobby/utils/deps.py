@@ -311,15 +311,6 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
                 "error": "provider configured but codex CLI not in PATH",
             }
         )
-    if getattr(config, "codex_app_server", False) and not shutil.which("codex"):
-        # Only add if not already added by providers check
-        if not any(i["subsystem"] == "Codex" for i in issues):
-            issues.append(
-                {
-                    "subsystem": "Codex",
-                    "error": "codex_app_server enabled but codex CLI not in PATH",
-                }
-            )
     if providers.gemini and not shutil.which("gemini"):
         issues.append(
             {

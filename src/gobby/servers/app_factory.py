@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+_CODEX_SYNC_TIMEOUT_SECONDS = 10.0
 
 
 def create_app(server: "HTTPServer") -> FastAPI:
@@ -235,28 +236,43 @@ def create_app(server: "HTTPServer") -> FastAPI:
         # Store server instance for dependency injection
         app.state.server = server
 
+        runtime_manager = getattr(server.services, "web_chat_runtime_manager", None)
+        if runtime_manager is not None:
+            try:
+                await runtime_manager.start(background=True)
+                logger.debug("Web chat runtime manager startup scheduled")
+            except Exception as e:
+                logger.warning(f"Failed to start web chat runtime manager: {e}")
+
+        async def _sync_existing_codex_sessions() -> None:
+            if not getattr(app.state, "codex_adapter", None):
+                return
+            try:
+                synced = await asyncio.wait_for(
+                    app.state.codex_adapter.sync_existing_sessions(),
+                    timeout=_CODEX_SYNC_TIMEOUT_SECONDS,
+                )
+                logger.debug(f"Synced {synced} existing Codex sessions")
+            except TimeoutError:
+                logger.warning(
+                    "Timed out syncing existing Codex sessions after %.1fs",
+                    _CODEX_SYNC_TIMEOUT_SECONDS,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to sync existing Codex sessions: {e}")
+
         # Initialize CodexAdapter for session tracking
         app.state.codex_adapter = None
+        app.state.codex_sync_task = None
         if server.codex_client and CodexAdapter.is_codex_available():
-            # Start the app-server subprocess
-            try:
-                await server.codex_client.start()
-                logger.debug("CodexAppServerClient started")
-            except Exception as e:
-                logger.warning(f"Failed to start CodexAppServerClient: {e}")
-
             codex_adapter = CodexAdapter(hook_manager=app.state.hook_manager)
             codex_adapter.attach_to_client(server.codex_client)
             app.state.codex_adapter = codex_adapter
             logger.debug("CodexAdapter attached to CodexAppServerClient")
 
-            # Sync existing Codex sessions when client is connected
+            # Sync existing Codex sessions after startup without blocking HTTP
             if server.codex_client.is_connected:
-                try:
-                    synced = await codex_adapter.sync_existing_sessions()
-                    logger.debug(f"Synced {synced} existing Codex sessions")
-                except Exception as e:
-                    logger.warning(f"Failed to sync existing Codex sessions: {e}")
+                app.state.codex_sync_task = asyncio.create_task(_sync_existing_codex_sessions())
 
         # Start TmuxPaneMonitor if tmux is enabled
         if server.services.config and server.services.config.tmux.enabled:
@@ -319,15 +335,22 @@ def create_app(server: "HTTPServer") -> FastAPI:
                 logger.warning(f"Failed to stop voice warmup task: {e}")
 
         # Cleanup CodexAdapter and stop app-server client
+        if getattr(app.state, "codex_sync_task", None):
+            app.state.codex_sync_task.cancel()
+            try:
+                await app.state.codex_sync_task
+            except asyncio.CancelledError:
+                pass
+            logger.debug("Codex session sync task stopped")
         if hasattr(app.state, "codex_adapter") and app.state.codex_adapter:
             app.state.codex_adapter.detach_from_client()
             logger.debug("CodexAdapter detached")
-        if server.codex_client:
+        if runtime_manager is not None:
             try:
-                await server.codex_client.stop()
-                logger.debug("CodexAppServerClient stopped")
+                await runtime_manager.stop()
+                logger.debug("Web chat runtime manager stopped")
             except Exception as e:
-                logger.warning(f"Failed to stop CodexAppServerClient: {e}")
+                logger.warning(f"Failed to stop web chat runtime manager: {e}")
 
         # Stop SessionLivenessMonitor
         if hasattr(app.state, "liveness_monitor") and app.state.liveness_monitor:

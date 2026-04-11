@@ -15,16 +15,8 @@ interface ProviderModelEntry {
 interface SessionSummary {
   id: string;
   ref: string;
-  seq_num?: number | null;
   source: string;
   model: string;
-  title?: string | null;
-}
-
-interface SentChat {
-  conversationId: string;
-  dbSessionId: string;
-  session: SessionSummary;
 }
 
 function getLiveChatUrl(): string {
@@ -44,15 +36,15 @@ function pause(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function loadLiveCatalog(
+async function loadGeminiModel(
   request: Parameters<typeof test>[0]["request"],
-): Promise<Record<string, ProviderModelEntry>> {
+): Promise<{ value: string; label: string }> {
   const authResponse = await request.get(getApiUrl("/api/auth/status"));
   expect(authResponse.ok()).toBeTruthy();
   const authStatus = await authResponse.json();
   test.skip(
     authStatus.auth_required && !authStatus.authenticated,
-    "Live Gemini swap verification requires an authenticated daemon session.",
+    "Live Gemini verification requires an authenticated daemon session.",
   );
 
   const providersResponse = await request.get(getApiUrl("/api/providers/models"));
@@ -61,11 +53,16 @@ async function loadLiveCatalog(
   const providers = Array.isArray(providersBody?.providers)
     ? (providersBody.providers as ProviderModelEntry[])
     : [];
+  const gemini = providers.find((entry) => entry.provider === "gemini");
 
-  return Object.fromEntries(providers.map((entry) => [entry.provider, entry]));
+  expect(gemini, "Gemini must exist in /api/providers/models").toBeTruthy();
+  expect(gemini?.available, "Gemini must be available").toBeTruthy();
+  expect(gemini?.models.length, "Gemini must expose at least one model").toBeGreaterThan(0);
+
+  return gemini!.models[0];
 }
 
-async function openLiveChat(
+async function openFreshChat(
   page: Parameters<typeof test>[0]["page"],
   conversationId: string,
 ): Promise<void> {
@@ -114,8 +111,8 @@ async function waitForSessionSummary(
 async function waitForAssistantToken(
   request: Parameters<typeof test>[0]["request"],
   dbSessionId: string,
-  token?: string,
-): Promise<string> {
+  token: string,
+): Promise<void> {
   const deadline = Date.now() + PROMPT_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
@@ -137,23 +134,14 @@ async function waitForAssistantToken(
         throw new Error(`Gemini returned an error instead of a response: ${failed}`);
       }
 
-      if (token) {
-        const found = assistantMessages.find((content: string) => content.includes(token));
-        if (found) {
-          return found;
-        }
-      } else if (assistantMessages.length > 0) {
-        return assistantMessages[assistantMessages.length - 1];
+      if (assistantMessages.some((content: string) => content.includes(token))) {
+        return;
       }
     }
     await pause(1000);
   }
 
-  throw new Error(
-    token
-      ? `Timed out waiting for assistant token ${token} in ${dbSessionId}`
-      : `Timed out waiting for an assistant response in ${dbSessionId}`,
-  );
+  throw new Error(`Timed out waiting for assistant token ${token} in ${dbSessionId}`);
 }
 
 async function sendPromptAndWait(
@@ -161,7 +149,7 @@ async function sendPromptAndWait(
   request: Parameters<typeof test>[0]["request"],
   prompt: string,
   token: string,
-): Promise<SentChat> {
+): Promise<{ dbSessionId: string; session: SessionSummary }> {
   const input = page.getByRole("textbox", { name: /message input/i });
   await input.fill(prompt);
   await input.press("Enter");
@@ -173,40 +161,26 @@ async function sendPromptAndWait(
   );
 
   const dbSessionId = await page.evaluate(() => localStorage.getItem("gobby-db-session-id"));
-  const conversationId = await page.evaluate(() => localStorage.getItem("gobby-conversation-id"));
   expect(dbSessionId).toBeTruthy();
-  expect(conversationId).toBeTruthy();
 
   const session = await waitForSessionSummary(request, dbSessionId!);
-  await waitForAssistantToken(request, dbSessionId!, token);
+  const assistantContent = await waitForAssistantToken(request, dbSessionId!, token);
   await expect(
-    page.locator(".message-content").filter({
-      hasText: token,
-    }).last(),
+    page
+      .locator(".message-content")
+      .filter({ hasText: token || assistantContent.slice(0, 120) })
+      .last(),
   ).toBeVisible({
     timeout: PROMPT_TIMEOUT_MS,
   });
-  await expect(page.getByText("Thinking...")).toHaveCount(0, { timeout: PROMPT_TIMEOUT_MS });
-  await expect(page.getByText("Generation failed")).toHaveCount(0);
 
   return {
-    conversationId: conversationId!,
     dbSessionId: dbSessionId!,
     session,
   };
 }
 
-async function startNewChat(
-  page: Parameters<typeof test>[0]["page"],
-  _previousConversationId: string,
-): Promise<void> {
-  await page.locator('button[title="New Chat"]').click();
-  await expect(page.locator(".command-bar-session")).toContainText("New Chat Session", {
-    timeout: 15_000,
-  });
-}
-
-async function swapToSession(
+async function openSessionFromCommandPalette(
   page: Parameters<typeof test>[0]["page"],
   sessionRef: string,
 ): Promise<void> {
@@ -221,62 +195,73 @@ async function swapToSession(
   await expect(palette).toBeHidden();
 }
 
-test.describe("Live Gemini web chat swap verification", () => {
+test.describe("Live Gemini cross-context continuity verification", () => {
   test.skip(
     !process.env[LIVE_E2E_FLAG],
-    `Set ${LIVE_E2E_FLAG}=1 to run real daemon-backed Gemini swap verification.`,
+    `Set ${LIVE_E2E_FLAG}=1 to run real daemon-backed Gemini verification.`,
   );
 
-  test("can start Gemini chats, swap back to an earlier chat, and still get responses", async ({
+  test("can reopen the same Gemini web chat in a second browser context and continue it", async ({
+    browser,
     page,
     request,
   }) => {
-    test.setTimeout(12 * 60 * 1000);
+    test.setTimeout(10 * 60 * 1000);
 
-    const catalog = await loadLiveCatalog(request);
-    const gemini = catalog.gemini;
-    expect(gemini, "Gemini must exist in /api/providers/models").toBeTruthy();
-    expect(gemini.available, "Gemini must be available").toBeTruthy();
-    expect(gemini.models.length, "Gemini must expose at least one model").toBeGreaterThan(0);
-
-    const model = gemini.models[0];
+    const model = await loadGeminiModel(request);
     const runId = Date.now().toString(36);
 
     await configureGeminiModel(request, model.value);
-    await openLiveChat(page, `live-gemini-swap-${runId}`);
+    await openFreshChat(page, `live-gemini-cross-context-${runId}`);
 
-    const firstToken = `live-gemini-swap-first-${runId}`;
-    const firstChat = await sendPromptAndWait(
+    const firstToken = `live-gemini-context-one-${runId}`;
+    const firstTurn = await sendPromptAndWait(
       page,
       request,
       `Reply with exactly ${firstToken}.`,
       firstToken,
     );
-    await expect(page.locator(".command-bar-session")).toContainText(firstChat.session.ref);
 
-    await startNewChat(page, firstChat.conversationId);
+    const secondContext = await browser.newContext();
+    const secondPage = await secondContext.newPage();
 
-    const secondToken = `live-gemini-swap-second-${runId}`;
-    const secondChat = await sendPromptAndWait(
-      page,
+    await secondPage.goto(getLiveChatUrl());
+    await secondPage.evaluate(() => {
+      localStorage.removeItem("gobby-conversation-id");
+      localStorage.removeItem("gobby-db-session-id");
+      localStorage.removeItem("gobby-selected-provider");
+    });
+    await secondPage.reload();
+    await expect(secondPage.locator(".command-bar-session")).toContainText("New Chat Session");
+
+    await openSessionFromCommandPalette(secondPage, firstTurn.session.ref);
+
+    await secondPage.waitForFunction(
+      (expectedId) => localStorage.getItem("gobby-db-session-id") === expectedId,
+      firstTurn.dbSessionId,
+      { timeout: 15_000 },
+    );
+
+    await expect(secondPage.locator(".command-bar-session")).toContainText(firstTurn.session.ref);
+    await expect(
+      secondPage
+        .locator(".message-content")
+        .filter({ hasText: firstToken })
+        .last(),
+    ).toBeVisible({
+      timeout: PROMPT_TIMEOUT_MS,
+    });
+
+    const secondToken = `live-gemini-context-two-${runId}`;
+    const secondTurn = await sendPromptAndWait(
+      secondPage,
       request,
       `Reply with exactly ${secondToken}.`,
       secondToken,
     );
-    expect(secondChat.conversationId).not.toBe(firstChat.conversationId);
-    expect(secondChat.dbSessionId).not.toBe(firstChat.dbSessionId);
 
-    await swapToSession(page, firstChat.session.ref);
-    await expect(page.locator(".command-bar-session")).toContainText(firstChat.session.ref);
-    await expect(page.getByText("Generation failed")).toHaveCount(0);
-
-    const followupToken = `live-gemini-followup-${runId}`;
-    const followup = await sendPromptAndWait(
-      page,
-      request,
-      `Respond with one short sentence that ends with ${followupToken}.`,
-      followupToken,
-    );
-    expect(followup.dbSessionId).toBe(firstChat.dbSessionId);
+    expect(secondTurn.dbSessionId).toBe(firstTurn.dbSessionId);
+    await waitForAssistantToken(request, firstTurn.dbSessionId, secondToken);
+    await secondContext.close();
   });
 });

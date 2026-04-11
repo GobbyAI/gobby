@@ -287,24 +287,16 @@ class ChatSessionMixin:
         if not effective_provider and agent_body:
             effective_provider = getattr(agent_body, "provider", None)
 
-        # Route to appropriate session implementation
-        # Claude uses SDK (no interactive subprocess protocol).
-        # Gemini uses ACP (gemini --acp, JSON-RPC over stdio).
-        # Codex uses app-server (codex app-server, JSON-RPC over stdio).
-        match effective_provider:
-            case "gemini":
-                from gobby.servers.gemini_cli_chat_session import GeminiCLIChatSession
-
-                session: ChatSessionProtocol = GeminiCLIChatSession(
-                    conversation_id=conversation_id, _model=model
-                )
-            case "codex":
-                from gobby.servers.codex_cli_chat_session import CodexCLIChatSession
-
-                session = CodexCLIChatSession(conversation_id=conversation_id, model=model)
-            case _:
-                # Claude + Auto + unknown: SDK path
-                session = ChatSession(conversation_id=conversation_id)
+        runtime_manager = getattr(self, "web_chat_runtime_manager", None)
+        provider_name = effective_provider or "claude"
+        if runtime_manager is not None:
+            session = runtime_manager.create_session(
+                provider=provider_name,
+                conversation_id=conversation_id,
+                model=model,
+            )
+        else:
+            session = ChatSession(conversation_id=conversation_id)
 
         if resume_session_id:
             session.resume_session_id = resume_session_id

@@ -25,6 +25,7 @@ class DummyMixin(ChatSessionMixin):
         self._session_create_locks: dict = {}
         self.session_manager = None
         self.daemon_config = None
+        self.web_chat_runtime_manager = None
 
     async def _fire_lifecycle(self, cid: str, event_type: str, data: object) -> None:
         pass
@@ -306,9 +307,6 @@ class TestCreateChatSessionInner:
     @pytest.mark.asyncio
     async def test_create_gemini_chat_session_uses_identity_only_prompt(self, mixin: DummyMixin):
         with (
-            patch(
-                "gobby.servers.gemini_cli_chat_session.GeminiCLIChatSession"
-            ) as MockSessionClass,
             patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
             patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
             patch(
@@ -328,13 +326,15 @@ class TestCreateChatSessionInner:
             mock_resolve_agent.return_value = agent_body
 
             mock_session = AsyncMock()
+            mock_session.provider = "gemini"
             mock_session.chat_mode = "plan"
             mock_session.db_session_id = None
             mock_session.resume_session_id = None
             mock_session.project_path = None
             mock_session.project_id = None
             mock_session.system_prompt_override = None
-            MockSessionClass.return_value = mock_session
+            mixin.web_chat_runtime_manager = MagicMock()
+            mixin.web_chat_runtime_manager.create_session.return_value = mock_session
 
             mock_db_sess = MagicMock()
             mock_db_sess.id = "db-id-gemini"
@@ -349,6 +349,11 @@ class TestCreateChatSessionInner:
 
             await mixin._create_chat_session_inner("conv-gemini", provider="gemini")
 
+            mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
+                provider="gemini",
+                conversation_id="conv-gemini",
+                model=None,
+            )
             assert mock_session.system_prompt_override == (
                 "## Role\nYou are Gobby\n\n"
                 "## Goal\nFix the daemon\n\n"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -76,6 +76,29 @@ class TestProviderRoutes:
                 assert p["available"] is True
                 assert p["path"] == paths[p["name"]]
 
+    def test_runtime_health_can_disable_startup_failed_provider(self) -> None:
+        app = FastAPI()
+        runtime_manager = MagicMock()
+        runtime_manager.health.side_effect = lambda provider: SimpleNamespace(
+            available=False if provider == "gemini" else True,
+            startup_error="gemini failed" if provider == "gemini" else None,
+        )
+        server = SimpleNamespace(
+            services=SimpleNamespace(config=DaemonConfig(), web_chat_runtime_manager=runtime_manager)
+        )
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        with patch(
+            "gobby.servers.routes.providers.shutil.which",
+            side_effect=lambda b: f"/usr/local/bin/{b}",
+        ):
+            response = client.get("/api/providers")
+
+        providers = {p["name"]: p for p in response.json()["providers"]}
+        assert providers["gemini"]["available"] is False
+        assert providers["gemini"]["startup_error"] == "gemini failed"
+
 
 class TestProviderModelsRoute:
     """Tests for GET /api/providers/models."""
@@ -131,6 +154,29 @@ class TestProviderModelsRoute:
             assert providers["claude"]["available"] is True
             assert providers["gemini"]["available"] is False
             assert providers["codex"]["available"] is False
+
+    def test_models_route_uses_runtime_health_for_backend_failures(self) -> None:
+        app = FastAPI()
+        runtime_manager = MagicMock()
+        runtime_manager.health.side_effect = lambda provider: SimpleNamespace(
+            available=False if provider == "codex" else True,
+            startup_error="codex failed" if provider == "codex" else None,
+        )
+        server = SimpleNamespace(
+            services=SimpleNamespace(config=DaemonConfig(), web_chat_runtime_manager=runtime_manager)
+        )
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        with patch(
+            "gobby.servers.routes.providers.shutil.which",
+            side_effect=lambda b: f"/usr/local/bin/{b}",
+        ):
+            response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        assert providers["codex"]["available"] is False
+        assert providers["codex"]["startup_error"] == "codex failed"
 
     def test_includes_local_claude_model_when_configured(self) -> None:
         """Claude model catalog exposes a local option when daemon local config exists."""

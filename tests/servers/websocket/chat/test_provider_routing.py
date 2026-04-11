@@ -35,6 +35,7 @@ def _make_mixin(**overrides: Any) -> ChatSessionMixin:
     mixin._inject_pending_messages = MagicMock(return_value=None)
     mixin.broadcast_session_event = AsyncMock(return_value=None)
     mixin.hook_broadcaster = None
+    mixin.web_chat_runtime_manager = None
     mixin.session_manager = MagicMock()
     mixin.session_manager.db = MagicMock()
     mixin.session_manager.register = MagicMock(
@@ -106,6 +107,16 @@ class TestPendingProviderOverride:
         """Queued provider overrides should route the next session creation."""
         mixin = _make_mixin()
         mixin._pending_providers["test-conv-routing"] = "gemini"
+        mock_session = AsyncMock()
+        mock_session.provider = "gemini"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
 
         session = await _create_session_for_provider(mixin, provider=None)
 
@@ -161,14 +172,6 @@ async def _create_session_for_provider(
     with (
         patch(
             "gobby.servers.chat_session.ChatSession.start",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "gobby.servers.gemini_cli_chat_session.GeminiCLIChatSession.start",
-            new=AsyncMock(return_value=None),
-        ),
-        patch(
-            "gobby.servers.codex_cli_chat_session.CodexCLIChatSession.start",
             new=AsyncMock(return_value=None),
         ),
     ):

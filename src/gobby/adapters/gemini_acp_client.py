@@ -2,7 +2,7 @@
 
 Wraps `gemini --acp` subprocess, communicating over JSON-RPC 2.0 via stdio.
 Normalizes Gemini's NDJSON stream events into structured dicts that
-GeminiCLIChatSession converts to ChatEvent instances.
+Gemini web-chat wrappers convert to ChatEvent instances.
 
 Protocol lifecycle:
   1. initialize  →  handshake with protocol version and client info
@@ -58,6 +58,31 @@ def _resolve_timeout(value: float | None, *, env_name: str, default: float) -> f
     return parsed
 
 
+def _extract_session_id(payload: Any) -> str | None:
+    """Extract an ACP session ID from common response/notification shapes."""
+    if not isinstance(payload, dict):
+        return None
+
+    for key in ("sessionId", "session_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    session = payload.get("session")
+    if isinstance(session, dict):
+        nested = _extract_session_id(session)
+        if nested:
+            return nested
+
+    result = payload.get("result")
+    if isinstance(result, dict):
+        nested = _extract_session_id(result)
+        if nested:
+            return nested
+
+    return None
+
+
 @dataclass
 class StreamEvent:
     """A normalized event from the Gemini ACP stream.
@@ -106,6 +131,8 @@ class GeminiACPClient:
         self._process: asyncio.subprocess.Process | None = None
         self._started = False
         self._session_id: str | None = None
+        self._session_info: dict[str, Any] = {}
+        self._io_lock = asyncio.Lock()
 
     @property
     def is_started(self) -> bool:
@@ -117,10 +144,18 @@ class GeminiACPClient:
         """The ACP session ID obtained from session/new or session/load."""
         return self._session_id
 
+    @property
+    def session_info(self) -> dict[str, Any]:
+        """The full ACP session/new or session/load result."""
+        return dict(self._session_info)
+
     async def start(
         self,
         session_id: str | None = None,
         model: str | None = None,
+        *,
+        auto_session: bool = True,
+        cwd: str | None = None,
     ) -> None:
         """Launch ``gemini --acp``, perform initialize handshake, and create/resume session.
 
@@ -171,30 +206,59 @@ class GeminiACPClient:
             },
         )
         logger.debug(f"ACP initialize response: {init_result}")
+        if auto_session:
+            if session_id:
+                session_result = await self.load_session(session_id, model=model, cwd=cwd)
+            else:
+                session_result = await self.create_session(model=model, cwd=cwd)
+            self._session_info = session_result if isinstance(session_result, dict) else {}
+            self._session_id = (
+                session_result.get("sessionId")
+                if session_result and session_result.get("sessionId")
+                else session_id
+            )
+            logger.debug(f"ACP session ID: {self._session_id}")
+        else:
+            self._session_id = None
+            self._session_info = {}
 
+    async def create_session(
+        self,
+        *,
+        model: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new ACP session on an already-started shared backend."""
         session_params = {
-            "cwd": self._cwd or ".",
+            "cwd": cwd or self._cwd or ".",
             "mcpServers": [],
         }
+        if model:
+            session_params["model"] = model
+        result = await self._send_request("session/new", session_params)
+        self._session_info = result if isinstance(result, dict) else {}
+        self._session_id = _extract_session_id(self._session_info)
+        return self._session_info
 
-        # Create or resume session
-        if session_id:
-            session_result = await self._send_request(
-                "session/load",
-                {
-                    **session_params,
-                    "sessionId": session_id,
-                },
-            )
-        else:
-            session_result = await self._send_request("session/new", session_params)
-
-        self._session_id = (
-            session_result.get("sessionId")
-            if session_result and session_result.get("sessionId")
-            else session_id
-        )
-        logger.debug(f"ACP session ID: {self._session_id}")
+    async def load_session(
+        self,
+        session_id: str,
+        *,
+        model: str | None = None,
+        cwd: str | None = None,
+    ) -> dict[str, Any]:
+        """Load an existing ACP session on an already-started shared backend."""
+        session_params = {
+            "cwd": cwd or self._cwd or ".",
+            "mcpServers": [],
+            "sessionId": session_id,
+        }
+        if model:
+            session_params["model"] = model
+        result = await self._send_request("session/load", session_params)
+        self._session_info = result if isinstance(result, dict) else {}
+        self._session_id = _extract_session_id(self._session_info) or session_id
+        return self._session_info
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a JSON-RPC request and wait for the response.
@@ -209,6 +273,10 @@ class GeminiACPClient:
         Raises:
             RuntimeError: If the process is not running or returns an error.
         """
+        async with self._io_lock:
+            return await self._send_request_locked(method, params)
+
+    async def _send_request_locked(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if not self._process or not self._process.stdin or not self._process.stdout:
             raise RuntimeError("GeminiACPClient process not available")
 
@@ -223,8 +291,8 @@ class GeminiACPClient:
         self._process.stdin.write(request_line.encode())
         await self._process.stdin.drain()
         logger.debug(f"Sent ACP request: {method}")
+        pending_session_id: str | None = None
 
-        # Read lines until we get a JSON-RPC response (has "id" field)
         while True:
             try:
                 line = await asyncio.wait_for(
@@ -249,18 +317,30 @@ class GeminiACPClient:
                 logger.warning(f"Non-JSON line during {method}: {line_str[:200]}")
                 continue
 
-            # JSON-RPC response has "id" field
             if "id" in data:
                 if "error" in data:
                     err = data["error"]
                     raise RuntimeError(f"ACP {method} error: {err.get('message', err)}")
                 result = data.get("result", {})
-                return result if isinstance(result, dict) else {}
+                if not isinstance(result, dict):
+                    result = {}
+                if pending_session_id and not _extract_session_id(result):
+                    result = {**result, "sessionId": pending_session_id}
+                return result
 
-            # Skip notifications during handshake
+            if not pending_session_id:
+                normalized = self._normalize_notification(data)
+                if normalized.event_type == "init":
+                    pending_session_id = _extract_session_id(normalized.data)
             logger.debug(f"Skipping notification during {method}: {data.get('method', 'unknown')}")
 
-    async def send(self, message: str) -> AsyncIterator[StreamEvent]:
+    async def send(
+        self,
+        message: str,
+        *,
+        session_id: str | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         """Send a prompt and yield normalized stream events.
 
         Uses the ``session/prompt`` method with the session ID obtained
@@ -284,26 +364,33 @@ class GeminiACPClient:
         assert self._process.stdin is not None
         assert self._process.stdout is not None
 
-        # Build JSON-RPC request using session/prompt method
-        request = {
-            "jsonrpc": "2.0",
-            "method": "session/prompt",
-            "params": {
-                "sessionId": self._session_id,
-                "prompt": [{"type": "text", "text": message}],
-            },
-            "id": _make_id(),
-        }
+        target_session_id = session_id or self._session_id
+        if not target_session_id:
+            raise RuntimeError("GeminiACPClient missing session ID for session/prompt")
 
-        # Write request as a single line
-        request_line = json.dumps(request) + "\n"
-        self._process.stdin.write(request_line.encode())
-        await self._process.stdin.drain()
-        logger.debug(f"Sent prompt to Gemini ACP: {message[:80]!r}")
+        await self._io_lock.acquire()
+        try:
+            request = {
+                "jsonrpc": "2.0",
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": target_session_id,
+                    "prompt": [{"type": "text", "text": message}],
+                },
+                "id": _make_id(),
+            }
+            if model:
+                request["params"]["model"] = model
 
-        # Read NDJSON response lines until we get the final JSON-RPC response
-        async for event in self._read_stream():
-            yield event
+            request_line = json.dumps(request) + "\n"
+            self._process.stdin.write(request_line.encode())
+            await self._process.stdin.drain()
+            logger.debug(f"Sent prompt to Gemini ACP: {message[:80]!r}")
+
+            async for event in self._read_stream():
+                yield event
+        finally:
+            self._io_lock.release()
 
     async def _read_stream(self) -> AsyncIterator[StreamEvent]:
         """Read and parse NDJSON lines from the subprocess stdout.
@@ -550,6 +637,7 @@ class GeminiACPClient:
         if not self._process:
             self._started = False
             self._session_id = None
+            self._session_info = {}
             return
 
         try:
@@ -576,4 +664,5 @@ class GeminiACPClient:
             self._process = None
             self._started = False
             self._session_id = None
+            self._session_info = {}
             logger.debug("GeminiACPClient stopped")

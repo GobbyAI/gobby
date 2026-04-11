@@ -12,7 +12,7 @@ interface ProviderModelEntry {
   provider: string;
   available: boolean;
   models: { value: string; label: string }[];
-  source: "static" | "dynamic" | "config";
+  source: "static" | "live" | "cache" | "failed";
 }
 
 /** Fetch the canonical model catalog from the daemon. */

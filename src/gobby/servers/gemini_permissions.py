@@ -1,8 +1,6 @@
-"""
-Tool permission, approval, and plan mode logic for GeminiCLIChatSession.
+"""Tool approval and plan-mode helpers for Gemini web-chat sessions."""
 
-Mirrors CodexChatSessionPermissionsMixin -- returns Gemini-compatible dicts.
-"""
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -10,22 +8,14 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from gobby.servers.chat_session_helpers import (
-    PendingApproval,
-)
+from gobby.servers.chat_session_helpers import PendingApproval
 
 logger = logging.getLogger(__name__)
 
 
-class GeminiCLIChatSessionPermissionsMixin:
-    """Tool permission, approval, and plan mode logic for GeminiCLIChatSession.
+class GeminiWebChatPermissionsMixin:
+    """Permission and plan helpers for Gemini web-chat wrappers."""
 
-    Returns decision dicts:
-    {"decision": "accept"} or {"decision": "decline", "reason": "..."}
-
-    Attributes set by the concrete dataclass (declared here for type-checking)."""
-
-    # Attribute type stubs -- actual fields live on GeminiCLIChatSession dataclass
     conversation_id: str
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
@@ -54,7 +44,6 @@ class GeminiCLIChatSessionPermissionsMixin:
     )
 
     def provide_answer(self, answers: dict[str, str]) -> None:
-        """Provide answers to a pending question."""
         self._pending_answers = answers
         if self._pending_answer_event is not None:
             self._pending_answer_event.set()
@@ -64,7 +53,6 @@ class GeminiCLIChatSessionPermissionsMixin:
         return self._pending_question is not None
 
     def set_chat_mode(self, mode: str) -> None:
-        """Set chat mode, resetting plan state when entering plan mode."""
         self.chat_mode = mode
         if mode == "plan":
             self._plan_approved = False
@@ -80,26 +68,21 @@ class GeminiCLIChatSessionPermissionsMixin:
                 logger.warning(f"Failed to persist chat_mode={mode}: {e}")
 
     def approve_plan(self) -> None:
-        """Mark the current plan as approved, unlocking write tools."""
         self._plan_approved = True
 
     def set_plan_feedback(self, feedback: str) -> None:
-        """Store user feedback for plan revision."""
         self._plan_feedback = feedback
 
     def provide_plan_decision(self, decision: str) -> None:
-        """Provide plan approval decision."""
         if decision == "approve":
             self.set_chat_mode("accept_edits")
             self._plan_approved = True
 
     @property
     def has_pending_plan(self) -> bool:
-        """Whether a plan is awaiting approval."""
         return False
 
     def _pop_plan_mode_context(self) -> str | None:
-        """Return plan mode system context for injection and clear consumed feedback."""
         if self.chat_mode != "plan":
             return None
 
@@ -136,14 +119,9 @@ class GeminiCLIChatSessionPermissionsMixin:
         parts.append("</plan-mode>")
         return "\n".join(parts)
 
-    def _consume_plan_mode_context(self) -> str | None:
-        """Backward-compatible alias for callers still using the old name."""
-        return self._pop_plan_mode_context()
-
     async def _wait_for_tool_approval(
         self, tool_name: str, input_data: dict[str, Any]
     ) -> dict[str, Any]:
-        """Block until the user approves or rejects a tool call."""
         self._pending_approval = {
             "tool_name": tool_name,
             "arguments": input_data,
@@ -180,15 +158,14 @@ class GeminiCLIChatSessionPermissionsMixin:
         return {"decision": "decline", "reason": f"User rejected tool call: {tool_name}"}
 
     def provide_approval(self, decision: str) -> None:
-        """Provide approval decision for a pending tool call."""
         self._pending_approval_decision = decision
         if self._pending_approval_event is not None:
             self._pending_approval_event.set()
 
     async def sync_sdk_permission_mode(self) -> None:
-        """No-op for Gemini -- permission mode is enforced via context injection."""
-        pass
+        return None
 
     @property
     def has_pending_approval(self) -> bool:
         return self._pending_approval is not None
+

@@ -56,14 +56,27 @@ def _friendly_label(provider: str, model: str) -> str:
 
 def _build_model_catalog(
     server: HTTPServer | None = None,
-) -> dict[str, tuple[list[dict[str, str]], str]]:
+) -> dict[str, tuple[list[dict[str, Any]], str]]:
     """Return the canonical web-chat provider model catalog.
 
     For web chat, the backend owns the supported model picker contract.
     We intentionally do not mirror arbitrary daemon config model strings into
     the picker because that reintroduces stale or retired model IDs.
     """
-    catalog = {provider: ([*models], "static") for provider, models in _BASE_MODEL_CATALOG.items()}
+    provider_model_catalog = getattr(getattr(server, "services", None), "provider_model_catalog", None)
+    if provider_model_catalog is not None:
+        catalog = {
+            provider: (
+                provider_model_catalog.get_provider_snapshot(provider).get("models", []),
+                provider_model_catalog.get_provider_snapshot(provider).get("source", "failed"),
+            )
+            for provider, _binary in _PROVIDER_DEFS
+        }
+    else:
+        catalog = {
+            provider: ([*models], "static") for provider, models in _BASE_MODEL_CATALOG.items()
+        }
+
     config = getattr(getattr(server, "services", None), "config", None)
     local_cfg = getattr(config, "local", None) if config is not None else None
     if local_cfg and getattr(local_cfg, "model", None):
@@ -72,6 +85,22 @@ def _build_model_catalog(
             claude_entries.append({"value": "local", "label": f"Local ({local_cfg.model})"})
         catalog["claude"] = (claude_entries, source)
     return catalog
+
+
+def _provider_health(
+    server: HTTPServer | None,
+    provider: str,
+    path: str | None,
+) -> tuple[bool, str | None]:
+    """Resolve provider availability using runtime backend health when available."""
+    runtime_manager = getattr(getattr(server, "services", None), "web_chat_runtime_manager", None)
+    if runtime_manager is None:
+        return path is not None, None
+
+    health = runtime_manager.health(provider)
+    if provider == "claude":
+        return path is not None and health.available, health.startup_error
+    return health.available, health.startup_error
 
 
 async def _probe_providers() -> list[tuple[str, str | None]]:
@@ -97,35 +126,46 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
     async def list_providers() -> dict[str, Any]:
         """List CLI providers with their availability status."""
         probed = await _probe_providers()
-        providers = [
-            {"name": name, "available": path is not None, "path": path} for name, path in probed
-        ]
+        providers = []
+        for name, path in probed:
+            available, startup_error = _provider_health(server, name, path)
+            providers.append(
+                {
+                    "name": name,
+                    "available": available,
+                    "path": path,
+                    "startup_error": startup_error,
+                }
+            )
         return {"providers": providers}
 
     @router.get("/models")
     async def list_provider_models() -> dict[str, Any]:
         """Return available models grouped by provider.
 
-        Merges the static catalog with provider availability. Falls back to
-        the full catalog when availability probing fails.
+        Merges provider availability with the startup-discovered model catalog.
+        Falls back to the static catalog when no daemon-backed catalog is present.
         """
         probed = await _probe_providers()
         model_catalog = _build_model_catalog(server)
-        result: list[dict[str, Any]] = [
-            {
-                "provider": name,
-                "available": path is not None,
-                "models": model_catalog.get(
-                    name,
-                    ([{"value": "default", "label": "Default"}], "static"),
-                )[0],
-                "source": model_catalog.get(
-                    name,
-                    ([{"value": "default", "label": "Default"}], "static"),
-                )[1],
-            }
-            for name, path in probed
-        ]
+        result: list[dict[str, Any]] = []
+        for name, path in probed:
+            available, startup_error = _provider_health(server, name, path)
+            result.append(
+                {
+                    "provider": name,
+                    "available": available,
+                    "models": model_catalog.get(
+                        name,
+                        ([{"value": "default", "label": "Default"}], "static"),
+                    )[0],
+                    "source": model_catalog.get(
+                        name,
+                        ([{"value": "default", "label": "Default"}], "static"),
+                    )[1],
+                    "startup_error": startup_error,
+                }
+            )
         return {"providers": result}
 
     return router

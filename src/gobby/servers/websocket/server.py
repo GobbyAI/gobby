@@ -102,6 +102,7 @@ class WebSocketServer(
         self.webhook_dispatcher: WebhookDispatcher | None = None
         self.hook_broadcaster: HookEventBroadcaster | None = None
         self.inter_session_msg_manager: InterSessionMessageManager | None = None
+        self.web_chat_runtime_manager: Any | None = None
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}

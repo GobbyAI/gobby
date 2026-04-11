@@ -283,6 +283,7 @@ class CodexAppServerClient:
             preview=thread_data.get("preview", ""),
             model_provider=thread_data.get("modelProvider", "openai"),
             created_at=thread_data.get("createdAt", 0),
+            path=thread_data.get("path"),
         )
 
         self._threads[thread.id] = thread
@@ -307,6 +308,7 @@ class CodexAppServerClient:
             preview=thread_data.get("preview", ""),
             model_provider=thread_data.get("modelProvider", "openai"),
             created_at=thread_data.get("createdAt", 0),
+            path=thread_data.get("path"),
         )
 
         self._threads[thread.id] = thread
@@ -356,6 +358,36 @@ class CodexAppServerClient:
         await self._send_request("thread/archive", {"threadId": thread_id})
         self._threads.pop(thread_id, None)
         logger.debug(f"Archived Codex thread: {thread_id}")
+
+    async def list_models(
+        self,
+        *,
+        limit: int = 100,
+        include_hidden: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List Codex app-server models, following pagination when present."""
+        models: list[dict[str, Any]] = []
+        cursor: str | None = None
+
+        while True:
+            params: dict[str, Any] = {
+                "limit": limit,
+                "includeHidden": include_hidden,
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            result = await self._send_request("model/list", params)
+            page = result.get("data", [])
+            if isinstance(page, list):
+                models.extend(item for item in page if isinstance(item, dict))
+
+            next_cursor = result.get("nextCursor")
+            cursor = str(next_cursor) if next_cursor else None
+            if not cursor:
+                break
+
+        return models
 
     # ===== Turn Management =====
 

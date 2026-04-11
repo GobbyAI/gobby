@@ -98,6 +98,13 @@ def _resume_handshake_lines_without_session_id() -> list[str]:
     ]
 
 
+def _initialize_only_lines() -> list[str]:
+    """Return stdout lines for initialize-only startup."""
+    return [
+        json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1}}) + "\n",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -229,6 +236,36 @@ class TestStart:
                 await client.start(session_id="prev-123")
 
         assert client.session_id == "prev-123"
+
+    @pytest.mark.asyncio
+    async def test_create_session_uses_init_notification_session_id_when_response_is_empty(self) -> None:
+        proc = _mock_process(
+            stdout_lines=_initialize_only_lines()
+            + [
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "session/init",
+                        "params": {"session_id": "notif-123", "model": "auto-gemini-3"},
+                    }
+                )
+                + "\n",
+                json.dumps({"jsonrpc": "2.0", "id": 2, "result": {}}) + "\n",
+            ]
+        )
+
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                await client.start(auto_session=False)
+                result = await client.create_session(model="auto-gemini-3")
+
+        assert result["sessionId"] == "notif-123"
+        assert client.session_id == "notif-123"
 
     @pytest.mark.asyncio
     async def test_start_raises_when_cli_not_found(self) -> None:
