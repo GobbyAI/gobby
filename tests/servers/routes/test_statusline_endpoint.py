@@ -81,7 +81,6 @@ class TestStatuslineEndpoint:
             json={
                 "session_id": "ext-123",
                 "model_id": "claude-opus-4-6",
-                "total_cost_usd": 0.0423,
                 "input_tokens": 12345,
                 "output_tokens": 6789,
                 "cache_creation_tokens": 1000,

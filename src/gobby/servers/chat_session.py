@@ -637,7 +637,6 @@ class ChatSession(ChatSessionPermissionsMixin):
                         # response), emit the ResultMessage.result as a TextChunk
                         if message.result and not has_text:
                             yield TextChunk(content=message.result)
-                        cost_usd = getattr(message, "total_cost_usd", None)
                         duration_ms = getattr(message, "duration_ms", None)
                         # Extract token usage from ResultMessage.usage dict
                         # (AssistantMessage does NOT carry usage in the SDK)
@@ -668,7 +667,7 @@ class ChatSession(ChatSessionPermissionsMixin):
                         total_input = uncached_input + cache_read + cache_creation
 
                         # Output tokens: use accumulated from ResultMessage
-                        # (correct for cost tracking; not part of context %)
+                        # (not part of context %)
                         output_tokens = usage.get("output_tokens", 0) or 0
 
                         context_window = resolve_context_window(
@@ -682,7 +681,6 @@ class ChatSession(ChatSessionPermissionsMixin):
                         )
                         yield DoneEvent(
                             tool_calls_count=tool_calls_count,
-                            cost_usd=cost_usd,
                             duration_ms=duration_ms,
                             input_tokens=uncached_input if has_usage else None,
                             output_tokens=output_tokens if has_usage else None,

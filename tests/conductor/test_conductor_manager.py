@@ -50,7 +50,6 @@ def _mock_chat_session(is_connected: bool = True) -> MagicMock:
             tool_calls_count=0,
             input_tokens=100,
             output_tokens=20,
-            cost_usd=0.001,
             duration_ms=500,
         )
 

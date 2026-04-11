@@ -94,7 +94,6 @@ export interface TokenUsage {
   output_tokens: number;
   cache_creation_tokens?: number;
   cache_read_tokens?: number;
-  total_cost_usd?: number;
 }
 
 export interface RenderedMessage {

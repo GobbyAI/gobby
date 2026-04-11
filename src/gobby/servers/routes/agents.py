@@ -81,7 +81,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
 async def _batch_load_session_info(
     database: Any, session_ids: list[str]
 ) -> dict[str, dict[str, Any]]:
-    """Load session token/cost data for a batch of session IDs.
+    """Load session token usage data for a batch of session IDs.
 
     Returns dict mapping session_id to enrichment fields.
     """

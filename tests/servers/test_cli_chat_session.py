@@ -40,11 +40,9 @@ def _mock_cli_imports(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     class ResultEvent(StreamEvent):
         def __init__(
             self,
-            cost_usd: float | None = None,
             input_tokens: int | None = None,
             output_tokens: int | None = None,
         ) -> None:
-            self.cost_usd = cost_usd
             self.input_tokens = input_tokens
             self.output_tokens = output_tokens
 
@@ -196,7 +194,7 @@ class TestCLIChatSessionSendMessage:
         events = [
             ContentBlockDelta(block_type="text", text="Hello "),
             ContentBlockDelta(block_type="text", text="world"),
-            ResultEvent(cost_usd=0.01, input_tokens=100, output_tokens=50),
+            ResultEvent(input_tokens=100, output_tokens=50),
         ]
 
         async def mock_send(text: str):
@@ -218,7 +216,8 @@ class TestCLIChatSessionSendMessage:
         assert isinstance(collected[1], TextChunk)
         assert collected[1].content == "world"
         assert isinstance(collected[2], DoneEvent)
-        assert collected[2].cost_usd == 0.01
+        assert collected[2].input_tokens == 100
+        assert collected[2].output_tokens == 50
 
     @pytest.mark.asyncio
     async def test_send_message_thinking_events(self, mocks: dict[str, Any]) -> None:

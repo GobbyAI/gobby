@@ -79,30 +79,30 @@ export function TokenTracker({ sessionId }: TokenTrackerProps) {
   }, [sessionId])
 
   if (!sessionId) return null
-  if (isLoading) return <div className="cost-tracker-loading">Loading usage...</div>
-  if (!usage) return <div className="cost-tracker-empty">No usage data</div>
+  if (isLoading) return <div className="token-tracker-loading">Loading usage...</div>
+  if (!usage) return <div className="token-tracker-empty">No usage data</div>
 
   const totalTokens = usage.inputTokens + usage.outputTokens
   const inputPct = totalTokens > 0 ? (usage.inputTokens / totalTokens) * 100 : 50
 
   return (
-    <div className="cost-tracker">
+    <div className="token-tracker">
       {/* Total tokens */}
-      <div className="cost-tracker-total">
-        <span className="cost-tracker-cost">{formatTokens(totalTokens)}</span>
-        <span className="cost-tracker-total-label">tokens used</span>
+      <div className="token-tracker-total">
+        <span className="token-tracker-total-value">{formatTokens(totalTokens)}</span>
+        <span className="token-tracker-total-label">tokens used</span>
       </div>
 
       {/* Token breakdown bar */}
-      <div className="cost-tracker-bar-container">
-        <div className="cost-tracker-bar">
+      <div className="token-tracker-bar-container">
+        <div className="token-tracker-bar">
           <div
-            className="cost-tracker-bar-input"
+            className="token-tracker-bar-input"
             style={{ width: `${inputPct}%` }}
             title={`Input: ${formatTokens(usage.inputTokens)}`}
           />
           <div
-            className="cost-tracker-bar-output"
+            className="token-tracker-bar-output"
             style={{ width: `${100 - inputPct}%` }}
             title={`Output: ${formatTokens(usage.outputTokens)}`}
           />
@@ -110,20 +110,20 @@ export function TokenTracker({ sessionId }: TokenTrackerProps) {
       </div>
 
       {/* Token stats */}
-      <div className="cost-tracker-stats">
-        <div className="cost-tracker-stat">
-          <span className="cost-tracker-stat-dot cost-tracker-stat-dot--input" />
-          <span className="cost-tracker-stat-label">Input</span>
-          <span className="cost-tracker-stat-value">{formatTokens(usage.inputTokens)}</span>
+      <div className="token-tracker-stats">
+        <div className="token-tracker-stat">
+          <span className="token-tracker-stat-dot token-tracker-stat-dot--input" />
+          <span className="token-tracker-stat-label">Input</span>
+          <span className="token-tracker-stat-value">{formatTokens(usage.inputTokens)}</span>
         </div>
-        <div className="cost-tracker-stat">
-          <span className="cost-tracker-stat-dot cost-tracker-stat-dot--output" />
-          <span className="cost-tracker-stat-label">Output</span>
-          <span className="cost-tracker-stat-value">{formatTokens(usage.outputTokens)}</span>
+        <div className="token-tracker-stat">
+          <span className="token-tracker-stat-dot token-tracker-stat-dot--output" />
+          <span className="token-tracker-stat-label">Output</span>
+          <span className="token-tracker-stat-value">{formatTokens(usage.outputTokens)}</span>
         </div>
-        <div className="cost-tracker-stat">
-          <span className="cost-tracker-stat-label">Total</span>
-          <span className="cost-tracker-stat-value">{formatTokens(totalTokens)}</span>
+        <div className="token-tracker-stat">
+          <span className="token-tracker-stat-label">Total</span>
+          <span className="token-tracker-stat-value">{formatTokens(totalTokens)}</span>
         </div>
       </div>
     </div>

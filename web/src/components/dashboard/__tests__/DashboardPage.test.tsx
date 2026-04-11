@@ -56,9 +56,8 @@ const SAMPLE_DATA: AdminStatus = {
   pipelines: { running: 0, waiting_approval: 0, completed: 3, failed: 1, total: 4 },
   savings: {
     today_tokens_saved: 0,
-    today_cost_saved_usd: 0,
     today_events: 0,
-    cumulative_cost_saved_usd: 0,
+    cumulative_tokens_saved: 0,
     categories: {},
   },
 }

@@ -131,7 +131,7 @@ class TestMetricsTools:
 
 
 class TestTokenMetricsTools:
-    """Tests for token/cost tracking tools."""
+    """Tests for token tracking tools."""
 
     @pytest.fixture
     def mock_session_storage(self):

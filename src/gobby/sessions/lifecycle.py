@@ -401,7 +401,7 @@ class SessionLifecycleManager:
         Process a full transcript for a session.
 
         Reads the entire transcript and stores messages.
-        Aggregates token usage and costs.
+        Aggregates token usage.
         Uses idempotent upsert so re-processing is safe.
 
         Args:

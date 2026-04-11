@@ -71,7 +71,6 @@ def _stream_to_chat_event(event: StreamEvent) -> ChatEvent | None:
     elif isinstance(event, ResultEvent):
         return DoneEvent(
             tool_calls_count=0,
-            cost_usd=event.cost_usd,
             input_tokens=event.input_tokens,
             output_tokens=event.output_tokens,
         )

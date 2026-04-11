@@ -63,7 +63,6 @@ class RateLimitEvent(StreamEvent):
 class ResultEvent(StreamEvent):
     """Final result with usage stats."""
 
-    cost_usd: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
     session_id: str = ""
@@ -139,7 +138,6 @@ def _classify_event(data: dict[str, Any]) -> StreamEvent:
         usage = data.get("usage", {})
         return ResultEvent(
             raw=data,
-            cost_usd=float(data.get("cost_usd", 0.0)),
             input_tokens=int(data.get("input_tokens", usage.get("input_tokens", 0))),
             output_tokens=int(data.get("output_tokens", usage.get("output_tokens", 0))),
             session_id=data.get("session_id", ""),

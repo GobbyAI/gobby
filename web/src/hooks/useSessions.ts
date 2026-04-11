@@ -18,7 +18,6 @@ export interface GobbySession {
   git_branch: string | null;
   usage_input_tokens: number;
   usage_output_tokens: number;
-  usage_total_cost_usd: number;
   had_edits: boolean;
   agent_depth: number;
   chat_mode: string | null;

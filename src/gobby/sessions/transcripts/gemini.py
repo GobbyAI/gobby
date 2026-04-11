@@ -314,7 +314,6 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             return TokenUsage(
                 input_tokens=usage_data.get("promptTokenCount", 0),
                 output_tokens=usage_data.get("candidatesTokenCount", 0),
-                total_cost_usd=None,
             )
 
         return None

@@ -313,7 +313,7 @@ def register_core_routes(
         days: int = Query(1, ge=1, le=365, description="Number of days to look back"),
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
-        """Get token usage and cost breakdown by source and model.
+        """Get token usage breakdown by source and model.
 
         Returns aggregated usage statistics including per-model and
         per-source (CLI adapter) breakdowns.

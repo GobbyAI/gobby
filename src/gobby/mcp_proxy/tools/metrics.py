@@ -29,7 +29,7 @@ def create_metrics_registry(
 
     Args:
         metrics_manager: ToolMetricsManager instance
-        session_storage: Optional LocalSessionManager for token/cost tracking
+        session_storage: Optional LocalSessionManager for token tracking
         daily_budget_tokens: Daily budget limit in tokens (default: 10M)
 
     Returns:
@@ -288,7 +288,7 @@ def create_metrics_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Token/cost tracking tools (only available if session_storage provided)
+    # Token tracking tools (only available if session_storage provided)
     @registry.tool(
         name="get_usage_report",
         description="Get token usage report for a specified time period.",

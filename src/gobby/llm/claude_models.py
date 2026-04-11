@@ -110,9 +110,6 @@ class DoneEvent:
     tool_calls_count: int
     """Total number of tool calls made."""
 
-    cost_usd: float | None = None
-    """Cost in USD if available."""
-
     duration_ms: float | None = None
     """Duration in milliseconds if available."""
 

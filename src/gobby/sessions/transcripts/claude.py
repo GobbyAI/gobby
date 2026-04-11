@@ -569,17 +569,12 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             if "cache_read_input_tokens" in usage_data
             else usage_data.get("cacheReadInputTokens", 0)
         )
-        # Cost might be calculated or provided
-        total_cost_usd = (
-            usage_data["cost"] if "cost" in usage_data else usage_data.get("total_cost")
-        )
 
         return TokenUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cache_read_tokens,
-            total_cost_usd=total_cost_usd,
         ), model
 
     def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:

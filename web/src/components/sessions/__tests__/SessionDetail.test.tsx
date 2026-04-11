@@ -42,7 +42,6 @@ const SAMPLE_SESSION: GobbySession = {
   git_branch: 'feature/test',
   usage_input_tokens: 10000,
   usage_output_tokens: 5000,
-  usage_total_cost_usd: 0.50,
   had_edits: true,
   agent_depth: 0,
   chat_mode: null,
@@ -86,7 +85,7 @@ describe('SessionDetail', () => {
 
   it('renders session stats', () => {
     render(<SessionDetail {...defaultProps} />)
-    // Should show message count, token usage, cost, etc.
+    // Should show message count and token usage.
     expect(screen.getByText(/42 msgs/)).toBeTruthy()
   })
 

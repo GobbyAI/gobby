@@ -640,14 +640,6 @@ function AgentDrillDown({
               </span>
             </div>
           )}
-          {run.usage_total_cost_usd != null && run.usage_total_cost_usd > 0 && (
-            <div className="reporting-stat">
-              <span className="reporting-stat-label">Cost</span>
-              <span className="reporting-stat-value reporting-stat-value--cost">
-                ${run.usage_total_cost_usd.toFixed(4)}
-              </span>
-            </div>
-          )}
         </div>
       </div>
 

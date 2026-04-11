@@ -121,7 +121,6 @@ class TestClassifyEvent:
         }
         event = _classify_event(raw)
         assert isinstance(event, ResultEvent)
-        assert event.cost_usd == 0.003
         assert event.input_tokens == 100
         assert event.output_tokens == 50
         assert event.session_id == "sess-xyz"

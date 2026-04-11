@@ -756,9 +756,9 @@ class CodexWebChatBackend:
                 if method == "turn/started":
                     turn_id = params.get("turnId")
                     if not turn_id:
-                        turn = params.get("turn")
-                        if isinstance(turn, dict):
-                            turn_id = turn.get("id")
+                        turn_data = params.get("turn")
+                        if isinstance(turn_data, dict):
+                            turn_id = turn_data.get("id")
                     if isinstance(turn_id, str) and turn_id:
                         session._turn_id = turn_id
                     continue
@@ -783,7 +783,6 @@ class CodexWebChatBackend:
 
                     yield DoneEvent(
                         tool_calls_count=0,
-                        cost_usd=float(usage.get("cost_usd", 0.0)),
                         input_tokens=int(usage.get("input_tokens", 0)),
                         output_tokens=int(usage.get("output_tokens", 0)),
                         sdk_session_id=session.sdk_session_id,
