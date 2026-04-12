@@ -359,6 +359,12 @@ def dispatch_mcp_calls(
                         f"dispatch_mcp_calls: background {s}/{tl} failed: {t.exception()}"
                     )
 
+            def _log_bg_future_error(f: Any, s: str = _bg_server, tl: str = _bg_tool) -> None:
+                if not f.cancelled():
+                    exc = f.exception()
+                    if exc is not None:
+                        logger.warning(f"dispatch_mcp_calls: background {s}/{tl} failed: {exc}")
+
             try:
                 running_loop = asyncio.get_running_loop()
                 task = running_loop.create_task(coro)
@@ -366,7 +372,8 @@ def dispatch_mcp_calls(
             except RuntimeError:
                 if loop and loop.is_running():
                     try:
-                        asyncio.run_coroutine_threadsafe(coro, loop)
+                        future = asyncio.run_coroutine_threadsafe(coro, loop)
+                        future.add_done_callback(_log_bg_future_error)
                     except Exception as e:
                         logger.warning(
                             f"dispatch_mcp_calls: failed to schedule {server}/{tool}: {e}",
