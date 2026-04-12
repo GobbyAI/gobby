@@ -1,4 +1,5 @@
 # GEMINI.md
+<!-- Blocked verification test -->
 
 This file provides guidance to Gemini CLI when working with code in this repository.
 
