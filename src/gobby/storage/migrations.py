@@ -3,13 +3,13 @@
 This module handles schema migrations for the Gobby database.
 
 For new databases (version == 0):
-    BASELINE_SCHEMA is applied, jumping directly to BASELINE_VERSION (171).
+    BASELINE_SCHEMA is applied, jumping directly to BASELINE_VERSION.
 
-For existing databases at v171+:
-    Any migrations in MIGRATIONS (v172+) are applied incrementally.
+For existing databases at or above the minimum supported version:
+    Any migrations in MIGRATIONS beyond BASELINE_VERSION are applied incrementally.
 
 To add a new migration:
-    1. Add it to the MIGRATIONS list below with version = 172, 173, etc.
+    1. Add it to the MIGRATIONS list below with the next version number.
     2. Use SQL strings for schema changes, callables for data migrations.
     3. Also add the migration to BASELINE_SCHEMA for future fresh installs.
 """
@@ -297,6 +297,44 @@ def _drop_column_if_exists(db: LocalDatabase, table: str, column: str) -> None:
     )
     if row and row["cnt"] > 0:
         db.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+
+def _column_exists(db: LocalDatabase, table: str, column: str) -> bool:
+    """Return True when the given table already has the target column."""
+    row = db.fetchone(
+        f"SELECT COUNT(*) as cnt FROM pragma_table_info('{table}') WHERE name = ?", (column,)
+    )
+    return bool(row and row["cnt"] > 0)
+
+
+def _migrate_claimed_by_session_id(db: LocalDatabase) -> None:
+    """Add canonical task ownership column and heal partial application.
+
+    Migration 208 may be retried on databases where the column was added but the
+    schema version was never recorded. Make the migration idempotent so reruns
+    can backfill the new field and create the missing index without failing.
+    """
+    conn = db.connection
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        with db.transaction() as tx:
+            if not _column_exists(db, "tasks", "claimed_by_session_id"):
+                tx.execute(
+                    "ALTER TABLE tasks ADD COLUMN claimed_by_session_id TEXT REFERENCES sessions(id)"
+                )
+
+            tx.execute("""
+                UPDATE tasks
+                SET claimed_by_session_id = assignee
+                WHERE claimed_by_session_id IS NULL
+                  AND assignee IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = tasks.assignee)
+            """)
+            tx.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_claimed_session ON tasks(claimed_by_session_id)"
+            )
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
 
 
 def _drop_agent_runs_mode(db: LocalDatabase) -> None:
@@ -848,14 +886,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
         208,
         "Add claimed_by_session_id canonical task ownership field",
-        """
-        ALTER TABLE tasks ADD COLUMN claimed_by_session_id TEXT REFERENCES sessions(id);
-        UPDATE tasks
-        SET claimed_by_session_id = assignee
-        WHERE assignee IS NOT NULL
-          AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = tasks.assignee);
-        CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id);
-        """,
+        _migrate_claimed_by_session_id,
     ),
 ]
 
@@ -997,10 +1028,10 @@ def run_migrations(db: LocalDatabase) -> int:
     Run pending migrations.
 
     For new databases (version == 0):
-        - Applies baseline schema (v171) directly.
+        - Applies the current baseline schema directly.
 
     For existing databases:
-        - Runs any new migrations from v172 onwards.
+        - Runs any new migrations after the recorded schema version.
 
     Args:
         db: LocalDatabase instance

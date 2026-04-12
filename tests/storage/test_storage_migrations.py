@@ -95,6 +95,104 @@ def test_tasks_table_includes_claimed_by_session_id_on_fresh_db(tmp_path) -> Non
     assert "idx_tasks_claimed_session" in task_indexes
 
 
+def test_migration_208_recovers_when_column_exists_but_version_does_not(tmp_path) -> None:
+    """Migration 208 should heal partial application without duplicate-column failure."""
+    db_path = tmp_path / "tasks_claim_owner_partial.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    project_id = "00000000-0000-0000-0000-000000060887"
+    session_id = "session-208"
+    task_id = "task-208"
+    db.execute(
+        """
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        """,
+        (session_id, "ext-208", "machine-208", "codex", project_id),
+    )
+    db.execute(
+        """
+        INSERT INTO tasks (
+            id, project_id, title, assignee, created_at, updated_at, claimed_by_session_id
+        ) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), NULL)
+        """,
+        (task_id, project_id, "partial migration task", session_id),
+    )
+
+    db.execute("DROP INDEX IF EXISTS idx_tasks_claimed_session")
+    db.execute("DELETE FROM schema_version")
+    db.execute("INSERT INTO schema_version (version) VALUES (207)")
+
+    applied = run_migrations(db)
+
+    assert applied == 1
+    assert get_current_version(db) == EXPECTED_FINAL_VERSION
+    task_row = db.fetchone(
+        "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+    assert task_row is not None
+    assert task_row["claimed_by_session_id"] == session_id
+
+    task_indexes = {row["name"] for row in db.fetchall("PRAGMA index_list(tasks)")}
+    assert "idx_tasks_claimed_session" in task_indexes
+
+
+def test_migration_208_backfills_despite_legacy_orphaned_task_foreign_keys(tmp_path) -> None:
+    """Migration 208 should recover even when legacy task rows violate older FKs."""
+    db_path = tmp_path / "tasks_claim_owner_orphaned.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    project_id = "00000000-0000-0000-0000-000000060887"
+    session_id = "session-208-valid"
+    task_id = "task-208-orphaned"
+    db.execute(
+        """
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        """,
+        (session_id, "ext-208-valid", "machine-208", "codex", project_id),
+    )
+
+    db.execute("PRAGMA foreign_keys=OFF")
+    try:
+        db.execute(
+            """
+            INSERT INTO tasks (
+                id,
+                project_id,
+                title,
+                assignee,
+                created_in_session_id,
+                created_at,
+                updated_at,
+                claimed_by_session_id
+            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'), NULL)
+            """,
+            (task_id, project_id, "orphaned task", session_id, "missing-session"),
+        )
+    finally:
+        db.execute("PRAGMA foreign_keys=ON")
+
+    db.execute("DROP INDEX IF EXISTS idx_tasks_claimed_session")
+    db.execute("DELETE FROM schema_version")
+    db.execute("INSERT INTO schema_version (version) VALUES (207)")
+
+    applied = run_migrations(db)
+
+    assert applied == 1
+    task_row = db.fetchone(
+        "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+    assert task_row is not None
+    assert task_row["claimed_by_session_id"] == session_id
+
+
 def test_get_current_version_error(tmp_path) -> None:
     """Test get_current_version handles errors (e.g. missing table)."""
     db_path = tmp_path / "error.db"
