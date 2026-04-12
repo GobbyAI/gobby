@@ -373,14 +373,8 @@ class GeminiAdapter(BaseAdapter):
                         context_lines.append(
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
-                    # Add terminal-specific session IDs
                     for key in [
-                        "terminal_iterm_session_id",
-                        "terminal_term_session_id",
-                        "terminal_kitty_window_id",
                         "terminal_tmux_pane",
-                        "terminal_vscode_terminal_id",
-                        "terminal_alacritty_socket",
                     ]:
                         if response.metadata.get(key):
                             friendly_name = key.replace("terminal_", "").replace("_", " ")

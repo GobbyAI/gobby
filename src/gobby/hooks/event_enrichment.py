@@ -31,12 +31,7 @@ TERMINAL_CONTEXT_KEYS = [
     "terminal_term_program",
     "terminal_tty",
     "terminal_parent_pid",
-    "terminal_iterm_session_id",
-    "terminal_term_session_id",
-    "terminal_kitty_window_id",
     "terminal_tmux_pane",
-    "terminal_vscode_terminal_id",
-    "terminal_alacritty_socket",
 ]
 
 # Hook events that fire frequently during execution — good piggyback candidates.

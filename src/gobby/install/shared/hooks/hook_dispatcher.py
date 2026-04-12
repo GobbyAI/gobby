@@ -185,19 +185,6 @@ def get_terminal_context() -> dict[str, str | int | bool | None]:
     except Exception:
         context["tty"] = None
 
-    # macOS Terminal.app session ID
-    context["term_session_id"] = os.environ.get("TERM_SESSION_ID")
-
-    # iTerm2 session ID
-    context["iterm_session_id"] = os.environ.get("ITERM_SESSION_ID")
-
-    # VS Code detection (multiple env vars across CLIs)
-    context["vscode_terminal_id"] = os.environ.get("VSCODE_GIT_ASKPASS_NODE")
-    vscode_ipc_hook = os.environ.get("VSCODE_IPC_HOOK_CLI")
-    term_program = os.environ.get("TERM_PROGRAM")
-    context["vscode_ipc_hook_cli"] = vscode_ipc_hook
-    context["vscode_terminal_detected"] = bool(vscode_ipc_hook) or term_program == "vscode"
-
     # Tmux pane (only if actually running INSIDE a tmux session)
     # IMPORTANT: Only report TMUX_PANE if TMUX env var is also set.
     # The TMUX_PANE env var can be inherited by child processes that are
@@ -208,13 +195,8 @@ def get_terminal_context() -> dict[str, str | int | bool | None]:
     else:
         context["tmux_pane"] = None
 
-    # Kitty terminal window ID
-    context["kitty_window_id"] = os.environ.get("KITTY_WINDOW_ID")
-
-    # Alacritty IPC socket path (unique per instance)
-    context["alacritty_socket"] = os.environ.get("ALACRITTY_SOCKET")
-
     # Generic terminal program identifier (set by many terminals)
+    term_program = os.environ.get("TERM_PROGRAM")
     context["term_program"] = term_program
 
     # Gobby agent context (set by spawn_executor for terminal-mode agents)

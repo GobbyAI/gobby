@@ -47,7 +47,7 @@ class Session:
     usage_cache_read_tokens: int = 0
     context_window: int | None = None
     model: str | None = None  # LLM model used (e.g., "claude-3-5-sonnet-20241022")
-    # Terminal context (JSON blob with tty, parent_pid, term_session_id, etc.)
+    # Terminal context (JSON blob with tty, parent_pid, tmux_pane, term_program)
     terminal_context: dict[str, Any] | None = None
     # Global sequence number
     seq_num: int | None = None

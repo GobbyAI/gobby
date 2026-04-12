@@ -530,12 +530,7 @@ class CodexAdapter(BaseAdapter):
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
                     for key in [
-                        "terminal_iterm_session_id",
-                        "terminal_term_session_id",
-                        "terminal_kitty_window_id",
                         "terminal_tmux_pane",
-                        "terminal_vscode_terminal_id",
-                        "terminal_alacritty_socket",
                     ]:
                         if response.metadata.get(key):
                             friendly_name = key.replace("terminal_", "").replace("_", " ")
@@ -703,6 +698,10 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata = {"is_failure": is_failure} if is_failure else {}
+        original_tool_name = normalized_data.pop("_original_tool_name", None)
+        if original_tool_name:
+            metadata["original_tool_name"] = original_tool_name
+            metadata["normalized_tool_name"] = normalized_data.get("tool_name")
 
         return HookEvent(
             event_type=event_type,
@@ -806,12 +805,7 @@ class CodexHooksAdapter(BaseAdapter):
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
                     for key in [
-                        "terminal_iterm_session_id",
-                        "terminal_term_session_id",
-                        "terminal_kitty_window_id",
                         "terminal_tmux_pane",
-                        "terminal_vscode_terminal_id",
-                        "terminal_alacritty_socket",
                     ]:
                         if response.metadata.get(key):
                             friendly_name = key.replace("terminal_", "").replace("_", " ")

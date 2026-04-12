@@ -630,12 +630,7 @@ class TestResponseMetadata:
         """Terminal-specific session IDs are included in first hook."""
         adapter = ClaudeCodeAdapter()
         terminal_keys = [
-            ("terminal_iterm_session_id", "iterm-sess-1"),
-            ("terminal_term_session_id", "term-sess-1"),
-            ("terminal_kitty_window_id", "kitty-win-1"),
             ("terminal_tmux_pane", "%42"),
-            ("terminal_vscode_terminal_id", "vscode-term-1"),
-            ("terminal_alacritty_socket", "/tmp/alacritty.sock"),
         ]
         for key, value in terminal_keys:
             response = HookResponse(
