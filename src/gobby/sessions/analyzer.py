@@ -57,6 +57,91 @@ class TranscriptAnalyzer:
         """
         self.parser = parser or ClaudeTranscriptParser()
 
+    # ------------------------------------------------------------------
+    # Format-agnostic helpers
+    # ------------------------------------------------------------------
+    # Claude turns:  {"type": "user"|"assistant", "message": {"content": [blocks]}}
+    # Gemini turns:  {"type": "user"|"gemini", "content": str|[{"text":...}],
+    #                  "toolCalls": [{name, args, ...}]}
+    # These helpers let extract_handoff_context work with either format.
+
+    @staticmethod
+    def _get_user_text(turn: dict[str, Any]) -> str:
+        """Extract the user's text from a turn, handling Claude and Gemini formats."""
+        # Claude: nested under message
+        msg = turn.get("message")
+        if isinstance(msg, dict):
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                parts: list[str] = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        parts.append(block.get("text", ""))
+                    elif isinstance(block, str):
+                        parts.append(block)
+                return " ".join(parts).strip()
+            return str(content).strip()
+
+        # Gemini: content at top level — list of {"text": ...} or a string
+        content = turn.get("content")
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and "text" in item:
+                    parts.append(item["text"])
+                elif isinstance(item, str):
+                    parts.append(item)
+            return " ".join(parts).strip()
+        if isinstance(content, str):
+            return content.strip()
+        return ""
+
+    @staticmethod
+    def _iter_content_blocks(turn: dict[str, Any]) -> list[dict[str, Any]]:
+        """Return normalized content blocks from a turn (Claude or Gemini).
+
+        Every returned block has at least a ``type`` key (``"text"``,
+        ``"tool_use"``, ``"tool_result"``).
+        """
+        # Claude format: message.content is a list of typed blocks
+        msg = turn.get("message")
+        if isinstance(msg, dict):
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                return [b for b in content if isinstance(b, dict)]
+            return []
+
+        # Gemini JSON session format — synthesize blocks from top-level fields
+        blocks: list[dict[str, Any]] = []
+
+        content = turn.get("content")
+        if isinstance(content, str) and content.strip():
+            blocks.append({"type": "text", "text": content})
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and "text" in item:
+                    blocks.append({"type": "text", "text": item["text"]})
+
+        for tc in turn.get("toolCalls", []):
+            if isinstance(tc, dict):
+                block: dict[str, Any] = {
+                    "type": "tool_use",
+                    "name": tc.get("name", "unknown"),
+                    "input": tc.get("args", {}),
+                }
+                if tc.get("id"):
+                    block["id"] = tc["id"]
+                blocks.append(block)
+
+        return blocks
+
+    @staticmethod
+    def _is_user_turn(turn: dict[str, Any]) -> bool:
+        """Return True if the turn is from the user (works for all CLI formats)."""
+        return turn.get("type") == "user"
+
+    # ------------------------------------------------------------------
+
     def extract_handoff_context(
         self, turns: list[dict[str, Any]], max_turns: int | None = None
     ) -> HandoffContext:
@@ -70,8 +155,11 @@ class TranscriptAnalyzer:
         - The original user goal (first user message)
         - Recent tool activity summaries
 
+        Handles both Claude JSONL and Gemini JSON session formats
+        transparently via ``_iter_content_blocks`` / ``_get_user_text``.
+
         Args:
-            turns: List of transcript turns (dicts)
+            turns: List of transcript turns (dicts) in any supported format.
             max_turns: Deprecated, ignored. All turns are processed.
 
         Returns:
@@ -84,78 +172,36 @@ class TranscriptAnalyzer:
             return context
 
         # 1. Extract Initial Goal (First User Message)
-        # We scan from the beginning to find the first user message
         for turn in turns:
-            if turn.get("type") == "user":
-                msg = turn.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    # Handle nested content blocks (e.g., Claude format)
-                    text_parts = []
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text_parts.append(block.get("text", ""))
-                        elif isinstance(block, str):
-                            text_parts.append(block)
-                    context.initial_goal = " ".join(text_parts).strip()
-                else:
-                    context.initial_goal = str(content).strip()
+            if self._is_user_turn(turn):
+                context.initial_goal = self._get_user_text(turn)
                 break
 
         # 2. Analyze Recent Activity (Scan all turns)
-        relevant_turns = turns
-
-        # Track what we've found to avoid duplicates where appropriate
         found_active_task = False
         modified_files_set: set[str] = set()
 
-        for turn in reversed(relevant_turns):
-            message = turn.get("message", {})
-            content_blocks = message.get("content", [])
-
-            # Handle Claude's content block list format
-            if isinstance(content_blocks, list):
-                for block in content_blocks:
-                    if not isinstance(block, dict):
-                        continue
-
-                    block_type = block.get("type")
-
-                    # Check for Tool Use
-                    if block_type == "tool_use":
-                        self._analyze_tool_use(
-                            block, context, found_active_task, modified_files_set
-                        )
-                        if (
-                            block.get("name") == "mcp_call_tool"
-                            and block.get("input", {}).get("server_name") == "gobby-tasks"
-                        ):
-                            # We found a task interaction, but we want the *latest* active one
-                            # The helper _analyze_tool_use will handle extraction,
-                            # we just mark we found some task activity if needed.
-                            pass
+        for turn in reversed(turns):
+            for block in self._iter_content_blocks(turn):
+                if block.get("type") == "tool_use":
+                    self._analyze_tool_use(block, context, found_active_task, modified_files_set)
 
         context.files_modified = sorted(modified_files_set)
         # task_progress was built in reverse order; restore chronological
         context.task_progress.reverse()
 
         # 3. Recent Activity Summary (Last 10 calls)
-        # Extract meaningful details from recent tool uses
-        recent_tools = []
+        recent_tools: list[str] = []
         count = 0
         for turn in reversed(turns):
             if count >= 10:
                 break
-            message = turn.get("message", {})
-            content = message.get("content", [])
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
-                        description = self._format_tool_description(block)
-                        recent_tools.append(description)
-                        count += 1
-                        if count >= 10:
-                            break
+            for block in self._iter_content_blocks(turn):
+                if block.get("type") == "tool_use":
+                    recent_tools.append(self._format_tool_description(block))
+                    count += 1
+                    if count >= 10:
+                        break
         context.recent_activity = recent_tools
 
         # 4. Extract Key Decisions from assistant text blocks
@@ -171,23 +217,19 @@ class TranscriptAnalyzer:
             "rather than",
         ]
         decisions: list[str] = []
-        for turn in relevant_turns:
-            message = turn.get("message", {})
-            content = message.get("content", [])
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text", "")
-                        text_lower = text.lower()
-                        if any(ind in text_lower for ind in decision_indicators):
-                            # Extract first 200 chars of the decision text
-                            snippet = text[:200].strip()
-                            if snippet:
-                                decisions.append(snippet)
-                                if len(decisions) >= 10:
-                                    break
-                if len(decisions) >= 10:
-                    break
+        for turn in turns:
+            for block in self._iter_content_blocks(turn):
+                if block.get("type") == "text":
+                    text = block.get("text", "")
+                    text_lower = text.lower()
+                    if any(ind in text_lower for ind in decision_indicators):
+                        snippet = text[:200].strip()
+                        if snippet:
+                            decisions.append(snippet)
+                            if len(decisions) >= 10:
+                                break
+            if len(decisions) >= 10:
+                break
         if decisions:
             context.key_decisions = decisions
 

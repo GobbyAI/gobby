@@ -1426,6 +1426,43 @@ class TestGeminiTranscriptParser:
         extracted = parser.extract_turns_since_clear(small_turns, max_turns=50)
         assert len(extracted) == 10
 
+    def test_gemini_extract_last_messages_json_session_format(self, parser) -> None:
+        """Test extract_last_messages with Gemini JSON session format (type: user/gemini)."""
+        turns = [
+            {
+                "id": "msg-1",
+                "type": "user",
+                "timestamp": "2026-04-12T16:20:00Z",
+                "content": [{"text": "Fix the bug"}],
+            },
+            {
+                "id": "msg-2",
+                "type": "gemini",
+                "timestamp": "2026-04-12T16:20:01Z",
+                "content": "I'll fix it now.",
+                "toolCalls": [],
+            },
+            {
+                "id": "msg-3",
+                "type": "user",
+                "timestamp": "2026-04-12T16:21:00Z",
+                "content": [{"text": "Looks good"}],
+            },
+            {
+                "id": "msg-4",
+                "type": "gemini",
+                "timestamp": "2026-04-12T16:21:01Z",
+                "content": "Great, all done.",
+            },
+        ]
+
+        msgs = parser.extract_last_messages(turns, num_pairs=1)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "user"
+        assert "Looks good" in msgs[0]["content"]
+        assert msgs[1]["role"] == "assistant"
+        assert "all done" in msgs[1]["content"]
+
     def test_gemini_is_session_boundary(self, parser) -> None:
         """Test is_session_boundary always returns False for Gemini."""
         assert parser.is_session_boundary({}) is False

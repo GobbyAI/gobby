@@ -1502,3 +1502,88 @@ def test_initial_goal_handles_list_content() -> None:
     ctx = analyzer.extract_handoff_context(turns)
 
     assert ctx.initial_goal == "Please fix the login bug"
+
+
+# ------------------------------------------------------------------
+# Gemini JSON session format
+# ------------------------------------------------------------------
+
+
+@pytest.fixture
+def gemini_turns():
+    """Turns in Gemini JSON session format (type: user/gemini)."""
+    return [
+        {
+            "id": "msg-1",
+            "type": "user",
+            "timestamp": "2026-04-12T16:20:00Z",
+            "content": [{"text": "Fix the auth bug"}],
+        },
+        {
+            "id": "msg-2",
+            "type": "gemini",
+            "timestamp": "2026-04-12T16:20:01Z",
+            "content": "I'll fix it now.",
+            "toolCalls": [
+                {
+                    "id": "replace_1",
+                    "name": "replace",
+                    "args": {"file_path": "auth.py", "old_string": "bad", "new_string": "good"},
+                },
+            ],
+        },
+        {
+            "id": "msg-3",
+            "type": "gemini",
+            "timestamp": "2026-04-12T16:20:02Z",
+            "content": "I decided to use the new auth library because it's more secure.",
+            "toolCalls": [
+                {
+                    "id": "shell_1",
+                    "name": "shell",
+                    "args": {"command": "git commit -m 'fix auth'"},
+                },
+            ],
+        },
+    ]
+
+
+def test_gemini_initial_goal(gemini_turns) -> None:
+    """Gemini format: initial goal extracted from first user message."""
+    analyzer = TranscriptAnalyzer()
+    ctx = analyzer.extract_handoff_context(gemini_turns)
+    assert ctx.initial_goal == "Fix the auth bug"
+
+
+def test_gemini_tool_calls_detected(gemini_turns) -> None:
+    """Gemini format: tool calls from toolCalls array are detected."""
+    analyzer = TranscriptAnalyzer()
+    ctx = analyzer.extract_handoff_context(gemini_turns)
+    assert len(ctx.recent_activity) > 0
+
+
+def test_gemini_key_decisions(gemini_turns) -> None:
+    """Gemini format: key decisions from assistant text content are extracted."""
+    analyzer = TranscriptAnalyzer()
+    ctx = analyzer.extract_handoff_context(gemini_turns)
+    assert ctx.key_decisions is not None
+    assert any("decided" in d.lower() or "because" in d.lower() for d in ctx.key_decisions)
+
+
+def test_gemini_empty_turns() -> None:
+    """Gemini format: empty turns produce empty context."""
+    analyzer = TranscriptAnalyzer()
+    ctx = analyzer.extract_handoff_context([])
+    assert ctx.initial_goal == ""
+    assert not ctx.active_gobby_task
+
+
+def test_gemini_user_content_as_string() -> None:
+    """Gemini format: user content can also be a plain string."""
+    turns = [
+        {"type": "user", "content": "Hello world"},
+        {"type": "gemini", "content": "Hi!"},
+    ]
+    analyzer = TranscriptAnalyzer()
+    ctx = analyzer.extract_handoff_context(turns)
+    assert ctx.initial_goal == "Hello world"

@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import aiofiles
 
-from gobby.sessions.analyzer import HandoffContext, TranscriptAnalyzer
+if TYPE_CHECKING:
+    from gobby.sessions.analyzer import HandoffContext
 from gobby.workflows.git_utils import (
     get_file_changes,
     get_git_diff_summary,
@@ -498,6 +499,8 @@ async def generate_summary(
             structured_context += "\n\nRecent Commits:\n" + "\n".join(commit_lines)
     else:
         # Fallback: full transcript analysis
+        from gobby.sessions.analyzer import TranscriptAnalyzer
+
         analyzer = TranscriptAnalyzer()
         handoff_ctx = analyzer.extract_handoff_context(turns, max_turns=150)
         real_commits = get_recent_git_commits()
