@@ -33,6 +33,8 @@ _SHELL_TOOLS = frozenset(
 # Pattern to detect non-zero exit codes in tool output text.
 # Matches: "Exit code: 1", "exit code 127", "Error: Exit code 2", etc.
 _EXIT_CODE_RE = _re.compile(r"[Ee]xit.?code[:\s]+(\d+)")
+_APPLY_PATCH_FILE_RE = _re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$")
+_APPLY_PATCH_MOVE_RE = _re.compile(r"^\*\*\* Move to: (.+)$")
 
 
 def is_shell_tool(tool_name: Any) -> bool:
@@ -45,6 +47,113 @@ def canonicalize_shell_tool_name(tool_name: Any) -> Any:
     if is_shell_tool(tool_name):
         return "Bash"
     return tool_name
+
+
+def _append_unique_path(paths: list[str], path: Any) -> None:
+    """Append a non-empty path while preserving order."""
+    if not isinstance(path, str):
+        return
+    normalized = path.strip()
+    if normalized and normalized not in paths:
+        paths.append(normalized)
+
+
+def _extract_change_path(change: Any) -> str | None:
+    """Extract a touched file path from a file-change dict."""
+    if not isinstance(change, dict):
+        return None
+
+    for key in (
+        "file_path",
+        "path",
+        "new_path",
+        "newPath",
+        "target_path",
+        "targetPath",
+    ):
+        value = change.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return None
+
+
+def _normalize_file_change_input(tool_input: Any) -> Any:
+    """Normalize app-server style file-change lists into canonical Write input."""
+    if isinstance(tool_input, list):
+        normalized_input: dict[str, Any] = {"changes": tool_input}
+        changes = tool_input
+    elif isinstance(tool_input, dict) and isinstance(tool_input.get("changes"), list):
+        normalized_input = dict(tool_input)
+        changes = normalized_input["changes"]
+    else:
+        return tool_input
+
+    paths: list[str] = []
+    for change in changes:
+        _append_unique_path(paths, _extract_change_path(change))
+
+    if paths:
+        normalized_input.setdefault("file_path", paths[0])
+        if len(paths) > 1:
+            normalized_input.setdefault("file_paths", paths)
+
+    return normalized_input
+
+
+def _extract_apply_patch_text(tool_input: Any) -> str | None:
+    """Extract raw patch text from apply_patch inputs."""
+    if isinstance(tool_input, str):
+        return tool_input
+
+    if not isinstance(tool_input, dict):
+        return None
+
+    for key in ("patch", "content", "text", "diff"):
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            return value
+
+    return None
+
+
+def _parse_apply_patch_paths(patch_text: str) -> list[str]:
+    """Extract touched paths from apply_patch freeform patch text."""
+    paths: list[str] = []
+
+    for raw_line in patch_text.splitlines():
+        line = raw_line.strip()
+        file_match = _APPLY_PATCH_FILE_RE.match(line)
+        if file_match:
+            _append_unique_path(paths, file_match.group(1))
+            continue
+
+        move_match = _APPLY_PATCH_MOVE_RE.match(line)
+        if move_match:
+            _append_unique_path(paths, move_match.group(1))
+
+    return paths
+
+
+def _normalize_apply_patch_input(tool_input: Any) -> dict[str, Any]:
+    """Normalize apply_patch payloads into canonical Write input."""
+    normalized_input: dict[str, Any] = dict(tool_input) if isinstance(tool_input, dict) else {}
+    patch_text = _extract_apply_patch_text(tool_input)
+
+    if patch_text is not None:
+        normalized_input.setdefault("patch", patch_text)
+
+    if isinstance(normalized_input.get("path"), str) and "file_path" not in normalized_input:
+        normalized_input["file_path"] = normalized_input["path"]
+
+    if patch_text:
+        paths = _parse_apply_patch_paths(patch_text)
+        if paths:
+            normalized_input.setdefault("file_path", paths[0])
+            if len(paths) > 1:
+                normalized_input.setdefault("file_paths", paths)
+
+    return normalized_input
 
 
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +212,19 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     # Normalize tool_input internal fields (e.g., path → file_path for Gemini)
     tool_input = data.get("tool_input")
+    tool_name = data.get("tool_name")
+
+    if isinstance(tool_name, str) and tool_name.lower() == "apply_patch":
+        data.setdefault("_original_tool_name", tool_name)
+        data["tool_name"] = "Write"
+        tool_input = _normalize_apply_patch_input(tool_input)
+        data["tool_input"] = tool_input
+    elif data.get("tool_name") == "Write":
+        normalized_input = _normalize_file_change_input(tool_input)
+        if normalized_input is not tool_input:
+            data["tool_input"] = normalized_input
+            tool_input = normalized_input
+
     if isinstance(tool_input, dict):
         if "path" in tool_input and "file_path" not in tool_input:
             tool_input["file_path"] = tool_input["path"]

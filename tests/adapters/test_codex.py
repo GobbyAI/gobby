@@ -1114,7 +1114,10 @@ class TestCodexAdapterTranslateApprovalEvent:
 
         assert hook_event is not None
         assert hook_event.data["tool_name"] == "Write"
-        assert hook_event.data["tool_input"] == changes
+        assert hook_event.data["tool_input"] == {
+            "changes": changes,
+            "file_path": "/file.txt",
+        }
 
     def test_unknown_approval_method(self) -> None:
         """Unknown approval method returns None."""
@@ -1424,6 +1427,39 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event is not None
         assert hook_event.event_type == HookEventType.BEFORE_TOOL
         assert hook_event.session_id == "codex-session-123"
+
+    def test_translate_pre_tool_use_apply_patch_as_write(self) -> None:
+        """Translate apply_patch to canonical Write with touched file paths."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+
+        native_event = {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "session_id": "codex-session-123",
+                "cwd": "/project",
+                "tool_name": "apply_patch",
+                "tool_input": (
+                    "*** Begin Patch\n"
+                    "*** Update File: src/main.py\n"
+                    "@@\n"
+                    "-print('old')\n"
+                    "+print('new')\n"
+                    "*** End Patch\n"
+                ),
+            },
+            "source": "codex",
+        }
+
+        hook_event = adapter.translate_to_hook_event(native_event)
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.data["tool_name"] == "Write"
+        assert hook_event.data["tool_input"]["file_path"] == "src/main.py"
+        assert hook_event.metadata["original_tool_name"] == "apply_patch"
+        assert hook_event.metadata["normalized_tool_name"] == "Write"
 
     def test_translate_post_tool_use(self) -> None:
         """Translate PostToolUse to AFTER_TOOL."""
@@ -2902,6 +2938,9 @@ class TestCodexWorkflowEnforcementIntegration:
 
         hook_event = mock_hm.handle.call_args[0][0]
         assert hook_event.data["tool_name"] == "Write"
-        assert hook_event.data["tool_input"] == changes
+        assert hook_event.data["tool_input"] == {
+            "changes": changes,
+            "file_path": "/src/app.py",
+        }
 
         assert result == {"decision": "accept"}

@@ -173,7 +173,7 @@ class TestRequireTaskBeforeEdit:
         assert set(body.effects[0].tools) == {"Edit", "Write", "NotebookEdit"}
 
     def test_when_checks_task_claimed_and_plan_file_and_plan_mode(self, db, manager) -> None:
-        """Should check task_claimed, is_plan_file, and plan_mode."""
+        """Should check task_claimed and multi-file task gating."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-task-before-edit")
@@ -181,18 +181,17 @@ class TestRequireTaskBeforeEdit:
 
         assert body.when is not None
         assert "task_claimed" in body.when
-        assert "is_plan_file" in body.when
+        assert "requires_task_for_any_touched_file" in body.when
         assert "plan_mode" in body.when
 
-    def test_when_condition_evaluates_with_is_plan_file(self) -> None:
-        """The when condition should evaluate successfully with is_plan_file registered."""
-        from gobby.workflows.enforcement.blocking import is_plan_file
+    def test_when_condition_evaluates_with_plan_file(self) -> None:
+        """Plan files should stay exempt when the helper is registered."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
-            "and not is_plan_file(tool_input.get('file_path', ''), source) "
-            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
+            "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
         )
 
         # Scenario: editing a plan file without task claimed => should NOT block
@@ -206,7 +205,7 @@ class TestRequireTaskBeforeEdit:
             "source": "claude_code",
         }
         allowed_funcs = build_condition_helpers(context=context)
-        allowed_funcs["is_plan_file"] = is_plan_file
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
 
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         result = evaluator.evaluate(condition)
@@ -214,13 +213,12 @@ class TestRequireTaskBeforeEdit:
 
     def test_when_condition_blocks_non_plan_file(self) -> None:
         """Editing a non-plan file without task should still block."""
-        from gobby.workflows.enforcement.blocking import is_plan_file
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
-            "and not is_plan_file(tool_input.get('file_path', ''), source) "
-            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
+            "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
         )
 
         context = {
@@ -233,7 +231,7 @@ class TestRequireTaskBeforeEdit:
             "source": "claude_code",
         }
         allowed_funcs = build_condition_helpers(context=context)
-        allowed_funcs["is_plan_file"] = is_plan_file
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
 
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         result = evaluator.evaluate(condition)
@@ -241,13 +239,12 @@ class TestRequireTaskBeforeEdit:
 
     def test_plan_mode_exempts_markdown(self) -> None:
         """In plan mode, writing .md files should not be blocked."""
-        from gobby.workflows.enforcement.blocking import is_plan_file
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
-            "and not is_plan_file(tool_input.get('file_path', ''), source) "
-            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
+            "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
         )
 
         context = {
@@ -260,7 +257,7 @@ class TestRequireTaskBeforeEdit:
             "source": "claude_code",
         }
         allowed_funcs = build_condition_helpers(context=context)
-        allowed_funcs["is_plan_file"] = is_plan_file
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
 
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         result = evaluator.evaluate(condition)
@@ -268,13 +265,12 @@ class TestRequireTaskBeforeEdit:
 
     def test_plan_mode_still_blocks_non_markdown(self) -> None:
         """In plan mode, writing non-.md files should still be blocked."""
-        from gobby.workflows.enforcement.blocking import is_plan_file
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
         from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
-            "and not is_plan_file(tool_input.get('file_path', ''), source) "
-            "and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))"
+            "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
         )
 
         context = {
@@ -287,11 +283,39 @@ class TestRequireTaskBeforeEdit:
             "source": "claude_code",
         }
         allowed_funcs = build_condition_helpers(context=context)
-        allowed_funcs["is_plan_file"] = is_plan_file
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
 
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         result = evaluator.evaluate(condition)
         assert result is True, "Should block non-markdown even in plan mode"
+
+    def test_multi_file_blocks_when_any_touched_path_requires_task(self) -> None:
+        """A mixed exempt/non-exempt patch should block as a whole."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        condition = (
+            "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
+        )
+
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+            "tool_input": {
+                "file_paths": ["/project/.gobby/plans/my-plan.md", "/project/src/main.py"],
+            },
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        result = evaluator.evaluate(condition)
+        assert result is True, "Should block if any touched file needs a task"
 
 
 class TestIsPlanFile:
@@ -357,6 +381,91 @@ class TestIsPlanFile:
         from gobby.workflows.enforcement.blocking import is_plan_file
 
         assert is_plan_file("/home/user/.codex/config.toml") is False
+
+
+class TestTouchedFileHelpers:
+    """Unit tests for touched-path task gating helpers."""
+
+    def test_get_touched_file_paths_prefers_file_paths(self) -> None:
+        from gobby.workflows.enforcement.blocking import get_touched_file_paths
+
+        result = get_touched_file_paths(
+            {
+                "file_paths": ["/project/a.py", "/project/b.py"],
+                "file_path": "/project/ignored.py",
+            }
+        )
+
+        assert result == ["/project/a.py", "/project/b.py"]
+
+    def test_get_touched_file_paths_falls_back_to_changes(self) -> None:
+        from gobby.workflows.enforcement.blocking import get_touched_file_paths
+
+        result = get_touched_file_paths(
+            {
+                "changes": [
+                    {"path": "/project/a.py"},
+                    {"file_path": "/project/b.py"},
+                    {"path": "/project/a.py"},
+                ]
+            }
+        )
+
+        assert result == ["/project/a.py", "/project/b.py"]
+
+    def test_requires_task_for_any_touched_file_allows_all_exempt_paths(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {
+                "file_paths": [
+                    "/project/.gobby/plans/plan.md",
+                    "/project/.codex/notes.md",
+                ]
+            },
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is False
+
+    def test_requires_task_for_any_touched_file_blocks_mixed_paths(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {
+                "file_paths": [
+                    "/project/.gobby/plans/plan.md",
+                    "/project/src/main.py",
+                ]
+            },
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is True
+
+    def test_requires_task_for_any_touched_file_allows_markdown_in_plan_mode(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {"file_paths": ["/project/docs/notes.md"]},
+            source="codex",
+            plan_mode=True,
+        )
+
+        assert result is False
+
+    def test_requires_task_for_any_touched_file_fails_closed_without_paths(self) -> None:
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+
+        result = requires_task_for_any_touched_file(
+            {"patch": "*** Begin Patch\n*** End Patch\n"},
+            source="codex",
+            plan_mode=False,
+        )
+
+        assert result is True
 
 
 class TestRequireCleanTreeBeforeStatus:

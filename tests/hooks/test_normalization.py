@@ -282,13 +282,13 @@ class TestFieldAliases:
         """toolArgs as a JSON string is parsed to tool_input."""
         data = {"toolArgs": '{"path": "/foo.py"}'}
         normalize_tool_fields(data)
-        assert data["tool_input"] == {"path": "/foo.py"}
+        assert data["tool_input"] == {"path": "/foo.py", "file_path": "/foo.py"}
 
     def test_toolArgs_object_to_tool_input(self) -> None:
         """toolArgs as a dict should pass through without JSON parsing."""
         data = {"toolArgs": {"path": "/foo.py"}}
         normalize_tool_fields(data)
-        assert data["tool_input"] == {"path": "/foo.py"}
+        assert data["tool_input"] == {"path": "/foo.py", "file_path": "/foo.py"}
 
     def test_toolArgs_invalid_json_string_kept_as_string(self) -> None:
         """Invalid JSON in toolArgs should be kept as-is."""
@@ -392,6 +392,89 @@ class TestNormalizeToolFieldsAlias:
         assert data["mcp_server"] == "gobby-memory"
         assert data["mcp_tool"] == "create_memory"
         assert data["tool_output"] == "ok"
+
+
+class TestWriteNormalization:
+    """Tests for canonical write input normalization."""
+
+    def test_write_change_list_populates_file_path(self) -> None:
+        data = {
+            "tool_name": "Write",
+            "tool_input": [{"path": "/file.txt", "content": "new content"}],
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Write"
+        assert data["tool_input"] == {
+            "changes": [{"path": "/file.txt", "content": "new content"}],
+            "file_path": "/file.txt",
+        }
+
+    def test_write_change_list_populates_file_paths_for_multiple_files(self) -> None:
+        data = {
+            "tool_name": "Write",
+            "tool_input": [
+                {"path": "/file-a.txt", "content": "a"},
+                {"path": "/file-b.txt", "content": "b"},
+            ],
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_input"]["file_path"] == "/file-a.txt"
+        assert data["tool_input"]["file_paths"] == ["/file-a.txt", "/file-b.txt"]
+
+    def test_apply_patch_normalized_to_write(self) -> None:
+        data = {
+            "tool_name": "apply_patch",
+            "tool_input": (
+                "*** Begin Patch\n"
+                "*** Update File: src/main.py\n"
+                "@@\n"
+                "-print('old')\n"
+                "+print('new')\n"
+                "*** End Patch\n"
+            ),
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Write"
+        assert data["_original_tool_name"] == "apply_patch"
+        assert data["tool_input"]["patch"].startswith("*** Begin Patch")
+        assert data["tool_input"]["file_path"] == "src/main.py"
+
+    def test_apply_patch_multi_file_populates_file_paths(self) -> None:
+        data = {
+            "tool_name": "apply_patch",
+            "tool_input": (
+                "*** Begin Patch\n"
+                "*** Update File: src/main.py\n"
+                "@@\n"
+                "*** Add File: docs/plan.md\n"
+                "+hello\n"
+                "*** End Patch\n"
+            ),
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Write"
+        assert data["tool_input"]["file_path"] == "src/main.py"
+        assert data["tool_input"]["file_paths"] == ["src/main.py", "docs/plan.md"]
+
+    def test_apply_patch_without_paths_preserves_patch_only(self) -> None:
+        data = {
+            "tool_name": "apply_patch",
+            "tool_input": "*** Begin Patch\n*** End Patch\n",
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Write"
+        assert data["tool_input"] == {"patch": "*** Begin Patch\n*** End Patch\n"}
+        assert "file_path" not in data["tool_input"]
 
 
 class TestToolErrorDetection:
