@@ -1522,8 +1522,16 @@ class TestCloseTaskTool:
                 },
             )
 
-            # When override_justification is provided, task routes to review
-            assert result.get("routed_to_review") is True
+            # When override_justification is provided, task escalates for human review
+            assert result.get("routed_to_escalation") is True
+            mock_task_manager.escalate_task.assert_called_once_with(
+                "550e8400-e29b-41d4-a716-446655440000",
+                reason="Validation override requested: Manually verified",
+            )
+            mock_task_manager.update_task.assert_called_once_with(
+                "550e8400-e29b-41d4-a716-446655440000",
+                validation_override_reason="Manually verified",
+            )
 
     @pytest.mark.asyncio
     async def test_close_task_out_of_repo_blocked_when_session_had_edits(
