@@ -124,11 +124,24 @@ class TestToolNameNormalization:
             ("edit_file", "Edit"),
             ("EditFile", "Edit"),
             ("EditFileTool", "Edit"),
+            ("replace", "Edit"),
+            ("Replace", "Edit"),
+            ("ReplaceTool", "Edit"),
             # Search/Glob/Grep
             ("GlobTool", "Glob"),
+            ("glob", "Glob"),
             ("GrepTool", "Grep"),
+            ("grep", "Grep"),
+            ("grep_search", "Grep"),
             ("search_file_content", "Grep"),
             ("SearchText", "Grep"),
+            # Directory listing
+            ("list_directory", "Ls"),
+            ("ListDirectory", "Ls"),
+            ("ls", "Ls"),
+            # Web access
+            ("web_fetch", "Fetch"),
+            ("FetchTool", "Fetch"),
             # MCP tools (Gobby MCP server)
             ("call_tool", "mcp__gobby__call_tool"),
             ("list_mcp_servers", "mcp__gobby__list_mcp_servers"),
