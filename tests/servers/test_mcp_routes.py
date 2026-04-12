@@ -2216,6 +2216,32 @@ class TestHooksEndpoints:
         assert "claimed" in result["stopReason"]
 
 
+class TestCodexValidateSettings:
+    """Tests for Codex entry in validate_settings CLI_VALIDATION_CONFIGS."""
+
+    def test_codex_config_exists(self) -> None:
+        """Codex must be registered in CLI_VALIDATION_CONFIGS."""
+        from gobby.install.shared.hooks.validate_settings import CLI_VALIDATION_CONFIGS
+
+        assert "codex" in CLI_VALIDATION_CONFIGS
+
+    def test_codex_config_hooks_json(self) -> None:
+        """Codex validation must target hooks.json, not settings.json."""
+        from gobby.install.shared.hooks.validate_settings import CLI_VALIDATION_CONFIGS
+
+        config = CLI_VALIDATION_CONFIGS["codex"]
+        assert config.settings_file == "hooks.json"
+        assert config.settings_dir == ".codex"
+
+    def test_codex_required_hooks(self) -> None:
+        """All critical Codex hook types must be required."""
+        from gobby.install.shared.hooks.validate_settings import CLI_VALIDATION_CONFIGS
+
+        config = CLI_VALIDATION_CONFIGS["codex"]
+        for hook in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
+            assert hook in config.required_hooks, f"Missing required hook: {hook}"
+
+
 # ============================================================================
 # Webhooks Endpoint Tests
 # ============================================================================
