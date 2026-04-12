@@ -240,6 +240,7 @@ def is_blocked(result: dict[str, Any]) -> bool:
     Checks all block patterns used across CLIs:
     - continue=False (Claude, Gemini)
     - decision in ("deny", "block") (Claude, Gemini)
+    - hookSpecificOutput.permissionDecision="deny" (Codex PreToolUse)
     """
     if result.get("continue") is False:
         return True
@@ -247,6 +248,9 @@ def is_blocked(result: dict[str, Any]) -> bool:
     if decision in ("deny", "block"):
         return True
     if result.get("permissionDecision") == "deny":
+        return True
+    hook_specific = result.get("hookSpecificOutput")
+    if isinstance(hook_specific, dict) and hook_specific.get("permissionDecision") == "deny":
         return True
     return False
 

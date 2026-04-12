@@ -719,27 +719,42 @@ class CodexHooksAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         """Convert HookResponse to Codex hooks.json expected format.
 
-        Codex uses the same hook output schema as Claude Code:
-        - ``continue``: bool (whether to continue execution)
-        - ``decision``: ``"block"`` with ``reason`` to block
-        - ``hookSpecificOutput``: ``{hookEventName, additionalContext}``
-        - ``systemMessage``: system-level message injection
+        Codex hooks share some top-level fields with Claude Code, but PreToolUse
+        requires a Codex-specific ``hookSpecificOutput.permissionDecision``
+        contract for block/approval semantics.
         """
         from gobby.llm.sdk_utils import compress_and_truncate
 
-        should_continue = response.decision not in ("deny", "block")
+        hook_event_name = hook_type or "Unknown"
 
-        result: dict[str, Any] = {
-            "continue": should_continue,
-        }
+        if response.decision in ("deny", "block"):
+            if hook_event_name == "PreToolUse":
+                result: dict[str, Any] = {
+                    "decision": "block",
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                    },
+                }
+                if response.reason:
+                    result["reason"] = response.reason
+                    result["hookSpecificOutput"]["permissionDecisionReason"] = response.reason
 
-        if not should_continue:
-            result["decision"] = "block"
+                system_parts: list[str] = []
+                if response.system_message:
+                    system_parts.append(response.system_message)
+                if response.context:
+                    system_parts.append(response.context)
+                if system_parts:
+                    result["systemMessage"] = compress_and_truncate("\n\n".join(system_parts))[0]
+                return result
+
+            result = {"continue": False, "decision": "block"}
             if response.reason:
                 result["reason"] = response.reason
             return result
 
-        hook_event_name = hook_type or "Unknown"
+        result: dict[str, Any] = {"continue": True}
 
         # Build additionalContext from all context sources
         context_parts: list[str] = []
@@ -828,6 +843,12 @@ class CodexHooksAdapter(BaseAdapter):
                     "hookEventName": hook_event_name,
                     "additionalContext": combined_context,
                 }
+
+        if response.modified_input and hook_event_name == "PreToolUse":
+            hook_output = result.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
+            hook_output["updatedInput"] = response.modified_input
+            if response.auto_approve:
+                hook_output["permissionDecision"] = "allow"
 
         return result
 

@@ -1549,6 +1549,49 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["decision"] == "block"
         assert result["reason"] == "Not allowed"
 
+    def test_pre_tool_use_block_uses_permission_decision(self) -> None:
+        """PreToolUse blocks must use Codex permissionDecision, not continue=false."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="block",
+            reason="Tool not allowed",
+            system_message="Use MCP instead",
+            context="Run create_task first",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert "continue" not in result
+        assert result["decision"] == "block"
+        assert result["reason"] == "Tool not allowed"
+        assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Tool not allowed"
+        assert "Use MCP instead" in result["systemMessage"]
+        assert "Run create_task first" in result["systemMessage"]
+
+    def test_pre_tool_use_rewrite_includes_updated_input(self) -> None:
+        """PreToolUse rewrites include updatedInput and optional auto-approval."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            context="Bare python is not allowed",
+            modified_input={"command": "uv run python hello.py"},
+            auto_approve=True,
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert result["continue"] is True
+        assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+        assert result["hookSpecificOutput"]["updatedInput"] == {
+            "command": "uv run python hello.py"
+        }
+        assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert "Bare python is not allowed" in result["systemMessage"]
+
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter

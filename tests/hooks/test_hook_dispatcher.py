@@ -303,6 +303,11 @@ class TestCodexStopHookBlocking:
         block_result = {
             "decision": "block",
             "reason": "Tool not allowed",
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Tool not allowed",
+            },
         }
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -328,6 +333,51 @@ class TestCodexStopHookBlocking:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["decision"] == "block"
+        assert "continue" not in output
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    @pytest.mark.asyncio
+    async def test_codex_pretooluse_nested_permission_deny_is_treated_as_block(
+        self, _patch_daemon_running, _patch_stdin, capsys
+    ) -> None:
+        """Codex PreToolUse must treat nested permissionDecision=deny as a block."""
+        args = MagicMock()
+        args.type = "PreToolUse"
+        args.debug = False
+        args.cli = "codex"
+
+        block_result = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Tool not allowed",
+            },
+            "reason": "Tool not allowed",
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = block_result
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(hook_dispatcher, "parse_arguments", return_value=args):
+            with patch.object(hook_dispatcher, "detect_cli", return_value=CODEX_CONFIG):
+                with patch("httpx.AsyncClient", return_value=mock_client):
+                    with patch.object(
+                        hook_dispatcher,
+                        "get_daemon_url",
+                        new_callable=AsyncMock,
+                        return_value="http://localhost:60887",
+                    ):
+                        exit_code = await hook_dispatcher.main()
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     @pytest.mark.asyncio
     async def test_codex_stop_allow_returns_exit_0(
