@@ -14,6 +14,7 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.rule_engine import RuleEngine
+from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
 
 pytestmark = pytest.mark.unit
@@ -61,6 +62,11 @@ def _insert_rule(
         enabled=enabled,
     )
     return row.id
+
+
+def _sync_bundled_rules(db: LocalDatabase) -> None:
+    """Sync the real bundled rule set into the test database."""
+    sync_bundled_rules(db, get_bundled_rules_path())
 
 
 class TestMCPRewriteNesting:
@@ -566,3 +572,44 @@ class TestRequireUvRewrite:
         assert response.decision == "allow"
         # Per-effect when blocks the rewrite since 'python'/'pip' not in command
         assert response.modified_input is None
+
+
+class TestCompressBashOutputBundledRule:
+    """Bundled compress-bash-output should skip Codex but keep other CLIs."""
+
+    @pytest.mark.asyncio
+    async def test_codex_does_not_rewrite_plain_bash(self, db, manager) -> None:
+        _sync_bundled_rules(db)
+
+        row = manager.get_by_name("compress-bash-output")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "source != 'codex'" in body.when
+
+        event = _make_event(
+            data={"tool_name": "Bash", "tool_input": {"command": "echo ok"}},
+            source=SessionSource.CODEX,
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
+
+        assert response.decision == "allow"
+        assert response.modified_input is None
+
+    @pytest.mark.asyncio
+    async def test_claude_still_rewrites_bash_through_gsqz(self, db) -> None:
+        _sync_bundled_rules(db)
+
+        event = _make_event(
+            data={"tool_name": "Bash", "tool_input": {"command": "echo ok"}},
+            source=SessionSource.CLAUDE,
+        )
+
+        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
+
+        assert response.decision == "allow"
+        assert response.modified_input is not None
+        assert "gsqz" in response.modified_input["command"]
+        assert "echo ok" in response.modified_input["command"]

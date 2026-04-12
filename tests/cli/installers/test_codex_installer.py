@@ -2,6 +2,7 @@
 
 import json
 import os
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -308,6 +309,9 @@ class TestInstallCodex:
         codex_hooks_pos = config_content.index("codex_hooks = true")
         mcp_pos = config_content.index("[mcp_servers")
         assert features_pos < codex_hooks_pos < mcp_pos
+        parsed = tomllib.loads(config_content)
+        assert parsed["features"]["fast_mode"] is True
+        assert parsed["features"]["codex_hooks"] is True
 
     def test_install_replaces_flag_in_existing_features_section(
         self,
@@ -331,6 +335,9 @@ class TestInstallCodex:
         assert "codex_hooks = true" in config_content
         assert "codex_hooks = false" not in config_content
         assert config_content.count("codex_hooks") == 1
+        parsed = tomllib.loads(config_content)
+        assert parsed["features"]["codex_hooks"] is True
+        assert parsed["features"]["fast_mode"] is True
 
     def test_install_merges_into_existing_hooks_json(
         self,

@@ -1607,8 +1607,8 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "Use MCP instead" in result["systemMessage"]
         assert "Run create_task first" in result["systemMessage"]
 
-    def test_pre_tool_use_rewrite_includes_updated_input(self) -> None:
-        """PreToolUse rewrites include updatedInput and optional auto-approval."""
+    def test_pre_tool_use_rewrite_blocks_and_surfaces_retry_input(self) -> None:
+        """PreToolUse rewrites block and tell Codex how to retry safely."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -1620,13 +1620,32 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
-        assert result["continue"] is True
+        assert result["decision"] == "block"
+        assert result["reason"] == "Retry the tool call with the corrected input from the hook message."
         assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-        assert result["hookSpecificOutput"]["updatedInput"] == {
-            "command": "uv run python hello.py"
-        }
-        assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert (
+            result["hookSpecificOutput"]["permissionDecisionReason"]
+            == "Retry the tool call with the corrected input from the hook message."
+        )
+        assert "updatedInput" not in result["hookSpecificOutput"]
         assert "Bare python is not allowed" in result["systemMessage"]
+        assert "uv run python hello.py" in result["systemMessage"]
+
+    def test_pre_tool_use_ignores_modified_input_without_rewrite_signal(self) -> None:
+        """modified_input alone should not block ordinary Codex commands."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            modified_input={"command": "sed -n '1,20p' file.txt"},
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "hookSpecificOutput" not in result
 
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""

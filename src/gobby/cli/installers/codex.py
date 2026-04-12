@@ -49,7 +49,7 @@ def _set_toml_value(content: str, key: str, value: str) -> str:
     before the first ``[table]`` header to stay top-level.
     """
     # Check for the exact dotted key first (e.g., features.codex_hooks = ...)
-    pattern = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$")
+    pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}\s*=.*$")
     line = f"{key} = {value}"
 
     if pattern.search(content):
@@ -60,7 +60,9 @@ def _set_toml_value(content: str, key: str, value: str) -> str:
     if "." in key:
         section, subkey = key.rsplit(".", 1)
         section_pattern = re.compile(rf"(?m)^\[{re.escape(section)}\]\s*$")
-        bare_pattern = re.compile(rf"(?m)^\s*{re.escape(subkey)}\s*=.*$")
+        # Use horizontal whitespace only so we don't consume the newline
+        # after ``[section]`` when replacing the first key in that section.
+        bare_pattern = re.compile(rf"(?m)^[ \t]*{re.escape(subkey)}\s*=.*$")
 
         section_match = section_pattern.search(content)
         if section_match:
@@ -100,7 +102,7 @@ def _remove_toml_key(content: str, key: str) -> str:
     Same limitations as _set_toml_value — regex-based, for the controlled
     Codex config.toml shape only.
     """
-    pattern = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$\n?")
+    pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}\s*=.*$\n?")
     result = pattern.sub("", content)
     return re.sub(r"\n{3,}", "\n\n", result)
 

@@ -10,6 +10,7 @@ Extracted from codex.py as part of Phase 3 Strangler Fig decomposition.
 
 from __future__ import annotations
 
+import json
 import logging
 import platform
 import uuid
@@ -721,11 +722,46 @@ class CodexHooksAdapter(BaseAdapter):
 
         Codex hooks share some top-level fields with Claude Code, but PreToolUse
         requires a Codex-specific ``hookSpecificOutput.permissionDecision``
-        contract for block/approval semantics.
+        contract for block semantics.
         """
         from gobby.llm.sdk_utils import compress_and_truncate
 
         hook_event_name = hook_type or "Unknown"
+
+        # Codex CLI 0.120.0 rejects ``updatedInput`` and ``permissionDecision=allow``
+        # for PreToolUse hooks. When Gobby wants to rewrite a tool call, block the
+        # current execution and tell the model exactly how to retry instead.
+        has_retry_signal = bool(
+            response.auto_approve
+            or response.reason
+            or response.context
+            or response.system_message
+        )
+        if response.modified_input and hook_event_name == "PreToolUse" and has_retry_signal:
+            retry_reason = (
+                response.reason
+                or "Retry the tool call with the corrected input from the hook message."
+            )
+            retry_parts: list[str] = []
+            if response.system_message:
+                retry_parts.append(response.system_message)
+            if response.context:
+                retry_parts.append(response.context)
+            retry_parts.append(
+                "Retry this tool call with the corrected input below:\n"
+                f"{json.dumps(response.modified_input, indent=2, sort_keys=True)}"
+            )
+            result: dict[str, Any] = {
+                "decision": "block",
+                "reason": retry_reason,
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": retry_reason,
+                },
+            }
+            result["systemMessage"] = compress_and_truncate("\n\n".join(retry_parts))[0]
+            return result
 
         if response.decision in ("deny", "block"):
             if hook_event_name == "PreToolUse":
@@ -843,12 +879,6 @@ class CodexHooksAdapter(BaseAdapter):
                     "hookEventName": hook_event_name,
                     "additionalContext": combined_context,
                 }
-
-        if response.modified_input and hook_event_name == "PreToolUse":
-            hook_output = result.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
-            hook_output["updatedInput"] = response.modified_input
-            if response.auto_approve:
-                hook_output["permissionDecision"] = "allow"
 
         return result
 
