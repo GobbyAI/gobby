@@ -17,6 +17,7 @@ from gobby.hooks.event_handlers._session_responses import (
     get_claimed_task_info,
 )
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.tasks.state_semantics import is_active_claim_status
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -445,12 +446,36 @@ class SessionStartMixin(EventHandlersBase):
                             k: parent_vars[k] for k in _TASK_CLAIM_KEYS if parent_vars.get(k)
                         }
                         if task_handoff:
-                            sv_mgr.merge_variables(session_id, task_handoff)
-                            # Re-assign all claimed tasks and re-link to new session
                             claimed_tasks = task_handoff.get("claimed_tasks") or {}
+                            merged_claims: dict[str, Any] = {}
+                            if task_handoff.get("session_had_task"):
+                                merged_claims["session_had_task"] = True
+
+                            filtered_claims: dict[str, str] = {}
                             if task_handoff.get("task_claimed") and claimed_tasks:
-                                for claimed_id in claimed_tasks:
+                                for claimed_id, claimed_ref in claimed_tasks.items():
+                                    task_obj = None
                                     if self._task_manager:
+                                        try:
+                                            task_obj = self._task_manager.get_task(claimed_id)
+                                        except Exception as e:
+                                            self.logger.debug(
+                                                f"Best-effort task lookup failed for session={session_id} task={claimed_id}: {e}"
+                                            )
+                                            continue
+
+                                    if task_obj is not None:
+                                        if not is_active_claim_status(task_obj.status):
+                                            continue
+                                        if task_obj.assignee not in (None, parent_session_id):
+                                            self.logger.debug(
+                                                "Skipping task handoff for session=%s task=%s; "
+                                                "already assigned to %s",
+                                                session_id,
+                                                claimed_id,
+                                                task_obj.assignee,
+                                            )
+                                            continue
                                         try:
                                             self._task_manager.update_task(
                                                 claimed_id, assignee=session_id
@@ -459,6 +484,9 @@ class SessionStartMixin(EventHandlersBase):
                                             self.logger.debug(
                                                 f"Best-effort task re-assignment failed for session={session_id} task={claimed_id}: {e}"
                                             )
+                                            continue
+
+                                    filtered_claims[claimed_id] = claimed_ref
                                     if self._session_task_manager:
                                         try:
                                             self._session_task_manager.link_task(
@@ -468,6 +496,11 @@ class SessionStartMixin(EventHandlersBase):
                                             self.logger.debug(
                                                 f"Best-effort session-task link failed for session={session_id} task={claimed_id}: {e}"
                                             )
+                            if filtered_claims:
+                                merged_claims["task_claimed"] = True
+                                merged_claims["claimed_tasks"] = filtered_claims
+                            if merged_claims:
+                                sv_mgr.merge_variables(session_id, merged_claims)
 
         # Deterministic claimed task context injection (compact/clear/restart)
         # Ensures agents always know which tasks they've claimed, even after

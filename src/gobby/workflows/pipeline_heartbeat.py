@@ -12,6 +12,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
 if TYPE_CHECKING:
@@ -143,12 +144,12 @@ class PipelineHeartbeat:
             return True  # Err on side of caution — assume alive
 
     async def check_stale_tasks(self) -> int:
-        """Find in_progress tasks with no alive agent or session and reset to open.
+        """Find claimed tasks with no alive agent or session and recover ownership.
 
-        For each in_progress task that has an assignee:
+        For each actively claimed task that has an assignee:
         1. Check if there's an active agent run (pending/running) for the task
         2. If not, check if the assignee session is still alive
-        3. If neither, reset the task to open with no assignee
+        3. If neither, recover the task based on its current lifecycle status
 
         Returns:
             Number of recovered tasks.
@@ -159,15 +160,17 @@ class PipelineHeartbeat:
             return 0
 
         try:
-            in_progress = await asyncio.to_thread(
-                self._task_manager.list_tasks, status="in_progress", limit=100
+            active_claims = await asyncio.to_thread(
+                self._task_manager.list_tasks,
+                status=list(ACTIVE_CLAIM_STATUSES),
+                limit=100,
             )
         except Exception:
-            logger.exception("Heartbeat: failed to query in_progress tasks")
+            logger.exception("Heartbeat: failed to query claimed tasks")
             return 0
 
         recovered = 0
-        for task in in_progress:
+        for task in active_claims:
             if not task.assignee:
                 continue
             try:
@@ -183,12 +186,11 @@ class PipelineHeartbeat:
                 if session_alive:
                     continue
 
-                # No active agent run and no live session — task is orphaned.
-                # If the task has linked commits, the agent did real work
-                # but didn't call mark_task_needs_review — promote to
-                # needs_review instead of wiping the claim entirely.
+                # No active agent run and no live session — task ownership is orphaned.
+                # Preserve non-implementation lifecycle states instead of forcing
+                # them back through in_progress/open.
                 has_commits = bool(getattr(task, "commits", None))
-                if has_commits:
+                if task.status == "in_progress" and has_commits:
                     await asyncio.to_thread(
                         self._task_manager.update_task,
                         task.id,
@@ -198,7 +200,7 @@ class PipelineHeartbeat:
                     logger.info(
                         f"Heartbeat: promoted stale task {task.id} (#{task.seq_num}) to needs_review (has commits, no active agent run)",
                     )
-                else:
+                elif task.status == "in_progress":
                     await asyncio.to_thread(
                         self._task_manager.update_task,
                         task.id,
@@ -207,6 +209,18 @@ class PipelineHeartbeat:
                     )
                     logger.warning(
                         f"Heartbeat: recovered stale task {task.id} (#{task.seq_num}) - reset to open (no active agent run, no commits)",
+                    )
+                else:
+                    await asyncio.to_thread(
+                        self._task_manager.update_task,
+                        task.id,
+                        assignee=None,
+                    )
+                    logger.info(
+                        "Heartbeat: released stale claim on task %s (#%s) in status %s",
+                        task.id,
+                        task.seq_num,
+                        task.status,
                     )
                 recovered += 1
             except Exception:

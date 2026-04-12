@@ -250,6 +250,45 @@ class TestDeEscalateCommand:
             f"Expected exit code 0 for valid de-escalate command, got {result.exit_code}: {result.output}"
         )
 
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_de_escalate_with_target_status(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test de-escalate can target needs_review explicitly."""
+        mock_task = MagicMock()
+        mock_task.id = "gt-test123"
+        mock_task.status = "escalated"
+        mock_resolve.return_value = mock_task
+
+        mock_manager = MagicMock()
+        mock_manager.update_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "de-escalate",
+                "gt-test123",
+                "--reason",
+                "Resume review",
+                "--target-status",
+                "needs_review",
+            ],
+        )
+
+        assert result.exit_code == 0
+        mock_manager.update_task.assert_called_once_with(
+            "gt-test123",
+            status="needs_review",
+            escalated_at=None,
+            escalation_reason=None,
+        )
+
 
 class TestValidationHistoryCommand:
     """Tests for gobby tasks validation-history command."""

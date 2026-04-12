@@ -104,12 +104,52 @@ class TestRecoverTaskFromFailedAgent:
 
         await monitor._recover_task_from_failed_agent("run-2")
 
-        mock_task_mgr.list_tasks.assert_called_once_with(status="in_progress", assignee="child-123")
+        mock_task_mgr.list_tasks.assert_called_once_with(
+            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
+            assignee="child-123",
+        )
         mock_task_mgr.get_task.assert_called_once_with("task-fallback")
         # Non-provider error: dispatch_failure_count incremented from 0 to 1
         mock_task_mgr.update_task.assert_called_once_with(
             "task-fallback", status="open", assignee=None, dispatch_failure_count=1
         )
+
+    @pytest.mark.asyncio
+    async def test_recover_task_releases_review_claim_without_status_change(self) -> None:
+        """Failed review agent should clear assignee without regressing status."""
+        mock_run_mgr = MagicMock()
+        mock_task_mgr = MagicMock()
+        mock_stall = MagicMock()
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            task_manager=mock_task_mgr,
+        )
+        monitor._stall_classifier = mock_stall
+
+        db_run = AgentRun(
+            id="run-review",
+            parent_session_id="p",
+            task_id="task-review",
+            provider="claude",
+            prompt="review it",
+            status="error",
+            error="agent crashed",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+        )
+        mock_run_mgr.get.return_value = db_run
+
+        mock_task = MagicMock()
+        mock_task.status = "needs_review"
+        mock_task.seq_num = 22
+        mock_task_mgr.get_task.return_value = mock_task
+        mock_stall.is_provider_error.return_value = False
+
+        await monitor._recover_task_from_failed_agent("run-review")
+
+        mock_task_mgr.update_task.assert_called_once_with("task-review", assignee=None)
 
     @pytest.mark.asyncio
     async def test_recover_task_no_task_manager(self) -> None:

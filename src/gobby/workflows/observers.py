@@ -10,6 +10,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
+from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES, is_task_actively_claimed
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -491,7 +492,7 @@ def reconcile_claimed_tasks(
     from gobby.storage.tasks import TaskNotFoundError
 
     if claimed_tasks:
-        # Prune entries that are no longer in_progress or assigned to us
+        # Prune entries that are no longer active claimed work for this session.
         pruned: list[str] = []
         for task_uuid, ref in list(claimed_tasks.items()):
             try:
@@ -499,7 +500,7 @@ def reconcile_claimed_tasks(
             except (TaskNotFoundError, ValueError, KeyError):
                 task = None
 
-            if task is None or task.status != "in_progress" or task.assignee != session_id:
+            if not is_task_actively_claimed(task, session_id):
                 pruned.append(f"{ref}({task_uuid[:8]})")
                 del claimed_tasks[task_uuid]
 
@@ -510,9 +511,12 @@ def reconcile_claimed_tasks(
     else:
         # Dict is empty — check DB for tasks we might have lost track of
         try:
-            db_tasks = task_manager.list_tasks(assignee=session_id, status="in_progress")
+            db_tasks = task_manager.list_tasks(
+                assignee=session_id,
+                status=list(ACTIVE_CLAIM_STATUSES),
+            )
         except Exception as e:
-            logger.warning(f"Session {session_id}: failed to list in-progress tasks: {e}")
+            logger.warning(f"Session {session_id}: failed to list claimed tasks: {e}")
             db_tasks = []
 
         if db_tasks:

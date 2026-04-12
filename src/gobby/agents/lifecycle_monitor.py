@@ -24,6 +24,7 @@ from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES, is_active_claim_status
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -100,7 +101,7 @@ class AgentLifecycleMonitor:
         self._master_fds[run_id] = fd
 
     async def _recover_task_from_failed_agent(self, run_id: str) -> None:
-        """Reset a failed agent's task back to 'open' so the orchestrator can re-dispatch it.
+        """Recover task ownership after a failed agent run.
 
         If the failure is provider-side, logs which provider failed so the
         orchestrator can rotate to an alternative on the next dispatch.
@@ -118,7 +119,7 @@ class AgentLifecycleMonitor:
             if not task_id and db_run.child_session_id:
                 tasks = await asyncio.to_thread(
                     self._task_manager.list_tasks,
-                    status="in_progress",
+                    status=list(ACTIVE_CLAIM_STATUSES),
                     assignee=db_run.child_session_id,
                 )
                 if tasks:
@@ -135,10 +136,24 @@ class AgentLifecycleMonitor:
                 )
 
             task = await asyncio.to_thread(self._task_manager.get_task, task_id)
-            if not task or task.status != "in_progress":
+            if not task or not is_active_claim_status(task.status):
                 return
 
             task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
+
+            if task.status != "in_progress":
+                await asyncio.to_thread(
+                    self._task_manager.update_task,
+                    task_id,
+                    assignee=None,
+                )
+                logger.info(
+                    "Released stale ownership on task %s after agent %s failed (status=%s)",
+                    task_ref,
+                    run_id,
+                    task.status,
+                )
+                return
 
             # Track dispatch failures (exclude provider errors — rotation handles those)
             failure_count = task.dispatch_failure_count or 0

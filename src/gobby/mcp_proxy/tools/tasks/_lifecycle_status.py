@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.state_semantics import normalize_de_escalation_target_status
 
 logger = logging.getLogger(__name__)
 
@@ -424,16 +425,18 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
     def de_escalate_task(
         task_id: str,
         reason: str,
+        target_status: str | None = None,
         reset_validation: bool = False,
     ) -> dict[str, Any]:
-        """De-escalate a task back to open status.
+        """De-escalate a task to an explicit next status.
 
-        Returns an escalated task to open after human intervention resolves
+        Returns an escalated task to the requested next state after human intervention resolves
         the issue. Optionally resets the validation failure count.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
             reason: Reason for de-escalation (required)
+            target_status: Where the task should return (default: open)
             reset_validation: Also reset validation fail count (default: False)
 
         Returns:
@@ -457,9 +460,14 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 "error": f"Task {task_id} is not escalated (current status: {task.status})",
             }
 
+        try:
+            normalized_target = normalize_de_escalation_target_status(target_status)
+        except ValueError as e:
+            return {"error": str(e)}
+
         # Build update kwargs
         update_kwargs: dict[str, Any] = {
-            "status": "open",
+            "status": normalized_target,
             "escalated_at": None,
             "escalation_reason": None,
         }
@@ -479,7 +487,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         notify_parent_on_status_change(
             ctx.task_manager.db,
             resolved_id,
-            "open",
+            normalized_target,
             task_ref=f"#{task.seq_num}" if task.seq_num else None,
         )
 
@@ -499,7 +507,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
 
     registry.register(
         name="de_escalate_task",
-        description="Return an escalated task to open status after human intervention resolves the issue. Optionally resets validation failure count.",
+        description="Return an escalated task to an explicit next status after human intervention resolves the issue. Optionally resets validation failure count.",
         input_schema={
             "type": "object",
             "properties": {
@@ -510,6 +518,12 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 "reason": {
                     "type": "string",
                     "description": "Why the task is being de-escalated (e.g., 'dependency resolved', 'workaround applied')",
+                },
+                "target_status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "needs_review", "review_approved"],
+                    "description": "Status to return the task to after de-escalation (default: open)",
+                    "default": "open",
                 },
                 "reset_validation": {
                     "type": "boolean",

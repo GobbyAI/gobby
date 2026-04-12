@@ -679,6 +679,32 @@ class TestDeEscalateTaskTool:
         update_kwargs = mock_task_manager.update_task.call_args.kwargs
         assert update_kwargs.get("validation_fail_count") == 0
 
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_de_escalate_task_accepts_explicit_target_status(
+        self, mock_task_manager, task_registry_with_patches
+    ):
+        """Test that de_escalate_task can route explicitly to needs_review."""
+        escalated_task = Task(
+            id="t1",
+            title="Escalated task",
+            project_id="p1",
+            status="escalated",
+            priority=2,
+            task_type="task",
+            created_at="now",
+            updated_at="now",
+        )
+        mock_task_manager.get_task.return_value = escalated_task
+
+        await task_registry_with_patches.call(
+            "de_escalate_task",
+            {"task_id": "t1", "reason": "Resume review", "target_status": "needs_review"},
+        )
+
+        update_kwargs = mock_task_manager.update_task.call_args.kwargs
+        assert update_kwargs["status"] == "needs_review"
+
 
 # ============================================================================
 # Tool Registration Tests

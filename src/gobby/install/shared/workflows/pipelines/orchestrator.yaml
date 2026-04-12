@@ -235,33 +235,42 @@ steps:
         data:
           qa_already_running: "${{ len([a for a in check_qa_running.output.agents if a.get('provider', '') == inputs.qa_provider]) > 0 }}"
 
+  - id: select_unclaimed_review_tasks
+    condition: "${{ not done_check.output.orchestration_complete and len(scan_needs_review.output.tasks) > 0 }}"
+    mcp:
+      server: gobby-workflows
+      tool: pipeline_eval
+      arguments:
+        data:
+          tasks: "${{ [t for t in scan_needs_review.output.tasks if not t.get('assignee')] }}"
+
   - id: annotate_observed
-    condition: "${{ not done_check.output.orchestration_complete and len(scan_needs_review.output.tasks) > 0 and not (qa_gate.output and qa_gate.output.qa_already_running) }}"
+    condition: "${{ not done_check.output.orchestration_complete and select_unclaimed_review_tasks.output and len(select_unclaimed_review_tasks.output.tasks) > 0 and not (qa_gate.output and qa_gate.output.qa_already_running) }}"
     mcp:
       server: gobby-tasks
       tool: update_observed_files
       arguments:
-        task_id: "${{ scan_needs_review.output.tasks[0].id }}"
+        task_id: "${{ select_unclaimed_review_tasks.output.tasks[0].id }}"
         require_commits: false
 
   - id: get_qa_task
-    condition: "${{ not done_check.output.orchestration_complete and len(scan_needs_review.output.tasks) > 0 and not (qa_gate.output and qa_gate.output.qa_already_running) }}"
+    condition: "${{ not done_check.output.orchestration_complete and select_unclaimed_review_tasks.output and len(select_unclaimed_review_tasks.output.tasks) > 0 and not (qa_gate.output and qa_gate.output.qa_already_running) }}"
     mcp:
       server: gobby-tasks
       tool: get_task
       arguments:
-        task_id: "${{ scan_needs_review.output.tasks[0].id }}"
+        task_id: "${{ select_unclaimed_review_tasks.output.tasks[0].id }}"
         brief: false
 
   - id: dispatch_qa
-    condition: "${{ not done_check.output.orchestration_complete and len(scan_needs_review.output.tasks) > 0 and not (qa_gate.output and qa_gate.output.qa_already_running) }}"
+    condition: "${{ not done_check.output.orchestration_complete and select_unclaimed_review_tasks.output and len(select_unclaimed_review_tasks.output.tasks) > 0 and not (qa_gate.output and qa_gate.output.qa_already_running) }}"
     mcp:
       server: gobby-agents
       tool: spawn_agent
       arguments:
-        prompt: "${{ 'Review task ' + scan_needs_review.output.tasks[0].ref + ': ' + scan_needs_review.output.tasks[0].title + ('\n\nDescription:\n' + get_qa_task.output.description if get_qa_task.output and get_qa_task.output.get('description') else '') }}"
+        prompt: "${{ 'Review task ' + select_unclaimed_review_tasks.output.tasks[0].ref + ': ' + select_unclaimed_review_tasks.output.tasks[0].title + ('\n\nDescription:\n' + get_qa_task.output.description if get_qa_task.output and get_qa_task.output.get('description') else '') }}"
         agent: "${{ inputs.qa_agent }}"
-        task_id: "${{ scan_needs_review.output.tasks[0].id }}"
+        task_id: "${{ select_unclaimed_review_tasks.output.tasks[0].id }}"
         clone_id: "${{ resolve_isolation_id.output.clone_id }}"
         worktree_id: "${{ resolve_isolation_id.output.worktree_id }}"
         provider: "${{ inputs.qa_provider }}"

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+from gobby.tasks.state_semantics import normalize_de_escalation_target_status
 from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_history import ValidationHistoryManager
 
@@ -443,19 +444,21 @@ def create_validation_registry(
 
     @registry.tool(
         name="de_escalate_task",
-        description="Return an escalated task to open status after human intervention resolves the issue.",
+        description="Return an escalated task to an explicit next status after human intervention resolves the issue.",
     )
     def de_escalate_task(
         task_id: str,
         reason: str,
+        target_status: str | None = None,
         reset_validation: bool = False,
     ) -> dict[str, Any]:
         """
-        De-escalate a task back to open status.
+        De-escalate a task to an explicit next status.
 
         Args:
             task_id: Task reference: #N, N (seq_num), path (1.2.3), or UUID
             reason: Reason for de-escalation (required)
+            target_status: Where the task should return (default: open)
             reset_validation: Also reset validation fail count (default: False)
 
         Returns:
@@ -477,9 +480,14 @@ def create_validation_registry(
                 "error": f"Task {task_id} is not escalated (current status: {task.status})",
             }
 
+        try:
+            normalized_target = normalize_de_escalation_target_status(target_status)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
         # Build update kwargs
         update_kwargs: dict[str, Any] = {
-            "status": "open",
+            "status": normalized_target,
             "escalated_at": None,
             "escalation_reason": None,
         }
@@ -496,6 +504,7 @@ def create_validation_registry(
             "escalated_at": updated_task.escalated_at,
             "escalation_reason": updated_task.escalation_reason,
             "de_escalation_reason": reason,
+            "target_status": normalized_target,
             "validation_reset": reset_validation,
         }
 

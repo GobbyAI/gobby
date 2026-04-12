@@ -638,9 +638,21 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
 @click.command("de-escalate")
 @click.argument("task_id", metavar="TASK")
 @click.option("--reason", "-r", required=True, help="Reason for de-escalation")
+@click.option(
+    "--target-status",
+    type=click.Choice(["open", "in_progress", "needs_review", "review_approved"]),
+    default="open",
+    show_default=True,
+    help="Status to return the task to after de-escalation.",
+)
 @click.option("--reset-validation", is_flag=True, help="Reset validation fail count")
-def de_escalate_cmd(task_id: str, reason: str, reset_validation: bool) -> None:
-    """Return an escalated task to open status.
+def de_escalate_cmd(
+    task_id: str,
+    reason: str,
+    target_status: str,
+    reset_validation: bool,
+) -> None:
+    """Return an escalated task to an explicit next status.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
 
@@ -660,7 +672,7 @@ def de_escalate_cmd(task_id: str, reason: str, reset_validation: bool) -> None:
 
     # Build update kwargs
     update_kwargs: dict[str, str | int | None] = {
-        "status": "open",
+        "status": target_status,
         "escalated_at": None,
         "escalation_reason": None,
     }
@@ -668,7 +680,7 @@ def de_escalate_cmd(task_id: str, reason: str, reset_validation: bool) -> None:
         update_kwargs["validation_fail_count"] = 0
 
     manager.update_task(resolved.id, **update_kwargs)
-    click.echo(f"De-escalated task {resolved.id[:8]} ({reason})")
+    click.echo(f"De-escalated task {resolved.id[:8]} to {target_status} ({reason})")
     if reset_validation:
         click.echo("  Validation fail count reset to 0")
 

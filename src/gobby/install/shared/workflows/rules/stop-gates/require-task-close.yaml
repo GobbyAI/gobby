@@ -2,7 +2,7 @@ tags: [stop-gates, enforcement, lifecycle, gobby, default]
 
 rules:
   require-task-close:
-    description: "Block stop if task is still in_progress"
+    description: "Block stop if active claimed task work is still open"
     event: turn_end
     enabled: true
     priority: 50
@@ -10,4 +10,4 @@ rules:
     effects:
       - type: block
         reason: |
-          Tasks still in_progress: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}. Commit and close_task().
+          Active claimed tasks still require handoff or closure: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}. Commit and close_task() or explicitly release the claim.

@@ -416,8 +416,26 @@ class TestDeEscalateTask:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "in_progress"
+        assert data["status"] == "open"
         assert "User approved the approach" in data["description"]
+
+    def test_de_escalate_task_with_explicit_target_status(
+        self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
+    ) -> None:
+        task_manager.update_task(
+            sample_task["id"],
+            status="escalated",
+            escalation_reason="Blocked on user input",
+        )
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/de-escalate",
+            json={
+                "decision_context": "Resume review",
+                "target_status": "needs_review",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "needs_review"
 
     def test_de_escalate_not_escalated(self, client: TestClient, sample_task: dict) -> None:
         """De-escalating a task that's not escalated returns 400."""
@@ -447,7 +465,7 @@ class TestDeEscalateTask:
             },
         )
         assert response.status_code == 200
-        assert response.json()["status"] == "in_progress"
+        assert response.json()["status"] == "open"
 
 
 # ---------------------------------------------------------------------------

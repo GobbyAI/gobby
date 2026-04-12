@@ -1074,6 +1074,28 @@ class TestClaimedTaskReconciliation:
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-1": "#10"}
 
+    def test_reconcile_preserves_review_claims(self) -> None:
+        """needs_review + assigned to this session should still count as claimed work."""
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.observers import reconcile_claimed_tasks
+
+        task_manager = MagicMock()
+        task_manager.get_task.return_value = _make_task(
+            "uuid-review",
+            status="needs_review",
+            assignee="sess-1",
+        )
+
+        variables: dict[str, object] = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-review": "#11"},
+        }
+        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+
+        assert variables["task_claimed"] is True
+        assert variables["claimed_tasks"] == {"uuid-review": "#11"}
+
     def test_reconcile_mixed_valid_and_stale(self) -> None:
         """Mix of valid and stale claims → only valid ones survive."""
         from unittest.mock import MagicMock
@@ -1139,7 +1161,10 @@ class TestClaimedTaskReconciliation:
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-db": "#42"}
-        task_manager.list_tasks.assert_called_once_with(assignee="sess-1", status="in_progress")
+        task_manager.list_tasks.assert_called_once_with(
+            assignee="sess-1",
+            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
+        )
 
     def test_reconcile_rebuilds_with_no_seq_num(self) -> None:
         """DB task without seq_num should use truncated UUID as ref."""
@@ -1162,6 +1187,26 @@ class TestClaimedTaskReconciliation:
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"abcdef12-3456-7890-abcd-ef1234567890": "abcdef12"}
+
+    def test_reconcile_rebuilds_review_claims_from_db(self) -> None:
+        """Empty dict + DB needs_review task should rebuild claimed state."""
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.observers import reconcile_claimed_tasks
+
+        task_manager = MagicMock()
+        db_task = _make_task("uuid-review-db", status="needs_review", assignee="sess-1")
+        db_task.seq_num = 77
+        task_manager.list_tasks.return_value = [db_task]
+
+        variables: dict[str, object] = {
+            "task_claimed": True,
+            "claimed_tasks": {},
+        }
+        reconcile_claimed_tasks(variables, "sess-1", task_manager=task_manager)
+
+        assert variables["task_claimed"] is True
+        assert variables["claimed_tasks"] == {"uuid-review-db": "#77"}
 
     def test_reconcile_clears_when_db_has_no_tasks(self) -> None:
         """Empty dict + DB confirms no tasks → task_claimed should be False."""

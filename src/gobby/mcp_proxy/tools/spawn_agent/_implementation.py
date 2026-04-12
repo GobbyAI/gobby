@@ -20,6 +20,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+from gobby.tasks.state_semantics import is_active_claim_status
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -492,7 +493,19 @@ async def spawn_agent_impl(
         if resolved_task_id and task_manager:
             try:
                 task_obj = task_manager.get_task(resolved_task_id)
-                if task_obj and task_obj.status == "open":
+                if not task_obj or not is_active_claim_status(task_obj.status):
+                    logger.info(
+                        "Skipping auto-claim for task %s; status=%s is not active work",
+                        f"#{task_seq_num}" if task_seq_num else resolved_task_id,
+                        getattr(task_obj, "status", None),
+                    )
+                elif task_obj.assignee and task_obj.assignee != spawn_result.child_session_id:
+                    logger.info(
+                        "Skipping auto-claim for task %s; already assigned to %s",
+                        f"#{task_seq_num}" if task_seq_num else resolved_task_id,
+                        task_obj.assignee,
+                    )
+                elif task_obj.status == "open":
                     task_manager.update_task(
                         resolved_task_id,
                         status="in_progress",

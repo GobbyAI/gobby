@@ -85,6 +85,10 @@ class TaskDeEscalateRequest(BaseModel):
     """Request body for de-escalating a task."""
 
     decision_context: str = Field(..., description="User's decision or instructions for the agent")
+    target_status: Literal["open", "in_progress", "needs_review", "review_approved"] = Field(
+        default="open",
+        description="Status to return the task to after de-escalation",
+    )
     reset_validation: bool = Field(default=False, description="Also reset validation fail count")
 
 
@@ -319,7 +323,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/{task_id}/de-escalate")
     async def de_escalate_task(task_id: str, request_data: TaskDeEscalateRequest) -> Any:
-        """De-escalate a task and return it to open status with user decision context."""
+        """De-escalate a task to an explicit next status with user decision context."""
         try:
             task = server.task_manager.get_task(task_id)
             resolved_id = task.id
@@ -328,7 +332,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 raise ValueError(f"Task is not escalated (status: {task.status})")
 
             update_kwargs: dict[str, Any] = {
-                "status": "in_progress",
+                "status": request_data.target_status,
                 "escalated_at": None,
                 "escalation_reason": None,
             }

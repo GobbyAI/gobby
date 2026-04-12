@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookResponse
+from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES
 
 if TYPE_CHECKING:
     from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -51,7 +52,7 @@ def get_claimed_task_info(
         try:
             db_tasks = handler._task_manager.list_tasks(
                 assignee=session_id,
-                status="in_progress",
+                status=list(ACTIVE_CLAIM_STATUSES),
                 project_id=project_id,
             )
             if db_tasks:

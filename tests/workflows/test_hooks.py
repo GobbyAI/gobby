@@ -839,6 +839,42 @@ class TestVariablePersistence:
         assert variables.get("claimed_tasks") == {}
 
     @pytest.mark.asyncio
+    async def test_turn_end_rebuilds_review_claims_for_after_agent(
+        self, db, session_var_manager
+    ) -> None:
+        """AFTER_AGENT should rebuild claimed review work from DB assignment state."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        mock_task_manager = MagicMock()
+        review_task = MagicMock()
+        review_task.id = "task-uuid-review"
+        review_task.seq_num = 123
+        review_task.status = "needs_review"
+        review_task.assignee = "test-session"
+        mock_task_manager.list_tasks.return_value = [review_task]
+
+        rule_engine = RuleEngine(db=db)
+        handler = WorkflowHookHandler(
+            rule_engine=rule_engine,
+            task_manager=mock_task_manager,
+        )
+
+        session_var_manager.merge_variables(
+            "test-session",
+            {
+                "task_claimed": True,
+                "claimed_tasks": {},
+            },
+        )
+
+        event = self._make_after_agent_event()
+        await handler._evaluate_rules(event)
+
+        variables = session_var_manager.get_variables("test-session")
+        assert variables.get("task_claimed") is True
+        assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
+
+    @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
         """Both observer changes and rule set_variable effects should persist."""
         from gobby.workflows.rule_engine import RuleEngine

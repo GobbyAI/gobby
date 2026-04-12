@@ -556,6 +556,10 @@ class TestSessionMoreCoverage:
             patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
         ):
             handler._session_manager.register_session.return_value = "new-sess-1"
+            handler._task_manager.get_task.return_value = MagicMock(
+                status="needs_review",
+                assignee="parent-1",
+            )
 
             handler.handle_session_start(event)
 
@@ -774,6 +778,30 @@ class TestClaimedTaskHelpers:
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
         assert result == [("#42", "in_progress", "Fix auth bug")]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_db_fallback_rebuilds_review_claims(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm = mock_svm_cls.return_value
+        mock_svm.get_variables.return_value = {}
+
+        task = MagicMock()
+        task.id = "uuid-review"
+        task.seq_num = 55
+        task.status = "needs_review"
+        task.title = "Review the patch"
+        handler._task_manager.list_tasks.return_value = [task]
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+
+        assert result == [("#55", "needs_review", "Review the patch")]
+        handler._task_manager.list_tasks.assert_called_once_with(
+            assignee="sess-1",
+            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
+            project_id="proj-1",
+        )
+        mock_svm.set_variable.assert_any_call("sess-1", "task_claimed", True)
+        mock_svm.set_variable.assert_any_call("sess-1", "claimed_tasks", {"uuid-review": "#55"})
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_multiple_claimed_tasks(self, mock_svm_cls: MagicMock) -> None:
