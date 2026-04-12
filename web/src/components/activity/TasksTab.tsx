@@ -6,6 +6,14 @@ import { useNow } from '../../hooks/useNow'
 import { useWebSocketEvent } from '../../hooks/useWebSocketEvent'
 import '../tasks/task-execution.css'
 import type { GobbyTask } from '../../hooks/useTasks'
+import {
+  getCanonicalTaskState,
+  getTaskBucket,
+  getTaskStateSummary,
+  TASK_BUCKET_COLORS,
+  TASK_BUCKET_LABELS,
+  type TaskBucket,
+} from '../../lib/taskState'
 
 interface TasksTabProps {
   projectId?: string | null
@@ -32,19 +40,11 @@ interface TreeNode {
 // Constants
 // =============================================================================
 
-const CLOSED_STATUSES = new Set(['closed', 'review_approved'])
-const ALL_STATUSES = ['open', 'in_progress', 'needs_review', 'review_approved', 'escalated', 'closed']
-const DEFAULT_FILTERS = new Set(['open', 'in_progress', 'needs_review', 'review_approved', 'escalated'])
+const ALL_BUCKETS: TaskBucket[] = ['ready', 'in_progress', 'review', 'blocked', 'merge_ready', 'closed']
+const DEFAULT_FILTERS = new Set<TaskBucket>(['ready', 'in_progress', 'review', 'merge_ready', 'blocked'])
 const INITIAL_TASK_LIMIT = 10
 
-const STATUS_DOT_COLORS: Record<string, string> = {
-  open: '#3b82f6',
-  in_progress: '#f59e0b',
-  needs_review: '#8b5cf6',
-  review_approved: '#22c55e',
-  closed: '#737373',
-  escalated: '#ef4444',
-}
+const STATUS_DOT_COLORS = TASK_BUCKET_COLORS
 
 const PRIORITY_LABELS: Record<number, string> = {
   0: 'Critical',
@@ -102,14 +102,14 @@ function searchMatch(node: { data: TreeNode }, term: string): boolean {
 
 function PanelTaskNode({ node, style }: NodeRendererProps<TreeNode>) {
   const task = node.data.task
-  const dotColor = STATUS_DOT_COLORS[task.status] ?? '#737373'
+  const dotColor = STATUS_DOT_COLORS[getTaskBucket(task)] ?? '#737373'
   const textColor = PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? 'var(--text-secondary)'
   const ref = task.seq_num != null ? `#${task.seq_num}` : null
 
   return (
     <div
       style={style}
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${node.isSelected ? ' bg-accent/[0.06]' : ''}${CLOSED_STATUSES.has(task.status) ? ' opacity-50' : ''}`}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${node.isSelected ? ' bg-accent/[0.06]' : ''}${getTaskBucket(task) === 'closed' ? ' opacity-50' : ''}`}
       onClick={() => node.activate()}
     >
       {node.isInternal ? (
@@ -143,15 +143,15 @@ function FilterDropdown({
   onToggle,
   onClose,
 }: {
-  filters: Set<string>
-  onToggle: (status: string) => void
+  filters: Set<TaskBucket>
+  onToggle: (status: TaskBucket) => void
   onClose: () => void
 }) {
   return (
     <>
       <div className="fixed inset-0 z-[99]" onClick={onClose} />
       <div className="absolute top-full right-2 z-[100] bg-secondary border border-border rounded-md shadow-lg p-1.5 flex flex-col gap-0.5 min-w-[10rem]">
-        {ALL_STATUSES.map((status) => (
+        {ALL_BUCKETS.map((status) => (
           <label key={status} className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50 capitalize">
             <input
               type="checkbox"
@@ -163,7 +163,7 @@ function FilterDropdown({
               className="w-1.5 h-1.5 rounded-full shrink-0"
               style={{ backgroundColor: STATUS_DOT_COLORS[status] ?? '#737373' }}
             />
-            <span>{status.replace(/_/g, ' ')}</span>
+            <span>{TASK_BUCKET_LABELS[status]}</span>
           </label>
         ))}
       </div>
@@ -180,7 +180,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [statusFilters, setStatusFilters] = useState<Set<string>>(() => new Set(DEFAULT_FILTERS))
+  const [statusFilters, setStatusFilters] = useState<Set<TaskBucket>>(() => new Set(DEFAULT_FILTERS))
   const [visibleCount, setVisibleCount] = useState(INITIAL_TASK_LIMIT)
   const [showFilterDropdown, setShowFilterDropdown] = useState(false)
   const [topHeight, setTopHeight] = useState(50)
@@ -189,7 +189,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [treeHeight, setTreeHeight] = useState(300)
 
-  // Fetch tasks filtered by active status filters (server-side)
+  // Fetch tasks, then apply canonical bucket filters client-side.
   const abortRef = useRef<AbortController | null>(null)
   const debouncedRefetchRef = useRef<number | null>(null)
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
@@ -204,14 +204,13 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     const baseUrl = getBaseUrl()
     const params = new URLSearchParams()
     if (projectId) params.set('project_id', projectId)
-    if (statusFilters.size > 0) params.set('status', [...statusFilters].join(','))
     params.set('limit', '500')
     fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : { tasks: [] }))
       .then((data) => setTasks(data.tasks ?? []))
       .catch((err) => { if (err.name !== 'AbortError') setTasks([]) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-  }, [projectId, statusFilters])
+  }, [projectId])
 
   useEffect(() => {
     fetchTasks()
@@ -317,7 +316,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     return () => observer.disconnect()
   }, [])
 
-  const toggleFilter = useCallback((status: string) => {
+  const toggleFilter = useCallback((status: TaskBucket) => {
     setStatusFilters((prev) => {
       const next = new Set(prev)
       if (next.has(status)) next.delete(status)
@@ -336,15 +335,11 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const filtered = useMemo(() => {
     return tasks
       .filter((t) => {
-        if (!statusFilters.has(t.status)) {
-          // Show closed tasks if closed within 24h and closed filter is on
-          if (CLOSED_STATUSES.has(t.status) && statusFilters.has('closed')) {
-            const closedAt = (t as GobbyTaskDetail).closed_at
-            if (closedAt && now - new Date(closedAt).getTime() < DAY_MS) return true
-          }
-          return false
-        }
-        return true
+        const bucket = getTaskBucket(t)
+        if (!statusFilters.has(bucket)) return false
+        if (bucket !== 'closed') return true
+        const closedAt = (t as GobbyTaskDetail).closed_at
+        return !closedAt || now - new Date(closedAt).getTime() < DAY_MS
       })
       .sort((a, b) => {
         const pa = a.priority ?? 3
@@ -392,7 +387,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
           type="button"
           className="flex items-center justify-center bg-transparent border border-border rounded text-muted-foreground cursor-pointer px-1.5 py-0.5 shrink-0 hover:text-foreground hover:border-accent transition-colors"
           onClick={() => setShowFilterDropdown((v) => !v)}
-          title="Filter by status"
+          title="Filter by task state"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
@@ -490,7 +485,7 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
   return (
     <div className="px-3 py-2 flex flex-col gap-2">
       <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
-        <span className="capitalize">{task.status.replace(/_/g, ' ')}</span>
+        <span className="capitalize">{getTaskStateSummary(task)}</span>
         <span className="opacity-40">{'\u00B7'}</span>
         <span>{priorityLabel}</span>
         {task.task_type !== 'task' && (
@@ -499,10 +494,10 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
             <span>{task.task_type}</span>
           </>
         )}
-        {task.assignee && (
+        {getCanonicalTaskState(task).owner_session_id && (
           <>
             <span className="opacity-40">{'\u00B7'}</span>
-            <span>{task.assignee}</span>
+            <span>{getCanonicalTaskState(task).owner_session_id}</span>
           </>
         )}
       </div>

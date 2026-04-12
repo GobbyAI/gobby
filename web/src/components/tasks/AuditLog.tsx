@@ -4,6 +4,7 @@ import { useNow } from '../../hooks/useNow'
 import { StatusDot } from './TaskBadges'
 import { RiskBadge } from './RiskBadges'
 import { classifyTaskRisk } from './riskUtils'
+import { getCanonicalTaskState, getTaskBucket, getTaskStateSummary, type TaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -17,7 +18,7 @@ interface AuditEntry {
   targetId: string
   result: string
   riskLevel: 'critical' | 'high' | 'medium' | 'low' | 'none'
-  status: string
+  status: TaskBucket
 }
 
 type ActionFilter = 'all' | 'created' | 'closed' | 'status_change' | 'high_risk'
@@ -32,30 +33,30 @@ function deriveAuditEntries(tasks: GobbyTask[]): AuditEntry[] {
 
   for (const task of tasks) {
     const risk = classifyTaskRisk(task.title, task.task_type)
+    const bucket = getTaskBucket(task)
 
     // Task created
     entries.push({
       timestamp: task.created_at,
       action: 'created',
-      actor: task.assignee || 'system',
+      actor: getCanonicalTaskState(task).owner_session_id || 'system',
       target: `${task.ref} ${task.title}`,
       targetId: task.id,
       result: 'success',
       riskLevel: risk,
-      status: task.status,
+      status: bucket,
     })
 
-    // Task status (if not open, it changed status)
-    if (task.status !== 'open') {
+    if (bucket !== 'ready') {
       entries.push({
         timestamp: task.updated_at,
-        action: task.status === 'closed' ? 'closed' : 'status_change',
-        actor: task.assignee || 'system',
-        target: `${task.ref} → ${task.status.replace(/_/g, ' ')}`,
+        action: bucket === 'closed' ? 'closed' : 'status_change',
+        actor: getCanonicalTaskState(task).owner_session_id || 'system',
+        target: `${task.ref} → ${getTaskStateSummary(task)}`,
         targetId: task.id,
-        result: task.status === 'escalated' ? 'failure' : 'success',
+        result: bucket === 'blocked' ? 'failure' : 'success',
         riskLevel: risk,
-        status: task.status,
+        status: bucket,
       })
     }
   }

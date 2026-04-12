@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { GobbyTaskDetail } from '../../hooks/useTasks'
 import { relativeTime } from '../../utils/formatTime'
+import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // Phase derivation from task lifecycle
@@ -15,11 +16,29 @@ interface TimelinePhase {
   summary: string | null
 }
 
-const STATUS_ORDER = ['open', 'in_progress', 'needs_review', 'review_approved', 'closed']
+const TIMELINE_BUCKET_ORDER = ['ready', 'in_progress', 'review', 'merge_ready', 'closed'] as const
+
+function getTimelineBucketIndex(task: GobbyTaskDetail): number {
+  const state = getCanonicalTaskState(task)
+  const bucket = getTaskBucket(task)
+
+  if (bucket !== 'blocked') {
+    return TIMELINE_BUCKET_ORDER.indexOf(bucket)
+  }
+
+  if (state.is_merge_ready) return TIMELINE_BUCKET_ORDER.indexOf('merge_ready')
+  if (state.lifecycle_stage === 'needs_review') return TIMELINE_BUCKET_ORDER.indexOf('review')
+  if (state.is_claimed || state.lifecycle_stage === 'in_progress') {
+    return TIMELINE_BUCKET_ORDER.indexOf('in_progress')
+  }
+
+  return TIMELINE_BUCKET_ORDER.indexOf('ready')
+}
 
 function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
-  const statusIdx = STATUS_ORDER.indexOf(task.status)
-  const isFailed = task.status === 'escalated' || statusIdx === -1
+  const state = getCanonicalTaskState(task)
+  const bucketIdx = getTimelineBucketIndex(task)
+  const isFailed = state.is_escalated
 
   const phases: TimelinePhase[] = []
 
@@ -34,28 +53,28 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
   })
 
   // Investigate: work started (in_progress or beyond)
-  const investigateReached = statusIdx >= 1 || isFailed
+  const investigateReached = bucketIdx >= 1 || isFailed
   phases.push({
     key: 'investigate',
     icon: '\u{1F50D}',
     label: 'Investigate',
     status: investigateReached
-      ? (statusIdx === 1 && !isFailed ? 'active' : 'complete')
+      ? (bucketIdx === 1 && !isFailed ? 'active' : 'complete')
       : 'pending',
     timestamp: investigateReached ? task.updated_at : null,
-    summary: task.assignee
-      ? `Assigned to ${task.agent_name || task.assignee}`
+    summary: state.owner_session_id
+      ? `Assigned to ${task.agent_name || state.owner_session_id}`
       : investigateReached ? 'Work started' : null,
   })
 
   // Act: commits linked or review stage
-  const actReached = statusIdx >= 2 || (task.commits && task.commits.length > 0) || isFailed
+  const actReached = bucketIdx >= 2 || (task.commits && task.commits.length > 0) || isFailed
   phases.push({
     key: 'act',
     icon: '\u{2699}\u{FE0F}',
     label: 'Act',
     status: actReached
-      ? (statusIdx === 2 ? 'active' : 'complete')
+      ? (bucketIdx === 2 && !isFailed ? 'active' : 'complete')
       : 'pending',
     timestamp: actReached ? task.updated_at : null,
     summary: task.commits && task.commits.length > 0
@@ -64,7 +83,7 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
   })
 
   // Verify: validation or close
-  const verifyReached = statusIdx >= 3 || task.validation_status !== 'pending' || isFailed
+  const verifyReached = bucketIdx >= 3 || task.validation_status !== 'pending' || isFailed
   let verifySummary: string | null = null
   if (isFailed) {
     verifySummary = `Escalated: ${task.escalation_reason || 'needs attention'}`
@@ -81,7 +100,11 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
     icon: '\u{2705}',
     label: 'Verify',
     status: verifyReached
-      ? ((statusIdx >= 4 || task.validation_status === 'passed' || task.validation_status === 'valid') ? 'complete' : 'active')
+      ? (
+          state.is_closed || state.is_merge_ready || task.validation_status === 'passed' || task.validation_status === 'valid'
+            ? 'complete'
+            : 'active'
+        )
       : 'pending',
     timestamp: task.closed_at || (verifyReached ? task.updated_at : null),
     summary: verifySummary,
@@ -109,9 +132,9 @@ interface InterventionButton {
 
 function getInterventionsForPhase(
   phase: TimelinePhase,
-  taskStatus: string,
+  task: GobbyTaskDetail,
 ): InterventionButton[] {
-  const isFailed = taskStatus === 'escalated'
+  const isFailed = getCanonicalTaskState(task).is_escalated
 
   if (phase.status === 'pending') return []
 
@@ -194,7 +217,7 @@ export function ReasoningTimeline({ task, onIntervene }: ReasoningTimelineProps)
                 <div className="reasoning-phase-detail">
                   {phase.summary}
                   {onIntervene && (() => {
-                    const buttons = getInterventionsForPhase(phase, task.status)
+                    const buttons = getInterventionsForPhase(phase, task)
                     if (buttons.length === 0) return null
                     return (
                       <div className="reasoning-phase-interventions">

@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { relativeTime } from '../../utils/formatTime'
+import { getTaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -59,29 +60,40 @@ export function DigestView({ tasks, onSelectTask }: DigestViewProps) {
   const sections = useMemo((): DigestSection[] => {
     // Completed: closed tasks within period
     const completed = tasks.filter(
-      t => (t.status === 'closed' || t.status === 'review_approved') && isAfter(t.updated_at, cutoff)
+      t => getTaskBucket(t) === 'closed' && isAfter(t.updated_at, cutoff)
     )
 
-    // In progress: active tasks
-    const inProgress = tasks.filter(t => t.status === 'in_progress')
+    const inProgress = tasks.filter(t => getTaskBucket(t) === 'in_progress')
 
-    // Needs input: escalated or needs_review
-    const needsInput = tasks.filter(
-      t => t.status === 'escalated' || t.status === 'needs_review'
-    )
+    const review = tasks.filter(t => getTaskBucket(t) === 'review')
+    const mergeReady = tasks.filter(t => getTaskBucket(t) === 'merge_ready')
+    const blocked = tasks.filter(t => getTaskBucket(t) === 'blocked')
 
-    // Recently created (within period)
     const newTasks = tasks.filter(
-      t => t.status === 'open' && isAfter(t.created_at, cutoff)
+      t => getTaskBucket(t) === 'ready' && isAfter(t.created_at, cutoff)
     )
 
     return [
       {
-        key: 'needs-input',
-        title: 'Needs Your Input',
+        key: 'blocked',
+        title: 'Blocked',
         icon: '\u26A0',
-        tasks: needsInput,
+        tasks: blocked,
         color: '#f59e0b',
+      },
+      {
+        key: 'review',
+        title: 'In Review',
+        icon: '\u{1F50D}',
+        tasks: review,
+        color: '#a855f7',
+      },
+      {
+        key: 'merge-ready',
+        title: 'Merge Ready',
+        icon: '\u{1F9F7}',
+        tasks: mergeReady,
+        color: '#14b8a6',
       },
       {
         key: 'in-progress',
@@ -166,7 +178,7 @@ export function DigestView({ tasks, onSelectTask }: DigestViewProps) {
                       className="digest-item"
                       onClick={() => onSelectTask(task.id)}
                     >
-                      <StatusDot status={task.status} />
+                      <StatusDot task={task} />
                       <span className="digest-item-ref">{task.ref}</span>
                       <span className="digest-item-title">{task.title}</span>
                       <span className="digest-item-meta">

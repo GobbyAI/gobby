@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useRef } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
+import { getTaskBucket, TASK_BUCKET_COLORS } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -23,15 +24,6 @@ interface DepArrow {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-const STATUS_COLORS: Record<string, string> = {
-  open: '#737373',
-  in_progress: '#3b82f6',
-  needs_review: '#f59e0b',
-  review_approved: '#22c55e',
-  closed: '#16a34a',
-  escalated: '#f97316',
-}
 
 const ROW_HEIGHT = 32
 const ROW_GAP = 4
@@ -337,7 +329,8 @@ export function GanttChart({ tasks, onSelectTask, onReschedule }: GanttChartProp
             const x = dateToX(bar.startDate) + dragOffsetPx
             const w = Math.max(dateToX(bar.endDate) - dateToX(bar.startDate), 8)
             const y = rowToY(bar.row)
-            const color = STATUS_COLORS[bar.task.status] || '#737373'
+            const bucket = getTaskBucket(bar.task)
+            const color = TASK_BUCKET_COLORS[bucket] || '#737373'
 
             if (bar.isMilestone) {
               const cx = x + w / 2
@@ -382,7 +375,7 @@ export function GanttChart({ tasks, onSelectTask, onReschedule }: GanttChartProp
                   fill={color}
                   className={`gantt-bar ${isDragging ? 'gantt-bar--dragging' : ''}`}
                 />
-                {(bar.task.status === 'closed' || bar.task.status === 'review_approved') && (
+                {(bucket === 'closed' || bucket === 'merge_ready') && (
                   <rect
                     x={x} y={y + 4} width={w} height={ROW_HEIGHT - 8}
                     rx={3} ry={3}

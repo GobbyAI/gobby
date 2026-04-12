@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
+import { getTaskBucket, getTaskStateSummary } from '../../lib/taskState'
 
 // =============================================================================
 // Column definitions
@@ -20,17 +21,17 @@ const COLUMNS: PriorityColumnDef[] = [
   { key: 'later', label: 'Later', color: '#737373', description: 'Low + Backlog' },
 ]
 
-const DONE_STATUSES = new Set(['closed', 'review_approved'])
-
 function classifyTask(task: GobbyTask): 'now' | 'next' | 'later' | null {
-  // Skip completed tasks
-  if (DONE_STATUSES.has(task.status)) return null
+  const bucket = getTaskBucket(task)
+
+  if (bucket === 'closed') return null
 
   // In-progress or blocked tasks with high urgency → Now
-  if (task.status === 'in_progress') return 'now'
+  if (bucket === 'in_progress' || bucket === 'blocked') return 'now'
   if (task.priority <= 1) return 'now'
 
-  // Medium priority, open/review → Next
+  // Review and merge-ready work stays near the front of the queue.
+  if (bucket === 'review' || bucket === 'merge_ready') return 'next'
   if (task.priority === 2) return 'next'
 
   // Low/Backlog → Later
@@ -76,15 +77,15 @@ function PriorityCard({
       onClick={() => onSelect(task.id)}
     >
       <div className="priority-card-header">
-        <StatusDot status={task.status} />
+        <StatusDot task={task} />
         <span className="priority-card-ref">{task.ref}</span>
         <PriorityBadge priority={task.priority} />
       </div>
       <div className="priority-card-title">{task.title}</div>
       <div className="priority-card-footer">
         <TypeBadge type={task.task_type} />
-        <span className="priority-card-status">{task.status.replace(/_/g, ' ')}</span>
-        {onUpdateStatus && task.status === 'open' && (
+        <span className="priority-card-status">{getTaskStateSummary(task)}</span>
+        {onUpdateStatus && getTaskBucket(task) === 'ready' && (
           <button
             type="button"
             className="priority-card-action"
@@ -154,7 +155,7 @@ interface PriorityBoardProps {
 export function PriorityBoard({ tasks, onSelectTask, onUpdateStatus }: PriorityBoardProps) {
   const grouped = useMemo(() => groupByPriority(tasks), [tasks])
   const doneCount = useMemo(
-    () => tasks.filter(t => DONE_STATUSES.has(t.status)).length,
+    () => tasks.filter(t => getTaskBucket(t) === 'closed').length,
     [tasks]
   )
 

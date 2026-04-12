@@ -7,36 +7,39 @@ import { RiskBadge } from './RiskBadges'
 import { classifyTaskRisk } from './riskUtils'
 import { ActivityPulse } from './ActivityPulse'
 import { AssigneeBadge } from './AssigneeBadge'
+import {
+  getCanonicalTaskState,
+  getTaskBucket,
+  TASK_BUCKET_LABELS,
+  type TaskBucket,
+} from '../../lib/taskState'
 
 // =============================================================================
-// Column definitions: map 8 statuses → 6 columns
+// Column definitions
 // =============================================================================
 
 interface KanbanColumnDef {
-  key: string
+  key: TaskBucket
   label: string
-  statuses: string[]
-  targetStatus: string
+  targetBucket: TaskBucket
+  dotStatus: string
 }
 
 const COLUMNS: KanbanColumnDef[] = [
-  { key: 'backlog',     label: 'Backlog',     statuses: ['open'],                targetStatus: 'open' },
-  { key: 'in_progress', label: 'In Progress', statuses: ['in_progress'],         targetStatus: 'in_progress' },
-  { key: 'review',      label: 'Review',      statuses: ['needs_review'],        targetStatus: 'needs_review' },
-  { key: 'blocked',     label: 'Blocked',     statuses: ['escalated'],           targetStatus: 'escalated' },
-  { key: 'approved',    label: 'Ready',       statuses: ['review_approved'],     targetStatus: 'review_approved' },
-  { key: 'closed',      label: 'Closed',      statuses: ['closed'],              targetStatus: 'closed' },
+  { key: 'ready', label: TASK_BUCKET_LABELS.ready, targetBucket: 'ready', dotStatus: 'open' },
+  { key: 'in_progress', label: TASK_BUCKET_LABELS.in_progress, targetBucket: 'in_progress', dotStatus: 'in_progress' },
+  { key: 'review', label: TASK_BUCKET_LABELS.review, targetBucket: 'review', dotStatus: 'needs_review' },
+  { key: 'blocked', label: TASK_BUCKET_LABELS.blocked, targetBucket: 'blocked', dotStatus: 'escalated' },
+  { key: 'merge_ready', label: TASK_BUCKET_LABELS.merge_ready, targetBucket: 'merge_ready', dotStatus: 'review_approved' },
+  { key: 'closed', label: TASK_BUCKET_LABELS.closed, targetBucket: 'closed', dotStatus: 'closed' },
 ]
 
-// Status progression: current → next
-const NEXT_STATUS: Record<string, string> = {
-  open: 'in_progress',
-  in_progress: 'needs_review',
-  needs_review: 'review_approved',
-  review_approved: 'closed',
+const NEXT_BUCKET: Partial<Record<TaskBucket, TaskBucket>> = {
+  ready: 'in_progress',
+  in_progress: 'review',
+  review: 'merge_ready',
+  merge_ready: 'closed',
 }
-
-const BLOCKED_STATUSES = new Set(['escalated'])
 
 // =============================================================================
 // Fractional indexing helpers
@@ -98,7 +101,7 @@ function groupIntoSwimlanes(tasks: GobbyTask[], mode: SwimlaneModeType): Swimlan
   for (const task of tasks) {
     let key: string
     if (mode === 'assignee') {
-      key = task.assignee || '_unassigned'
+      key = getCanonicalTaskState(task).owner_session_id || '_unassigned'
     } else if (mode === 'priority') {
       key = String(task.priority)
     } else {
@@ -146,7 +149,7 @@ function groupIntoSwimlanes(tasks: GobbyTask[], mode: SwimlaneModeType): Swimlan
 interface KanbanCardProps {
   task: GobbyTask
   index: number
-  columnKey: string
+  columnKey: TaskBucket
   onSelect: (id: string) => void
   onUpdateStatus?: (taskId: string, newStatus: string) => void
 }
@@ -156,8 +159,10 @@ function KanbanCard({ task, index, columnKey, onSelect, onUpdateStatus }: Kanban
   const [isDragging, setIsDragging] = useState(false)
   const [dropEdge, setDropEdge] = useState<'top' | 'bottom' | null>(null)
   const priorityColor = (PRIORITY_STYLES[task.priority] || PRIORITY_STYLES[2]).color
-  const isBlocked = BLOCKED_STATUSES.has(task.status)
-  const nextStatus = NEXT_STATUS[task.status]
+  const bucket = getTaskBucket(task)
+  const ownerSessionId = getCanonicalTaskState(task).owner_session_id
+  const isBlocked = bucket === 'blocked'
+  const nextBucket = NEXT_BUCKET[bucket]
   const riskLevel = classifyTaskRisk(task.title, task.task_type)
 
   // Draggable
@@ -169,14 +174,14 @@ function KanbanCard({ task, index, columnKey, onSelect, onUpdateStatus }: Kanban
       getInitialData: () => ({
         type: 'kanban-card',
         taskId: task.id,
-        currentStatus: task.status,
+        currentBucket: bucket,
         columnKey,
         index,
       }),
       onDragStart: () => setIsDragging(true),
       onDrop: () => setIsDragging(false),
     })
-  }, [task.id, task.status, isBlocked, columnKey, index])
+  }, [task.id, bucket, isBlocked, columnKey, index])
 
   // Drop target (for within-column reorder)
   useEffect(() => {
@@ -230,21 +235,21 @@ function KanbanCard({ task, index, columnKey, onSelect, onUpdateStatus }: Kanban
       <div className="kanban-card-title">{task.title}</div>
       <div className="kanban-card-footer">
         <TypeBadge type={task.task_type} />
-        <AssigneeBadge assignee={task.assignee} agentName={task.agent_name} />
+        <AssigneeBadge assignee={ownerSessionId} agentName={task.agent_name} />
         <RiskBadge level={riskLevel} compact />
         {onUpdateStatus && !isBlocked && (
           <div className="kanban-card-actions">
-            {nextStatus && (
+            {nextBucket && (
               <button
                 type="button"
                 className="kanban-card-action"
-                title={`Move to ${nextStatus.replace(/_/g, ' ')}`}
-                onClick={e => { e.stopPropagation(); onUpdateStatus(task.id, nextStatus) }}
+                title={`Move to ${TASK_BUCKET_LABELS[nextBucket]}`}
+                onClick={e => { e.stopPropagation(); onUpdateStatus(task.id, nextBucket) }}
               >
                 →
               </button>
             )}
-            {task.status !== 'closed' && (
+            {bucket !== 'closed' && (
               <button
                 type="button"
                 className="kanban-card-action kanban-card-action--close"
@@ -288,18 +293,18 @@ function KanbanColumnComponent({
     if (!el) return
     return dropTargetForElements({
       element: el,
-      getData: () => ({ type: 'kanban-column', columnKey: col.key, targetStatus: col.targetStatus }),
+      getData: () => ({ type: 'kanban-column', columnKey: col.key, targetBucket: col.targetBucket }),
       canDrop: ({ source }) => source.data.type === 'kanban-card',
       onDragEnter: () => setIsDraggedOver(true),
       onDragLeave: () => setIsDraggedOver(false),
       onDrop: () => setIsDraggedOver(false),
     })
-  }, [col.key, col.targetStatus])
+  }, [col.key, col.targetBucket])
 
   return (
     <div ref={ref} className={`kanban-column ${isDraggedOver ? 'kanban-column--drag-over' : ''}`}>
       <div className="kanban-column-header">
-        <StatusDot status={col.statuses[0]} />
+        <StatusDot status={col.dotStatus} />
         <span className="kanban-column-label">{col.label}</span>
         <span className="kanban-column-count">{tasks.length}</span>
       </div>
@@ -340,7 +345,7 @@ function groupByColumn(tasks: GobbyTask[]): Map<string, GobbyTask[]> {
     grouped.set(col.key, [])
   }
   for (const task of tasks) {
-    const col = COLUMNS.find(c => c.statuses.includes(task.status))
+    const col = COLUMNS.find(c => c.key === getTaskBucket(task))
     if (col) {
       grouped.get(col.key)!.push(task)
     }
@@ -404,7 +409,7 @@ export function KanbanBoard({ tasks, onSelectTask, onUpdateStatus, onReorder }: 
         if (dropTargets.length === 0) return
 
         const taskId = source.data.taskId as string
-        const currentStatus = source.data.currentStatus as string
+        const currentBucket = source.data.currentBucket as string
 
         // Check if innermost target is a card (reorder within column)
         const innermost = dropTargets[0]
@@ -415,11 +420,11 @@ export function KanbanBoard({ tasks, onSelectTask, onUpdateStatus, onReorder }: 
 
           // Find the column drop target for status change
           const columnTarget = dropTargets.find(t => t.data.type === 'kanban-column')
-          const targetStatus = columnTarget?.data.targetStatus as string | undefined
+          const targetBucket = columnTarget?.data.targetBucket as string | undefined
 
           // If cross-column, update status first
-          if (targetStatus && currentStatus !== targetStatus && onUpdateStatus) {
-            onUpdateStatus(taskId, targetStatus)
+          if (targetBucket && currentBucket !== targetBucket && onUpdateStatus) {
+            onUpdateStatus(taskId, targetBucket)
           }
 
           // Compute insert index based on edge
@@ -430,9 +435,9 @@ export function KanbanBoard({ tasks, onSelectTask, onUpdateStatus, onReorder }: 
 
         // Fallback: column-level drop (status change only, append to end)
         if (innermost.data.type === 'kanban-column') {
-          const targetStatus = innermost.data.targetStatus as string
-          if (currentStatus !== targetStatus && onUpdateStatus) {
-            onUpdateStatus(taskId, targetStatus)
+          const targetBucket = innermost.data.targetBucket as string
+          if (currentBucket !== targetBucket && onUpdateStatus) {
+            onUpdateStatus(taskId, targetBucket)
           }
           // Place at end of target column
           if (onReorder) {

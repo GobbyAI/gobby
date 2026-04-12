@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useWebSocketEvent } from './useWebSocketEvent'
+import type { CanonicalTaskState, TaskCompatProjection } from '../lib/taskState'
+import { countTasksByBucket, matchesTaskBucketFilter } from '../lib/taskState'
 
 // =============================================================================
 // Types
@@ -10,6 +12,8 @@ export interface GobbyTask {
   ref: string
   title: string
   status: string
+  state?: CanonicalTaskState | null
+  compat?: TaskCompatProjection | null
   priority: number
   task_type: string
   parent_task_id: string | null
@@ -17,13 +21,19 @@ export interface GobbyTask {
   updated_at: string
   seq_num: number | null
   path_cache: string | null
-  requires_user_review: boolean
+  requires_user_review?: boolean
   assignee: string | null
   agent_name: string | null
   sequence_order: number | null
   start_date: string | null
   due_date: string | null
   project_id: string
+  claimed_by_session_id?: string | null
+  lifecycle_stage?: string | null
+  closed_at?: string | null
+  closed_in_session_id?: string | null
+  escalated_at?: string | null
+  category?: string | null
 }
 
 export interface GobbyTaskDetail extends GobbyTask {
@@ -95,10 +105,8 @@ interface CreateTaskParams {
 interface UpdateTaskParams {
   title?: string
   description?: string
-  status?: string
   priority?: number
   task_type?: string
-  assignee?: string
   labels?: string[]
   parent_task_id?: string
   category?: string
@@ -121,13 +129,11 @@ function getBaseUrl(): string {
 // =============================================================================
 
 export function useTasks(projectId?: string | null) {
-  const [tasks, setTasks] = useState<GobbyTask[]>([])
-  const [total, setTotal] = useState(0)
-  const [stats, setStats] = useState<TaskStats>({})
+  const [allTasks, setAllTasks] = useState<GobbyTask[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filters, setFilters] = useState<TaskFilters>({
-    status: 'open',
+    status: null,
     priority: null,
     taskType: null,
     assignee: null,
@@ -150,10 +156,7 @@ export function useTasks(projectId?: string | null) {
   const fetchTasks = useCallback(async () => {
     try {
       const baseUrl = getBaseUrl()
-      const params = new URLSearchParams({ limit: '200' })
-      if (filters.status === 'recently_done') params.set('status', 'closed')
-      else if (filters.status === 'in_review') params.set('status', 'needs_review,review_approved')
-      else if (filters.status) params.set('status', filters.status)
+      const params = new URLSearchParams({ limit: '500' })
       if (filters.priority !== null) params.set('priority', String(filters.priority))
       if (filters.taskType) params.set('task_type', filters.taskType)
       if (filters.assignee) params.set('assignee', filters.assignee)
@@ -165,9 +168,7 @@ export function useTasks(projectId?: string | null) {
       const response = await fetch(`${baseUrl}/api/tasks?${params}`)
       if (response.ok) {
         const data: TaskListResponse = await response.json()
-        setTasks(data.tasks || [])
-        setTotal(data.total)
-        setStats(data.stats || {})
+        setAllTasks(data.tasks || [])
         setError(null)
       } else {
         setError(`Failed to fetch tasks (${response.status})`)
@@ -179,6 +180,14 @@ export function useTasks(projectId?: string | null) {
       setIsLoading(false)
     }
   }, [filters])
+
+  const tasks = useMemo(
+    () => allTasks.filter(task => matchesTaskBucketFilter(task, filters.status)),
+    [allTasks, filters.status]
+  )
+
+  const total = tasks.length
+  const stats = useMemo(() => countTasksByBucket(allTasks), [allTasks])
 
   // Get single task detail
   const getTask = useCallback(async (taskId: string): Promise<GobbyTaskDetail | null> => {
@@ -240,17 +249,16 @@ export function useTasks(projectId?: string | null) {
     [fetchTasks]
   )
 
-  // Close task
-  const closeTask = useCallback(
-    async (taskId: string, reason?: string): Promise<GobbyTaskDetail | null> => {
+  const postTaskTransition = useCallback(
+    async (taskId: string, path: string, body?: Record<string, unknown>): Promise<GobbyTaskDetail | null> => {
       try {
         const baseUrl = getBaseUrl()
         const response = await fetch(
-          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/close`,
+          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/${path}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason }),
+            body: JSON.stringify(body ?? {}),
           }
         )
         if (response.ok) {
@@ -259,37 +267,72 @@ export function useTasks(projectId?: string | null) {
           return task
         }
       } catch (e) {
-        console.error('Failed to close task:', e)
+        console.error(`Failed to transition task via ${path}:`, e)
       }
       return null
     },
     [fetchTasks]
   )
 
+  const claimTask = useCallback(
+    async (taskId: string, sessionId: string, force = false): Promise<GobbyTaskDetail | null> =>
+      postTaskTransition(taskId, 'claim', { session_id: sessionId, force }),
+    [postTaskTransition]
+  )
+
+  const releaseTaskClaim = useCallback(
+    async (taskId: string, status?: string): Promise<GobbyTaskDetail | null> =>
+      postTaskTransition(taskId, 'release-claim', status ? { status } : {}),
+    [postTaskTransition]
+  )
+
+  const markTaskNeedsReview = useCallback(
+    async (taskId: string, notes?: string): Promise<GobbyTaskDetail | null> =>
+      postTaskTransition(taskId, 'needs-review', notes ? { notes } : {}),
+    [postTaskTransition]
+  )
+
+  const markTaskReviewApproved = useCallback(
+    async (taskId: string, notes?: string): Promise<GobbyTaskDetail | null> =>
+      postTaskTransition(taskId, 'review-approved', notes ? { notes } : {}),
+    [postTaskTransition]
+  )
+
+  const escalateTask = useCallback(
+    async (taskId: string, reason: string): Promise<GobbyTaskDetail | null> =>
+      postTaskTransition(taskId, 'escalate', { reason }),
+    [postTaskTransition]
+  )
+
+  const deEscalateTask = useCallback(
+    async (
+      taskId: string,
+      decisionContext: string,
+      targetStatus = 'open',
+      resetValidation = false
+    ): Promise<GobbyTaskDetail | null> =>
+      postTaskTransition(taskId, 'de-escalate', {
+        decision_context: decisionContext,
+        target_status: targetStatus,
+        reset_validation: resetValidation,
+      }),
+    [postTaskTransition]
+  )
+
+  // Close task
+  const closeTask = useCallback(
+    async (taskId: string, reason?: string): Promise<GobbyTaskDetail | null> => {
+      return postTaskTransition(taskId, 'close', reason ? { reason } : {})
+    },
+    [postTaskTransition]
+  )
+
   // Reopen task
   const reopenTask = useCallback(
     async (taskId: string, reason?: string): Promise<GobbyTaskDetail | null> => {
-      try {
-        const baseUrl = getBaseUrl()
-        const response = await fetch(
-          `${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/reopen`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason }),
-          }
-        )
-        if (response.ok) {
-          const task = await response.json()
-          fetchTasks()
-          return task
-        }
-      } catch (e) {
-        console.error('Failed to reopen task:', e)
-      }
-      return null
+      return postTaskTransition(taskId, 'reopen', reason ? { reason } : {})
     },
-    [fetchTasks]
+    [postTaskTransition]
   )
 
   // Delete task
@@ -370,19 +413,17 @@ export function useTasks(projectId?: string | null) {
     if (!taskId) return
 
     if (event === 'task_deleted') {
-      setTasks(prev => prev.filter(t => t.id !== taskId))
-      setTotal(prev => Math.max(0, prev - 1))
+      setAllTasks(prev => prev.filter(t => t.id !== taskId))
     } else if (event === 'task_created') {
       const newTask = taskData as unknown as GobbyTask
-      setTasks(prev => {
+      setAllTasks(prev => {
         if (prev.some(t => t.id === taskId)) return prev
         return [...prev, newTask]
       })
-      setTotal(prev => prev + 1)
     } else {
       // task_updated, task_closed, task_reopened
       const updated = taskData as unknown as GobbyTask
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updated } : t))
+      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updated } : t))
     }
 
     // Debounced full refetch to sync stats, total, and filter accuracy
@@ -409,6 +450,7 @@ export function useTasks(projectId?: string | null) {
   }, [fetchTasks])
 
   return {
+    allTasks,
     tasks,
     total,
     stats,
@@ -419,6 +461,12 @@ export function useTasks(projectId?: string | null) {
     getTask,
     createTask,
     updateTask,
+    claimTask,
+    releaseTaskClaim,
+    markTaskNeedsReview,
+    markTaskReviewApproved,
+    escalateTask,
+    deEscalateTask,
     closeTask,
     reopenTask,
     deleteTask,

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import type { CanonicalTaskState, TaskCompatProjection } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -26,6 +28,8 @@ interface TaskData {
   ref: string
   title: string
   status: string
+  state?: CanonicalTaskState | null
+  compat?: TaskCompatProjection | null
   priority: number
   type: string
   category: string | null
@@ -36,6 +40,8 @@ interface TaskData {
   closed_at: string | null
   closed_in_session_id: string | null
   created_in_session_id: string | null
+  claimed_by_session_id?: string | null
+  lifecycle_stage?: string | null
   validation_fail_count: number
   escalated_at: string | null
 }
@@ -351,12 +357,31 @@ export function AgentPortfolioPage() {
       const sessionIds = new Set(group.sessions.map(s => s.id))
 
       // Tasks assigned to sessions of this agent
-      const assigned = tasks.filter(t => t.assignee && sessionIds.has(t.assignee))
+      const assigned = tasks.filter(t => {
+        const ownerSessionId = getCanonicalTaskState(t).owner_session_id
+        return Boolean(ownerSessionId && sessionIds.has(ownerSessionId))
+      })
       const closed = tasks.filter(
-        t => t.closed_in_session_id && sessionIds.has(t.closed_in_session_id) && (t.status === 'closed' || t.status === 'review_approved')
+        t => {
+          const state = getCanonicalTaskState(t)
+          const bucket = getTaskBucket(t)
+
+          if (bucket === 'closed') {
+            return Boolean(state.closed_in_session_id && sessionIds.has(state.closed_in_session_id))
+          }
+
+          if (bucket === 'merge_ready') {
+            return Boolean(state.owner_session_id && sessionIds.has(state.owner_session_id))
+          }
+
+          return false
+        }
       )
       const escalated = tasks.filter(
-        t => (t.assignee && sessionIds.has(t.assignee)) && t.escalated_at !== null
+        t => {
+          const state = getCanonicalTaskState(t)
+          return Boolean(state.owner_session_id && sessionIds.has(state.owner_session_id) && state.is_escalated)
+        }
       )
 
       // Aggregate token usage
@@ -379,7 +404,7 @@ export function AgentPortfolioPage() {
         : 0
 
       // Success rate: closed / (assigned non-open)
-      const attempted = assigned.filter(t => t.status !== 'open')
+      const attempted = assigned.filter(t => getTaskBucket(t) !== 'ready')
       const successRate = attempted.length > 0 ? closed.length / attempted.length : 0
 
       // Category breakdown from closed tasks
@@ -392,7 +417,10 @@ export function AgentPortfolioPage() {
       // Failure modes from failed/escalated
       const modes: string[] = []
       const failedWithValidation = tasks.filter(
-        t => (t.assignee && sessionIds.has(t.assignee)) && t.validation_fail_count > 0
+        t => {
+          const ownerSessionId = getCanonicalTaskState(t).owner_session_id
+          return Boolean(ownerSessionId && sessionIds.has(ownerSessionId) && t.validation_fail_count > 0)
+        }
       )
       if (failedWithValidation.length > 0) modes.push(`Validation failures (${failedWithValidation.length})`)
       if (escalated.length > 0) modes.push(`Escalations (${escalated.length})`)
