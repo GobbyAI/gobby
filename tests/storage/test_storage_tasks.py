@@ -341,6 +341,40 @@ class TestLocalTaskManager:
         assert blocked.id in blocked_ids
         assert task_manager.count_blocked_tasks(project_id=project_id) == 1
 
+    def test_task_state_tracks_only_unresolved_external_blockers(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Canonical blocked state should ignore closed blockers but preserve dependency order."""
+        blocked = task_manager.create_task(project_id, "Blocked")
+        blocker = task_manager.create_task(project_id, "Blocker")
+        dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
+
+        fetched = task_manager.get_task(blocked.id)
+        assert fetched.blocked_by == {blocker.id}
+        assert fetched.active_blocked_by == {blocker.id}
+        assert fetched.to_brief()["state"]["is_blocked"] is True
+
+        task_manager.close_task(blocker.id)
+
+        fetched = task_manager.get_task(blocked.id)
+        assert fetched.blocked_by == {blocker.id}
+        assert fetched.active_blocked_by == set()
+        assert fetched.to_brief()["state"]["is_blocked"] is False
+
+    def test_task_state_ignores_descendant_completion_blocks(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Parent completion blockers should not project as canonical blocked state."""
+        parent = task_manager.create_task(project_id, "Parent Epic")
+        child = task_manager.create_task(project_id, "Child Task", parent_task_id=parent.id)
+        dep_manager.add_dependency(parent.id, child.id, "blocks")
+
+        fetched = task_manager.get_task(parent.id)
+
+        assert fetched.blocked_by == {child.id}
+        assert fetched.active_blocked_by == set()
+        assert fetched.to_dict()["state"]["is_blocked"] is False
+
     def test_parent_blocked_by_children_is_still_ready(
         self, task_manager, dep_manager, project_id
     ) -> None:

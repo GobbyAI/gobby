@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query
 
+from gobby.storage.tasks._state_sql import canonical_status_case, is_ready_sql
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -69,8 +71,9 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             "closed_24h": 0,
         }
         try:
+            projected_status = canonical_status_case()
             rows = db.fetchall(
-                f"SELECT status, COUNT(*) as cnt FROM tasks "
+                f"SELECT {projected_status} as status, COUNT(*) as cnt FROM tasks "
                 f"WHERE 1=1 {time_filter} GROUP BY status",
                 tuple(params),
             )
@@ -79,7 +82,7 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 if status in task_stats:
                     task_stats[status] = row["cnt"]
 
-            # Ready = open tasks with no unresolved blocking deps
+            # Ready = canonically executable tasks with no unresolved blocking deps
             tf_aliased, _ = _build_filters(
                 hours,
                 days,
@@ -89,26 +92,26 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             )
             ready_rows = db.fetchall(
                 "SELECT COUNT(*) as cnt FROM tasks t "
-                "WHERE t.status = 'open' "
+                f"WHERE {is_ready_sql('t')} "
                 f"{tf_aliased} "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM task_dependencies td "
                 "  JOIN tasks blocker ON td.depends_on = blocker.id "
-                "  WHERE td.task_id = t.id AND blocker.status != 'closed'"
+                "  WHERE td.task_id = t.id AND blocker.closed_at IS NULL"
                 ")",
                 tuple(params),
             )
             task_stats["ready"] = ready_rows[0]["cnt"] if ready_rows else 0
 
-            # Blocked = open/in_progress tasks with unresolved blocking deps
+            # Blocked = unresolved tasks with unresolved blocking deps
             blocked_rows = db.fetchall(
                 "SELECT COUNT(*) as cnt FROM tasks t "
-                "WHERE t.status IN ('open', 'in_progress') "
+                "WHERE t.closed_at IS NULL "
                 f"{tf_aliased} "
                 "AND EXISTS ("
                 "  SELECT 1 FROM task_dependencies td "
                 "  JOIN tasks blocker ON td.depends_on = blocker.id "
-                "  WHERE td.task_id = t.id AND blocker.status != 'closed'"
+                "  WHERE td.task_id = t.id AND blocker.closed_at IS NULL"
                 ")",
                 tuple(params),
             )

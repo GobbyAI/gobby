@@ -103,7 +103,8 @@ def is_task_merge_ready(task: Any) -> bool:
     """Return whether the task has passed review and is ready for merge/close."""
     if task is None or is_task_closed(task) or is_task_escalated(task):
         return False
-    return normalize_lifecycle_stage(getattr(task, "lifecycle_stage", None)) == "review_approved"
+    lifecycle_stage = _coerce_task_lifecycle_stage(task)
+    return lifecycle_stage == "review_approved"
 
 
 def is_active_claim_status(status: str | None) -> bool:
@@ -150,3 +151,48 @@ def normalize_de_escalation_target_status(
         allowed = ", ".join(DE_ESCALATION_TARGET_STATUSES)
         raise ValueError(f"Invalid target_status '{target_status}'. Expected one of: {allowed}.")
     return normalized
+
+
+def _coerce_task_lifecycle_stage(task: Any) -> TaskLifecycleStage | None:
+    """Return the best-effort lifecycle stage for a task during migration."""
+    if task is None:
+        return None
+
+    raw_stage = getattr(task, "lifecycle_stage", None)
+    try:
+        normalized_stage = normalize_lifecycle_stage(raw_stage)
+    except (AttributeError, TypeError, ValueError):
+        normalized_stage = None
+
+    if normalized_stage is not None:
+        return normalized_stage
+
+    legacy_status = getattr(task, "status", None)
+    if isinstance(legacy_status, str):
+        return lifecycle_stage_from_status(legacy_status)
+    return None
+
+
+def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[str, Any]:
+    """Build the canonical task-state projection for external callers."""
+    owner_session_id = get_claimed_session_id(task)
+    lifecycle_stage = _coerce_task_lifecycle_stage(task)
+    if is_blocked is None:
+        active_blocked_by = getattr(task, "active_blocked_by", None)
+        is_blocked = bool(active_blocked_by) or is_task_escalated(task)
+
+    return {
+        "owner_session_id": owner_session_id,
+        "lifecycle_stage": lifecycle_stage,
+        "is_claimed": bool(owner_session_id),
+        "is_closed": is_task_closed(task),
+        "is_escalated": is_task_escalated(task),
+        "is_blocked": bool(is_blocked),
+        "is_merge_ready": is_task_merge_ready(task),
+        "closed_at": getattr(task, "closed_at", None),
+        "closed_reason": getattr(task, "closed_reason", None),
+        "closed_in_session_id": getattr(task, "closed_in_session_id", None),
+        "closed_commit_sha": getattr(task, "closed_commit_sha", None),
+        "escalated_at": getattr(task, "escalated_at", None),
+        "escalation_reason": getattr(task, "escalation_reason", None),
+    }

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.state_semantics import lifecycle_stage_from_status, serialize_task_state
 
 logger = logging.getLogger(__name__)
 
@@ -140,10 +141,18 @@ class TaskSyncManager:
 
             export_data = []
             for task in tasks:
+                state = serialize_task_state(task)
+                state["closed_at"] = _normalize_timestamp(task.closed_at)
+                state["escalated_at"] = _normalize_timestamp(task.escalated_at)
                 task_dict = {
                     "id": task.id,
                     "title": task.title,
                     "description": task.description,
+                    "state": state,
+                    "compat": {
+                        "status": task.status,
+                        "assignee": task.assignee,
+                    },
                     "status": task.status,
                     "priority": task.priority,
                     "task_type": task.task_type,
@@ -152,12 +161,16 @@ class TaskSyncManager:
                     "updated_at": _normalize_timestamp(task.updated_at),
                     "project_id": task.project_id,
                     "parent_id": task.parent_task_id,
+                    "created_in_session_id": task.created_in_session_id,
+                    "claimed_by_session_id": task.claimed_by_session_id,
+                    "lifecycle_stage": task.lifecycle_stage,
                     "deps_on": sorted(deps_map.get(task.id, [])),  # Sort deps for stability
                     # Commit SHAs are already normalized at write time by link_commit()
                     "commits": sorted(set(task.commits)) if task.commits else [],
                     # Closed state fields
                     "closed_at": _normalize_timestamp(task.closed_at),
                     "closed_reason": task.closed_reason,
+                    "closed_in_session_id": task.closed_in_session_id,
                     "closed_commit_sha": task.closed_commit_sha,
                     # Labels (already a list on Task model)
                     "labels": task.labels if task.labels else None,
@@ -236,13 +249,19 @@ class TaskSyncManager:
             # Bulk-load existing task metadata in one query to avoid per-task SELECTs
             existing_tasks: dict[str, dict[str, Any]] = {}
             for row in self.db.fetchall(
-                "SELECT id, updated_at, seq_num, path_cache, project_id FROM tasks"
+                "SELECT id, updated_at, seq_num, path_cache, project_id, "
+                "claimed_by_session_id, created_in_session_id, closed_in_session_id, "
+                "lifecycle_stage FROM tasks"
             ):
                 existing_tasks[row["id"]] = {
                     "updated_at": row["updated_at"],
                     "seq_num": row["seq_num"],
                     "path_cache": row["path_cache"],
                     "project_id": row["project_id"],
+                    "claimed_by_session_id": row["claimed_by_session_id"],
+                    "created_in_session_id": row["created_in_session_id"],
+                    "closed_in_session_id": row["closed_in_session_id"],
+                    "lifecycle_stage": row["lifecycle_stage"],
                 }
 
             # Track occupied seq_nums per project to preserve JSONL values
@@ -317,6 +336,9 @@ class TaskSyncManager:
                                 skipped_count += 1
 
                         if should_update:
+                            state = data.get("state") or {}
+                            compat = data.get("compat") or {}
+
                             # Handle commits array (stored as JSON in SQLite)
                             commits_json = (
                                 json.dumps(data["commits"]) if data.get("commits") else None
@@ -334,21 +356,54 @@ class TaskSyncManager:
                             labels_raw = data.get("labels")
                             labels_json = json.dumps(labels_raw) if labels_raw else None
 
+                            legacy_status = data.get("status") or compat.get("status") or "open"
+                            lifecycle_stage = data.get("lifecycle_stage")
+                            if lifecycle_stage is None:
+                                lifecycle_stage = state.get("lifecycle_stage")
+                            if lifecycle_stage is None:
+                                lifecycle_stage = (
+                                    existing_row["lifecycle_stage"] if existing_row else None
+                                )
+                            if lifecycle_stage is None:
+                                lifecycle_stage = lifecycle_stage_from_status(legacy_status)
+
+                            claimed_by_session_id = data.get("claimed_by_session_id")
+                            if claimed_by_session_id is None:
+                                claimed_by_session_id = state.get("owner_session_id")
+                            if claimed_by_session_id is None and existing_row:
+                                claimed_by_session_id = existing_row["claimed_by_session_id"]
+
+                            created_in_session_id = data.get("created_in_session_id")
+                            if created_in_session_id is None and existing_row:
+                                created_in_session_id = existing_row["created_in_session_id"]
+
+                            closed_in_session_id = data.get("closed_in_session_id")
+                            if closed_in_session_id is None:
+                                closed_in_session_id = state.get("closed_in_session_id")
+                            if closed_in_session_id is None and existing_row:
+                                closed_in_session_id = existing_row["closed_in_session_id"]
+
                             # Common synced field values
                             synced_values = {
                                 "project_id": data.get("project_id"),
                                 "title": data["title"],
                                 "description": data.get("description"),
                                 "parent_task_id": data.get("parent_id"),
-                                "status": data["status"],
+                                "status": legacy_status,
                                 "priority": data.get("priority", 2),
                                 "task_type": data.get("task_type", "task"),
                                 "created_at": data["created_at"],
                                 "updated_at": data["updated_at"],
+                                "created_in_session_id": created_in_session_id,
+                                "claimed_by_session_id": claimed_by_session_id,
+                                "lifecycle_stage": lifecycle_stage,
                                 "commits": commits_json,
-                                "closed_at": data.get("closed_at"),
-                                "closed_reason": data.get("closed_reason"),
-                                "closed_commit_sha": data.get("closed_commit_sha"),
+                                "closed_at": data.get("closed_at", state.get("closed_at")),
+                                "closed_reason": data.get("closed_reason", state.get("closed_reason")),
+                                "closed_in_session_id": closed_in_session_id,
+                                "closed_commit_sha": data.get(
+                                    "closed_commit_sha", state.get("closed_commit_sha")
+                                ),
                                 "labels": labels_json,
                                 "validation_status": validation_status,
                                 "validation_feedback": validation_feedback,
@@ -365,8 +420,10 @@ class TaskSyncManager:
                                 "linear_team_id": data.get("linear_team_id"),
                                 "start_date": data.get("start_date"),
                                 "due_date": data.get("due_date"),
-                                "escalated_at": data.get("escalated_at"),
-                                "escalation_reason": data.get("escalation_reason"),
+                                "escalated_at": data.get("escalated_at", state.get("escalated_at")),
+                                "escalation_reason": data.get(
+                                    "escalation_reason", state.get("escalation_reason")
+                                ),
                                 "seq_num": (
                                     data["seq_num"] if "seq_num" in data else existing_seq_num
                                 ),

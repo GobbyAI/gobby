@@ -888,6 +888,9 @@ class TestGetTaskTool:
 
             assert result["id"] == sample_task.id
             assert result["title"] == "Test Task"
+            assert "state" in result
+            assert "compat" in result
+            assert result["state"]["is_blocked"] is False
             assert "dependencies" in result
             assert "blocked_by" in result["dependencies"]
             assert "blocking" in result["dependencies"]
@@ -983,6 +986,8 @@ class TestGetTaskTool:
             result = await registry.call("get_task", {"task_id": sample_task.id, "brief": False})
 
             assert result["id"] == sample_task.id
+            assert "state" in result
+            assert "compat" in result
             assert "description" in result
             assert "validation_criteria" in result
             assert "dependencies" in result

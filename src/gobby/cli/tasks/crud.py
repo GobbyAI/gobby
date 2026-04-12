@@ -20,6 +20,7 @@ from gobby.cli.tasks._utils import (
     sort_tasks_for_tree,
 )
 from gobby.cli.utils import resolve_project_ref
+from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.project_context import get_project_context
 
 
@@ -27,30 +28,45 @@ from gobby.utils.project_context import get_project_context
 @click.option(
     "--status",
     "-s",
-    help="Filter by status (open, in_progress, needs_review, closed, blocked). Comma-separated for multiple.",
+    help="Compatibility filter by projected legacy status. Comma-separated for multiple.",
+)
+@click.option(
+    "--lifecycle",
+    help=(
+        "Filter by canonical lifecycle stage "
+        "(open, in_progress, needs_review, review_approved). "
+        "Comma-separated for multiple."
+    ),
 )
 @click.option(
     "--active",
     is_flag=True,
-    help="Shorthand for --status open,in_progress (all active work)",
+    help="Show all non-closed work (canonical active tasks)",
 )
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
 @click.option("--assignee", "-a", help="Filter by assignee")
+@click.option("--claimed", is_flag=True, help="Show only claimed tasks")
+@click.option("--unclaimed", is_flag=True, help="Show only unclaimed tasks")
 @click.option(
     "--ready", is_flag=True, help="Show only ready tasks (open/in_progress with no blocking deps)"
 )
 @click.option(
-    "--blocked", is_flag=True, help="Show only blocked tasks (open with unresolved blockers)"
+    "--blocked", is_flag=True, help="Show only canonically blocked tasks"
 )
+@click.option("--closed", "closed_only", is_flag=True, help="Show only canonically closed tasks")
 @click.option("--limit", "-l", default=50, help="Max tasks to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_tasks(
     status: str | None,
+    lifecycle: str | None,
     active: bool,
     project_ref: str | None,
     assignee: str | None,
+    claimed: bool,
+    unclaimed: bool,
     ready: bool,
     blocked: bool,
+    closed_only: bool,
     limit: int,
     json_format: bool,
 ) -> None:
@@ -59,20 +75,56 @@ def list_tasks(
         click.echo("Error: --ready and --blocked are mutually exclusive.", err=True)
         return
 
+    if claimed and unclaimed:
+        click.echo("Error: --claimed and --unclaimed are mutually exclusive.", err=True)
+        return
+
     if active and status:
         click.echo("Error: --active and --status are mutually exclusive.", err=True)
         return
 
-    # Parse comma-separated statuses or use --active shorthand
-    # Normalize hyphen-separated status names (e.g., in-progress -> in_progress)
+    if status and lifecycle:
+        click.echo("Error: --status and --lifecycle are mutually exclusive.", err=True)
+        return
+
+    if active and closed_only:
+        click.echo("Error: --active and --closed are mutually exclusive.", err=True)
+        return
+
+    if (ready or blocked) and any((status, lifecycle, active, claimed, unclaimed, closed_only)):
+        click.echo(
+            "Error: --ready/--blocked cannot be combined with --status, --lifecycle, "
+            "--active, --claimed, --unclaimed, or --closed.",
+            err=True,
+        )
+        return
+
+    # Parse comma-separated statuses or lifecycle stages.
     status_filter: str | list[str] | None = None
-    if active:
-        status_filter = ["open", "in_progress"]
-    elif status:
+    if status:
         if "," in status:
             status_filter = [normalize_status(s.strip()) for s in status.split(",")]
         else:
             status_filter = normalize_status(status)
+
+    lifecycle_filter: str | list[str] | None = None
+    if lifecycle:
+        if "," in lifecycle:
+            lifecycle_filter = [normalize_status(s.strip()) for s in lifecycle.split(",")]
+        else:
+            lifecycle_filter = normalize_status(lifecycle)
+
+    claimed_filter: bool | None = None
+    if claimed:
+        claimed_filter = True
+    elif unclaimed:
+        claimed_filter = False
+
+    closed_filter: bool | None = None
+    if closed_only:
+        closed_filter = True
+    elif active:
+        closed_filter = False
 
     project_id = resolve_project_ref(project_ref)
 
@@ -99,10 +151,24 @@ def list_tasks(
         tasks_list = manager.list_tasks(
             project_id=project_id,
             status=status_filter,
+            lifecycle_stage=lifecycle_filter,
             assignee=assignee,
+            claimed=claimed_filter,
+            closed=closed_filter,
             limit=limit,
         )
-        label = "tasks"
+        if closed_filter:
+            label = "closed tasks"
+        elif claimed_filter is True:
+            label = "claimed tasks"
+        elif claimed_filter is False:
+            label = "unclaimed tasks"
+        elif active:
+            label = "active tasks"
+        elif lifecycle_filter:
+            label = "lifecycle-filtered tasks"
+        else:
+            label = "tasks"
         empty_msg = "No tasks found."
 
     if json_format:
@@ -116,7 +182,14 @@ def list_tasks(
     # For filtered views, include ancestors for proper tree hierarchy
     primary_ids: set[str] | None = None
     display_tasks = tasks_list
-    if ready or blocked or status_filter:
+    if (
+        ready
+        or blocked
+        or status_filter
+        or lifecycle_filter
+        or claimed_filter is not None
+        or closed_filter is not None
+    ):
         display_tasks, primary_ids = collect_ancestors(tasks_list, manager)
 
     # Sort for proper tree display order
@@ -264,35 +337,63 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
     project_id = resolve_project_ref(project_ref)
     manager = get_task_manager()
 
-    # Get counts by status
     all_tasks = manager.list_tasks(project_id=project_id, limit=10000)
     total = len(all_tasks)
-    by_status = {"open": 0, "in_progress": 0, "needs_review": 0, "closed": 0}
-    by_priority = {1: 0, 2: 0, 3: 0}
+    by_lifecycle = {"open": 0, "in_progress": 0, "needs_review": 0, "review_approved": 0}
+    compat_by_status: dict[str, int] = {}
+    by_priority = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
     by_type: dict[str, int] = {}
+    claimed_count = 0
+    unclaimed_count = 0
+    closed_count = 0
+    escalated_count = 0
+    merge_ready_count = 0
 
     for task in all_tasks:
-        by_status[task.status] = by_status.get(task.status, 0) + 1
-        if task.priority:
+        state = serialize_task_state(task)
+        compat_by_status[task.status] = compat_by_status.get(task.status, 0) + 1
+
+        if state["is_closed"]:
+            closed_count += 1
+        else:
+            lifecycle = state["lifecycle_stage"] or "open"
+            by_lifecycle[lifecycle] = by_lifecycle.get(lifecycle, 0) + 1
+            if state["is_claimed"]:
+                claimed_count += 1
+            else:
+                unclaimed_count += 1
+            if state["is_escalated"]:
+                escalated_count += 1
+            if state["is_merge_ready"]:
+                merge_ready_count += 1
+
+        if task.priority is not None:
             by_priority[task.priority] = by_priority.get(task.priority, 0) + 1
         if task.task_type:
             by_type[task.task_type] = by_type.get(task.task_type, 0) + 1
 
-    # Get ready and blocked counts
     ready_count = len(manager.list_ready_tasks(project_id=project_id, limit=10000))
     blocked_count = len(manager.list_blocked_tasks(project_id=project_id, limit=10000))
 
     stats = {
         "total": total,
-        "by_status": by_status,
+        "by_lifecycle": by_lifecycle,
         "by_priority": {
+            "critical": by_priority.get(0, 0),
             "high": by_priority.get(1, 0),
             "medium": by_priority.get(2, 0),
             "low": by_priority.get(3, 0),
+            "backlog": by_priority.get(4, 0),
         },
         "by_type": by_type,
+        "claimed": claimed_count,
+        "unclaimed": unclaimed_count,
+        "closed": closed_count,
+        "escalated": escalated_count,
+        "merge_ready": merge_ready_count,
         "ready": ready_count,
         "blocked": blocked_count,
+        "compat_by_status": compat_by_status,
     }
 
     if json_format:
@@ -301,15 +402,22 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 
     click.echo("Task Statistics:")
     click.echo(f"  Total: {total}")
-    click.echo(f"  Open: {by_status.get('open', 0)}")
-    click.echo(f"  In Progress: {by_status.get('in_progress', 0)}")
-    click.echo(f"  Needs Review: {by_status.get('needs_review', 0)}")
-    click.echo(f"  Closed: {by_status.get('closed', 0)}")
+    click.echo(f"  Open: {by_lifecycle.get('open', 0)}")
+    click.echo(f"  In Progress: {by_lifecycle.get('in_progress', 0)}")
+    click.echo(f"  Needs Review: {by_lifecycle.get('needs_review', 0)}")
+    click.echo(f"  Review Approved: {by_lifecycle.get('review_approved', 0)}")
+    click.echo(f"  Closed: {closed_count}")
+    click.echo(f"\n  Claimed: {claimed_count}")
+    click.echo(f"  Unclaimed Active: {unclaimed_count}")
+    click.echo(f"  Escalated: {escalated_count}")
+    click.echo(f"  Merge Ready: {merge_ready_count}")
     click.echo(f"\n  Ready (no blockers): {ready_count}")
     click.echo(f"  Blocked: {blocked_count}")
-    click.echo(f"\n  High Priority: {by_priority.get(1, 0)}")
+    click.echo(f"\n  Critical Priority: {by_priority.get(0, 0)}")
+    click.echo(f"  High Priority: {by_priority.get(1, 0)}")
     click.echo(f"  Medium Priority: {by_priority.get(2, 0)}")
     click.echo(f"  Low Priority: {by_priority.get(3, 0)}")
+    click.echo(f"  Backlog Priority: {by_priority.get(4, 0)}")
     if by_type:
         click.echo("\n  By Type:")
         for t, count in sorted(by_type.items(), key=lambda x: -x[1]):
@@ -393,19 +501,52 @@ def show_task(task_id: str) -> None:
     if not task:
         return
 
+    blocker_ids = sorted(task.active_blocked_by)
+    state = serialize_task_state(task)
+    lifecycle_display = state["lifecycle_stage"] or "open"
+
     click.echo(f"Task: {task.title}")
     click.echo(f"ID: {task.id}")
     if task.seq_num:
         click.echo(f"Ref: #{task.seq_num}")
-    click.echo(f"Status: {task.status}")
+    click.echo(f"Lifecycle: {lifecycle_display}")
+    click.echo(f"Owner Session: {state['owner_session_id'] or '-'}")
+    click.echo(f"Blocked: {'yes' if state['is_blocked'] else 'no'}")
+    click.echo(f"Escalated: {'yes' if state['is_escalated'] else 'no'}")
+    click.echo(f"Merge Ready: {'yes' if state['is_merge_ready'] else 'no'}")
+    click.echo(f"Closed: {'yes' if state['is_closed'] else 'no'}")
+    click.echo(f"Legacy Status: {task.status}")
     click.echo(f"Priority: {task.priority}")
     click.echo(f"Type: {task.task_type}")
     click.echo(f"Created: {task.created_at}")
     click.echo(f"Updated: {task.updated_at}")
+    if state["closed_at"]:
+        click.echo(f"Closed At: {state['closed_at']}")
+    if state["closed_reason"]:
+        click.echo(f"Closed Reason: {state['closed_reason']}")
+    if state["closed_in_session_id"]:
+        click.echo(f"Closed In Session: {state['closed_in_session_id']}")
+    if state["closed_commit_sha"]:
+        click.echo(f"Closed Commit: {state['closed_commit_sha']}")
+    if state["escalated_at"]:
+        click.echo(f"Escalated At: {state['escalated_at']}")
+    if state["escalation_reason"]:
+        click.echo(f"Escalation Reason: {state['escalation_reason']}")
     if task.assignee:
-        click.echo(f"Assignee: {task.assignee}")
+        click.echo(f"Compatibility Assignee: {task.assignee}")
     if task.labels:
         click.echo(f"Labels: {', '.join(task.labels)}")
+    if blocker_ids:
+        blocker_refs: list[str] = []
+        for blocker_id in blocker_ids:
+            try:
+                blocker_task = manager.get_task(blocker_id)
+                blocker_refs.append(
+                    f"#{blocker_task.seq_num}" if blocker_task.seq_num else blocker_task.id[:8]
+                )
+            except Exception:
+                blocker_refs.append(blocker_id[:8])
+        click.echo(f"Blocked By: {', '.join(blocker_refs)}")
     if task.description:
         click.echo(f"\n{task.description}")
 

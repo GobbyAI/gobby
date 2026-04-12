@@ -10,18 +10,55 @@ This module provides query operations for listing and filtering tasks:
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
 from gobby.storage.tasks._state_sql import is_ready_sql, status_filter_sql
+from gobby.tasks.state_semantics import normalize_lifecycle_stage
+
+
+def _lifecycle_stage_filter_sql(
+    lifecycle_stage: str | list[str] | None,
+) -> tuple[str | None, list[Any]]:
+    """Build a canonical lifecycle-stage filter clause and params."""
+    if not lifecycle_stage:
+        return None, []
+
+    raw_values = [lifecycle_stage] if isinstance(lifecycle_stage, str) else list(lifecycle_stage)
+    include_open = False
+    normalized_values: list[str] = []
+
+    for raw_value in raw_values:
+        normalized = normalize_lifecycle_stage(raw_value)
+        if normalized is None:
+            include_open = True
+        elif normalized not in normalized_values:
+            normalized_values.append(normalized)
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    if normalized_values:
+        placeholders = ", ".join("?" for _ in normalized_values)
+        clauses.append(f"lifecycle_stage IN ({placeholders})")
+        params.extend(normalized_values)
+    if include_open:
+        clauses.append("lifecycle_stage IS NULL")
+
+    if not clauses:
+        return None, []
+    return "(" + " OR ".join(clauses) + ")", params
 
 
 def list_tasks(
     db: DatabaseProtocol,
     project_id: str | None = None,
     status: str | list[str] | None = None,
+    lifecycle_stage: str | list[str] | None = None,
     priority: int | None = None,
     assignee: str | None = None,
     claimed_by_session_id: str | None = None,
+    claimed: bool | None = None,
+    closed: bool | None = None,
     task_type: str | None = None,
     label: str | None = None,
     parent_task_id: str | None = None,
@@ -36,9 +73,13 @@ def list_tasks(
         project_id: Filter by project
         status: Filter by status. Can be a single status string, a list of statuses,
             or None to include all statuses.
+        lifecycle_stage: Filter by canonical lifecycle stage (`open`, `in_progress`,
+            `needs_review`, `review_approved`) independent of closed/escalated state.
         priority: Filter by priority
         assignee: Filter by assignee
         claimed_by_session_id: Filter by canonical owning session
+        claimed: Filter by whether canonical ownership exists
+        closed: Filter by canonical closed state
         task_type: Filter by task type
         label: Filter by label
         parent_task_id: Filter by parent task
@@ -60,6 +101,11 @@ def list_tasks(
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
+    if lifecycle_stage:
+        clause, clause_params = _lifecycle_stage_filter_sql(lifecycle_stage)
+        if clause:
+            query += f" AND {clause}"
+            params.extend(clause_params)
     if priority:
         query += " AND priority = ?"
         params.append(priority)
@@ -69,6 +115,14 @@ def list_tasks(
     if claimed_by_session_id:
         query += " AND claimed_by_session_id = ?"
         params.append(claimed_by_session_id)
+    if claimed is True:
+        query += " AND claimed_by_session_id IS NOT NULL"
+    elif claimed is False:
+        query += " AND claimed_by_session_id IS NULL"
+    if closed is True:
+        query += " AND closed_at IS NOT NULL"
+    elif closed is False:
+        query += " AND closed_at IS NULL"
     if task_type:
         query += " AND task_type = ?"
         params.append(task_type)
@@ -89,29 +143,7 @@ def list_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
-
-    # Bulk fetch dependencies for these tasks to support topological sort
-    if tasks:
-        task_ids = [t.id for t in tasks]
-        placeholders = ", ".join("?" for _ in task_ids)
-        dep_rows = db.fetchall(
-            f"SELECT task_id, depends_on FROM task_dependencies WHERE dep_type = 'blocks' AND task_id IN ({placeholders})",  # nosec B608
-            tuple(task_ids),
-        )
-
-        # Map by task_id -> set of blockers
-        blockers_map: dict[str, set[str]] = {}
-        for row in dep_rows:
-            tid = row["task_id"]
-            blocker = row["depends_on"]
-            if tid not in blockers_map:
-                blockers_map[tid] = set()
-            blockers_map[tid].add(blocker)
-
-        # Populate task objects
-        for task in tasks:
-            if task.id in blockers_map:
-                task.blocked_by = blockers_map[task.id]
+    hydrate_task_blocking_state(db, tasks)
 
     return order_tasks_hierarchically(tasks)
 
@@ -225,6 +257,7 @@ def list_ready_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_blocking_state(db, tasks)
 
     # Order hierarchically, then apply user's limit/offset
     ordered = order_tasks_hierarchically(tasks)
@@ -288,6 +321,7 @@ def list_blocked_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_blocking_state(db, tasks)
 
     # Order hierarchically, then apply user's limit/offset
     ordered = order_tasks_hierarchically(tasks)

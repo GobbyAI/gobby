@@ -52,11 +52,15 @@ class TestTaskSyncManager:
         task1_data = next(d for d in data if d["id"] == t1.id)
         assert task1_data["title"] == "Task 1"
         assert task1_data["deps_on"] == []
+        assert "state" in task1_data
+        assert "compat" in task1_data
 
         # Verify Task 2
         task2_data = next(d for d in data if d["id"] == t2.id)
         assert task2_data["title"] == "Task 2"
         assert task2_data["deps_on"] == [t1.id]
+        assert task2_data["state"]["is_closed"] is False
+        assert task2_data["compat"]["status"] == "open"
 
     @pytest.mark.integration
     def test_import_from_jsonl(self, sync_manager, task_manager, sample_project) -> None:
@@ -355,6 +359,56 @@ class TestImportEdgeCases:
         assert task is not None
         assert task.escalated_at == now
         assert task.escalation_reason == "Blocked by external dependency"
+
+    @pytest.mark.integration
+    def test_import_with_canonical_state_projection(
+        self, sync_manager, task_manager, sample_project
+    ) -> None:
+        """Test import reads canonical lifecycle and ownership from the state object."""
+        now = "2023-01-02T00:00:00+00:00"
+
+        tasks_data = {
+            "id": "task-canonical-state",
+            "title": "Canonical Task",
+            "description": "Desc",
+            "status": "needs_review",
+            "created_at": now,
+            "updated_at": now,
+            "project_id": sample_project["id"],
+            "parent_id": None,
+            "deps_on": [],
+            "state": {
+                "owner_session_id": "session-123",
+                "lifecycle_stage": "needs_review",
+                "is_claimed": True,
+                "is_closed": False,
+                "is_escalated": False,
+                "is_blocked": False,
+                "is_merge_ready": False,
+                "closed_at": None,
+                "closed_reason": None,
+                "closed_in_session_id": None,
+                "closed_commit_sha": None,
+                "escalated_at": None,
+                "escalation_reason": None,
+            },
+            "compat": {
+                "status": "needs_review",
+                "assignee": "session-123",
+            },
+        }
+
+        sync_manager.export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(sync_manager.export_path, "w") as f:
+            f.write(json.dumps(tasks_data) + "\n")
+
+        sync_manager.import_from_jsonl()
+
+        task = task_manager.get_task("task-canonical-state")
+        assert task is not None
+        assert task.status == "needs_review"
+        assert task.lifecycle_stage == "needs_review"
+        assert task.claimed_by_session_id == "session-123"
 
     @pytest.mark.integration
     def test_import_with_null_validation(self, sync_manager, task_manager, sample_project) -> None:

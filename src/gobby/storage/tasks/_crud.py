@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._models import (
     UNSET,
@@ -259,7 +260,9 @@ def get_task(db: DatabaseProtocol, task_id: str, project_id: str | None = None) 
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
     if not row:
         raise ValueError(f"Task {task_id} not found")
-    return Task.from_row(row)
+    task = Task.from_row(row)
+    hydrate_task_blocking_state(db, [task])
+    return task
 
 
 def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
@@ -267,19 +270,25 @@ def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
     # First try exact match
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (prefix,))
     if row:
-        return Task.from_row(row)
+        task = Task.from_row(row)
+        hydrate_task_blocking_state(db, [task])
+        return task
 
     # Try prefix match
     rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE ?", (f"{prefix}%",))
     if len(rows) == 1:
-        return Task.from_row(rows[0])
+        task = Task.from_row(rows[0])
+        hydrate_task_blocking_state(db, [task])
+        return task
     return None
 
 
 def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
     """Find all tasks matching an ID prefix."""
     rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE ?", (f"{prefix}%",))
-    return [Task.from_row(row) for row in rows]
+    tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_blocking_state(db, tasks)
+    return tasks
 
 
 def update_task(

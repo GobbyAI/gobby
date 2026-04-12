@@ -16,6 +16,7 @@ from gobby.tasks.state_semantics import (
     TaskLifecycleStage,
     lifecycle_stage_from_status,
     project_legacy_status,
+    serialize_task_state,
 )
 
 # Priority name to numeric value mapping
@@ -158,6 +159,7 @@ class Task:
     due_date: str | None = None
     # Dependency fields (populated on demand, not stored in tasks table)
     blocked_by: set[str] = field(default_factory=set)
+    active_blocked_by: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         """Fill canonical lifecycle stage for manually constructed legacy-style tasks."""
@@ -257,10 +259,16 @@ class Task:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert Task to dictionary."""
+        state = serialize_task_state(self)
         return {
             "ref": f"#{self.seq_num}" if self.seq_num else self.id[:8],
             "project_id": self.project_id,
             "title": self.title,
+            "state": state,
+            "compat": {
+                "status": self.status,
+                "assignee": self.assignee,
+            },
             "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,
@@ -311,9 +319,15 @@ class Task:
         - list_tasks() returns brief format (~22 fields)
         - get_task() returns brief format by default, full with brief=False (~35 fields)
         """
+        state = serialize_task_state(self)
         return {
             "ref": f"#{self.seq_num}" if self.seq_num else self.id[:8],
             "title": self.title,
+            "state": state,
+            "compat": {
+                "status": self.status,
+                "assignee": self.assignee,
+            },
             "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,

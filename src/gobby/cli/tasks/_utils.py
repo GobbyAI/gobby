@@ -17,6 +17,7 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.sync.tasks import TaskSyncManager
+from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
@@ -314,6 +315,9 @@ def compute_tree_prefixes(
 COL_STATUS = 1  # Status icon
 COL_PRIORITY = 2  # Priority emoji (2 visual chars)
 COL_ID = 6  # #N format (e.g., #1234)
+COL_LIFECYCLE = 15
+COL_OWNER = 10
+COL_FLAGS = 18
 
 
 def format_task_row(
@@ -333,26 +337,41 @@ def format_task_row(
         claimed_task_ids: Set of task IDs claimed by active sessions
     """
     show_muted = muted or not is_primary
-    is_claimed = claimed_task_ids is not None and task.id in claimed_task_ids
+    state = serialize_task_state(task)
+    is_claimed = state["is_claimed"] or (
+        claimed_task_ids is not None and task.id in claimed_task_ids
+    )
+    owner_session_id = state["owner_session_id"] or (
+        getattr(task, "assignee", None) if is_claimed else None
+    )
+    lifecycle_display = state["lifecycle_stage"] or "open"
+    blocked = state["is_blocked"] or getattr(task, "status", None) == "blocked"
+    escalated = state["is_escalated"]
+    closed = state["is_closed"]
+    merge_ready = state["is_merge_ready"]
 
     # Status icons:
     # ○ = open, unclaimed
     # ◐ = open, claimed by active session
     # ● = in_progress
-    # ✓ = completed/closed
+    # ✓ = closed
     # ⊗ = blocked
     # ⚠ = escalated
-    if task.status == "open" and is_claimed:
+    if closed:
+        status_icon = "✓"
+    elif escalated:
+        status_icon = "⚠"
+    elif blocked:
+        status_icon = "⊗"
+    elif lifecycle_display == "open" and is_claimed:
         status_icon = "◐"  # Open but claimed by active session
     else:
         status_icon = {
             "open": "○",
             "in_progress": "●",
-            "completed": "✓",
-            "closed": "✓",
-            "blocked": "⊗",
-            "escalated": "⚠",
-        }.get(task.status, "?")
+            "needs_review": "◌",
+            "review_approved": "◆",
+        }.get(lifecycle_display, "?")
 
     priority_icon = {
         0: "🟣",  # Critical
@@ -368,6 +387,19 @@ def format_task_row(
     # Use #N format for display (seq_num), fallback to short UUID prefix
     task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
     id_col = pad_to_width(task_ref, COL_ID)
+    lifecycle_col = pad_to_width(lifecycle_display, COL_LIFECYCLE)
+    owner_col = pad_to_width(owner_session_id[:8] if owner_session_id else "-", COL_OWNER)
+
+    flags: list[str] = []
+    if blocked:
+        flags.append("blocked")
+    if escalated:
+        flags.append("escalated")
+    if merge_ready:
+        flags.append("merge-ready")
+    if closed:
+        flags.append("closed")
+    flags_col = pad_to_width(",".join(flags) if flags else "-", COL_FLAGS)
 
     title = task.title
     if show_muted:
@@ -375,7 +407,10 @@ def format_task_row(
         # \033[2m = dim, \033[0m = reset
         title = f"\033[2m{task.title}\033[0m"
 
-    return f"{status_col} {priority_col} {id_col} {tree_prefix}{title}"
+    return (
+        f"{status_col} {priority_col} {id_col} {lifecycle_col} "
+        f"{owner_col} {flags_col} {tree_prefix}{title}"
+    )
 
 
 def format_task_header() -> str:
@@ -383,8 +418,11 @@ def format_task_header() -> str:
     status_col = pad_to_width("", COL_STATUS)
     priority_col = pad_to_width("", COL_PRIORITY)
     id_col = pad_to_width("#", COL_ID)
+    lifecycle_col = pad_to_width("LIFECYCLE", COL_LIFECYCLE)
+    owner_col = pad_to_width("OWNER", COL_OWNER)
+    flags_col = pad_to_width("FLAGS", COL_FLAGS)
 
-    return f"{status_col} {priority_col} {id_col} TITLE"
+    return f"{status_col} {priority_col} {id_col} {lifecycle_col} {owner_col} {flags_col} TITLE"
 
 
 def resolve_task_id(
