@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -71,27 +72,31 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             }
 
         # Check if already claimed by another session
-        if task.assignee and task.assignee != resolved_session_id and not force:
+        current_owner = get_claimed_session_id(task)
+        if current_owner and current_owner != resolved_session_id and not force:
             return {
                 "success": False,
                 "error": "Task already claimed by another session",
-                "claimed_by": task.assignee,
-                "message": f"Task is already claimed by session '{task.assignee}'. Use force=True to override.",
+                "claimed_by": current_owner,
+                "message": (
+                    f"Task is already claimed by session '{current_owner}'. "
+                    "Use force=True to override."
+                ),
             }
 
-        # Update task: only transition to in_progress when task is open.
-        # For other statuses (e.g. needs_review claimed by QA), preserve status.
-        update_kwargs: dict[str, Any] = {"assignee": resolved_session_id}
-        if task.status == "open":
-            update_kwargs["status"] = "in_progress"
-        updated = ctx.task_manager.update_task(
-            resolved_id,
-            **update_kwargs,
-        )
+        try:
+            updated = ctx.task_manager.claim_task(
+                resolved_id,
+                session_id=resolved_session_id,
+                force=force,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
+
         if not updated:
             return {"error": f"Failed to claim task {task_id}"}
 
-        new_status = update_kwargs.get("status", task.status)
+        new_status = updated.status
         if new_status != task.status:
             notify_parent_on_status_change(
                 ctx.task_manager.db,

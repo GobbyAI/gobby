@@ -17,7 +17,7 @@ from gobby.hooks.event_handlers._session_responses import (
     get_claimed_task_info,
 )
 from gobby.hooks.events import HookEvent, HookResponse
-from gobby.tasks.state_semantics import is_active_claim_status
+from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
@@ -475,18 +475,21 @@ class SessionStartMixin(EventHandlersBase):
                                     if task_obj is not None:
                                         if not is_active_claim_status(task_obj.status):
                                             continue
-                                        if task_obj.assignee not in (None, parent_session_id):
+                                        current_owner = get_claimed_session_id(task_obj)
+                                        if current_owner not in (None, parent_session_id):
                                             self.logger.debug(
                                                 "Skipping task handoff for session=%s task=%s; "
                                                 "already assigned to %s",
                                                 session_id,
                                                 claimed_id,
-                                                task_obj.assignee,
+                                                current_owner,
                                             )
                                             continue
                                         try:
-                                            self._task_manager.update_task(
-                                                claimed_id, assignee=session_id
+                                            self._task_manager.claim_task(
+                                                claimed_id,
+                                                session_id=session_id,
+                                                force=current_owner == parent_session_id,
                                             )
                                         except Exception as e:
                                             self.logger.debug(

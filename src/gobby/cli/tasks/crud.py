@@ -670,16 +670,12 @@ def de_escalate_cmd(
         )
         return
 
-    # Build update kwargs
-    update_kwargs: dict[str, str | int | None] = {
-        "status": target_status,
-        "escalated_at": None,
-        "escalation_reason": None,
-    }
-    if reset_validation:
-        update_kwargs["validation_fail_count"] = 0
-
-    manager.update_task(resolved.id, **update_kwargs)
+    manager.de_escalate_task(
+        resolved.id,
+        reason=reason,
+        target_status=target_status,
+        reset_validation=reset_validation,
+    )
     click.echo(f"De-escalated task {resolved.id[:8]} to {target_status} ({reason})")
     if reset_validation:
         click.echo("  Validation fail count reset to 0")

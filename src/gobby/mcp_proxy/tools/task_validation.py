@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
-from gobby.tasks.state_semantics import normalize_de_escalation_target_status
 from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_history import ValidationHistoryManager
 
@@ -481,21 +480,14 @@ def create_validation_registry(
             }
 
         try:
-            normalized_target = normalize_de_escalation_target_status(target_status)
+            updated_task = task_manager.de_escalate_task(
+                task.id,
+                reason=reason,
+                target_status=target_status,
+                reset_validation=reset_validation,
+            )
         except ValueError as e:
             return {"success": False, "error": str(e)}
-
-        # Build update kwargs
-        update_kwargs: dict[str, Any] = {
-            "status": normalized_target,
-            "escalated_at": None,
-            "escalation_reason": None,
-        }
-
-        if reset_validation:
-            update_kwargs["validation_fail_count"] = 0
-
-        updated_task = task_manager.update_task(task.id, **update_kwargs)
 
         return {
             "success": True,
@@ -504,7 +496,7 @@ def create_validation_registry(
             "escalated_at": updated_task.escalated_at,
             "escalation_reason": updated_task.escalation_reason,
             "de_escalation_reason": reason,
-            "target_status": normalized_target,
+            "target_status": updated_task.status,
             "validation_reset": reset_validation,
         }
 

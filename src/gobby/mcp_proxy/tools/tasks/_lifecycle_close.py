@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +169,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "Explain why validation should be skipped.",
                 }
             # Check if task was claimed by the calling session
-            if resolved_session_id and task.assignee == resolved_session_id:
+            if resolved_session_id and get_claimed_session_id(task) == resolved_session_id:
                 return {
                     "success": False,
                     "error": "skip_validation_own_task",

@@ -23,6 +23,35 @@ from gobby.storage.tasks._models import (
 logger = logging.getLogger(__name__)
 
 
+def _session_exists(db: DatabaseProtocol, session_id: str) -> bool:
+    """Return whether the given session ID exists in storage."""
+    return bool(db.fetchone("SELECT 1 FROM sessions WHERE id = ?", (session_id,)))
+
+
+def _derive_claimed_by_session_id(
+    db: DatabaseProtocol,
+    *,
+    assignee: Any = UNSET,
+    claimed_by_session_id: Any = UNSET,
+) -> Any:
+    """Project canonical ownership from explicit owner or session assignee.
+
+    `claimed_by_session_id` is authoritative when explicitly provided.
+    When only `assignee` is supplied, we mirror it into canonical ownership
+    only if it resolves to a real session ID. This preserves compatibility-only
+    assignee values such as web-chat conversation IDs.
+    """
+    if claimed_by_session_id is not UNSET:
+        return claimed_by_session_id
+    if assignee is UNSET:
+        return UNSET
+    if assignee is None:
+        return None
+    if isinstance(assignee, str) and _session_exists(db, assignee):
+        return assignee
+    return UNSET
+
+
 def create_task(
     db: DatabaseProtocol,
     project_id: str,
@@ -33,6 +62,7 @@ def create_task(
     priority: int = 2,
     task_type: str = "task",
     assignee: str | None = None,
+    claimed_by_session_id: str | None = None,
     labels: list[str] | None = None,
     category: str | None = None,
     expansion_context: str | None = None,
@@ -56,6 +86,13 @@ def create_task(
 
     # Default validation status
     validation_status = "pending" if validation_criteria else None
+    canonical_owner = _derive_claimed_by_session_id(
+        db,
+        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
+    )
+    if canonical_owner is UNSET:
+        canonical_owner = None
 
     for attempt in range(max_retries + 1):
         try:
@@ -73,13 +110,13 @@ def create_task(
                     """
                     INSERT INTO tasks (
                         id, project_id, title, description, parent_task_id,
-                        created_in_session_id, priority, task_type, assignee,
+                        created_in_session_id, claimed_by_session_id, priority, task_type, assignee,
                         labels, status, created_at, updated_at,
                         validation_status, category, expansion_context,
                         validation_criteria, validation_fail_count,
                         github_issue_number, github_pr_number, github_repo,
                         linear_issue_id, linear_team_id, seq_num
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -88,6 +125,7 @@ def create_task(
                         description,
                         parent_task_id,
                         created_in_session_id,
+                        canonical_owner,
                         priority,
                         task_type,
                         assignee,
@@ -224,8 +262,13 @@ def update_task(
     priority: Any = UNSET,
     task_type: Any = UNSET,
     assignee: Any = UNSET,
+    claimed_by_session_id: Any = UNSET,
     labels: Any = UNSET,
     parent_task_id: Any = UNSET,
+    closed_reason: Any = UNSET,
+    closed_at: Any = UNSET,
+    closed_in_session_id: Any = UNSET,
+    closed_commit_sha: Any = UNSET,
     validation_status: Any = UNSET,
     validation_feedback: Any = UNSET,
     category: Any = UNSET,
@@ -268,6 +311,14 @@ def update_task(
     if assignee is not UNSET:
         updates.append("assignee = ?")
         params.append(assignee)
+    derived_claimed_by_session_id = _derive_claimed_by_session_id(
+        db,
+        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
+    )
+    if derived_claimed_by_session_id is not UNSET:
+        updates.append("claimed_by_session_id = ?")
+        params.append(derived_claimed_by_session_id)
     if labels is not UNSET:
         updates.append("labels = ?")
         if labels is None:
@@ -277,6 +328,18 @@ def update_task(
     if parent_task_id is not UNSET:
         updates.append("parent_task_id = ?")
         params.append(parent_task_id)
+    if closed_reason is not UNSET:
+        updates.append("closed_reason = ?")
+        params.append(closed_reason)
+    if closed_at is not UNSET:
+        updates.append("closed_at = ?")
+        params.append(closed_at)
+    if closed_in_session_id is not UNSET:
+        updates.append("closed_in_session_id = ?")
+        params.append(closed_in_session_id)
+    if closed_commit_sha is not UNSET:
+        updates.append("closed_commit_sha = ?")
+        params.append(closed_commit_sha)
     if validation_status is not UNSET:
         updates.append("validation_status = ?")
         params.append(validation_status)

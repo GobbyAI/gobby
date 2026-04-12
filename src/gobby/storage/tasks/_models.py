@@ -114,6 +114,7 @@ class Task:
     description: str | None = None
     parent_task_id: str | None = None
     created_in_session_id: str | None = None
+    claimed_by_session_id: str | None = None
     closed_in_session_id: str | None = None
     closed_commit_sha: str | None = None
     closed_at: str | None = None
@@ -178,6 +179,9 @@ class Task:
                     row["discovered_in_session_id"] if "discovered_in_session_id" in keys else None
                 )
             ),
+            claimed_by_session_id=(
+                row["claimed_by_session_id"] if "claimed_by_session_id" in keys else None
+            ),
             closed_in_session_id=(
                 row["closed_in_session_id"] if "closed_in_session_id" in keys else None
             ),
@@ -239,6 +243,7 @@ class Task:
             "description": self.description,
             "parent_task_id": self.parent_task_id,
             "created_in_session_id": self.created_in_session_id,
+            "claimed_by_session_id": self.claimed_by_session_id,
             "closed_in_session_id": self.closed_in_session_id,
             "closed_commit_sha": self.closed_commit_sha,
             "closed_at": self.closed_at,
@@ -291,6 +296,7 @@ class Task:
             "seq_num": self.seq_num,
             "path_cache": self.path_cache,
             "assignee": self.assignee,
+            "claimed_by_session_id": self.claimed_by_session_id,
             "category": self.category,
             "closed_at": self.closed_at,
             "closed_in_session_id": self.closed_in_session_id,

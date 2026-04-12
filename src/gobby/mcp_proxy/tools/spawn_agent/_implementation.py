@@ -20,7 +20,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-from gobby.tasks.state_semantics import is_active_claim_status
+from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -499,28 +499,21 @@ async def spawn_agent_impl(
                         f"#{task_seq_num}" if task_seq_num else resolved_task_id,
                         getattr(task_obj, "status", None),
                     )
-                elif task_obj.assignee and task_obj.assignee != spawn_result.child_session_id:
+                elif (
+                    current_owner := get_claimed_session_id(task_obj)
+                ) and current_owner != spawn_result.child_session_id:
                     logger.info(
                         "Skipping auto-claim for task %s; already assigned to %s",
                         f"#{task_seq_num}" if task_seq_num else resolved_task_id,
-                        task_obj.assignee,
+                        current_owner,
                     )
-                elif task_obj.status == "open":
-                    task_manager.update_task(
+                else:
+                    task_manager.claim_task(
                         resolved_task_id,
-                        status="in_progress",
-                        assignee=spawn_result.child_session_id,
+                        session_id=spawn_result.child_session_id,
                     )
                     logger.info(
                         f"Auto-claimed task {(f'#{task_seq_num}' if task_seq_num else resolved_task_id)} for agent {run_id} (session {spawn_result.child_session_id})",
-                    )
-                elif task_obj:
-                    task_manager.update_task(
-                        resolved_task_id,
-                        assignee=spawn_result.child_session_id,
-                    )
-                    logger.info(
-                        f"Assigned task {(f'#{task_seq_num}' if task_seq_num else resolved_task_id)} to agent {run_id} (session {spawn_result.child_session_id}) without status change (status={task_obj.status})",
                     )
             except Exception as e:
                 logger.warning(f"Failed to auto-claim task {resolved_task_id}: {e}")

@@ -253,6 +253,7 @@ CREATE TABLE tasks (
     project_id TEXT NOT NULL REFERENCES projects(id),
     parent_task_id TEXT REFERENCES tasks(id),
     created_in_session_id TEXT REFERENCES sessions(id),
+    claimed_by_session_id TEXT REFERENCES sessions(id),
     closed_in_session_id TEXT REFERENCES sessions(id),
     closed_commit_sha TEXT,
     closed_at TEXT,
@@ -293,6 +294,7 @@ CREATE INDEX idx_tasks_project ON tasks(project_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
 CREATE INDEX idx_tasks_created_session ON tasks(created_in_session_id);
+CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id);
 CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id);
 CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
 CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);

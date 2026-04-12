@@ -5,7 +5,6 @@ mark_task_needs_review tool registrations.
 """
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -13,7 +12,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.state_semantics import normalize_de_escalation_target_status
+from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,7 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
 
         # Capture assignee before reopen clears it (needed for session variable cleanup)
         task = ctx.task_manager.get_task(resolved_id)
-        prior_assignee = task.assignee if task else None
+        prior_assignee = get_claimed_session_id(task) if task else None
 
         try:
             ctx.task_manager.reopen_task(resolved_id, reason=reason)
@@ -137,12 +136,10 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         if task.status in ("escalated", "closed"):
             return {"error": f"Cannot escalate task with status '{task.status}'."}
 
-        ctx.task_manager.update_task(
-            resolved_id,
-            status="escalated",
-            escalated_at=datetime.now(UTC).isoformat(),
-            escalation_reason=reason,
-        )
+        try:
+            ctx.task_manager.escalate_task(resolved_id, reason=reason)
+        except ValueError as e:
+            return {"error": str(e)}
 
         notify_parent_on_status_change(
             ctx.task_manager.db,
@@ -255,17 +252,13 @@ def register_mark_task_review_approved(
         except Exception:
             pass  # nosec B110 # best-effort, SESSION_END is the backstop
 
-        # Build update kwargs
-        update_kwargs: dict[str, Any] = {"status": "review_approved"}
-
-        # Append approval notes to description if provided
-        if approval_notes:
-            current_desc = task.description or ""
-            approval_section = f"\n\n[Approval Notes]\n{approval_notes}"
-            update_kwargs["description"] = current_desc + approval_section
-
-        # Update task status to review_approved
-        updated = ctx.task_manager.update_task(resolved_id, **update_kwargs)
+        try:
+            updated = ctx.task_manager.mark_task_review_approved(
+                resolved_id,
+                approval_notes=approval_notes,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
         if not updated:
             return {"error": f"Failed to approve task {task_id}"}
 
@@ -368,17 +361,10 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
         except Exception:
             pass  # nosec B110 # best-effort, SESSION_END is the backstop
 
-        # Build update kwargs
-        update_kwargs: dict[str, Any] = {"status": "needs_review"}
-
-        # Append review notes to description if provided
-        if review_notes:
-            current_desc = task.description or ""
-            review_section = f"\n\n[Review Notes]\n{review_notes}"
-            update_kwargs["description"] = current_desc + review_section
-
-        # Update task status to needs_review
-        updated = ctx.task_manager.update_task(resolved_id, **update_kwargs)
+        updated = ctx.task_manager.mark_task_needs_review(
+            resolved_id,
+            review_notes=review_notes,
+        )
         if not updated:
             return {"error": f"Failed to mark task {task_id} for review"}
 
@@ -461,25 +447,15 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
             }
 
         try:
-            normalized_target = normalize_de_escalation_target_status(target_status)
+            updated = ctx.task_manager.de_escalate_task(
+                resolved_id,
+                reason=reason,
+                target_status=target_status,
+                reset_validation=reset_validation,
+            )
         except ValueError as e:
             return {"error": str(e)}
 
-        # Build update kwargs
-        update_kwargs: dict[str, Any] = {
-            "status": normalized_target,
-            "escalated_at": None,
-            "escalation_reason": None,
-        }
-        reason_note = f"De-escalated: {reason}"
-        update_kwargs["description"] = (
-            f"{task.description}\n\n{reason_note}" if task.description else reason_note
-        )
-
-        if reset_validation:
-            update_kwargs["validation_fail_count"] = 0
-
-        updated = ctx.task_manager.update_task(resolved_id, **update_kwargs)
         if not updated:
             return {"error": f"Failed to de-escalate task {task_id}"}
         logger.info("Task %s de-escalated: %s", resolved_id, reason)
@@ -487,7 +463,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         notify_parent_on_status_change(
             ctx.task_manager.db,
             resolved_id,
-            normalized_target,
+            updated.status,
             task_ref=f"#{task.seq_num}" if task.seq_num else None,
         )
 

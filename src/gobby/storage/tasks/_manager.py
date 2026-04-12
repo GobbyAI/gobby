@@ -83,6 +83,24 @@ from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
 from gobby.storage.tasks._search import TaskFTS5Searcher
+from gobby.storage.tasks._transitions import (
+    claim_task as _claim_task,
+)
+from gobby.storage.tasks._transitions import (
+    de_escalate_task as _de_escalate_task,
+)
+from gobby.storage.tasks._transitions import (
+    escalate_task as _escalate_task,
+)
+from gobby.storage.tasks._transitions import (
+    mark_task_needs_review as _mark_task_needs_review,
+)
+from gobby.storage.tasks._transitions import (
+    mark_task_review_approved as _mark_task_review_approved,
+)
+from gobby.storage.tasks._transitions import (
+    release_task_claim as _release_task_claim,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +188,7 @@ class LocalTaskManager:
         priority: int = 2,
         task_type: str = "task",
         assignee: str | None = None,
+        claimed_by_session_id: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
         expansion_context: str | None = None,
@@ -192,6 +211,7 @@ class LocalTaskManager:
             priority=priority,
             task_type=task_type,
             assignee=assignee,
+            claimed_by_session_id=claimed_by_session_id,
             labels=labels,
             category=category,
             expansion_context=expansion_context,
@@ -263,8 +283,13 @@ class LocalTaskManager:
         priority: int | None | Any = UNSET,
         task_type: str | None | Any = UNSET,
         assignee: str | None | Any = UNSET,
+        claimed_by_session_id: str | None | Any = UNSET,
         labels: list[str] | None | Any = UNSET,
         parent_task_id: str | None | Any = UNSET,
+        closed_reason: str | None | Any = UNSET,
+        closed_at: str | None | Any = UNSET,
+        closed_in_session_id: str | None | Any = UNSET,
+        closed_commit_sha: str | None | Any = UNSET,
         validation_status: str | None | Any = UNSET,
         validation_feedback: str | None | Any = UNSET,
         category: str | None | Any = UNSET,
@@ -293,8 +318,13 @@ class LocalTaskManager:
             priority=priority,
             task_type=task_type,
             assignee=assignee,
+            claimed_by_session_id=claimed_by_session_id,
             labels=labels,
             parent_task_id=parent_task_id,
+            closed_reason=closed_reason,
+            closed_at=closed_at,
+            closed_in_session_id=closed_in_session_id,
+            closed_commit_sha=closed_commit_sha,
             validation_status=validation_status,
             validation_feedback=validation_feedback,
             category=category,
@@ -319,6 +349,37 @@ class LocalTaskManager:
 
         self._notify_listeners()
         return self.get_task(task_id)
+
+    def claim_task(self, task_id: str, session_id: str, force: bool = False) -> Task:
+        """Claim a task for a session, preserving non-open lifecycle states."""
+        task = _claim_task(self.db, task_id=task_id, session_id=session_id, force=force)
+        self._notify_listeners()
+        return task
+
+    def release_task_claim(
+        self,
+        task_id: str,
+        *,
+        status: str | None | Any = UNSET,
+        description: str | None | Any = UNSET,
+        validation_fail_count: int | None | Any = UNSET,
+        dispatch_failure_count: int | None | Any = UNSET,
+        escalated_at: str | None | Any = UNSET,
+        escalation_reason: str | None | Any = UNSET,
+    ) -> Task:
+        """Clear ownership while optionally changing lifecycle metadata."""
+        task = _release_task_claim(
+            self.db,
+            task_id=task_id,
+            status=status,
+            description=description,
+            validation_fail_count=validation_fail_count,
+            dispatch_failure_count=dispatch_failure_count,
+            escalated_at=escalated_at,
+            escalation_reason=escalation_reason,
+        )
+        self._notify_listeners()
+        return task
 
     def close_task(
         self,
@@ -374,6 +435,50 @@ class LocalTaskManager:
         _reopen_task(self.db, task_id=task_id, reason=reason)
         self._notify_listeners()
         return self.get_task(task_id)
+
+    def escalate_task(self, task_id: str, reason: str) -> Task:
+        """Escalate a task for human intervention."""
+        task = _escalate_task(self.db, task_id=task_id, reason=reason)
+        self._notify_listeners()
+        return task
+
+    def de_escalate_task(
+        self,
+        task_id: str,
+        reason: str,
+        target_status: str | None = None,
+        reset_validation: bool = False,
+    ) -> Task:
+        """Return an escalated task to an explicit next status."""
+        task = _de_escalate_task(
+            self.db,
+            task_id=task_id,
+            reason=reason,
+            target_status=target_status,
+            reset_validation=reset_validation,
+        )
+        self._notify_listeners()
+        return task
+
+    def mark_task_needs_review(self, task_id: str, review_notes: str | None = None) -> Task:
+        """Mark a task as ready for review without dropping ownership."""
+        task = _mark_task_needs_review(self.db, task_id=task_id, review_notes=review_notes)
+        self._notify_listeners()
+        return task
+
+    def mark_task_review_approved(
+        self,
+        task_id: str,
+        approval_notes: str | None = None,
+    ) -> Task:
+        """Mark a task as review-approved without dropping ownership."""
+        task = _mark_task_review_approved(
+            self.db,
+            task_id=task_id,
+            approval_notes=approval_notes,
+        )
+        self._notify_listeners()
+        return task
 
     def add_label(self, task_id: str, label: str) -> Task:
         """Add a label to a task if not present."""
@@ -455,6 +560,7 @@ class LocalTaskManager:
         status: str | list[str] | None = None,
         priority: int | None = None,
         assignee: str | None = None,
+        claimed_by_session_id: str | None = None,
         task_type: str | None = None,
         label: str | None = None,
         parent_task_id: str | None = None,
@@ -477,6 +583,7 @@ class LocalTaskManager:
             status=status,
             priority=priority,
             assignee=assignee,
+            claimed_by_session_id=claimed_by_session_id,
             task_type=task_type,
             label=label,
             parent_task_id=parent_task_id,

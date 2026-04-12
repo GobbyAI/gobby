@@ -155,11 +155,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 claim_skipped_cross_project = True
 
         if claim:
-            updated_task = ctx.task_manager.update_task(
-                task.id,
-                assignee=resolved_session_id,
-                status="in_progress",
-            )
+            updated_task = ctx.task_manager.claim_task(task.id, resolved_session_id)
             if updated_task is None:
                 logger.warning(f"Failed to auto-claim task {task.id}: update_task returned None")
             else:

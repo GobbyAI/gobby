@@ -623,6 +623,62 @@ class TestLocalTaskManager:
         assert reopened.status == "open"
         assert reopened.assignee is None
 
+    def test_claim_task_sets_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Claiming should dual-write canonical ownership and legacy assignee."""
+        session = session_manager.register(
+            external_id="claim-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Claim me")
+
+        claimed = task_manager.claim_task(task.id, session.id)
+
+        assert claimed.status == "in_progress"
+        assert claimed.assignee == session.id
+        assert claimed.claimed_by_session_id == session.id
+
+    def test_claim_task_preserves_review_status(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Review ownership should be explicit without regressing lifecycle state."""
+        session = session_manager.register(
+            external_id="review-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Needs review")
+        task_manager.update_task(task.id, status="needs_review")
+
+        claimed = task_manager.claim_task(task.id, session.id)
+
+        assert claimed.status == "needs_review"
+        assert claimed.assignee == session.id
+        assert claimed.claimed_by_session_id == session.id
+
+    def test_release_task_claim_clears_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Ownership release should clear both canonical and legacy fields."""
+        session = session_manager.register(
+            external_id="release-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Release me")
+        task_manager.claim_task(task.id, session.id)
+
+        released = task_manager.release_task_claim(task.id, status="open")
+
+        assert released.status == "open"
+        assert released.assignee is None
+        assert released.claimed_by_session_id is None
+
     # =========================================================================
     # Close Task Additional Tests
     # =========================================================================

@@ -81,6 +81,20 @@ def test_migrations_idempotency(tmp_path) -> None:
     assert get_current_version(db) == initial_version
 
 
+def test_tasks_table_includes_claimed_by_session_id_on_fresh_db(tmp_path) -> None:
+    """Fresh baseline schema should include canonical task ownership."""
+    db_path = tmp_path / "tasks_claim_owner.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
+    assert "claimed_by_session_id" in task_columns
+
+    task_indexes = {row["name"] for row in db.fetchall("PRAGMA index_list(tasks)")}
+    assert "idx_tasks_claimed_session" in task_indexes
+
+
 def test_get_current_version_error(tmp_path) -> None:
     """Test get_current_version handles errors (e.g. missing table)."""
     db_path = tmp_path / "error.db"

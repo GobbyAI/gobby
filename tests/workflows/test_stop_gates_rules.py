@@ -1162,7 +1162,7 @@ class TestClaimedTaskReconciliation:
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-db": "#42"}
         task_manager.list_tasks.assert_called_once_with(
-            assignee="sess-1",
+            claimed_by_session_id="sess-1",
             status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
         )
 

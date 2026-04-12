@@ -645,7 +645,7 @@ class TestCreateTaskTool:
                 "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.update_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "proj-1"}
@@ -662,11 +662,9 @@ class TestCreateTaskTool:
                 # Task should be created
                 assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
 
-                # update_task should be called with assignee and status
-                mock_task_manager.update_task.assert_called_once_with(
+                mock_task_manager.claim_task.assert_called_once_with(
                     "550e8400-e29b-41d4-a716-446655440021",
-                    assignee="test-session",
-                    status="in_progress",
+                    "test-session",
                 )
 
                 # Session links should include both "created" and "claimed"
@@ -716,7 +714,7 @@ class TestCreateTaskTool:
                 "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.update_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "proj-1"}
@@ -842,7 +840,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
                 "task": {"id": mock_task.id},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.update_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "proj-1"}
@@ -859,11 +857,9 @@ class TestCreateTaskCrossProjectClaimBlocking:
                 # Task should be created and claimed
                 assert result["id"] == mock_task.id
                 assert "warning" not in result
-                # update_task should have been called (claim proceeded)
-                mock_task_manager.update_task.assert_called_once_with(
+                mock_task_manager.claim_task.assert_called_once_with(
                     mock_task.id,
-                    assignee="test-session",
-                    status="in_progress",
+                    "test-session",
                 )
 
 
@@ -2432,7 +2428,7 @@ class TestSessionVariableMirroring:
                 "task": {"id": task_uuid},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.update_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "proj-1"}

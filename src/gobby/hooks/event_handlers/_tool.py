@@ -282,7 +282,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         has_claimed_task = False
                         if self._task_manager:
                             try:
-                                claimed_tasks = self._task_manager.list_tasks(assignee=session_id)
+                                claimed_tasks = self._task_manager.list_tasks(
+                                    claimed_by_session_id=session_id
+                                )
                                 has_claimed_task = len(claimed_tasks) > 0
                             except Exception as e:
                                 self.logger.debug(

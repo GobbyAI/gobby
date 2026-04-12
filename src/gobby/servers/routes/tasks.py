@@ -327,25 +327,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         try:
             task = server.task_manager.get_task(task_id)
             resolved_id = task.id
-
-            if task.status != "escalated":
-                raise ValueError(f"Task is not escalated (status: {task.status})")
-
-            update_kwargs: dict[str, Any] = {
-                "status": request_data.target_status,
-                "escalated_at": None,
-                "escalation_reason": None,
-            }
-
-            if request_data.reset_validation:
-                update_kwargs["validation_fail_count"] = 0
-
-            # Append user decision context to description
-            decision_note = f"\n\n---\n**User decision:** {request_data.decision_context}"
-            current_desc = task.description or ""
-            update_kwargs["description"] = current_desc + decision_note
-
-            updated = server.task_manager.update_task(resolved_id, **update_kwargs)
+            updated = server.task_manager.de_escalate_task(
+                resolved_id,
+                reason=request_data.decision_context,
+                target_status=request_data.target_status,
+                reset_validation=request_data.reset_validation,
+            )
             result = updated.to_dict()
             await _broadcast_task("task_de_escalated", result)
             return result

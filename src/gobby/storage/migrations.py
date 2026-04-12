@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 207
+BASELINE_VERSION = 208
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -843,6 +843,18 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Persist agent definition name on agent runs",
         """
         ALTER TABLE agent_runs ADD COLUMN agent_name TEXT;
+        """,
+    ),
+    (
+        208,
+        "Add claimed_by_session_id canonical task ownership field",
+        """
+        ALTER TABLE tasks ADD COLUMN claimed_by_session_id TEXT REFERENCES sessions(id);
+        UPDATE tasks
+        SET claimed_by_session_id = assignee
+        WHERE assignee IS NOT NULL
+          AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = tasks.assignee);
+        CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id);
         """,
     ),
 ]

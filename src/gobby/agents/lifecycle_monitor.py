@@ -24,7 +24,10 @@ from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES, is_active_claim_status
+from gobby.tasks.state_semantics import (
+    ACTIVE_CLAIM_STATUSES,
+    is_active_claim_status,
+)
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -120,7 +123,7 @@ class AgentLifecycleMonitor:
                 tasks = await asyncio.to_thread(
                     self._task_manager.list_tasks,
                     status=list(ACTIVE_CLAIM_STATUSES),
-                    assignee=db_run.child_session_id,
+                    claimed_by_session_id=db_run.child_session_id,
                 )
                 if tasks:
                     task_id = tasks[0].id
@@ -143,9 +146,8 @@ class AgentLifecycleMonitor:
 
             if task.status != "in_progress":
                 await asyncio.to_thread(
-                    self._task_manager.update_task,
+                    self._task_manager.release_task_claim,
                     task_id,
-                    assignee=None,
                 )
                 logger.info(
                     "Released stale ownership on task %s after agent %s failed (status=%s)",
@@ -163,10 +165,9 @@ class AgentLifecycleMonitor:
             if not is_provider and failure_count >= 3:
                 # Escalate after too many non-provider failures; reset counter
                 await asyncio.to_thread(
-                    self._task_manager.update_task,
+                    self._task_manager.release_task_claim,
                     task_id,
                     status="escalated",
-                    assignee=None,
                     dispatch_failure_count=0,
                     escalation_reason=f"Failed {failure_count} times across different agents",
                 )
@@ -175,10 +176,9 @@ class AgentLifecycleMonitor:
                 )
             else:
                 await asyncio.to_thread(
-                    self._task_manager.update_task,
+                    self._task_manager.release_task_claim,
                     task_id,
                     status="open",
-                    assignee=None,
                     dispatch_failure_count=failure_count,
                 )
                 logger.info(f"Recovered task {task_ref} to open after agent {run_id} failed")

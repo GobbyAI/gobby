@@ -30,18 +30,29 @@ def is_active_claim_status(status: str | None) -> bool:
     return bool(status) and status in ACTIVE_CLAIM_STATUSES
 
 
+def get_claimed_session_id(task: Any) -> str | None:
+    """Return the best available owning session ID during the ownership migration."""
+    if task is None:
+        return None
+    claimed_by_session_id = getattr(task, "claimed_by_session_id", None)
+    if isinstance(claimed_by_session_id, str) and claimed_by_session_id:
+        return claimed_by_session_id
+    assignee = getattr(task, "assignee", None)
+    return assignee if isinstance(assignee, str) and assignee else None
+
+
 def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
     """Return whether a task still represents active claimed work.
 
     If ``session_id`` is provided, the task must also still be assigned to that
     session. This keeps reconciliation and recovery aligned while ownership is
-    still encoded in ``assignee``.
+    migrates from legacy ``assignee`` to canonical ``claimed_by_session_id``.
     """
 
     if task is None or not is_active_claim_status(getattr(task, "status", None)):
         return False
 
-    assignee = getattr(task, "assignee", None)
+    assignee = get_claimed_session_id(task)
     if session_id is None:
         return bool(assignee)
     return assignee == session_id

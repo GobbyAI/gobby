@@ -12,7 +12,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES
+from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES, get_claimed_session_id
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
 if TYPE_CHECKING:
@@ -146,9 +146,9 @@ class PipelineHeartbeat:
     async def check_stale_tasks(self) -> int:
         """Find claimed tasks with no alive agent or session and recover ownership.
 
-        For each actively claimed task that has an assignee:
+        For each actively claimed task that has an owning session:
         1. Check if there's an active agent run (pending/running) for the task
-        2. If not, check if the assignee session is still alive
+        2. If not, check if the owning session is still alive
         3. If neither, recover the task based on its current lifecycle status
 
         Returns:
@@ -171,7 +171,8 @@ class PipelineHeartbeat:
 
         recovered = 0
         for task in active_claims:
-            if not task.assignee:
+            owner_session_id = get_claimed_session_id(task)
+            if not owner_session_id:
                 continue
             try:
                 has_active = await asyncio.to_thread(
@@ -180,9 +181,9 @@ class PipelineHeartbeat:
                 if has_active:
                     continue
 
-                # No active agent run — check if assignee session is still alive.
+                # No active agent run — check if the owning session is still alive.
                 # Interactive CLI sessions don't create agent runs.
-                session_alive = await asyncio.to_thread(self._is_session_alive, task.assignee)
+                session_alive = await asyncio.to_thread(self._is_session_alive, owner_session_id)
                 if session_alive:
                     continue
 
@@ -192,29 +193,26 @@ class PipelineHeartbeat:
                 has_commits = bool(getattr(task, "commits", None))
                 if task.status == "in_progress" and has_commits:
                     await asyncio.to_thread(
-                        self._task_manager.update_task,
+                        self._task_manager.release_task_claim,
                         task.id,
                         status="needs_review",
-                        assignee=None,
                     )
                     logger.info(
                         f"Heartbeat: promoted stale task {task.id} (#{task.seq_num}) to needs_review (has commits, no active agent run)",
                     )
                 elif task.status == "in_progress":
                     await asyncio.to_thread(
-                        self._task_manager.update_task,
+                        self._task_manager.release_task_claim,
                         task.id,
                         status="open",
-                        assignee=None,
                     )
                     logger.warning(
                         f"Heartbeat: recovered stale task {task.id} (#{task.seq_num}) - reset to open (no active agent run, no commits)",
                     )
                 else:
                     await asyncio.to_thread(
-                        self._task_manager.update_task,
+                        self._task_manager.release_task_claim,
                         task.id,
-                        assignee=None,
                     )
                     logger.info(
                         "Heartbeat: released stale claim on task %s (#%s) in status %s",

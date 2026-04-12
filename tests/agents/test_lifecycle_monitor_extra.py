@@ -59,8 +59,8 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task_mgr.get_task.assert_called_once_with("task-123")
         # Provider error: dispatch_failure_count unchanged (stays at 0)
-        mock_task_mgr.update_task.assert_called_once_with(
-            "task-123", status="open", assignee=None, dispatch_failure_count=0
+        mock_task_mgr.release_task_claim.assert_called_once_with(
+            "task-123", status="open", dispatch_failure_count=0
         )
 
     @pytest.mark.asyncio
@@ -106,12 +106,12 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task_mgr.list_tasks.assert_called_once_with(
             status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
-            assignee="child-123",
+            claimed_by_session_id="child-123",
         )
         mock_task_mgr.get_task.assert_called_once_with("task-fallback")
         # Non-provider error: dispatch_failure_count incremented from 0 to 1
-        mock_task_mgr.update_task.assert_called_once_with(
-            "task-fallback", status="open", assignee=None, dispatch_failure_count=1
+        mock_task_mgr.release_task_claim.assert_called_once_with(
+            "task-fallback", status="open", dispatch_failure_count=1
         )
 
     @pytest.mark.asyncio
@@ -149,7 +149,7 @@ class TestRecoverTaskFromFailedAgent:
 
         await monitor._recover_task_from_failed_agent("run-review")
 
-        mock_task_mgr.update_task.assert_called_once_with("task-review", assignee=None)
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-review")
 
     @pytest.mark.asyncio
     async def test_recover_task_no_task_manager(self) -> None:
@@ -189,7 +189,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_task_mgr.get_task.return_value = mock_task
 
         await monitor._recover_task_from_failed_agent("run-1")
-        mock_task_mgr.update_task.assert_not_called()
+        mock_task_mgr.release_task_claim.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_recover_task_escalates_after_three_failures(self) -> None:
@@ -227,10 +227,9 @@ class TestRecoverTaskFromFailedAgent:
 
         await monitor._recover_task_from_failed_agent("run-1")
 
-        mock_task_mgr.update_task.assert_called_once_with(
+        mock_task_mgr.release_task_claim.assert_called_once_with(
             "task-1",
             status="escalated",
-            assignee=None,
             dispatch_failure_count=0,
             escalation_reason="Failed 3 times across different agents",
         )
@@ -272,8 +271,8 @@ class TestRecoverTaskFromFailedAgent:
         await monitor._recover_task_from_failed_agent("run-1")
 
         # Should NOT block — provider errors are excluded
-        mock_task_mgr.update_task.assert_called_once_with(
-            "task-1", status="open", assignee=None, dispatch_failure_count=2
+        mock_task_mgr.release_task_claim.assert_called_once_with(
+            "task-1", status="open", dispatch_failure_count=2
         )
 
     @pytest.mark.asyncio

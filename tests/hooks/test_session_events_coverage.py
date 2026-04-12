@@ -581,7 +581,11 @@ class TestSessionMoreCoverage:
             handler._session_manager.mark_session_expired.assert_called_with("parent-1")
 
             # Should have handed off task
-            handler._task_manager.update_task.assert_called_with("task-1", assignee="new-sess-1")
+            handler._task_manager.claim_task.assert_called_with(
+                "task-1",
+                session_id="new-sess-1",
+                force=True,
+            )
 
     def test_empty_parent_backoff(self) -> None:
         handler = _TestHandler()
@@ -797,7 +801,7 @@ class TestClaimedTaskHelpers:
 
         assert result == [("#55", "needs_review", "Review the patch")]
         handler._task_manager.list_tasks.assert_called_once_with(
-            assignee="sess-1",
+            claimed_by_session_id="sess-1",
             status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
             project_id="proj-1",
         )

@@ -20,11 +20,13 @@ This epic does **not** fold planning or expansion states into execution lifecycl
 
 ## Progress
 
-Updated: `2026-04-11`
+Updated: `2026-04-12`
 
 - Phase 0 is complete in code and validated with focused tests.
-- Phase 1 through Phase 6 are not started.
+- Phase 1 is complete in code and validated with focused tests.
+- Phase 2 through Phase 6 are not started.
 - The implementation slice for Phase 0 was tracked under `gobby-#11668`.
+- The implementation slice for Phase 1 was tracked under `gobby-#11672`.
 
 ### Phase 0 Landed
 
@@ -44,12 +46,26 @@ Updated: `2026-04-11`
 - `uv run pytest tests/servers/routes/test_agent_spawn_routes.py tests/agents/test_lifecycle_monitor_extra.py -q`
 - `uv run ruff check ...`
 
+### Phase 1 Landed
+
+- Added `claimed_by_session_id` to task storage, migration backfill, and indexing so session ownership is explicit instead of inferred from `status` or overloaded `assignee`.
+- Introduced a central transition layer in `src/gobby/storage/tasks/_transitions.py` and routed major lifecycle writers through shared claim, review, escalation, reopen, and close helpers.
+- Threaded canonical ownership through storage CRUD, task manager APIs, lifecycle MCP tools, CLI/REST de-escalation paths, and ownership-sensitive recovery code.
+- Updated reconciliation, handoff, spawn, and failed-agent recovery paths to treat `claimed_by_session_id` as authoritative while leaving `assignee` as compatibility-only state where still required.
+- Added storage and MCP regression coverage for canonical ownership, claim clearing, review approval, and ownership-sensitive transition behavior.
+
+### Phase 1 Validation
+
+- `uv run pytest tests/storage/test_storage_tasks.py tests/storage/test_storage_migrations.py tests/mcp_proxy/tools/test_claim_task.py tests/mcp_proxy/test_validation_mcp_tools.py tests/mcp_proxy/tools/test_spawn_agent_impl_provider.py tests/hooks/test_event_handlers.py tests/hooks/test_session_events_coverage.py tests/workflows/test_stop_gates_rules.py tests/workflows/test_pipeline_heartbeat.py tests/agents/test_lifecycle_monitor_extra.py tests/servers/routes/test_tasks_routes.py tests/cli/test_validation_cli.py tests/servers/routes/test_agent_spawn_routes.py tests/mcp_proxy/tools/test_mark_task_review_approved.py tests/mcp_proxy/tools/test_task_lifecycle_coverage.py tests/mcp_proxy/tools/test_tasks_coverage.py tests/mcp_proxy/tools/test_tasks_validation.py -q`
+- `uv run ruff check src/gobby/storage/tasks/_transitions.py $(git diff --name-only -- '*.py')`
+- `uv run ruff format --check src/gobby/storage/tasks/_transitions.py $(git diff --name-only -- '*.py')`
+
 ### Next Agent Start Here
 
-- Start with Phase 1. Do not add more ad hoc status checks in Phase 0-era code paths unless required for a bug fix.
-- Build the central task transition/projection layer before introducing more schema dual-writes.
-- Add `claimed_by_session_id` and thread it through storage and lifecycle tools while keeping `assignee` compatibility-only.
-- Treat `task_claimed` and `claimed_tasks` as derived mirrors from canonical ownership once `claimed_by_session_id` exists.
+- Start with Phase 2. The canonical ownership foundation is in place; do not add new ownership semantics back onto `status` or `assignee`.
+- Introduce `lifecycle_stage` and canonical blocked/closed semantics through the same shared transition/projection layer rather than adding more writer-specific branching.
+- Cut core queries and readiness helpers over to canonical predicates in the same phase so storage shape and behavior do not drift apart.
+- Keep `claimed_by_session_id` authoritative and continue treating `task_claimed`, `claimed_tasks`, and legacy `status` as projected compatibility surfaces only.
 - Keep the locked semantic decisions intact:
   - only `closed` unblocks dependents
   - closing preserves the last lifecycle stage for audit
@@ -110,8 +126,8 @@ Updated: `2026-04-11`
 ## Delivery Order
 
 1. Phase 0: Nominal Fix and Behavior Stabilization `(complete)`
-2. Phase 1: Canonical Transition Layer and Explicit Ownership `(next)`
-3. Phase 2: Lifecycle/Blocked/Closed Split and Query Cutover
+2. Phase 1: Canonical Transition Layer and Explicit Ownership `(complete)`
+3. Phase 2: Lifecycle/Blocked/Closed Split and Query Cutover `(next)`
 4. Phase 3: External Interfaces and Serialization
 5. Phase 4: Rules, Agents, Pipelines, and Recovery
 6. Phase 5: Web UI
@@ -155,6 +171,10 @@ Complete.
 ### Goal
 
 Make ownership first-class and centralize state transitions before broader schema cutover.
+
+### Status
+
+Complete.
 
 ### Atomic tasks
 

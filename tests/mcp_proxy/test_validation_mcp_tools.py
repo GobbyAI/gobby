@@ -500,7 +500,7 @@ class TestDeEscalateTaskTool:
             created_at="now",
             updated_at="now",
         )
-        mock_task_manager.update_task.return_value = reopened_task
+        mock_task_manager.de_escalate_task.return_value = reopened_task
 
         result = await task_registry_with_patches.call(
             "de_escalate_task", {"task_id": "t1", "reason": "Fixed manually"}
@@ -508,12 +508,12 @@ class TestDeEscalateTaskTool:
 
         # Lifecycle version returns empty dict on success
         assert "error" not in result
-        # Verify update_task was called with correct status
-        mock_task_manager.update_task.assert_called_once()
-        call_kwargs = mock_task_manager.update_task.call_args.kwargs
-        assert call_kwargs["status"] == "open"
-        assert call_kwargs["escalated_at"] is None
-        assert call_kwargs["escalation_reason"] is None
+        mock_task_manager.de_escalate_task.assert_called_once_with(
+            "t1",
+            reason="Fixed manually",
+            target_status=None,
+            reset_validation=False,
+        )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -601,12 +601,12 @@ class TestDeEscalateTaskTool:
             "de_escalate_task", {"task_id": "t1", "reason": "Resolved manually"}
         )
 
-        # Verify update_task was called with correct fields
-        mock_task_manager.update_task.assert_called()
-        update_kwargs = mock_task_manager.update_task.call_args.kwargs
-        assert update_kwargs.get("status") == "open"
-        assert update_kwargs.get("escalated_at") is None
-        assert update_kwargs.get("escalation_reason") is None
+        mock_task_manager.de_escalate_task.assert_called_once_with(
+            "t1",
+            reason="Resolved manually",
+            target_status=None,
+            reset_validation=False,
+        )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -646,7 +646,12 @@ class TestDeEscalateTaskTool:
 
         # Lifecycle version returns empty dict on success; verify the call went through
         assert "error" not in result
-        mock_task_manager.update_task.assert_called_once()
+        mock_task_manager.de_escalate_task.assert_called_once_with(
+            "t1",
+            reason="Human fixed the issue",
+            target_status=None,
+            reset_validation=False,
+        )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -674,10 +679,12 @@ class TestDeEscalateTaskTool:
             {"task_id": "t1", "reason": "Fixed", "reset_validation": True},
         )
 
-        # With reset_validation=True, should reset fail count
-        mock_task_manager.update_task.assert_called()
-        update_kwargs = mock_task_manager.update_task.call_args.kwargs
-        assert update_kwargs.get("validation_fail_count") == 0
+        mock_task_manager.de_escalate_task.assert_called_once_with(
+            "t1",
+            reason="Fixed",
+            target_status=None,
+            reset_validation=True,
+        )
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -702,8 +709,12 @@ class TestDeEscalateTaskTool:
             {"task_id": "t1", "reason": "Resume review", "target_status": "needs_review"},
         )
 
-        update_kwargs = mock_task_manager.update_task.call_args.kwargs
-        assert update_kwargs["status"] == "needs_review"
+        mock_task_manager.de_escalate_task.assert_called_once_with(
+            "t1",
+            reason="Resume review",
+            target_status="needs_review",
+            reset_validation=False,
+        )
 
 
 # ============================================================================

@@ -185,7 +185,7 @@ class TestDeEscalateCommand:
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
-        mock_manager.update_task.return_value = mock_task
+        mock_manager.de_escalate_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(
@@ -282,11 +282,11 @@ class TestDeEscalateCommand:
         )
 
         assert result.exit_code == 0
-        mock_manager.update_task.assert_called_once_with(
+        mock_manager.de_escalate_task.assert_called_once_with(
             "gt-test123",
-            status="needs_review",
-            escalated_at=None,
-            escalation_reason=None,
+            reason="Resume review",
+            target_status="needs_review",
+            reset_validation=False,
         )
 
 

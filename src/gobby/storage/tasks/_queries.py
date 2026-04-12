@@ -20,6 +20,7 @@ def list_tasks(
     status: str | list[str] | None = None,
     priority: int | None = None,
     assignee: str | None = None,
+    claimed_by_session_id: str | None = None,
     task_type: str | None = None,
     label: str | None = None,
     parent_task_id: str | None = None,
@@ -36,6 +37,7 @@ def list_tasks(
             or None to include all statuses.
         priority: Filter by priority
         assignee: Filter by assignee
+        claimed_by_session_id: Filter by canonical owning session
         task_type: Filter by task type
         label: Filter by label
         parent_task_id: Filter by parent task
@@ -66,6 +68,9 @@ def list_tasks(
     if assignee:
         query += " AND assignee = ?"
         params.append(assignee)
+    if claimed_by_session_id:
+        query += " AND claimed_by_session_id = ?"
+        params.append(claimed_by_session_id)
     if task_type:
         query += " AND task_type = ?"
         params.append(task_type)

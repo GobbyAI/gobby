@@ -1254,8 +1254,10 @@ class TestSessionStartHandoff:
                 "session_had_task": True,
             },
         )
-        mock_dependencies["task_manager"].update_task.assert_called_once_with(
-            "uuid-123", assignee="new-sess-456"
+        mock_dependencies["task_manager"].claim_task.assert_called_once_with(
+            "uuid-123",
+            session_id="new-sess-456",
+            force=True,
         )
         mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
             "new-sess-456", "uuid-123", "claimed"
@@ -1311,7 +1313,7 @@ class TestSessionStartHandoff:
             if len(args) >= 2:
                 merged_dict = args[1]
                 assert "task_claimed" not in merged_dict
-        mock_dependencies["task_manager"].update_task.assert_not_called()
+        mock_dependencies["task_manager"].claim_task.assert_not_called()
         mock_dependencies["session_task_manager"].link_task.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -1369,8 +1371,10 @@ class TestSessionStartHandoff:
                 "claimed_tasks": {"uuid-789": "#99"},
             },
         )
-        mock_dependencies["task_manager"].update_task.assert_called_once_with(
-            "uuid-789", assignee="new-sess-600"
+        mock_dependencies["task_manager"].claim_task.assert_called_once_with(
+            "uuid-789",
+            session_id="new-sess-600",
+            force=True,
         )
         mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
             "new-sess-600", "uuid-789", "claimed"
@@ -1426,7 +1430,7 @@ class TestSessionStartHandoff:
         response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
-        mock_dependencies["task_manager"].update_task.assert_not_called()
+        mock_dependencies["task_manager"].claim_task.assert_not_called()
         mock_dependencies["session_task_manager"].link_task.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")

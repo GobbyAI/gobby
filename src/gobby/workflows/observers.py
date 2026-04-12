@@ -512,7 +512,7 @@ def reconcile_claimed_tasks(
         # Dict is empty — check DB for tasks we might have lost track of
         try:
             db_tasks = task_manager.list_tasks(
-                assignee=session_id,
+                claimed_by_session_id=session_id,
                 status=list(ACTIVE_CLAIM_STATUSES),
             )
         except Exception as e:

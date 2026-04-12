@@ -51,7 +51,7 @@ def get_claimed_task_info(
         # DB fallback: check for tasks still assigned to this session
         try:
             db_tasks = handler._task_manager.list_tasks(
-                assignee=session_id,
+                claimed_by_session_id=session_id,
                 status=list(ACTIVE_CLAIM_STATUSES),
                 project_id=project_id,
             )

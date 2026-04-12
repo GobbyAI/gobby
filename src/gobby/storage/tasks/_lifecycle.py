@@ -16,6 +16,8 @@ from pathlib import Path
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDependentsError
+from gobby.storage.tasks._transitions import close_task as _close_task_transition
+from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
 
 logger = logging.getLogger(__name__)
 
@@ -57,30 +59,16 @@ def close_task(
                 f"Cannot close task {task_id}: has {len(open_children)} open child task(s): {child_list}"
             )
 
+    _close_task_transition(
+        db,
+        task_id,
+        reason=reason,
+        force=force,
+        closed_in_session_id=closed_in_session_id,
+        closed_commit_sha=closed_commit_sha,
+        validation_override_reason=validation_override_reason,
+    )
     now = datetime.now(UTC).isoformat()
-    with db.transaction() as conn:
-        cursor = conn.execute(
-            """UPDATE tasks SET
-                status = 'closed',
-                closed_reason = ?,
-                closed_at = ?,
-                closed_in_session_id = ?,
-                closed_commit_sha = ?,
-                validation_override_reason = ?,
-                updated_at = ?
-            WHERE id = ?""",
-            (
-                reason,
-                now,
-                closed_in_session_id,
-                closed_commit_sha,
-                validation_override_reason,
-                now,
-                task_id,
-            ),
-        )
-        if cursor.rowcount == 0:
-            raise ValueError(f"Task {task_id} not found")
 
     # Update any associated worktrees to merged status (outside transaction)
     # This is best-effort and should not roll back the task close
@@ -113,34 +101,8 @@ def reopen_task(
     Raises:
         ValueError: If task not found or already open
     """
-    task = get_task(db, task_id)
-    if task.status == "open":
-        raise ValueError(f"Task {task_id} is already open")
-
+    _reopen_task_transition(db, task_id, reason=reason)
     now = datetime.now(UTC).isoformat()
-
-    # Build description update if reason provided
-    new_description = task.description or ""
-    if reason:
-        reopen_note = f"\n\n[Reopened: {reason}]"
-        new_description = new_description + reopen_note
-
-    with db.transaction() as conn:
-        conn.execute(
-            """UPDATE tasks SET
-                status = 'open',
-                assignee = NULL,
-                closed_reason = NULL,
-                closed_at = NULL,
-                closed_in_session_id = NULL,
-                closed_commit_sha = NULL,
-                validation_fail_count = 0,
-                dispatch_failure_count = 0,
-                description = ?,
-                updated_at = ?
-            WHERE id = ?""",
-            (new_description if reason else task.description, now, task_id),
-        )
 
     # Reactivate any merged or abandoned worktrees for this task (outside transaction)
     # This is best-effort and should not roll back the task reopen

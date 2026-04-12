@@ -298,10 +298,9 @@ class TestSpawnAutoClaimAssignee:
             )
 
         assert result["success"] is True
-        task_manager.update_task.assert_called_once_with(
+        task_manager.claim_task.assert_called_once_with(
             "task-uuid-123",
-            status="in_progress",
-            assignee="child-session-abc",
+            session_id="child-session-abc",
         )
 
     @pytest.mark.asyncio
@@ -354,10 +353,9 @@ class TestSpawnAutoClaimAssignee:
             )
 
         assert result["success"] is True
-        # Should set assignee WITHOUT changing status
-        task_manager.update_task.assert_called_once_with(
+        task_manager.claim_task.assert_called_once_with(
             "task-uuid-456",
-            assignee="child-session-abc",
+            session_id="child-session-abc",
         )
 
     @pytest.mark.asyncio
@@ -412,9 +410,9 @@ class TestSpawnAutoClaimAssignee:
             )
 
         assert result["success"] is True
-        task_manager.update_task.assert_called_once_with(
+        task_manager.claim_task.assert_called_once_with(
             "task-uuid-789",
-            assignee="child-session-abc",
+            session_id="child-session-abc",
         )
 
     @pytest.mark.asyncio
@@ -467,4 +465,4 @@ class TestSpawnAutoClaimAssignee:
             )
 
         assert result["success"] is True
-        task_manager.update_task.assert_not_called()
+        task_manager.claim_task.assert_not_called()
