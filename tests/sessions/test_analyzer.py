@@ -826,6 +826,12 @@ class TestFormatToolDescription:
         block = {"name": "Bash", "input": {"command": "git status"}}
         assert analyzer._format_tool_description(block) == "Ran: git status"
 
+    def test_exec_command_shell_alias(self) -> None:
+        """Shell aliases should render like Bash commands."""
+        analyzer = TranscriptAnalyzer()
+        block = {"name": "exec_command", "input": {"command": "git status"}}
+        assert analyzer._format_tool_description(block) == "Ran: git status"
+
     def test_bash_long_command_truncated(self) -> None:
         """Test long Bash commands are truncated."""
         analyzer = TranscriptAnalyzer()
@@ -903,6 +909,28 @@ class TestFormatToolDescription:
         block = {"name": "Bash"}  # No input key
         result = analyzer._format_tool_description(block)
         assert result == "Ran: "  # Empty command
+
+    def test_extract_handoff_context_tracks_exec_command_git_commit(self) -> None:
+        """Git commits from shell aliases should be captured in handoff context."""
+        analyzer = TranscriptAnalyzer()
+        turns = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "exec_command",
+                            "input": {"command": "git commit -m 'changes'"},
+                        }
+                    ]
+                },
+            }
+        ]
+
+        ctx = analyzer.extract_handoff_context(turns)
+        assert len(ctx.git_commits) == 1
+        assert ctx.git_commits[0]["command"] == "git commit -m 'changes'"
 
     def test_missing_name_graceful(self) -> None:
         """Test graceful handling when name is missing."""

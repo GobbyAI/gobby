@@ -195,6 +195,20 @@ class TestToolHandlers:
         assert response.decision == "block"
         assert "create_task" in response.context
 
+    def test_before_tool_blocks_gobby_tasks_cli_exec_command_alias(
+        self, event_handlers: EventHandlers
+    ) -> None:
+        """Shell aliases should hit the same gobby-tasks block."""
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "exec_command", "tool_input": {"command": "gobby tasks list"}},
+            metadata={"_platform_session_id": "plat-123"},
+        )
+        response = event_handlers.handle_before_tool(event)
+
+        assert response.decision == "block"
+        assert "gobby-tasks MCP server" in response.reason
+
     def test_before_tool_allows_other_gobby_cli_commands(
         self, event_handlers: EventHandlers
     ) -> None:

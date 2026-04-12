@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.normalization import is_shell_tool
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         self, tool_name: str, input_data: dict[str, Any]
     ) -> HookResponse | None:
         """Block native shell access to ``gobby tasks`` across adapters."""
-        if tool_name != "Bash":
+        if not is_shell_tool(tool_name):
             return None
 
         tool_input = input_data.get("tool_input", {})

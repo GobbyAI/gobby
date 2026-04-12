@@ -397,6 +397,16 @@ class TestNormalizeToolFieldsAlias:
 class TestToolErrorDetection:
     """Tests for Phase 3: shell tool error detection from output text."""
 
+    def test_run_shell_command_is_canonicalized_to_bash(self) -> None:
+        data = {"tool_name": "run_shell_command", "tool_result": "Exit code: 0"}
+        normalize_tool_fields(data)
+        assert data["tool_name"] == "Bash"
+
+    def test_exec_command_is_canonicalized_to_bash(self) -> None:
+        data = {"tool_name": "exec_command", "tool_result": "Exit code: 0"}
+        normalize_tool_fields(data)
+        assert data["tool_name"] == "Bash"
+
     def test_bash_nonzero_exit_code_sets_is_error(self) -> None:
         """Bash tool_result with non-zero exit code → is_error = True."""
         data = {
@@ -484,6 +494,15 @@ class TestToolErrorDetection:
         """'run_command' native tool name should also be detected."""
         data = {
             "tool_name": "run_command",
+            "tool_result": "exit code: 1",
+        }
+        normalize_tool_fields(data)
+        assert data["is_error"] is True
+
+    def test_exec_command_tool_name(self) -> None:
+        """'exec_command' tool name should also be detected."""
+        data = {
+            "tool_name": "exec_command",
             "tool_result": "exit code: 1",
         }
         normalize_tool_fields(data)

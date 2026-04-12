@@ -14,12 +14,37 @@ import json as _json
 import re as _re
 from typing import Any
 
-# Tools that run shell commands — used for exit-code-based error detection
-_SHELL_TOOLS = frozenset({"Bash", "bash", "shell", "run_command"})
+# Tools that run shell commands. ``Bash`` is the canonical runtime name, but
+# several adapters and transcripts use shell aliases that should behave the same.
+_SHELL_TOOLS = frozenset(
+    {
+        "Bash",
+        "bash",
+        "shell",
+        "run_command",
+        "run_shell_command",
+        "RunShellCommand",
+        "ShellTool",
+        "commandExecution",
+        "exec_command",
+    }
+)
 
 # Pattern to detect non-zero exit codes in tool output text.
 # Matches: "Exit code: 1", "exit code 127", "Error: Exit code 2", etc.
 _EXIT_CODE_RE = _re.compile(r"[Ee]xit.?code[:\s]+(\d+)")
+
+
+def is_shell_tool(tool_name: Any) -> bool:
+    """Return True when ``tool_name`` represents shell command execution."""
+    return isinstance(tool_name, str) and tool_name in _SHELL_TOOLS
+
+
+def canonicalize_shell_tool_name(tool_name: Any) -> Any:
+    """Normalize shell aliases to the canonical ``Bash`` tool name."""
+    if is_shell_tool(tool_name):
+        return "Bash"
+    return tool_name
 
 
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -54,6 +79,9 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     # toolName → tool_name  (alias normalization)
     if "toolName" in data and "tool_name" not in data:
         data["tool_name"] = data["toolName"]
+
+    if "tool_name" in data:
+        data["tool_name"] = canonicalize_shell_tool_name(data["tool_name"])
 
     # toolArgs → tool_input  (may be a JSON string)
     if "toolArgs" in data and "tool_input" not in data:
@@ -205,7 +233,7 @@ def _detect_tool_error(data: dict[str, Any]) -> None:
         return
 
     tool_name = data.get("tool_name", "")
-    if tool_name not in _SHELL_TOOLS:
+    if not is_shell_tool(tool_name):
         return
 
     # Check tool_output (normalized) or fall back to tool_result (raw)

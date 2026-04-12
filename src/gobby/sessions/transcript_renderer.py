@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
+from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
     TokenUsage,
@@ -60,6 +61,9 @@ def classify_tool(tool_name: str | None) -> tuple[str, str | None]:
     """Returns (tool_type, server_name). Extracts server from mcp__server__tool naming."""
     if not tool_name:
         return "unknown", None
+
+    if is_shell_tool(tool_name):
+        return "bash", None
 
     if tool_name in TOOL_TYPE_MAP:
         return TOOL_TYPE_MAP[tool_name], None

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.transcripts.base import TranscriptParser
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 
@@ -250,7 +251,7 @@ class TranscriptAnalyzer:
                 modified_files_set.add(path)
 
         # -- Git Commits --
-        elif tool_name == "Bash":
+        elif is_shell_tool(tool_name):
             command = tool_input.get("command", "")
             if "git commit" in command:
                 # Attempt to extract message
@@ -324,8 +325,8 @@ class TranscriptAnalyzer:
                 return f"{server}.{tool}: {context}"
             return f"Called {server}.{tool}"
 
-        # Bash - show the command (truncated)
-        if tool_name == "Bash":
+        # Shell tools - show the command (truncated)
+        if is_shell_tool(tool_name):
             command = tool_input.get("command", "")
             # Truncate long commands
             if len(command) > 60:

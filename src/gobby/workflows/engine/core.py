@@ -16,6 +16,7 @@ from opentelemetry.trace import Status, StatusCode
 
 from gobby.hooks.event_handlers._tool import EDIT_TOOLS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import (
@@ -143,6 +144,9 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
             attributes={"event_type": str(event.event_type), "session_id": session_id},
         ) as span:
             try:
+                if isinstance(event.data, dict):
+                    normalize_tool_fields(event.data)
+
                 resolved_rule_events = _resolve_rule_events(event.event_type)
                 if not resolved_rule_events:
                     return HookResponse(decision="allow")

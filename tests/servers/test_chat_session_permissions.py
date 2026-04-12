@@ -121,6 +121,16 @@ class TestCanUseTool:
         assert "Plan mode is active" in result.message
 
     @pytest.mark.asyncio
+    async def test_plan_mode_blocks_dangerous_exec_command(self, session: ChatSession) -> None:
+        """Shell aliases should be blocked in plan mode like Bash."""
+        session.set_chat_mode("plan")
+        result = await session._can_use_tool(
+            "exec_command", {"command": "rm -rf /"}, ToolPermissionContext()
+        )
+        assert isinstance(result, PermissionResultDeny)
+        assert "Plan mode is active" in result.message
+
+    @pytest.mark.asyncio
     async def test_pre_tool_hook_blocks(self, session: ChatSession) -> None:
         """Session lifecycle can block a tool."""
         mock_cb = AsyncMock()
@@ -142,6 +152,7 @@ class TestNeedsToolApproval:
         assert not session._needs_tool_approval("Write")
         assert not session._needs_tool_approval("Edit")
         assert not session._needs_tool_approval("NotebookEdit")
+        assert not session._needs_tool_approval("exec_command")
         assert not session._needs_tool_approval("mcp__gobby__list_tools")  # Safe MCP
         assert session._needs_tool_approval("SomeRandomTool")  # Needs approval
 

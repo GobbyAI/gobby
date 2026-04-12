@@ -395,6 +395,48 @@ class TestRequireUvRewrite:
         assert response.auto_approve is True
 
     @pytest.mark.asyncio
+    async def test_rewrites_shell_alias_via_normalized_bash(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "require-uv",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                when="variables.get('require_uv') and event.data.get('tool_name') == 'Bash'",
+                effects=[
+                    RuleEffect(
+                        type="rewrite_input",
+                        when="any(p in str(tool_input.get('command', '')) for p in ['python', 'pip'])",
+                        input_updates={
+                            "command": (
+                                "{{ event.data.tool_input.command"
+                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?pip3?\\\\b', '\\\\1\\\\2uv pip')"
+                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?python(?:3(?:\\\\.\\\\d+)?)?\\\\b', '\\\\1\\\\2uv run python') }}"
+                            ),
+                        },
+                        auto_approve=True,
+                    ),
+                ],
+            ),
+        )
+
+        event = _make_event(
+            data={
+                "tool_name": "exec_command",
+                "tool_input": {"command": "python script.py"},
+            }
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+
+        assert response.decision == "allow"
+        assert response.modified_input is not None
+        assert "uv run python" in response.modified_input["command"]
+        assert response.auto_approve is True
+
+    @pytest.mark.asyncio
     async def test_passthrough_uv_command(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:

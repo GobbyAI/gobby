@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.normalization import is_shell_tool
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
@@ -220,9 +221,11 @@ class EffectsMixin:
 
         # Check native tool match
         if effect.tools and tool_name:
-            if tool_name in effect.tools:
-                # Check command patterns for Bash tool
-                if tool_name == "Bash" and effect.command_pattern and command:
+            matches_tool = tool_name in effect.tools or (
+                is_shell_tool(tool_name) and any(is_shell_tool(name) for name in effect.tools)
+            )
+            if matches_tool:
+                if is_shell_tool(tool_name) and effect.command_pattern and command:
                     if not re.search(effect.command_pattern, command):
                         return False
                     if effect.command_not_pattern and re.search(

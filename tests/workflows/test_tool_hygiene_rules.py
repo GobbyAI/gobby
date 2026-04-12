@@ -163,6 +163,17 @@ def _make_bash_event(command: str) -> HookEvent:
     )
 
 
+def _make_shell_alias_event(tool_name: str, command: str) -> HookEvent:
+    """Create a before_tool HookEvent for shell aliases."""
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": tool_name, "tool_input": {"command": command}},
+    )
+
+
 def _require_uv_effect() -> RuleEffect:
     """Build the RuleEffect matching the require-uv rule definition."""
     return RuleEffect(
@@ -236,4 +247,9 @@ class TestRequireUvShouldBlock:
             timestamp=datetime.now(UTC),
             data={"tool_name": "Bash", "command": "python script.py"},
         )
+        assert engine._should_block(_require_uv_effect(), event) is True
+
+    def test_blocks_shell_aliases_with_bash_rule(self, db) -> None:
+        engine = RuleEngine(db)
+        event = _make_shell_alias_event("exec_command", "python script.py")
         assert engine._should_block(_require_uv_effect(), event) is True

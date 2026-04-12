@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
+
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
 
@@ -194,11 +196,13 @@ class ProgressTracker:
         Returns:
             ProgressEvent if recorded, None if tool is not tracked
         """
+        canonical_tool_name = str(canonicalize_shell_tool_name(tool_name))
+
         # Determine progress type from tool name
-        progress_type = MEANINGFUL_TOOLS.get(tool_name, ProgressType.TOOL_CALL)
+        progress_type = MEANINGFUL_TOOLS.get(canonical_tool_name, ProgressType.TOOL_CALL)
 
         # Enhance progress type based on result analysis
-        if tool_name == "Bash":
+        if is_shell_tool(canonical_tool_name):
             # Check for test/build commands
             command = (tool_args or {}).get("command", "")
             if any(kw in command for kw in ["pytest", "test", "npm test", "cargo test"]):

@@ -211,6 +211,7 @@ def test_render_transcript_image():
 
 def test_classify_tool():
     assert classify_tool("Bash") == ("bash", None)
+    assert classify_tool("exec_command") == ("bash", None)
     assert classify_tool("Read") == ("read", None)
     assert classify_tool("Edit") == ("edit", None)
     assert classify_tool("MultiEdit") == ("edit", None)
