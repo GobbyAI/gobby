@@ -43,8 +43,8 @@ instructions: |
   - search_skills(query="...") on gobby-skills — find skills by topic
   - get_skill(name="...") on gobby-skills — load a skill's full content
 
-# Interactive sessions should not use pipeline-only status transitions.
-# Agents should create, claim, close, or escalate tasks — not manage review gates.
+# Interactive sessions should not use pipeline-only review gates.
+# Human-driven lifecycle resets such as reopen/de_escalate remain allowed when explicitly requested.
 blocked_mcp_tools:
   - "gobby-tasks:mark_task_needs_review"
   - "gobby-tasks:mark_task_review_approved"

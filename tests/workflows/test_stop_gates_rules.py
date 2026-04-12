@@ -188,6 +188,7 @@ class TestRequireErrorTriage:
 
         mcp_tools = body.effects[0].mcp_tools
         assert "gobby-tasks:close_task" in mcp_tools
+        assert "gobby-tasks:de_escalate_task" in mcp_tools
         assert "gobby-tasks:mark_task_needs_review" in mcp_tools
         assert "gobby-tasks:mark_task_review_approved" in mcp_tools
 

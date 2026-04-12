@@ -25,8 +25,8 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.tasks.state_semantics import (
-    ACTIVE_CLAIM_STATUSES,
-    is_active_claim_status,
+    get_claimed_session_id,
+    is_task_actively_claimed,
 )
 
 if TYPE_CHECKING:
@@ -122,8 +122,8 @@ class AgentLifecycleMonitor:
             if not task_id and db_run.child_session_id:
                 tasks = await asyncio.to_thread(
                     self._task_manager.list_tasks,
-                    status=list(ACTIVE_CLAIM_STATUSES),
                     claimed_by_session_id=db_run.child_session_id,
+                    closed=False,
                 )
                 if tasks:
                     task_id = tasks[0].id
@@ -139,12 +139,18 @@ class AgentLifecycleMonitor:
                 )
 
             task = await asyncio.to_thread(self._task_manager.get_task, task_id)
-            if not task or not is_active_claim_status(task.status):
+            expected_owner = db_run.child_session_id or get_claimed_session_id(task)
+            if not task or not is_task_actively_claimed(task, expected_owner):
                 return
 
             task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
+            raw_stage = getattr(task, "lifecycle_stage", None)
+            raw_status = getattr(task, "status", None)
+            lifecycle_stage = raw_stage if isinstance(raw_stage, str) and raw_stage else None
+            if lifecycle_stage is None and isinstance(raw_status, str) and raw_status:
+                lifecycle_stage = raw_status
 
-            if task.status != "in_progress":
+            if lifecycle_stage != "in_progress":
                 await asyncio.to_thread(
                     self._task_manager.release_task_claim,
                     task_id,

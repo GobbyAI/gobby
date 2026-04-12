@@ -5,7 +5,7 @@ description: |
   Based on the developer step workflow (claim -> implement -> terminate).
   Provider/model inherited from spawner.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 timeout: 1800
@@ -40,6 +40,7 @@ instructions: |
 
   CRITICAL RULES:
   - Do NOT call close_task — blocked by workflow. Only mark_task_needs_review.
+  - Do NOT call reopen_task or de_escalate_task — lifecycle resets are handled by humans.
   - Do NOT call git push — the merge agent handles pushing.
   - Do NOT stop or exit without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -97,7 +98,9 @@ steps:
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
+      - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:

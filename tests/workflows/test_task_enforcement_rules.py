@@ -46,6 +46,8 @@ def _sync_bundled(db):
 TASK_ENFORCEMENT_RULES = {
     "block-native-task-tools-unclaimed",
     "block-native-todo-write",
+    "block-reopen-task",
+    "inject-transition-skill",
     "require-task-before-edit",
     "require-commit-before-status",
     "require-clean-tree-before-status",
@@ -94,6 +96,7 @@ class TestTaskEnforcementSync:
                     "set_variable",
                     "observe",
                     "inject_context",
+                    "mcp_call",
                     "rewrite_input",
                 }
 
@@ -360,7 +363,7 @@ class TestRequireCleanTreeBeforeStatus:
     """Verify require-clean-tree-before-status blocks on dirty files."""
 
     def test_blocks_close_task_mcp(self, db, manager) -> None:
-        """Should block gobby-tasks:close_task."""
+        """Should block gobby-tasks:close_task and de_escalate_task."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-clean-tree-before-status")
@@ -370,6 +373,7 @@ class TestRequireCleanTreeBeforeStatus:
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "gobby-tasks:close_task" in body.effects[0].mcp_tools
+        assert "gobby-tasks:de_escalate_task" in body.effects[0].mcp_tools
 
     def test_when_checks_dirty_files(self, db, manager) -> None:
         """Should check has_dirty_files but not task_has_commits."""
@@ -406,7 +410,7 @@ class TestRequireCommitBeforeStatus:
     """Verify require-commit-before-status requires commit before status transitions."""
 
     def test_blocks_close_task_mcp(self, db, manager) -> None:
-        """Should block gobby-tasks:close_task."""
+        """Should block gobby-tasks:close_task and de_escalate_task."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
@@ -416,6 +420,7 @@ class TestRequireCommitBeforeStatus:
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
         assert "gobby-tasks:close_task" in body.effects[0].mcp_tools
+        assert "gobby-tasks:de_escalate_task" in body.effects[0].mcp_tools
 
     def test_when_checks_commits_and_reasons(self, db, manager) -> None:
         """Should check task_has_commits and special close reasons."""
@@ -527,3 +532,46 @@ class TestTrackTaskClaim:
         assert body.when is not None
         assert "claim_task" in body.when
         assert "create_task" in body.when
+
+
+class TestBlockReopenTask:
+    """Verify reopen is reserved for explicit human-driven lifecycle resets."""
+
+    def test_blocks_reopen_task_calls(self, db, manager) -> None:
+        """Should block the gobby-tasks reopen_task MCP call."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-reopen-task")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.effects[0].type == "block"
+        assert "reopen_task" in (body.when or "")
+
+    def test_reason_mentions_de_escalation(self, db, manager) -> None:
+        """Guidance should route escalated work through de_escalate_task."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-reopen-task")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        reason = body.effects[0].reason or ""
+        assert "de_escalate_task" in reason
+
+
+class TestInjectTransitionSkill:
+    """Verify lifecycle schemas trigger the task-transitions skill injection."""
+
+    def test_when_mentions_extended_lifecycle_tools(self, db, manager) -> None:
+        """reopen/escalate/de_escalate should all trigger the skill injection."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("inject-transition-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "after_tool"
+        assert "reopen_task" in (body.when or "")
+        assert "escalate_task" in (body.when or "")
+        assert "de_escalate_task" in (body.when or "")

@@ -16,7 +16,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.state_semantics import is_task_closed
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -212,11 +212,11 @@ def _resolve_ready_tasks(
     ready task fetching, in_progress filtering, and ancestry calculation.
 
     Returns dict with:
-    - ready_tasks: list of ready Task objects (in_progress filtered out)
+    - ready_tasks: list of ready Task objects that are not already active work
     - parent_task_id: resolved parent task ID (or None)
     - scoped_from_session_task: whether auto-scoped from session_task variable
-    - active_ancestry: ancestry chain of current in_progress task
-    - in_progress_tasks: list of in_progress tasks
+    - active_ancestry: ancestry chain of current in-progress task
+    - in_progress_tasks: list of in-progress tasks
     - early_return: if set, caller should return this dict immediately
     """
     from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
@@ -279,21 +279,32 @@ def _resolve_ready_tasks(
             }
         }
 
-    # Find current in_progress tasks for proximity scoring and file overlap checks
+    # Find current in-progress tasks for proximity scoring and file overlap checks.
+    # This remains status-based because the readiness tool is selecting the next
+    # implementation task, not routing review/merge-ready ownership.
     in_progress_tasks = task_manager.list_tasks(
-        status="in_progress", limit=50, project_id=project_id
+        status="in_progress",
+        limit=50,
+        project_id=project_id,
     )
     active_ancestry: list[str] = []
     if in_progress_tasks:
         active_ancestry = _get_ancestry_chain(task_manager, in_progress_tasks[0].id)
 
-    # Filter out in_progress tasks - we want to suggest the NEXT task, not current
-    ready_tasks = [t for t in ready_tasks if t.status != "in_progress"]
+    # Filter out already-active work. A ready task should not be re-suggested if
+    # it is already claimed or already projected as in_progress.
+    ready_tasks = [
+        task
+        for task in ready_tasks
+        if not get_claimed_session_id(task)
+        and getattr(task, "status", None) != "in_progress"
+        and getattr(task, "lifecycle_stage", None) != "in_progress"
+    ]
     if not ready_tasks:
         return {
             "early_return": {
                 "suggestion": None,
-                "reason": "No ready tasks found (all tasks are in_progress)",
+                "reason": "No ready tasks found (all ready tasks are already claimed)",
             }
         }
 
@@ -591,11 +602,11 @@ def create_readiness_registry(
         if count > 1:
             in_progress_tasks = result["in_progress_tasks"]
 
-            # Collect occupied files from in-progress tasks
+            # Collect occupied files from in-progress tasks.
             af_manager = TaskAffectedFileManager(task_manager.db)
             occupied_files: set[str] = set()
-            for ip_task in in_progress_tasks:
-                files = af_manager.get_files(ip_task.id)
+            for active_task in in_progress_tasks:
+                files = af_manager.get_files(active_task.id)
                 occupied_files.update(f.file_path for f in files)
 
             # Greedy selection with file-conflict detection

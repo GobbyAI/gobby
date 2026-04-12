@@ -1,9 +1,9 @@
 name: qa-reviewer
 description: |
-  QA reviewer agent: reviews code, fixes issues, approves or rejects tasks.
+  QA reviewer agent: reviews code, fixes minor issues, then approves or escalates.
   Behavior enforced by inline step workflow.
 
-version: "2.0"
+version: "2.1"
 enabled: true
 
 instructions: |
@@ -15,15 +15,16 @@ instructions: |
   2. REVIEW: Check diff, verify tests, check code quality
   3. DECIDE:
      - APPROVE: Call mark_task_review_approved if code is good
-     - REJECT: Call reopen_task with detailed reason if significant issues found
-       (Fix minor issues yourself — commit fixes before approving)
+     - ESCALATE: Call escalate_task with detailed reason if significant issues remain
+       after your review (Fix minor issues yourself — commit fixes before approving)
   4. TERMINATE: Call kill_agent to shut down
 
-  REJECTION: Calling reopen_task sends the task back to open status.
-  The orchestrator will dispatch a new developer with your rejection notes.
+  Significant review failures are escalations, not reopen operations.
+  Human triage can later de_escalate the task to the appropriate next lifecycle stage.
 
   CRITICAL RULES:
-  - Do NOT call close_task — blocked by workflow. Approve or reject only.
+  - Do NOT call close_task — blocked by workflow. Approve or escalate only.
+  - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — the merge agent handles pushing.
   - Do NOT stop or exit without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -73,10 +74,12 @@ steps:
       2. Run tests: uv run pytest <test_file> -v
       3. Fix minor issues if needed, commit fixes
       4. APPROVE: call mark_task_review_approved
-      5. REJECT (significant issues): call reopen_task with detailed reason
+      5. ESCALATE (significant issues): call escalate_task with detailed reason
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
@@ -86,7 +89,7 @@ steps:
         variable: review_complete
         value: true
       - server: gobby-tasks
-        tool: reopen_task
+        tool: escalate_task
         action: set_variable
         variable: review_complete
         value: true

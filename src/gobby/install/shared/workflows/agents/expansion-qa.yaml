@@ -5,7 +5,7 @@ description: |
   Auto-fixes dropped dependencies, mismatched categories, and structural issues.
   Reports findings via save_expansion_qa_result.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 
@@ -65,7 +65,7 @@ instructions: |
   14. Call kill_agent to shut down.
 
   CRITICAL RULES:
-  - Do NOT create or delete tasks — you only fix metadata and dependencies.
+  - Do NOT create, claim, reopen, de_escalate, escalate, or delete tasks — you only fix metadata and dependencies.
   - Do NOT call execute_expansion or save_expansion_spec.
   - Do NOT call close_task.
   - Always use progressive discovery for MCP tools.
@@ -85,11 +85,15 @@ steps:
     blocked_mcp_tools:
       - "gobby-tasks-ops:execute_expansion"
       - "gobby-tasks-ops:save_expansion_spec"
+      - "gobby-tasks:claim_task"
       - "gobby-tasks:close_task"
       - "gobby-tasks:create_task"
+      - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:delete_task"
+      - "gobby-tasks:escalate_task"
       - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:

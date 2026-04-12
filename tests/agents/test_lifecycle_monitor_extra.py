@@ -50,6 +50,7 @@ class TestRecoverTaskFromFailedAgent:
         # Setup mock task
         mock_task = MagicMock()
         mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task.seq_num = 5
         mock_task.dispatch_failure_count = 0
         mock_task_mgr.get_task.return_value = mock_task
@@ -96,6 +97,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_fallback_task = MagicMock()
         mock_fallback_task.id = "task-fallback"
         mock_fallback_task.status = "in_progress"
+        mock_fallback_task.claimed_by_session_id = "child-123"
         mock_fallback_task.seq_num = None
         mock_fallback_task.dispatch_failure_count = 0
         mock_task_mgr.list_tasks.return_value = [mock_fallback_task]
@@ -105,8 +107,8 @@ class TestRecoverTaskFromFailedAgent:
         await monitor._recover_task_from_failed_agent("run-2")
 
         mock_task_mgr.list_tasks.assert_called_once_with(
-            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
             claimed_by_session_id="child-123",
+            closed=False,
         )
         mock_task_mgr.get_task.assert_called_once_with("task-fallback")
         # Non-provider error: dispatch_failure_count incremented from 0 to 1
@@ -143,6 +145,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = MagicMock()
         mock_task.status = "needs_review"
+        mock_task.claimed_by_session_id = "reviewer-1"
         mock_task.seq_num = 22
         mock_task_mgr.get_task.return_value = mock_task
         mock_stall.is_provider_error.return_value = False
@@ -186,6 +189,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = MagicMock()
         mock_task.status = "completed"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task_mgr.get_task.return_value = mock_task
 
         await monitor._recover_task_from_failed_agent("run-1")
@@ -220,6 +224,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = MagicMock()
         mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task.seq_num = 10
         mock_task.dispatch_failure_count = 2  # Already 2 failures, this will be 3rd
         mock_task_mgr.get_task.return_value = mock_task
@@ -263,6 +268,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = MagicMock()
         mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task.seq_num = 10
         mock_task.dispatch_failure_count = 2
         mock_task_mgr.get_task.return_value = mock_task
@@ -406,7 +412,7 @@ class TestDispatchFailureCountCRUD:
             id="t-1",
             project_id="p-1",
             title="test",
-            status="blocked",
+            status="escalated",
             priority=2,
             task_type="task",
             created_at="2024-01-01",
@@ -433,8 +439,8 @@ class TestDispatchFailureCountCRUD:
 
         mgr = LocalTaskManager(temp_db)
         task = mgr.create_task(title="test", task_type="task", project_id=sample_project["id"])
-        # Set failure count and block
-        mgr.update_task(task.id, status="blocked", dispatch_failure_count=3)
+        # Set failure count and move out of open state
+        mgr.update_task(task.id, status="escalated", dispatch_failure_count=3)
         # Reopen
         mgr.reopen_task(task.id)
         reopened = mgr.get_task(task.id)

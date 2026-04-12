@@ -10,4 +10,5 @@ rules:
     effects:
       - type: block
         reason: |
-          Active claimed tasks still require handoff or closure: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}. Commit and close_task() or explicitly release the claim.
+          Active claimed tasks still require explicit handoff or closure: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}.
+          Close the task, de-escalate it if human intervention already resolved the blocker, or explicitly release the claim before stopping.

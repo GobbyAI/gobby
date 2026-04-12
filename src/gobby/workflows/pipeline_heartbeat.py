@@ -12,7 +12,11 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES, get_claimed_session_id
+from gobby.tasks.state_semantics import (
+    ACTIVE_CLAIM_STATUSES,
+    get_claimed_session_id,
+    is_task_actively_claimed,
+)
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
 if TYPE_CHECKING:
@@ -163,6 +167,7 @@ class PipelineHeartbeat:
             active_claims = await asyncio.to_thread(
                 self._task_manager.list_tasks,
                 status=list(ACTIVE_CLAIM_STATUSES),
+                closed=False,
                 limit=100,
             )
         except Exception:
@@ -173,6 +178,8 @@ class PipelineHeartbeat:
         for task in active_claims:
             owner_session_id = get_claimed_session_id(task)
             if not owner_session_id:
+                continue
+            if not is_task_actively_claimed(task, owner_session_id):
                 continue
             try:
                 has_active = await asyncio.to_thread(
@@ -191,7 +198,12 @@ class PipelineHeartbeat:
                 # Preserve non-implementation lifecycle states instead of forcing
                 # them back through in_progress/open.
                 has_commits = bool(getattr(task, "commits", None))
-                if task.status == "in_progress" and has_commits:
+                raw_stage = getattr(task, "lifecycle_stage", None)
+                raw_status = getattr(task, "status", None)
+                lifecycle_stage = raw_stage if isinstance(raw_stage, str) and raw_stage else None
+                if lifecycle_stage is None and isinstance(raw_status, str) and raw_status:
+                    lifecycle_stage = raw_status
+                if lifecycle_stage == "in_progress" and has_commits:
                     await asyncio.to_thread(
                         self._task_manager.release_task_claim,
                         task.id,
@@ -200,7 +212,7 @@ class PipelineHeartbeat:
                     logger.info(
                         f"Heartbeat: promoted stale task {task.id} (#{task.seq_num}) to needs_review (has commits, no active agent run)",
                     )
-                elif task.status == "in_progress":
+                elif lifecycle_stage == "in_progress":
                     await asyncio.to_thread(
                         self._task_manager.release_task_claim,
                         task.id,

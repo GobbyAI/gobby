@@ -16,4 +16,4 @@ rules:
       - type: block
         reason: |
           Epic tree not complete. Claimed tasks: {{ claimed_tasks.values() | list | join(', ') or '(unknown)' }}.
-          Close ALL subtasks and the parent epic before stopping. Use list_tasks(parent_task_id=...) to find remaining open work.
+          Close ALL subtasks and the parent epic before stopping. Use list_tasks(parent_task_id=...) to find remaining unresolved work.

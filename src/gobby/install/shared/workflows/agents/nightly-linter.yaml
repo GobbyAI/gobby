@@ -3,7 +3,7 @@ description: |
   Nightly linter agent: reads ruff, mypy, and bandit reports from ./reports/,
   fixes errors, verifies fixes, commits, and closes task with validation.
 
-version: "1.1"
+version: "1.2"
 enabled: true
 priority: 20
 
@@ -31,6 +31,7 @@ instructions: |
 
   CRITICAL RULES:
   - Do NOT call mark_task_review_approved — close_task handles validation.
+  - Do NOT call reopen_task or de_escalate_task — close_task is your only lifecycle transition.
   - Do NOT call git push.
   - Do NOT stop without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -79,8 +80,10 @@ steps:
       then commit and call close_task with a changes_summary.
     allowed_tools: "all"
     blocked_mcp_tools:
+      - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
