@@ -234,6 +234,28 @@ def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
         time.sleep(0.5)
 
 
+def _wait_for_daemon_health(
+    http_port: int,
+    *,
+    timeout: float = 120.0,
+    interval: float = 0.5,
+) -> float | None:
+    """Wait for the daemon health endpoint to respond successfully."""
+    start = time.monotonic()
+    deadline = start + timeout
+
+    while time.monotonic() < deadline:
+        try:
+            response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
+            if response.status_code == 200:
+                return time.monotonic() - start
+        except (httpx.ConnectError, httpx.TimeoutException):
+            pass
+        time.sleep(interval)
+
+    return None
+
+
 @click.command()
 @click.option(
     "--verbose",
@@ -255,18 +277,23 @@ def _poll_startup_progress(http_port: int, max_wait: float = 15.0) -> None:
 @click.pass_context
 def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
     """Start the Gobby daemon."""
+    config = ctx.obj["config"]
+
     # If OS service is installed, delegate to it
     svc = get_service_status()
     if svc.get("installed"):
         _step("Starting via OS service manager...")
         result = service_start()
         if result.get("success"):
+            elapsed = _wait_for_daemon_health(config.daemon_port)
+            if elapsed is None:
+                _step("Daemon did not become healthy after service start", error=True)
+                sys.exit(1)
             _step(f"Daemon started via {svc.get('platform', 'OS')} service")
+            _step(f"Health check passed ({elapsed:.1f}s)")
             return
         _step(f"Service start failed: {result.get('error')}", error=True)
         click.echo("  Falling back to direct start...")
-
-    config = ctx.obj["config"]
 
     gobby_dir = get_gobby_home()
     pid_file = gobby_dir / "gobby.pid"
@@ -366,23 +393,8 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
 
             # Wait for health check
             time.sleep(2.0)
-            daemon_healthy = False
-            health_start = time.time()
-            max_wait = 120.0
-
-            while (time.time() - health_start) < max_wait:
-                try:
-                    response = httpx.get(
-                        f"http://localhost:{http_port}/api/admin/health", timeout=1.0
-                    )
-                    if response.status_code == 200:
-                        daemon_healthy = True
-                        break
-                except (httpx.ConnectError, httpx.TimeoutException):
-                    time.sleep(0.5)
-
-            if daemon_healthy:
-                elapsed = time.time() - health_start
+            elapsed = _wait_for_daemon_health(http_port)
+            if elapsed is not None:
                 _step(f"Health check passed ({elapsed:.1f}s)")
             else:
                 _step("Health check failed", error=True)
@@ -492,6 +504,7 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
 def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
     """Restart the Gobby daemon (stop then start)."""
     setup_logging(verbose)
+    config = ctx.obj["config"]
 
     # If OS service is installed, delegate to it
     svc = get_service_status()
@@ -499,7 +512,12 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
         click.echo(f"Restarting via {svc.get('platform', 'OS')} service manager...")
         result = service_restart()
         if result.get("success"):
+            elapsed = _wait_for_daemon_health(config.daemon_port)
+            if elapsed is None:
+                click.echo("Service restart completed, but daemon did not become healthy", err=True)
+                sys.exit(1)
             click.echo(f"Daemon restarted via {result.get('method', 'service manager')}")
+            click.echo(f"Health check passed ({elapsed:.1f}s)")
             return
         click.echo(f"Service restart failed: {result.get('error')}", err=True)
         click.echo("Falling back to direct restart...")

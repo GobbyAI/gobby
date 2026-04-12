@@ -21,6 +21,54 @@ from gobby.cli import cli
 pytestmark = pytest.mark.unit
 
 
+class TestDaemonHealthWait:
+    """Tests for daemon health polling."""
+
+    @patch("gobby.cli.daemon.time.sleep")
+    @patch("gobby.cli.daemon.time.monotonic")
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_wait_for_daemon_health_returns_elapsed_after_retry(
+        self,
+        mock_httpx_get: MagicMock,
+        mock_monotonic: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        """Returns elapsed time once the health endpoint responds with 200."""
+        from gobby.cli.daemon import _wait_for_daemon_health
+
+        mock_httpx_get.side_effect = [
+            httpx.ConnectError("daemon not ready"),
+            MagicMock(status_code=200),
+        ]
+        mock_monotonic.side_effect = [0.0, 0.0, 0.5, 1.0]
+
+        elapsed = _wait_for_daemon_health(60887, timeout=5.0, interval=0.5)
+
+        assert elapsed == pytest.approx(1.0)
+        assert mock_httpx_get.call_count == 2
+        mock_sleep.assert_called_once_with(0.5)
+
+    @patch("gobby.cli.daemon.time.sleep")
+    @patch("gobby.cli.daemon.time.monotonic")
+    @patch("gobby.cli.daemon.httpx.get")
+    def test_wait_for_daemon_health_times_out(
+        self,
+        mock_httpx_get: MagicMock,
+        mock_monotonic: MagicMock,
+        mock_sleep: MagicMock,
+    ) -> None:
+        """Returns None when the health endpoint never comes back."""
+        from gobby.cli.daemon import _wait_for_daemon_health
+
+        mock_httpx_get.side_effect = httpx.ConnectError("daemon not ready")
+        mock_monotonic.side_effect = [0.0, 0.0, 1.0]
+
+        elapsed = _wait_for_daemon_health(60887, timeout=1.0, interval=0.5)
+
+        assert elapsed is None
+        mock_sleep.assert_called_once_with(0.5)
+
+
 class TestStartCommand:
     """Tests for the 'start' command."""
 
@@ -35,6 +83,30 @@ class TestStartCommand:
         assert result.exit_code == 0
         assert "Start the Gobby daemon" in result.output
         assert "--verbose" in result.output
+
+    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
+    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon.get_service_status", return_value={"installed": True, "platform": "macos"})
+    @patch("gobby.cli.load_config")
+    def test_start_via_service_waits_for_health(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_start: MagicMock,
+        mock_wait_for_health: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+    ) -> None:
+        """Start waits for health before returning when using the service manager."""
+        mock_load_config.return_value = mock_daemon_config
+
+        result = runner.invoke(cli, ["start"])
+
+        assert result.exit_code == 0
+        assert "Starting via OS service manager" in result.output
+        assert "Health check passed (2.5s)" in result.output
+        mock_service_start.assert_called_once()
+        mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
@@ -514,6 +586,76 @@ class TestRestartCommand:
         assert result.exit_code == 0
         assert "Restart the Gobby daemon" in result.output
         assert "--verbose" in result.output
+
+    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=4.0)
+    @patch(
+        "gobby.cli.daemon.service_restart",
+        return_value={"success": True, "method": "launchctl bootout + bootstrap"},
+    )
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "enabled": True, "platform": "macos"},
+    )
+    @patch("gobby.cli.daemon.stop_daemon_util")
+    @patch("gobby.cli.daemon.setup_logging")
+    @patch("gobby.cli.load_config")
+    def test_restart_via_service_waits_for_health(
+        self,
+        mock_load_config: MagicMock,
+        mock_setup_logging: MagicMock,
+        mock_stop_daemon: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_restart: MagicMock,
+        mock_wait_for_health: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+    ) -> None:
+        """Restart waits for health before returning when using the service manager."""
+        mock_load_config.return_value = mock_daemon_config
+
+        result = runner.invoke(cli, ["restart"])
+
+        assert result.exit_code == 0
+        assert "Restarting via macos service manager" in result.output
+        assert "Daemon restarted via launchctl bootout + bootstrap" in result.output
+        assert "Health check passed (4.0s)" in result.output
+        mock_stop_daemon.assert_not_called()
+        mock_service_restart.assert_called_once()
+        mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
+
+    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=None)
+    @patch(
+        "gobby.cli.daemon.service_restart",
+        return_value={"success": True, "method": "launchctl bootout + bootstrap"},
+    )
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "enabled": True, "platform": "macos"},
+    )
+    @patch("gobby.cli.daemon.stop_daemon_util")
+    @patch("gobby.cli.daemon.setup_logging")
+    @patch("gobby.cli.load_config")
+    def test_restart_via_service_fails_when_health_does_not_return(
+        self,
+        mock_load_config: MagicMock,
+        mock_setup_logging: MagicMock,
+        mock_stop_daemon: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_restart: MagicMock,
+        mock_wait_for_health: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+    ) -> None:
+        """Restart exits non-zero when launchd returns but the daemon never becomes healthy."""
+        mock_load_config.return_value = mock_daemon_config
+
+        result = runner.invoke(cli, ["restart"])
+
+        assert result.exit_code == 1
+        assert "Service restart completed, but daemon did not become healthy" in result.output
+        mock_stop_daemon.assert_not_called()
+        mock_service_restart.assert_called_once()
+        mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
