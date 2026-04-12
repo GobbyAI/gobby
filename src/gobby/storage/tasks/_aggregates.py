@@ -10,6 +10,7 @@ This module provides aggregate operations for task counts and statistics:
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._state_sql import canonical_status_case, is_ready_sql, status_filter_sql
 
 
 def count_tasks(
@@ -34,8 +35,10 @@ def count_tasks(
         query += " AND project_id = ?"
         params.append(project_id)
     if status:
-        query += " AND status = ?"
-        params.append(status)
+        clause, clause_params = status_filter_sql(status)
+        if clause:
+            query += f" AND {clause}"
+            params.extend(clause_params)
 
     result = db.fetchone(query, tuple(params))
     return result["count"] if result else 0
@@ -54,7 +57,8 @@ def count_by_status(
     Returns:
         Dictionary mapping status to count
     """
-    query = "SELECT status, COUNT(*) as count FROM tasks"
+    projected_status = canonical_status_case()
+    query = f"SELECT {projected_status} as status, COUNT(*) as count FROM tasks"
     params: list[Any] = []
 
     if project_id:
@@ -87,15 +91,15 @@ def count_ready_tasks(
     # Uses the same descendant-aware predicate as list_ready_tasks.
     # The is_descendant_of check uses a recursive CTE to walk up the blocker's
     # ancestor chain and check if the blocked task (t.id) appears anywhere.
-    query = """
+    query = f"""
     SELECT COUNT(*) as count FROM tasks t
-    WHERE t.status = 'open'
+    WHERE {is_ready_sql('t')}
     AND NOT EXISTS (
         SELECT 1 FROM task_dependencies d
         JOIN tasks blocker ON d.depends_on = blocker.id
         WHERE d.task_id = t.id
           AND d.dep_type = 'blocks'
-          AND blocker.status NOT IN ('closed', 'review_approved', 'needs_review')
+          AND blocker.closed_at IS NULL
           -- Exclude ancestor blocked by any descendant (completion block, not work block)
           -- Check if t.id appears anywhere in blocker's ancestor chain
           AND NOT EXISTS (
@@ -138,7 +142,7 @@ def count_closed_since(
     """
     query = (
         "SELECT COUNT(*) as count FROM tasks "
-        "WHERE status = 'closed' "
+        "WHERE closed_at IS NOT NULL "
         "AND closed_at >= datetime('now', ?)"
     )
     params: list[Any] = [f"-{hours} hours"]
@@ -171,13 +175,13 @@ def count_blocked_tasks(
     # ancestor chain and check if the blocked task (t.id) appears anywhere.
     query = """
     SELECT COUNT(*) as count FROM tasks t
-    WHERE t.status = 'open'
+    WHERE t.closed_at IS NULL
     AND EXISTS (
         SELECT 1 FROM task_dependencies d
         JOIN tasks blocker ON d.depends_on = blocker.id
         WHERE d.task_id = t.id
           AND d.dep_type = 'blocks'
-          AND blocker.status NOT IN ('closed', 'review_approved', 'needs_review')
+          AND blocker.closed_at IS NULL
           -- Exclude ancestor blocked by any descendant (completion block, not work block)
           -- Check if t.id appears anywhere in blocker's ancestor chain
           AND NOT EXISTS (

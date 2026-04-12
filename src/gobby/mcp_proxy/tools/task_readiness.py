@@ -16,6 +16,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.state_semantics import is_task_closed
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -250,7 +251,7 @@ def _resolve_ready_tasks(
         # If no ready descendants, check if the parent task itself is ready
         if not ready_tasks:
             parent_task = task_manager.get_task(parent_task_id)
-            if parent_task and parent_task.status == "open":
+            if parent_task and not is_task_closed(parent_task) and parent_task.status == "open":
                 if task_type is None or parent_task.task_type == task_type:
                     ready_check = task_manager.list_ready_tasks(project_id=project_id, limit=200)
                     if any(t.id == parent_task_id for t in ready_check):
@@ -263,7 +264,7 @@ def _resolve_ready_tasks(
     if not ready_tasks:
         if scoped_from_session_task and parent_task_id:
             parent_task = task_manager.get_task(parent_task_id)
-            if parent_task and parent_task.status == "closed":
+            if parent_task and is_task_closed(parent_task):
                 return {
                     "early_return": {
                         "suggestion": None,

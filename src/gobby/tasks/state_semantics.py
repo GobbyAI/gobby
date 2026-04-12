@@ -1,13 +1,24 @@
-"""Shared task state semantics used during the status-model migration.
-
-These helpers intentionally model the current transitional semantics rather
-than the final lifecycle split. They give claim reconciliation, recovery,
-and de-escalation a single definition to follow during Phase 0.
-"""
+"""Shared task state semantics used during the lifecycle split migration."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+
+TaskLifecycleStage = Literal["in_progress", "needs_review", "review_approved"]
+LegacyTaskStatus = Literal[
+    "open",
+    "in_progress",
+    "needs_review",
+    "review_approved",
+    "closed",
+    "escalated",
+]
+
+LIFECYCLE_STAGES: tuple[TaskLifecycleStage, ...] = (
+    "in_progress",
+    "needs_review",
+    "review_approved",
+)
 
 ACTIVE_CLAIM_STATUSES: tuple[str, ...] = (
     "open",
@@ -23,6 +34,76 @@ DE_ESCALATION_TARGET_STATUSES: tuple[str, ...] = (
     "needs_review",
     "review_approved",
 )
+
+
+def lifecycle_stage_from_status(status: str | None) -> TaskLifecycleStage | None:
+    """Map a legacy projected status back to canonical lifecycle stage."""
+    if status in LIFECYCLE_STAGES:
+        return status
+    return None
+
+
+def normalize_lifecycle_stage(stage: str | None) -> TaskLifecycleStage | None:
+    """Validate and normalize a lifecycle stage value."""
+    if stage is None:
+        return None
+    normalized = stage.strip().lower().replace("-", "_")
+    if normalized == "open":
+        return None
+    if normalized in LIFECYCLE_STAGES:
+        return normalized
+    raise ValueError(
+        f"Invalid lifecycle_stage '{stage}'. Expected one of: open, {', '.join(LIFECYCLE_STAGES)}."
+    )
+
+
+def project_legacy_status(
+    *,
+    lifecycle_stage: str | None,
+    closed_at: str | None = None,
+    escalated_at: str | None = None,
+    legacy_status: str | None = None,
+) -> LegacyTaskStatus:
+    """Project canonical lifecycle fields back to the temporary legacy status surface."""
+    if closed_at or legacy_status == "closed":
+        return "closed"
+    if escalated_at or legacy_status == "escalated":
+        return "escalated"
+
+    normalized_stage = normalize_lifecycle_stage(lifecycle_stage)
+    if normalized_stage:
+        return normalized_stage
+
+    if legacy_status in ("in_progress", "needs_review", "review_approved"):
+        return legacy_status
+    return "open"
+
+
+def is_task_closed(task: Any) -> bool:
+    """Return whether close metadata marks the task as closed."""
+    if task is None:
+        return False
+    closed_at = getattr(task, "closed_at", None)
+    if isinstance(closed_at, str) and bool(closed_at):
+        return True
+    return getattr(task, "status", None) == "closed"
+
+
+def is_task_escalated(task: Any) -> bool:
+    """Return whether escalation metadata marks the task as escalated."""
+    if task is None or is_task_closed(task):
+        return False
+    escalated_at = getattr(task, "escalated_at", None)
+    if isinstance(escalated_at, str) and bool(escalated_at):
+        return True
+    return getattr(task, "status", None) == "escalated"
+
+
+def is_task_merge_ready(task: Any) -> bool:
+    """Return whether the task has passed review and is ready for merge/close."""
+    if task is None or is_task_closed(task) or is_task_escalated(task):
+        return False
+    return normalize_lifecycle_stage(getattr(task, "lifecycle_stage", None)) == "review_approved"
 
 
 def is_active_claim_status(status: str | None) -> bool:

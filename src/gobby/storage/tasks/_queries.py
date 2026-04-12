@@ -12,6 +12,7 @@ from typing import Any
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
+from gobby.storage.tasks._state_sql import is_ready_sql, status_filter_sql
 
 
 def list_tasks(
@@ -55,13 +56,10 @@ def list_tasks(
         query += " AND project_id = ?"
         params.append(project_id)
     if status:
-        if isinstance(status, list):
-            placeholders = ", ".join("?" for _ in status)
-            query += f" AND status IN ({placeholders})"
-            params.extend(status)
-        else:
-            query += " AND status = ?"
-            params.append(status)
+        clause, clause_params = status_filter_sql(status)
+        if clause:
+            query += f" AND {clause}"
+            params.extend(clause_params)
     if priority:
         query += " AND priority = ?"
         params.append(priority)
@@ -146,18 +144,18 @@ def list_ready_tasks(
     then return the first N tasks in tree traversal order.
     """
     # Use recursive CTE to find tasks with ready parent chains
-    query = """
+    query = f"""
     WITH RECURSIVE ready_tasks AS (
         -- Base case: open/in_progress tasks with no parent and no external blocking deps
         SELECT t.id FROM tasks t
-        WHERE t.status IN ('open', 'in_progress')
+        WHERE {is_ready_sql('t')}
         AND t.parent_task_id IS NULL
         AND NOT EXISTS (
             SELECT 1 FROM task_dependencies d
             JOIN tasks blocker ON d.depends_on = blocker.id
             WHERE d.task_id = t.id
               AND d.dep_type = 'blocks'
-              AND blocker.status NOT IN ('closed', 'review_approved', 'needs_review')
+              AND blocker.closed_at IS NULL
               -- Exclude ancestor blocked by any descendant (completion block, not work block)
               AND NOT EXISTS (
                   WITH RECURSIVE ancestors AS (
@@ -177,13 +175,13 @@ def list_ready_tasks(
         -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
         SELECT t.id FROM tasks t
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
-        WHERE t.status IN ('open', 'in_progress')
+        WHERE {is_ready_sql('t')}
         AND NOT EXISTS (
             SELECT 1 FROM task_dependencies d
             JOIN tasks blocker ON d.depends_on = blocker.id
             WHERE d.task_id = t.id
               AND d.dep_type = 'blocks'
-              AND blocker.status NOT IN ('closed', 'review_approved', 'needs_review')
+              AND blocker.closed_at IS NULL
               -- Exclude ancestor blocked by any descendant (completion block, not work block)
               AND NOT EXISTS (
                   WITH RECURSIVE ancestors AS (
@@ -253,13 +251,13 @@ def list_blocked_tasks(
     """
     query = """
     SELECT t.* FROM tasks t
-    WHERE t.status = 'open'
+    WHERE t.closed_at IS NULL
     AND EXISTS (
         SELECT 1 FROM task_dependencies d
         JOIN tasks blocker ON d.depends_on = blocker.id
         WHERE d.task_id = t.id
           AND d.dep_type = 'blocks'
-          AND blocker.status NOT IN ('closed', 'review_approved', 'needs_review')
+          AND blocker.closed_at IS NULL
           -- Exclude ancestor blocked by any descendant (completion block, not work block)
           AND NOT EXISTS (
               WITH RECURSIVE ancestors AS (

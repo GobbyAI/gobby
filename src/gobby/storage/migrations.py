@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 208
+BASELINE_VERSION = 209
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -335,6 +335,53 @@ def _migrate_claimed_by_session_id(db: LocalDatabase) -> None:
             )
     finally:
         conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_task_lifecycle_stage(db: LocalDatabase) -> None:
+    """Add canonical lifecycle stage storage and backfill projected status."""
+    with db.transaction() as tx:
+        if not _column_exists(db, "tasks", "lifecycle_stage"):
+            tx.execute(
+                """
+                ALTER TABLE tasks
+                ADD COLUMN lifecycle_stage TEXT
+                CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved'))
+                """
+            )
+
+        tx.execute("""
+            UPDATE tasks
+            SET lifecycle_stage = CASE status
+                WHEN 'in_progress' THEN 'in_progress'
+                WHEN 'needs_review' THEN 'needs_review'
+                WHEN 'review_approved' THEN 'review_approved'
+                ELSE NULL
+            END
+            WHERE lifecycle_stage IS NULL
+        """)
+
+        tx.execute("""
+            UPDATE tasks
+            SET closed_at = COALESCE(closed_at, updated_at, created_at)
+            WHERE status = 'closed' AND closed_at IS NULL
+        """)
+
+        tx.execute("""
+            UPDATE tasks
+            SET escalated_at = COALESCE(escalated_at, updated_at, created_at)
+            WHERE status = 'escalated' AND escalated_at IS NULL
+        """)
+
+        tx.execute("""
+            UPDATE tasks
+            SET status = CASE
+                WHEN closed_at IS NOT NULL THEN 'closed'
+                WHEN escalated_at IS NOT NULL THEN 'escalated'
+                WHEN lifecycle_stage IS NOT NULL THEN lifecycle_stage
+                ELSE 'open'
+            END
+        """)
+        tx.execute("CREATE INDEX IF NOT EXISTS idx_tasks_lifecycle_stage ON tasks(lifecycle_stage)")
 
 
 def _drop_agent_runs_mode(db: LocalDatabase) -> None:
@@ -887,6 +934,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         208,
         "Add claimed_by_session_id canonical task ownership field",
         _migrate_claimed_by_session_id,
+    ),
+    (
+        209,
+        "Add canonical task lifecycle_stage and backfill projected status",
+        _migrate_task_lifecycle_stage,
     ),
 ]
 

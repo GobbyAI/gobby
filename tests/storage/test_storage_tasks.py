@@ -58,11 +58,43 @@ class TestLocalTaskManager:
         assert updated.status == "in_progress"
         assert updated.updated_at > task.updated_at
 
+    def test_status_projects_from_canonical_lifecycle_stage(self, task_manager, project_id) -> None:
+        """Raw legacy status should no longer drive task projection."""
+        task = task_manager.create_task(project_id=project_id, title="Projected")
+
+        task_manager.db.execute(
+            """
+            UPDATE tasks
+            SET status = 'open',
+                lifecycle_stage = 'review_approved',
+                escalated_at = NULL,
+                closed_at = NULL
+            WHERE id = ?
+            """,
+            (task.id,),
+        )
+
+        projected = task_manager.get_task(task.id)
+
+        assert projected.status == "review_approved"
+        assert projected.lifecycle_stage == "review_approved"
+
     def test_close_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="To Close")
         closed = task_manager.close_task(task.id, reason="Done")
         assert closed.status == "closed"
         assert closed.closed_reason == "Done"
+
+    def test_close_task_preserves_lifecycle_stage_projection(self, task_manager, project_id) -> None:
+        """Closed tasks keep their last lifecycle stage as latent context."""
+        task = task_manager.create_task(project_id=project_id, title="To Close Cleanly")
+        reviewed = task_manager.update_task(task.id, status="review_approved")
+
+        closed = task_manager.close_task(reviewed.id, reason="Merged")
+
+        assert closed.status == "closed"
+        assert closed.lifecycle_stage == "review_approved"
+        assert closed.closed_reason == "Merged"
 
     def test_delete_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="To Delete")
@@ -274,6 +306,40 @@ class TestLocalTaskManager:
         task_manager.close_task(t2.id)
         blocked = task_manager.list_blocked_tasks(project_id=project_id)
         # T1 is no longer blocked by OPEN task
+
+    def test_dependency_unblocks_only_when_blocker_is_closed(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Review stages should not satisfy blocking dependencies."""
+        blocked = task_manager.create_task(project_id, "Blocked")
+        blocker = task_manager.create_task(project_id, "Blocker")
+        dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
+
+        task_manager.update_task(blocker.id, status="needs_review")
+        assert blocked.id not in {t.id for t in task_manager.list_ready_tasks(project_id=project_id)}
+        assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+
+        task_manager.update_task(blocker.id, status="review_approved")
+        assert blocked.id not in {t.id for t in task_manager.list_ready_tasks(project_id=project_id)}
+        assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+
+        task_manager.close_task(blocker.id)
+        assert blocked.id in {t.id for t in task_manager.list_ready_tasks(project_id=project_id)}
+        assert blocked.id not in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+
+    def test_list_blocked_tasks_includes_escalated_tasks(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Blocked is an independent predicate from the active lifecycle stage."""
+        blocked = task_manager.create_task(project_id, "Blocked")
+        blocker = task_manager.create_task(project_id, "Blocker")
+        dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
+
+        task_manager.escalate_task(blocked.id, reason="Needs human help")
+
+        blocked_ids = {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+        assert blocked.id in blocked_ids
+        assert task_manager.count_blocked_tasks(project_id=project_id) == 1
 
     def test_parent_blocked_by_children_is_still_ready(
         self, task_manager, dep_manager, project_id

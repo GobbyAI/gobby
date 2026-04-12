@@ -48,7 +48,7 @@ def close_task(
     # Check for open children unless force=True
     if not force:
         open_children = db.fetchall(
-            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND status != 'closed'",
+            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND closed_at IS NULL",
             (task_id,),
         )
         if open_children:

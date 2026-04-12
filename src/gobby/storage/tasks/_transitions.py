@@ -15,7 +15,7 @@ from typing import Any
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
 from gobby.storage.tasks._models import UNSET, Task
-from gobby.tasks.state_semantics import normalize_de_escalation_target_status
+from gobby.tasks.state_semantics import is_task_closed, normalize_de_escalation_target_status
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def claim_task(
     task = get_task(db, task_id)
     current_owner = get_effective_claim_owner(task, db)
 
-    if task.status == "closed":
+    if is_task_closed(task):
         raise ValueError(f"Cannot claim task {task_id}: task is closed")
     if current_owner and current_owner != session_id and not force:
         raise ValueError(f"Task {task_id} is already claimed by session '{current_owner}'")
@@ -111,10 +111,13 @@ def reopen_task(
         description=description if reason else UNSET,
         assignee=None,
         claimed_by_session_id=None,
+        lifecycle_stage=None,
         closed_reason=None,
         closed_at=None,
         closed_in_session_id=None,
         closed_commit_sha=None,
+        escalated_at=None,
+        escalation_reason=None,
         validation_fail_count=0,
         dispatch_failure_count=0,
     )
@@ -124,7 +127,7 @@ def reopen_task(
 def escalate_task(db: DatabaseProtocol, task_id: str, *, reason: str) -> Task:
     """Escalate a task without dropping canonical ownership."""
     task = get_task(db, task_id)
-    if task.status in ("escalated", "closed"):
+    if task.status == "escalated" or is_task_closed(task):
         raise ValueError(f"Cannot escalate task with status '{task.status}'.")
 
     update_task(
@@ -230,7 +233,7 @@ def close_task(
     """Close a task and clear active ownership metadata."""
     if not force:
         open_children = db.fetchall(
-            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND status != 'closed'",
+            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND closed_at IS NULL",
             (task_id,),
         )
         if open_children:
