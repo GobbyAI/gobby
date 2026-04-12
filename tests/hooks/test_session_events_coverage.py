@@ -72,6 +72,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self.logger = MagicMock()
         self._session_manager = MagicMock()
         self._session_storage = MagicMock()
+        self._session_storage.update.return_value = None
         self._session_coordinator = MagicMock()
         self._message_processor = MagicMock()
         self._task_manager = MagicMock()

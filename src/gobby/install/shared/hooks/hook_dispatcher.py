@@ -56,6 +56,7 @@ class CLIConfig:
     source: str  # Source identifier sent to daemon
     critical_hooks: frozenset[str]  # Hooks requiring daemon to be running
     session_start_hooks: frozenset[str]  # Hooks that get terminal context injected
+    terminal_context_hooks: frozenset[str]  # Hooks that should carry terminal/process metadata
     json_error_exit_code: int  # Exit code for JSON parse errors (1 or 2)
     logger_name: str  # Logger name for this CLI's dispatcher
     suppress_logs: bool  # Whether to suppress logs in non-debug mode
@@ -72,6 +73,7 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         source="claude",
         critical_hooks=frozenset({"session-start", "session-end", "pre-compact"}),
         session_start_hooks=frozenset({"session-start"}),
+        terminal_context_hooks=frozenset({"session-start"}),
         json_error_exit_code=2,
         logger_name="gobby.hooks.dispatcher",
         suppress_logs=True,
@@ -81,6 +83,7 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         source="gemini",
         critical_hooks=frozenset({"SessionStart"}),
         session_start_hooks=frozenset({"SessionStart"}),
+        terminal_context_hooks=frozenset({"SessionStart"}),
         json_error_exit_code=1,
         logger_name="gobby.hooks.gemini.dispatcher",
         suppress_logs=False,
@@ -90,6 +93,9 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         source="codex",
         critical_hooks=frozenset({"SessionStart", "Stop"}),
         session_start_hooks=frozenset({"SessionStart"}),
+        terminal_context_hooks=frozenset(
+            {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
+        ),
         json_error_exit_code=2,
         logger_name="gobby.hooks.dispatcher.codex",
         suppress_logs=True,
@@ -631,9 +637,10 @@ async def main() -> int:
         raw = await loop.run_in_executor(None, sys.stdin.read)
         input_data = json.loads(raw)
 
-        # Inject terminal context for session start hooks
-        if hook_type in config.session_start_hooks:
-            input_data["terminal_context"] = get_terminal_context()
+        # Inject terminal context for hooks that may need to register or
+        # repair terminal-backed sessions later in the lifecycle.
+        if hook_type in config.terminal_context_hooks and isinstance(input_data, dict):
+            input_data.setdefault("terminal_context", get_terminal_context())
 
         log_hook_details(logger, hook_type, input_data, debug_mode)
 

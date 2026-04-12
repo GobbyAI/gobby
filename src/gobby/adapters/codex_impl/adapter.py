@@ -341,16 +341,30 @@ class CodexAdapter(BaseAdapter):
         # Handle different event types
         if method == "thread/started":
             thread = params.get("thread", {})
+            data = {
+                "preview": thread.get("preview", ""),
+                "model_provider": thread.get("modelProvider", ""),
+            }
+            transcript_path = thread.get("path")
+            if transcript_path:
+                data["transcript_path"] = transcript_path
+
+            cwd = params.get("cwd")
+            if isinstance(cwd, str) and cwd:
+                data["cwd"] = cwd
+
+            terminal_context = params.get("terminal_context")
+            if isinstance(terminal_context, dict) and terminal_context:
+                data["terminal_context"] = terminal_context
+
             return HookEvent(
                 event_type=HookEventType.SESSION_START,
                 session_id=thread.get("id", ""),
                 source=self.source,
                 timestamp=self._parse_timestamp(thread.get("createdAt")),
                 machine_id=self._get_machine_id(),
-                data={
-                    "preview": thread.get("preview", ""),
-                    "model_provider": thread.get("modelProvider", ""),
-                },
+                cwd=cwd if isinstance(cwd, str) else None,
+                data=data,
             )
 
         if method in ("thread/archive", "thread/closed"):

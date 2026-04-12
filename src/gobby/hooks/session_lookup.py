@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -77,12 +78,44 @@ class SessionLookupService:
 
         # Resolve active task for this session
         if platform_session_id:
+            self._backfill_terminal_context(platform_session_id, event)
             self._enrich_task_context(platform_session_id, event)
 
         # Store platform session_id in event metadata for handlers
         event.metadata["_platform_session_id"] = platform_session_id
 
         return platform_session_id
+
+    def _backfill_terminal_context(self, platform_session_id: str, event: HookEvent) -> None:
+        """Merge terminal metadata discovered after the original registration."""
+        terminal_context = event.data.get("terminal_context")
+        if not isinstance(terminal_context, dict) or not terminal_context:
+            return
+
+        try:
+            updated_session, tmux_pane_added = self._session_manager.backfill_terminal_context(
+                platform_session_id,
+                terminal_context,
+            )
+        except Exception as exc:
+            self._logger.debug(
+                "Failed to backfill terminal context for session %s: %s",
+                platform_session_id,
+                exc,
+            )
+            return
+
+        if (
+            tmux_pane_added
+            and updated_session is not None
+            and getattr(updated_session, "title", None)
+            and getattr(updated_session, "digest_markdown", None)
+        ):
+            schedule_tmux_window_rename(
+                updated_session,
+                updated_session.title,
+                loop=getattr(self._session_coordinator, "_event_loop", None),
+            )
 
     def _resolve_session_id(self, external_id: str, event: HookEvent) -> str | None:
         """Look up or create platform session ID for the given external_id."""

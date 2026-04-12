@@ -283,6 +283,46 @@ async def _write_summary_file(
         return None
 
 
+def schedule_tmux_window_rename(
+    session: Any,
+    title: str,
+    *,
+    loop: Any | None = None,
+) -> None:
+    """Run ``_rename_tmux_window`` from sync code using the best available loop."""
+    import asyncio
+
+    coro = _rename_tmux_window(session, title)
+
+    try:
+        running_loop = asyncio.get_running_loop()
+        running_loop.create_task(coro)
+        return
+    except RuntimeError:
+        pass
+
+    loop_is_usable = False
+    if loop is not None:
+        try:
+            loop_is_usable = not loop.is_closed()
+        except Exception:
+            loop_is_usable = False
+
+    if loop_is_usable:
+        try:
+            asyncio.run_coroutine_threadsafe(coro, loop)
+            return
+        except Exception:
+            logger.debug("Failed to schedule tmux rename on captured loop", exc_info=True)
+            coro.close()
+            return
+
+    try:
+        asyncio.run(coro)
+    except Exception:
+        logger.debug("Failed to run tmux rename synchronously", exc_info=True)
+
+
 async def _rename_tmux_window(session: Any, title: str) -> None:
     """Rename the tmux window for a session after title synthesis.
 

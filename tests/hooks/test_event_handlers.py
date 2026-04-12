@@ -55,6 +55,7 @@ def mock_dependencies() -> dict[str, Any]:
     session_storage = MagicMock()
     # Default: no handoff parent found (tests that need one override this)
     session_storage.find_parent.return_value = None
+    session_storage.update.return_value = None
     return {
         "session_manager": MagicMock(),
         "workflow_handler": workflow_handler,
@@ -386,6 +387,58 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("is_pre_created") is True
         assert response.metadata.get("session_id") == "sess-pre-123"
         mock_dependencies["session_storage"].update.assert_called_once()
+
+    def test_pre_created_session_backfills_terminal_context(self, mock_dependencies: dict) -> None:
+        """Pre-created sessions should persist terminal metadata from runtime hooks."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-pre-123"
+        mock_session.project_id = "proj-123"
+        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
+        mock_session.agent_run_id = None
+        mock_session.title = "Useful synthesized title"
+        mock_session.digest_markdown = "## digest"
+        mock_session.terminal_context = None
+
+        updated_session = MagicMock()
+        updated_session.id = "sess-pre-123"
+        updated_session.project_id = "proj-123"
+        updated_session.parent_session_id = None
+        updated_session.agent_depth = 0
+        updated_session.agent_run_id = None
+        updated_session.title = "Useful synthesized title"
+        updated_session.digest_markdown = "## digest"
+        updated_session.terminal_context = {"tmux_pane": "%77", "parent_pid": 123}
+
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        mock_dependencies["session_storage"].update.return_value = mock_session
+        mock_dependencies["session_manager"].backfill_terminal_context.return_value = (
+            updated_session,
+            True,
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="sess-pre-123",
+            data={
+                "transcript_path": "/path/to/transcript.jsonl",
+                "terminal_context": {"tmux_pane": "%77", "parent_pid": 123},
+            },
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+        ) as mock_schedule:
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
+            "sess-pre-123",
+            {"tmux_pane": "%77", "parent_pid": 123},
+        )
+        mock_schedule.assert_called_once()
+        assert response.metadata.get("terminal_tmux_pane") == "%77"
 
     def test_pre_created_session_with_parent(self, mock_dependencies: dict) -> None:
         """Test pre-created session with parent session ID includes parent context."""

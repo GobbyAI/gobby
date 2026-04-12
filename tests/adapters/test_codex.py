@@ -890,11 +890,14 @@ class TestCodexAdapterTranslateToHookEvent:
         native_event = {
             "method": "thread/started",
             "params": {
+                "cwd": "/tmp/project",
+                "terminal_context": {"tmux_pane": "%2"},
                 "thread": {
                     "id": "thr-123",
                     "preview": "Help me with code",
                     "modelProvider": "openai",
                     "createdAt": 1704067200,
+                    "path": "/tmp/codex-session.jsonl",
                 }
             },
         }
@@ -905,8 +908,11 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.event_type == HookEventType.SESSION_START
         assert hook_event.session_id == "thr-123"
         assert hook_event.source == SessionSource.CODEX
+        assert hook_event.cwd == "/tmp/project"
         assert hook_event.data["preview"] == "Help me with code"
         assert hook_event.data["model_provider"] == "openai"
+        assert hook_event.data["transcript_path"] == "/tmp/codex-session.jsonl"
+        assert hook_event.data["terminal_context"]["tmux_pane"] == "%2"
 
     def test_thread_archive(self) -> None:
         """Translate thread/archive to SESSION_END."""
