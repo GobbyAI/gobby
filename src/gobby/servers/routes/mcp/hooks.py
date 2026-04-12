@@ -193,12 +193,15 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             elif source == "gemini":
                 adapter = GeminiAdapter(hook_manager=hook_manager)
             elif source == "codex":
-                codex_adapter = getattr(request.app.state, "codex_adapter", None)
-                adapter = (
-                    codex_adapter
-                    if codex_adapter is not None
-                    else CodexHooksAdapter(hook_manager=hook_manager)
-                )
+                # Always use CodexHooksAdapter for HTTP hook requests from
+                # hook_dispatcher.py.  app.state.codex_adapter is the
+                # WebSocket-oriented CodexAdapter whose translate_to_hook_event
+                # expects JSON-RPC format ("method"/"params"), not the
+                # hooks.json format ("hook_type"/"input_data") that the
+                # dispatcher sends.  Using the wrong adapter silently drops
+                # every hook — no terminal_context, no rule enforcement, no
+                # stop gates.
+                adapter = CodexHooksAdapter(hook_manager=hook_manager)
             else:
                 raise HTTPException(
                     status_code=400,

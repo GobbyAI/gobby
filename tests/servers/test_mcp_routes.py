@@ -2098,7 +2098,7 @@ class TestHooksEndpoints:
         assert response.status_code == 200
 
     def test_execute_hook_codex_source(self, session_storage: LocalSessionManager) -> None:
-        """Test execute hook with Codex source."""
+        """Test execute hook with Codex source uses CodexHooksAdapter."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2109,7 +2109,9 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexNotifyAdapter") as MockAdapter,
+            patch(
+                "gobby.adapters.codex_impl.adapter.CodexHooksAdapter"
+            ) as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2118,12 +2120,100 @@ class TestHooksEndpoints:
             response = client.post(
                 "/api/hooks/execute",
                 json={
-                    "hook_type": "notification",
+                    "hook_type": "SessionStart",
                     "source": "codex",
+                    "input_data": {"session_id": "test-123", "cwd": "/tmp"},
                 },
             )
 
         assert response.status_code == 200
+        assert response.json()["continue"] is True
+        MockAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+
+    def test_execute_hook_codex_uses_hooks_adapter_not_app_server_adapter(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Regression: Codex HTTP hooks must use CodexHooksAdapter even when
+        the app-server CodexAdapter is connected.
+
+        The app-server adapter expects JSON-RPC format and silently drops
+        hooks.json payloads, breaking all hook enforcement for Codex.
+        """
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+        # Simulate connected app-server adapter on app.state
+        ws_adapter = MagicMock(name="WebSocketCodexAdapter")
+        server.app.state.codex_adapter = ws_adapter
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.adapters.codex_impl.adapter.CodexHooksAdapter"
+            ) as MockHooksAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockHooksAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "SessionStart",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-456", "cwd": "/tmp"},
+                },
+            )
+
+        assert response.status_code == 200
+        # Must use CodexHooksAdapter, NOT the app-server adapter
+        MockHooksAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        mock_adapter.handle_native.assert_called_once()
+        # The app-server adapter must NOT have been called
+        ws_adapter.handle_native.assert_not_called()
+
+    def test_execute_hook_codex_stop_block_propagates(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Codex Stop hook block decisions must propagate through the HTTP response."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.adapters.codex_impl.adapter.CodexHooksAdapter"
+            ) as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {
+                "continue": False,
+                "stopReason": "Task #11678 is still claimed — commit and close first.",
+            }
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "Stop",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-stop"},
+                },
+            )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["continue"] is False
+        assert "claimed" in result["stopReason"]
 
 
 # ============================================================================

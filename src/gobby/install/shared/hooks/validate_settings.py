@@ -82,6 +82,19 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         nested=True,
         check_enable_hooks=True,
     ),
+    "codex": ValidationConfig(
+        cli_name="Codex CLI",
+        settings_dir=".codex",
+        settings_file="hooks.json",
+        required_hooks=(
+            "SessionStart",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "Stop",
+        ),
+        nested=True,
+    ),
 }
 
 
