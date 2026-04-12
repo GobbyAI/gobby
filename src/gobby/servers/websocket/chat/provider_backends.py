@@ -12,8 +12,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
-from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ThinkingEvent
+from gobby.llm.claude_models import (
+    ChatEvent,
+    DoneEvent,
+    TextChunk,
+    ThinkingEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_helpers import PendingApproval, build_compaction_context
 from gobby.servers.gemini_permissions import GeminiWebChatPermissionsMixin
@@ -319,6 +327,38 @@ class GeminiManagedChatSession(
             if content:
                 return ThinkingEvent(content=content)
             return None
+
+        if event.event_type == "tool_call" or event.event_type == "call_tool":
+            tool_name = event.data.get("tool_name") or event.data.get("name")
+            if not tool_name:
+                return None
+
+            # Normalize tool name for rule enforcement
+            normalized_name = GeminiAdapter().normalize_tool_name(tool_name)
+
+            tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
+            mcp_server = event.data.get("mcp_server") or event.data.get("server_name")
+            call_id = event.data.get("call_id") or event.data.get("id") or "unknown"
+
+            return ToolCallEvent(
+                tool_call_id=call_id,
+                tool_name=normalized_name,
+                server_name=mcp_server or "gemini",
+                arguments=tool_input,
+            )
+
+        if event.event_type == "tool_result":
+            call_id = event.data.get("call_id") or event.data.get("id") or "unknown"
+            success = event.data.get("success", True)
+            result = event.data.get("result") or event.data.get("output")
+            error = event.data.get("error")
+
+            return ToolResultEvent(
+                tool_call_id=call_id,
+                success=success,
+                result=result,
+                error=error,
+            )
 
         if event.event_type == "error":
             message = event.data.get("message", "Unknown error")

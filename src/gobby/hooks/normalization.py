@@ -101,6 +101,12 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     if "args" in data and "tool_input" not in data:
         data["tool_input"] = data["args"]
 
+    # Normalize tool_input internal fields (e.g., path → file_path for Gemini)
+    tool_input = data.get("tool_input")
+    if isinstance(tool_input, dict):
+        if "path" in tool_input and "file_path" not in tool_input:
+            tool_input["file_path"] = tool_input["path"]
+
     # mcp_context {} → mcp_server / mcp_tool  (Gemini MCP)
     mcp_context = data.get("mcp_context")
     if mcp_context and isinstance(mcp_context, dict):
