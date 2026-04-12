@@ -24,9 +24,10 @@ Updated: `2026-04-12`
 
 - Phase 0 is complete in code and validated with focused tests.
 - Phase 1 is complete in code and validated with focused tests.
-- Phase 2 through Phase 6 are not started.
-- The implementation slice for Phase 0 was tracked under `gobby-#11668`.
-- The implementation slice for Phase 1 was tracked under `gobby-#11672`.
+- Phase 2 through Phase 5 are complete in code and validated with focused tests.
+- Phase 6 is complete as a planning follow-up: execution lifecycle stays clean, and any future generalized planning states are deferred to `gobby-#11686`.
+- The implementation slices for Phase 0 through Phase 5 were tracked under `gobby-#11668`, `gobby-#11672`, `gobby-#11673`, `gobby-#11674`, `gobby-#11675`, and `gobby-#11676`.
+- The Phase 6 planning follow-up was tracked under `gobby-#11677`.
 
 ### Phase 0 Landed
 
@@ -62,14 +63,13 @@ Updated: `2026-04-12`
 
 ### Next Agent Start Here
 
-- Start with Phase 2. The canonical ownership foundation is in place; do not add new ownership semantics back onto `status` or `assignee`.
-- Introduce `lifecycle_stage` and canonical blocked/closed semantics through the same shared transition/projection layer rather than adding more writer-specific branching.
-- Cut core queries and readiness helpers over to canonical predicates in the same phase so storage shape and behavior do not drift apart.
-- Keep `claimed_by_session_id` authoritative and continue treating `task_claimed`, `claimed_tasks`, and legacy `status` as projected compatibility surfaces only.
+- No implementation phases remain in this epic.
+- If persistent planning or expansion phases become a first-class routing or UI concern, start from `gobby-#11686` instead of reopening execution lifecycle.
 - Keep the locked semantic decisions intact:
   - only `closed` unblocks dependents
   - closing preserves the last lifecycle stage for audit
   - planning/expansion remains off the execution lifecycle axis
+  - current `expansion_status` stays expansion-specific unless the follow-up epic lands
 
 ## Locked Decisions
 
@@ -79,7 +79,7 @@ Updated: `2026-04-12`
 | `assignee` in this epic | Keep temporarily as compatibility/routing state | Existing flows still use it for non-canonical routing. Removing it now increases migration risk without helping the core split. |
 | Dependency satisfaction | Only `closed` tasks unblock dependents | Review stages are not completion. This fixes the current semantic drift between readiness helpers and workflow completion checks. |
 | Close semantics | Preserve the last `lifecycle_stage` underneath close state | Auditability is more valuable than collapsing lifecycle history on close. |
-| Planning/expansion workflow | Separate from execution lifecycle | Existing planning/expansion concepts should not pollute build/review/merge semantics. |
+| Planning/expansion workflow | Separate from execution lifecycle; keep `expansion_status` narrow for the current expansion-spec flow and defer generalized planning states to a future `workflow_phase` axis | Execution lifecycle is reserved for build/review/merge semantics. If planning states become first-class later, they need their own axis rather than another lifecycle overload. |
 
 ## Research Findings
 
@@ -93,6 +93,7 @@ Updated: `2026-04-12`
   - workflow completion helpers only treat `closed` as complete
 - The external compatibility surface is broader than the original draft: API serialization, web hooks/components, JSONL sync, admin health, and project stats still expose or depend on legacy `status`/`assignee`.
 - The repo already has a separate expansion axis (`expansion_status`, `expansion_context`), so execution lifecycle does not need another planning-specific state during this epic.
+- Current `expansion_status` usage is intentionally narrow: it persists the expansion-spec save/execute flow (`none | pending | completed`) and is not a general planning-phase model.
 
 ## Target End-State
 
@@ -127,11 +128,11 @@ Updated: `2026-04-12`
 
 1. Phase 0: Nominal Fix and Behavior Stabilization `(complete)`
 2. Phase 1: Canonical Transition Layer and Explicit Ownership `(complete)`
-3. Phase 2: Lifecycle/Blocked/Closed Split and Query Cutover `(next)`
-4. Phase 3: External Interfaces and Serialization
-5. Phase 4: Rules, Agents, Pipelines, and Recovery
-6. Phase 5: Web UI
-7. Phase 6: Future Workflow-Phase Follow-up
+3. Phase 2: Lifecycle/Blocked/Closed Split and Query Cutover `(complete)`
+4. Phase 3: External Interfaces and Serialization `(complete)`
+5. Phase 4: Rules, Agents, Pipelines, and Recovery `(complete)`
+6. Phase 5: Web UI `(complete)`
+7. Phase 6: Future Workflow-Phase Follow-up `(complete)`
 
 ## Phase 0: Nominal Fix and Behavior Stabilization
 
@@ -342,6 +343,13 @@ Keep planning and expansion workflows extensible without polluting execution lif
 
 - Future states like `needs_planning` or `needs_expansion` can be added later without reopening the execution lifecycle split.
 - This epic lands without re-entangling execution and planning semantics.
+
+### Outcome
+
+- The existing `expansion_status` axis is sufficient for the current repo because the only persisted non-execution workflow state today is the expansion-spec lifecycle, paired with `expansion_context`.
+- `expansion_status` should stay narrow. It is already expansion-specific across storage, sync, MCP, and web surfaces, so broadening it into a general planning-state bucket would create another overloaded compatibility problem.
+- If Gobby later needs first-class states like `needs_planning` or `needs_expansion`, introduce a separate `workflow_phase` axis instead of widening execution lifecycle, legacy `status`, or `assignee`.
+- Deferred follow-up: `gobby-#11686` tracks the future workflow-phase design and integration work.
 
 ## Risks and Watchpoints
 
