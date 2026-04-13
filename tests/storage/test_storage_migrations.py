@@ -106,6 +106,18 @@ def test_agent_runs_table_includes_claimed_session_id_on_fresh_db(tmp_path) -> N
     assert "claimed_session_id" in agent_run_columns
 
 
+def test_tasks_claimed_session_fk_is_set_null_on_fresh_db(tmp_path) -> None:
+    """Fresh databases should end with ON DELETE SET NULL for canonical task ownership."""
+    db_path = tmp_path / "tasks_claim_owner_fk.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
+    claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
+    assert claimed_fk["on_delete"] == "SET NULL"
+
+
 def test_migration_211_adds_claimed_session_id_to_agent_runs(tmp_path) -> None:
     """Migration 211 should add the claimed_session_id column to existing databases."""
     db_path = tmp_path / "agent_runs_claim_owner_partial.db"
@@ -185,6 +197,86 @@ def test_migration_211_adds_claimed_session_id_to_agent_runs(tmp_path) -> None:
     assert applied == EXPECTED_FINAL_VERSION - 210
     agent_run_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(agent_runs)")}
     assert "claimed_session_id" in agent_run_columns
+
+
+def test_migration_212_updates_tasks_claimed_session_fk(tmp_path) -> None:
+    """Migration 212 should rebuild tasks with ON DELETE SET NULL ownership semantics."""
+    db_path = tmp_path / "tasks_claim_owner_fk_partial.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    db.execute("DELETE FROM schema_version")
+    db.execute("INSERT INTO schema_version (version) VALUES (211)")
+
+    db.connection.executescript("""
+        PRAGMA foreign_keys=OFF;
+        DROP TABLE IF EXISTS tasks_legacy;
+        CREATE TABLE tasks_legacy AS
+        SELECT
+            id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
+            lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
+            description, status, priority, task_type, assignee, labels, closed_reason,
+            compacted_at, validation_status, validation_feedback, validation_override_reason,
+            category, validation_criteria, validation_fail_count, dispatch_failure_count,
+            commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
+            github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
+            start_date, due_date, created_at, updated_at
+        FROM tasks;
+        DROP TABLE tasks;
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            parent_task_id TEXT REFERENCES tasks(id),
+            created_in_session_id TEXT REFERENCES sessions(id),
+            claimed_by_session_id TEXT REFERENCES sessions(id),
+            lifecycle_stage TEXT CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved')),
+            closed_in_session_id TEXT REFERENCES sessions(id),
+            closed_commit_sha TEXT,
+            closed_at TEXT,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'open',
+            priority INTEGER DEFAULT 2,
+            task_type TEXT DEFAULT 'task',
+            assignee TEXT,
+            labels TEXT,
+            closed_reason TEXT,
+            compacted_at TEXT,
+            validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid')),
+            validation_feedback TEXT,
+            validation_override_reason TEXT,
+            category TEXT,
+            validation_criteria TEXT,
+            validation_fail_count INTEGER DEFAULT 0,
+            dispatch_failure_count INTEGER DEFAULT 0,
+            commits TEXT,
+            escalated_at TEXT,
+            escalation_reason TEXT,
+            github_issue_number INTEGER,
+            github_pr_number INTEGER,
+            github_repo TEXT,
+            linear_issue_id TEXT,
+            linear_team_id TEXT,
+            seq_num INTEGER,
+            path_cache TEXT,
+            start_date TEXT,
+            due_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO tasks
+        SELECT * FROM tasks_legacy;
+        DROP TABLE tasks_legacy;
+        PRAGMA foreign_keys=ON;
+    """)
+
+    applied = run_migrations(db)
+
+    assert applied == EXPECTED_FINAL_VERSION - 211
+    rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
+    claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
+    assert claimed_fk["on_delete"] == "SET NULL"
 
 
 def test_migration_208_recovers_when_column_exists_but_version_does_not(tmp_path) -> None:

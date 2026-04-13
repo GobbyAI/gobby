@@ -344,6 +344,112 @@ def _migrate_agent_run_claimed_session_id(db: LocalDatabase) -> None:
     db.execute("ALTER TABLE agent_runs ADD COLUMN claimed_session_id TEXT REFERENCES sessions(id)")
 
 
+def _tasks_claimed_session_fk_is_set_null(db: LocalDatabase) -> bool:
+    """Return True when tasks.claimed_by_session_id already uses ON DELETE SET NULL."""
+    rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
+    for row in rows:
+        if (
+            row["from"] == "claimed_by_session_id"
+            and row["table"] == "sessions"
+            and row["on_delete"] == "SET NULL"
+        ):
+            return True
+    return False
+
+
+def _migrate_tasks_claimed_session_fk_set_null(db: LocalDatabase) -> None:
+    """Rebuild tasks so deleting a session clears canonical task ownership."""
+    if _tasks_claimed_session_fk_is_set_null(db):
+        return
+
+    conn = db.connection
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.executescript("""
+            DROP TABLE IF EXISTS tasks_new;
+            CREATE TABLE tasks_new (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                parent_task_id TEXT REFERENCES tasks(id),
+                created_in_session_id TEXT REFERENCES sessions(id),
+                claimed_by_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                lifecycle_stage TEXT CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved')),
+                closed_in_session_id TEXT REFERENCES sessions(id),
+                closed_commit_sha TEXT,
+                closed_at TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'open',
+                priority INTEGER DEFAULT 2,
+                task_type TEXT DEFAULT 'task',
+                assignee TEXT,
+                labels TEXT,
+                closed_reason TEXT,
+                compacted_at TEXT,
+                validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid')),
+                validation_feedback TEXT,
+                validation_override_reason TEXT,
+                category TEXT,
+                validation_criteria TEXT,
+                validation_fail_count INTEGER DEFAULT 0,
+                dispatch_failure_count INTEGER DEFAULT 0,
+                commits TEXT,
+                escalated_at TEXT,
+                escalation_reason TEXT,
+                github_issue_number INTEGER,
+                github_pr_number INTEGER,
+                github_repo TEXT,
+                linear_issue_id TEXT,
+                linear_team_id TEXT,
+                seq_num INTEGER,
+                path_cache TEXT,
+                start_date TEXT,
+                due_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO tasks_new (
+                id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
+                lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
+                description, status, priority, task_type, assignee, labels, closed_reason,
+                compacted_at, validation_status, validation_feedback, validation_override_reason,
+                category, validation_criteria, validation_fail_count, dispatch_failure_count,
+                commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
+                github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
+                start_date, due_date, created_at, updated_at
+            )
+            SELECT
+                id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
+                lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
+                description, status, priority, task_type, assignee, labels, closed_reason,
+                compacted_at, validation_status, validation_feedback, validation_override_reason,
+                category, validation_criteria, validation_fail_count, dispatch_failure_count,
+                commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
+                github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
+                start_date, due_date, created_at, updated_at
+            FROM tasks;
+            DROP TABLE tasks;
+            ALTER TABLE tasks_new RENAME TO tasks;
+            CREATE INDEX idx_tasks_project ON tasks(project_id);
+            CREATE INDEX idx_tasks_status ON tasks(status);
+            CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
+            CREATE INDEX idx_tasks_created_session ON tasks(created_in_session_id);
+            CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id);
+            CREATE INDEX idx_tasks_lifecycle_stage ON tasks(lifecycle_stage);
+            CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id);
+            CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
+            CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
+            DROP TRIGGER IF EXISTS tasks_fts_ai;
+            DROP TRIGGER IF EXISTS tasks_fts_ad;
+            DROP TRIGGER IF EXISTS tasks_fts_au;
+            DROP TABLE IF EXISTS tasks_fts;
+        """)
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+    _setup_tasks_fts(db)
+
+
 def _migrate_task_lifecycle_stage(db: LocalDatabase) -> None:
     """Add canonical lifecycle stage storage and backfill projected status."""
     with db.transaction() as tx:
@@ -1006,6 +1112,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         211,
         "Persist agent run claimed session ownership for task recovery",
         _migrate_agent_run_claimed_session_id,
+    ),
+    (
+        212,
+        "Update tasks.claimed_by_session_id to ON DELETE SET NULL",
+        _migrate_tasks_claimed_session_fk_set_null,
     ),
 ]
 
