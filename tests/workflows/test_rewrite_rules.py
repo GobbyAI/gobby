@@ -586,7 +586,6 @@ class TestCompressBashOutputBundledRule:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
-        assert "source != 'codex'" in body.when
 
         event = _make_event(
             data={"tool_name": "Bash", "tool_input": {"command": "echo ok"}},

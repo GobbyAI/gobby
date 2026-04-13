@@ -34,7 +34,10 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
 
         try:
             session = server.session_manager.get(chat_id)
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "Chat message key resolution failed for %s: %s", chat_id, exc, exc_info=True
+            )
             session = None
 
         if not session or getattr(session, "session_type", None) != "web_chat":

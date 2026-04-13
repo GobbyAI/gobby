@@ -60,9 +60,15 @@ def expansion_registry(task_manager, sync_manager):
 
 
 @pytest.fixture(autouse=True)
-def clear_background_runs():
+async def clear_background_runs():
     _background_run_tasks.clear()
     yield
+    pending = list(_background_run_tasks.values())
+    for task in pending:
+        if not task.done():
+            task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
     _background_run_tasks.clear()
 
 

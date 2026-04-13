@@ -54,8 +54,21 @@ class ExpansionRun:
     @classmethod
     def from_row(cls, row: Any) -> ExpansionRun:
         """Create an ExpansionRun from a database row."""
+        run_id = row["id"]
+
+        def _decode(field: str) -> Any:
+            raw = row[field]
+            if not raw:
+                return None
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"ExpansionRun.from_row: failed to decode {field} for run {run_id}: {exc}"
+                ) from exc
+
         return cls(
-            id=row["id"],
+            id=run_id,
             parent_task_id=row["parent_task_id"],
             project_id=row["project_id"],
             triggering_session_id=row["triggering_session_id"],
@@ -64,18 +77,14 @@ class ExpansionRun:
             plan_file=row["plan_file"],
             provider=row["provider"],
             model=row["model"],
-            options=json.loads(row["options_json"]) if row["options_json"] else None,
-            compiled_spec=(
-                json.loads(row["compiled_spec_json"]) if row["compiled_spec_json"] else None
-            ),
-            qa_result=json.loads(row["qa_result_json"]) if row["qa_result_json"] else None,
-            task_id_map=json.loads(row["task_id_map_json"]) if row["task_id_map_json"] else None,
-            created_task_ids=(
-                json.loads(row["created_task_ids_json"]) if row["created_task_ids_json"] else None
-            ),
+            options=_decode("options_json"),
+            compiled_spec=_decode("compiled_spec_json"),
+            qa_result=_decode("qa_result_json"),
+            task_id_map=_decode("task_id_map_json"),
+            created_task_ids=_decode("created_task_ids_json"),
             error=row["error"],
-            logs=json.loads(row["logs_json"]) if row["logs_json"] else None,
-            checkpoints=json.loads(row["checkpoints_json"]) if row["checkpoints_json"] else None,
+            logs=_decode("logs_json"),
+            checkpoints=_decode("checkpoints_json"),
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             created_at=row["created_at"],

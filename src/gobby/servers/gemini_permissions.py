@@ -163,7 +163,7 @@ class GeminiWebChatPermissionsMixin:
             self._pending_approval_event.set()
 
     async def sync_sdk_permission_mode(self) -> None:
-        return None
+        pass
 
     @property
     def has_pending_approval(self) -> bool:

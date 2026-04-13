@@ -501,7 +501,12 @@ def show_task(task_id: str) -> None:
 
     blocker_ids = sorted(task.active_blocked_by)
     state = serialize_task_state(task)
-    lifecycle_display = state["lifecycle_stage"] or "open"
+    if state["is_closed"]:
+        lifecycle_display = "closed"
+    elif state["is_escalated"]:
+        lifecycle_display = "escalated"
+    else:
+        lifecycle_display = state["lifecycle_stage"] or "open"
 
     click.echo(f"Task: {task.title}")
     click.echo(f"ID: {task.id}")

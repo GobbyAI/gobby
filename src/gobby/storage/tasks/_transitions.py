@@ -124,8 +124,19 @@ def reopen_task(
     return get_task(db, task_id)
 
 
-def escalate_task(db: DatabaseProtocol, task_id: str, *, reason: str) -> Task:
-    """Escalate a task without dropping canonical ownership."""
+def escalate_task(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    reason: str,
+    validation_override_reason: str | None = None,
+) -> Task:
+    """Escalate a task without dropping canonical ownership.
+
+    When ``validation_override_reason`` is provided, it is persisted in the
+    same write as the escalation so callers don't need a second update_task
+    call that could fail after the escalation has already landed.
+    """
     task = get_task(db, task_id)
     if task.status == "escalated" or is_task_closed(task):
         raise ValueError(f"Cannot escalate task with status '{task.status}'.")
@@ -136,6 +147,9 @@ def escalate_task(db: DatabaseProtocol, task_id: str, *, reason: str) -> Task:
         status="escalated",
         escalated_at=datetime.now(UTC).isoformat(),
         escalation_reason=reason,
+        validation_override_reason=(
+            validation_override_reason if validation_override_reason is not None else UNSET
+        ),
     )
     return get_task(db, task_id)
 
@@ -180,6 +194,12 @@ def mark_task_needs_review(
 ) -> Task:
     """Submit a task for review while preserving ownership."""
     task = get_task(db, task_id)
+    if is_task_closed(task) or task.status == "escalated":
+        raise ValueError(
+            f"Cannot mark task with status '{task.status}' as needs_review. "
+            "Task must be active (not closed or escalated)."
+        )
+
     description = UNSET
     if review_notes:
         description = (task.description or "") + f"\n\n[Review Notes]\n{review_notes}"

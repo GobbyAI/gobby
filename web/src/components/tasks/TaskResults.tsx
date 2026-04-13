@@ -69,8 +69,11 @@ function outcomeLabel(task: GobbyTaskDetail): { text: string; color: string } {
       default: return { text: 'Closed', color: '#22c55e' }
     }
   }
-  if (bucket === 'blocked' || state.is_escalated) {
-    return { text: 'Escalated', color: TASK_BUCKET_COLORS.blocked }
+  if (state.is_escalated) {
+    return { text: 'Escalated', color: '#f87171' }
+  }
+  if (bucket === 'blocked') {
+    return { text: 'Blocked', color: TASK_BUCKET_COLORS.blocked }
   }
   return { text: TASK_BUCKET_LABELS[bucket], color: TASK_BUCKET_COLORS[bucket] }
 }

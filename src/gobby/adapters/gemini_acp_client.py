@@ -368,6 +368,8 @@ class GeminiACPClient:
         if not target_session_id:
             raise RuntimeError("GeminiACPClient missing session ID for session/prompt")
 
+        # Acquire manually (not `async with`) because the lock must remain held
+        # across the `yield` points of this async generator. Released in finally.
         await self._io_lock.acquire()
         try:
             request: dict[str, Any] = {

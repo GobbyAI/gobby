@@ -424,17 +424,22 @@ async def build_turn_and_digest(
         Dict with turn_num and pipeline results, or None if skipped
     """
     if not memory_manager or not memory_manager.config.enabled:
-        logger.debug("build_turn_and_digest: skipped — memory_manager missing or disabled")
+        logger.debug(
+            "build_turn_and_digest: skipped — memory_manager missing or disabled "
+            f"(session_id={session_id})"
+        )
         return None
 
     if not llm_service:
-        logger.debug("build_turn_and_digest: skipped — no llm_service")
+        logger.debug(f"build_turn_and_digest: skipped — no llm_service (session_id={session_id})")
         return None
 
     # Check DigestConfig.enabled
     digest_config = getattr(config, "digest", None) if config else None
     if digest_config and not digest_config.enabled:
-        logger.debug("build_turn_and_digest: skipped — digest config disabled")
+        logger.debug(
+            f"build_turn_and_digest: skipped — digest config disabled (session_id={session_id})"
+        )
         return None
 
     try:

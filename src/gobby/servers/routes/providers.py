@@ -150,21 +150,20 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         """
         probed = await _probe_providers()
         model_catalog = _build_model_catalog(server)
+        fallback_entry: tuple[list[dict[str, Any]], str] = (
+            [{"value": "default", "label": "Default"}],
+            "static",
+        )
         result: list[dict[str, Any]] = []
         for name, path in probed:
             available, startup_error = _provider_health(server, name, path)
+            models, source = model_catalog.get(name, fallback_entry)
             result.append(
                 {
                     "provider": name,
                     "available": available,
-                    "models": model_catalog.get(
-                        name,
-                        ([{"value": "default", "label": "Default"}], "static"),
-                    )[0],
-                    "source": model_catalog.get(
-                        name,
-                        ([{"value": "default", "label": "Default"}], "static"),
-                    )[1],
+                    "models": models,
+                    "source": source,
                     "startup_error": startup_error,
                 }
             )

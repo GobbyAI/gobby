@@ -266,12 +266,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             ctx.task_manager.escalate_task(
                 resolved_id,
                 reason=escalation_reason,
+                validation_override_reason=(override_justification if store_override else None),
             )
-            if store_override:
-                ctx.task_manager.update_task(
-                    resolved_id,
-                    validation_override_reason=override_justification,
-                )
 
             # Auto-link session if provided
             if resolved_session_id:

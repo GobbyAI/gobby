@@ -1162,10 +1162,16 @@ class TestClaimedTaskReconciliation:
 
         assert variables["task_claimed"] is True
         assert variables["claimed_tasks"] == {"uuid-db": "#42"}
-        task_manager.list_tasks.assert_called_once_with(
-            claimed_by_session_id="sess-1",
-            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
-        )
+        task_manager.list_tasks.assert_called_once()
+        call_kwargs = task_manager.list_tasks.call_args.kwargs
+        assert call_kwargs["claimed_by_session_id"] == "sess-1"
+        assert set(call_kwargs["status"]) == {
+            "open",
+            "in_progress",
+            "needs_review",
+            "review_approved",
+            "escalated",
+        }
 
     def test_reconcile_rebuilds_with_no_seq_num(self) -> None:
         """DB task without seq_num should use truncated UUID as ref."""

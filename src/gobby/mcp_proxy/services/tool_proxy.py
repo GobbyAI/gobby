@@ -363,7 +363,28 @@ class ToolProxyService:
             tool_name=tool_name,
             arguments=arguments,
         )
-        response = await asyncio.to_thread(workflow_handler.evaluate, event)
+        try:
+            response = await asyncio.to_thread(workflow_handler.evaluate, event)
+        except Exception as exc:
+            logger.warning(
+                "Workflow evaluation failed for %s/%s: %s",
+                server_name,
+                tool_name,
+                exc,
+                exc_info=True,
+            )
+            return (
+                server_name,
+                tool_name,
+                arguments,
+                {
+                    "success": False,
+                    "error": f"Workflow evaluation failed: {exc}",
+                    "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                },
+            )
 
         if response.decision != "allow":
             return (

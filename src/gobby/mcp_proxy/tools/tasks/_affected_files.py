@@ -329,7 +329,11 @@ def create_ops_affected_files_registry(ctx: "RegistryContext") -> InternalToolRe
             if not affected_files:
                 skipped += 1
                 continue
-            created_task_id = run.task_id_map.get(task_spec["id"])
+            task_id_key = task_spec.get("id")
+            if not task_id_key:
+                skipped += 1
+                continue
+            created_task_id = run.task_id_map.get(task_id_key)
             if not created_task_id:
                 skipped += 1
                 continue

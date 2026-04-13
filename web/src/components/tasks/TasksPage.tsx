@@ -408,13 +408,14 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           await deEscalateTask(taskId, 'Resumed active work from tasks view', 'in_progress')
           break
         }
+        // Prompt for a session BEFORE any mutating action — a cancelled
+        // prompt must not leave the task reopened-but-unclaimed.
+        const sessionId = promptForSessionId(state.owner_session_id)
+        if (!sessionId) return
         if (state.is_closed || state.lifecycle_stage === 'needs_review' || state.is_merge_ready) {
           await reopenTask(taskId, 'Returned to active work from tasks view')
         }
-        const sessionId = promptForSessionId(state.owner_session_id)
-        if (sessionId) {
-          await claimTask(taskId, sessionId, true)
-        }
+        await claimTask(taskId, sessionId, true)
         break
       }
       case 'review':

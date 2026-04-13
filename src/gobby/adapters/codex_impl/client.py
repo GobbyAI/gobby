@@ -368,6 +368,7 @@ class CodexAppServerClient:
         """List Codex app-server models, following pagination when present."""
         models: list[dict[str, Any]] = []
         cursor: str | None = None
+        seen_cursors: set[str] = set()
 
         while True:
             params: dict[str, Any] = {
@@ -382,10 +383,17 @@ class CodexAppServerClient:
             if isinstance(page, list):
                 models.extend(item for item in page if isinstance(item, dict))
 
-            next_cursor = result.get("nextCursor")
-            cursor = str(next_cursor) if next_cursor else None
+            next_cursor_raw = result.get("nextCursor")
+            cursor = str(next_cursor_raw) if next_cursor_raw else None
             if not cursor:
                 break
+            if cursor in seen_cursors:
+                logger.warning(
+                    "Codex model/list returned a repeated cursor (%s); stopping pagination",
+                    cursor,
+                )
+                break
+            seen_cursors.add(cursor)
 
         return models
 

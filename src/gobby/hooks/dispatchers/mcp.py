@@ -8,6 +8,7 @@ for context injection.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from typing import Any
@@ -365,9 +366,13 @@ def dispatch_mcp_calls(
                         f"dispatch_mcp_calls: background {s}/{tl} failed: {t.exception()}"
                     )
 
-            def _log_bg_future_error(f: Any, s: str = _bg_server, tl: str = _bg_tool) -> None:
+            def _log_bg_future_error(
+                f: concurrent.futures.Future[Any],
+                s: str = _bg_server,
+                tl: str = _bg_tool,
+            ) -> None:
                 if not f.cancelled():
-                    exc = f.exception()
+                    exc: BaseException | None = f.exception()
                     if exc is not None:
                         logger.warning(f"dispatch_mcp_calls: background {s}/{tl} failed: {exc}")
 

@@ -33,7 +33,7 @@ class WebChatRuntimeManager:
     @property
     def codex_client(self) -> CodexAppServerClient | None:
         """Expose the shared Codex app-server client."""
-        return self._codex_backend._client
+        return self._codex_backend.client
 
     async def start(self, *, background: bool = False) -> None:
         """Start daemon-owned provider backends."""

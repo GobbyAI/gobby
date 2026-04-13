@@ -434,9 +434,24 @@ class LocalTaskManager:
         self._notify_listeners()
         return self.get_task(task_id)
 
-    def escalate_task(self, task_id: str, reason: str) -> Task:
-        """Escalate a task for human intervention."""
-        task = _escalate_task(self.db, task_id=task_id, reason=reason)
+    def escalate_task(
+        self,
+        task_id: str,
+        reason: str,
+        *,
+        validation_override_reason: str | None = None,
+    ) -> Task:
+        """Escalate a task for human intervention.
+
+        Optionally persists a validation override reason in the same write
+        so callers don't need a follow-up update_task call.
+        """
+        task = _escalate_task(
+            self.db,
+            task_id=task_id,
+            reason=reason,
+            validation_override_reason=validation_override_reason,
+        )
         self._notify_listeners()
         return task
 

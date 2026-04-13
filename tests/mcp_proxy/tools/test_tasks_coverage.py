@@ -1527,15 +1527,18 @@ class TestCloseTaskTool:
                 },
             )
 
-            # When override_justification is provided, task escalates for human review
+            # When override_justification is provided, task escalates for human review.
+            # The validation_override_reason is now persisted in the same write as
+            # the escalation (no separate update_task call).
             assert result.get("routed_to_escalation") is True
             mock_task_manager.escalate_task.assert_called_once_with(
                 "550e8400-e29b-41d4-a716-446655440000",
                 reason="Validation override requested: Manually verified",
-            )
-            mock_task_manager.update_task.assert_called_once_with(
-                "550e8400-e29b-41d4-a716-446655440000",
                 validation_override_reason="Manually verified",
+            )
+            assert not any(
+                call.kwargs.get("validation_override_reason") is not None
+                for call in mock_task_manager.update_task.call_args_list
             )
 
     @pytest.mark.asyncio

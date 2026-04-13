@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 _BACKEND_START_TIMEOUT_SECONDS = 15.0
 
+# GeminiAdapter is stateless w.r.t. tool-name normalization; share one instance
+# instead of constructing a new adapter on every tool call.
+_GEMINI_TOOL_NAME_ADAPTER = GeminiAdapter()
+
 
 def _error_message(exc: BaseException) -> str:
     """Return a compact non-empty error string for startup health."""
@@ -334,7 +338,7 @@ class GeminiManagedChatSession(
                 return None
 
             # Normalize tool name for rule enforcement
-            normalized_name = GeminiAdapter().normalize_tool_name(tool_name)
+            normalized_name = _GEMINI_TOOL_NAME_ADAPTER.normalize_tool_name(tool_name)
 
             tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
             mcp_server = event.data.get("mcp_server") or event.data.get("server_name")
@@ -628,6 +632,11 @@ class CodexWebChatBackend:
             startup_error="Codex app-server client not configured",
         )
         self._startup_task: asyncio.Task[None] | None = None
+
+    @property
+    def client(self) -> CodexAppServerClient | None:
+        """Expose the shared Codex app-server client for callers."""
+        return self._client
 
     async def _start_inner(self) -> None:
         if self._client is None:

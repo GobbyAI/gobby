@@ -26,7 +26,13 @@ def _build_expansion_service() -> ExpansionService:
 
 
 def _resolve_cli_session_id(raw_session_id: str | None) -> str | None:
-    """Resolve a CLI-provided session reference when possible."""
+    """Resolve a CLI-provided session reference when possible.
+
+    When ``raw_session_id`` is explicitly supplied by the user, a resolution
+    failure surfaces as a :class:`click.ClickException`. When falling back to
+    the ambient ``get_current_session_id()``, failures stay silent so the
+    CLI keeps working outside of a hook-aware shell.
+    """
     session_ref = raw_session_id or get_current_session_id()
     if not session_ref:
         return None
@@ -36,7 +42,9 @@ def _resolve_cli_session_id(raw_session_id: str | None) -> str | None:
     project_id = project_ctx.get("id") if project_ctx else None
     try:
         return session_manager.resolve_session_reference(session_ref, project_id)
-    except Exception:
+    except Exception as exc:
+        if raw_session_id is not None:
+            raise click.ClickException(f"Cannot resolve session '{raw_session_id}': {exc}") from exc
         return None
 
 

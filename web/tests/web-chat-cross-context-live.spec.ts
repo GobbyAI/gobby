@@ -112,7 +112,7 @@ async function waitForAssistantToken(
   request: Parameters<typeof test>[0]["request"],
   dbSessionId: string,
   token: string,
-): Promise<void> {
+): Promise<string> {
   const deadline = Date.now() + PROMPT_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
@@ -134,8 +134,9 @@ async function waitForAssistantToken(
         throw new Error(`Gemini returned an error instead of a response: ${failed}`);
       }
 
-      if (assistantMessages.some((content: string) => content.includes(token))) {
-        return;
+      const match = assistantMessages.find((content: string) => content.includes(token));
+      if (match) {
+        return match;
       }
     }
     await pause(1000);
@@ -223,45 +224,48 @@ test.describe("Live Gemini cross-context continuity verification", () => {
     );
 
     const secondContext = await browser.newContext();
-    const secondPage = await secondContext.newPage();
+    try {
+      const secondPage = await secondContext.newPage();
 
-    await secondPage.goto(getLiveChatUrl());
-    await secondPage.evaluate(() => {
-      localStorage.removeItem("gobby-conversation-id");
-      localStorage.removeItem("gobby-db-session-id");
-      localStorage.removeItem("gobby-selected-provider");
-    });
-    await secondPage.reload();
-    await expect(secondPage.locator(".command-bar-session")).toContainText("New Chat Session");
+      await secondPage.goto(getLiveChatUrl());
+      await secondPage.evaluate(() => {
+        localStorage.removeItem("gobby-conversation-id");
+        localStorage.removeItem("gobby-db-session-id");
+        localStorage.removeItem("gobby-selected-provider");
+      });
+      await secondPage.reload();
+      await expect(secondPage.locator(".command-bar-session")).toContainText("New Chat Session");
 
-    await openSessionFromCommandPalette(secondPage, firstTurn.session.ref);
+      await openSessionFromCommandPalette(secondPage, firstTurn.session.ref);
 
-    await secondPage.waitForFunction(
-      (expectedId) => localStorage.getItem("gobby-db-session-id") === expectedId,
-      firstTurn.dbSessionId,
-      { timeout: 15_000 },
-    );
+      await secondPage.waitForFunction(
+        (expectedId) => localStorage.getItem("gobby-db-session-id") === expectedId,
+        firstTurn.dbSessionId,
+        { timeout: 15_000 },
+      );
 
-    await expect(secondPage.locator(".command-bar-session")).toContainText(firstTurn.session.ref);
-    await expect(
-      secondPage
-        .locator(".message-content")
-        .filter({ hasText: firstToken })
-        .last(),
-    ).toBeVisible({
-      timeout: PROMPT_TIMEOUT_MS,
-    });
+      await expect(secondPage.locator(".command-bar-session")).toContainText(firstTurn.session.ref);
+      await expect(
+        secondPage
+          .locator(".message-content")
+          .filter({ hasText: firstToken })
+          .last(),
+      ).toBeVisible({
+        timeout: PROMPT_TIMEOUT_MS,
+      });
 
-    const secondToken = `live-gemini-context-two-${runId}`;
-    const secondTurn = await sendPromptAndWait(
-      secondPage,
-      request,
-      `Reply with exactly ${secondToken}.`,
-      secondToken,
-    );
+      const secondToken = `live-gemini-context-two-${runId}`;
+      const secondTurn = await sendPromptAndWait(
+        secondPage,
+        request,
+        `Reply with exactly ${secondToken}.`,
+        secondToken,
+      );
 
-    expect(secondTurn.dbSessionId).toBe(firstTurn.dbSessionId);
-    await waitForAssistantToken(request, firstTurn.dbSessionId, secondToken);
-    await secondContext.close();
+      expect(secondTurn.dbSessionId).toBe(firstTurn.dbSessionId);
+      await waitForAssistantToken(request, firstTurn.dbSessionId, secondToken);
+    } finally {
+      await secondContext.close();
+    }
   });
 });

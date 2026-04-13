@@ -128,7 +128,7 @@ def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
 
     If ``session_id`` is provided, the task must also still be assigned to that
     session. This keeps reconciliation and recovery aligned while ownership is
-    migrates from legacy ``assignee`` to canonical ``claimed_by_session_id``.
+    migrating from legacy ``assignee`` to canonical ``claimed_by_session_id``.
     """
 
     if task is None or not is_active_claim_status(getattr(task, "status", None)):

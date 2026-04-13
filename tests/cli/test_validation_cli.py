@@ -237,7 +237,7 @@ class TestDeEscalateCommand:
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
-        mock_manager.update_task.return_value = mock_task
+        mock_manager.de_escalate_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(

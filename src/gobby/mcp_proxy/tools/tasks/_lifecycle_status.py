@@ -361,10 +361,13 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
         except Exception:
             pass  # nosec B110 # best-effort, SESSION_END is the backstop
 
-        updated = ctx.task_manager.mark_task_needs_review(
-            resolved_id,
-            review_notes=review_notes,
-        )
+        try:
+            updated = ctx.task_manager.mark_task_needs_review(
+                resolved_id,
+                review_notes=review_notes,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
         if not updated:
             return {"error": f"Failed to mark task {task_id} for review"}
 

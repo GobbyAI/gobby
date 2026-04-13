@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
@@ -213,15 +215,17 @@ def update_rule(
     if definition is not None:
         try:
             RuleDefinitionBody.model_validate(definition)
-        except Exception as e:
+        except ValidationError as e:
             return {"success": False, "error": f"Invalid rule definition: {e}"}
 
+        # Shallow-copy to avoid mutating the caller's dict via pop().
+        local_def = dict(definition)
         for key in ("description", "enabled", "priority", "tags"):
-            if key not in fields and key in definition:
-                fields[key] = definition.pop(key)
+            if key not in fields and key in local_def:
+                fields[key] = local_def.pop(key)
 
-        definition.pop("name", None)
-        fields["definition_json"] = json.dumps(definition)
+        local_def.pop("name", None)
+        fields["definition_json"] = json.dumps(local_def)
 
     if not fields:
         return {"success": False, "error": "No fields to update"}
@@ -266,7 +270,7 @@ def create_rule(
     # Validate with Pydantic
     try:
         RuleDefinitionBody.model_validate(definition)
-    except Exception as e:
+    except ValidationError as e:
         return {"success": False, "error": f"Validation failed: {e}"}
 
     # Name collision check: reject user rules that shadow gobby templates
