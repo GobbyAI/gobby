@@ -429,6 +429,60 @@ class TestRegisterSession:
         assert response.status_code == 400
         assert "No project found" in response.json()["detail"]
 
+
+# =============================================================================
+# POST /sessions/web-chat
+# =============================================================================
+
+
+class TestCreateWebChatSession:
+    """Test POST /sessions/web-chat endpoint."""
+
+    def test_create_web_chat_session_success(self, client, mock_server) -> None:
+        session = _make_session(source="claude")
+        refreshed = _make_session(source="claude")
+        mock_server.session_manager.create_web_chat_session.return_value = session
+        mock_server.session_manager.get.return_value = refreshed
+
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="machine-123"):
+            response = client.post(
+                "/api/sessions/web-chat",
+                json={
+                    "provider": "claude",
+                    "project_id": "proj-123",
+                    "cwd": "/repo",
+                    "title": "Web Chat",
+                    "model": "sonnet",
+                    "chat_mode": "plan",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "created"
+        mock_server.resolve_project_id.assert_called_once_with("proj-123", "/repo")
+        mock_server.session_manager.create_web_chat_session.assert_called_once_with(
+            machine_id="machine-123",
+            project_id="proj-123",
+            source="claude",
+            title="Web Chat",
+        )
+        mock_server.session_manager.update_model.assert_called_once_with("sess-abc123", "sonnet")
+        mock_server.session_manager.update_chat_mode.assert_called_once_with(
+            "sess-abc123",
+            "plan",
+        )
+
+    def test_create_web_chat_session_rejects_invalid_provider(self, client, mock_server) -> None:
+        response = client.post(
+            "/api/sessions/web-chat",
+            json={"provider": "invalid-provider"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid provider. Must be one of: claude, gemini, codex"
+        mock_server.session_manager.create_web_chat_session.assert_not_called()
+
     def test_register_internal_error(self, client, mock_server) -> None:
         """Returns 500 on unexpected internal error."""
         mock_server.session_manager.register.side_effect = RuntimeError("boom")

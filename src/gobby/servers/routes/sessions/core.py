@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from gobby.servers.models import SessionRegisterRequest
+from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -177,20 +177,20 @@ def register_core_routes(
     """Register core session CRUD routes on the router."""
 
     @router.post("/web-chat")
-    async def create_web_chat_session(body: dict[str, Any]) -> dict[str, Any]:
+    async def create_web_chat_session(body: WebChatSessionRequest) -> dict[str, Any]:
         """Create a durable web-chat session row owned by the server."""
         try:
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
-            provider = body.get("provider") or "claude"
+            provider = body.provider or "claude"
             if provider not in {"claude", "gemini", "codex"}:
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid provider. Must be one of: claude, gemini, codex",
                 )
 
-            project_id = server.resolve_project_id(body.get("project_id"), body.get("cwd"))
+            project_id = server.resolve_project_id(body.project_id, body.cwd)
 
             from gobby.utils.machine_id import get_machine_id
 
@@ -199,17 +199,17 @@ def register_core_routes(
                 machine_id=machine_id,
                 project_id=project_id,
                 source=provider,
-                title=body.get("title"),
+                title=body.title,
             )
 
-            model = body.get("model")
+            model = body.model
             if isinstance(model, str) and model:
                 server.session_manager.update_model(session.id, model)
                 refreshed = server.session_manager.get(session.id)
                 if refreshed is not None:
                     session = refreshed
 
-            chat_mode = body.get("chat_mode")
+            chat_mode = body.chat_mode
             if isinstance(chat_mode, str) and chat_mode:
                 server.session_manager.update_chat_mode(session.id, chat_mode)
                 refreshed = server.session_manager.get(session.id)

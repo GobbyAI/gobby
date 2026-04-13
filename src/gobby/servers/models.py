@@ -29,3 +29,20 @@ class SessionRegisterRequest(BaseModel):
     )
     git_branch: str | None = Field(None, description="Current git branch name")
     cwd: str | None = Field(None, description="Current working directory")
+
+
+class WebChatSessionRequest(BaseModel):
+    """Request model for durable web-chat session creation."""
+
+    provider: str | None = Field(
+        default="claude",
+        description="CLI provider backing the web chat session (claude, gemini, codex)",
+    )
+    project_id: str | None = Field(None, description="Project ID to associate with session")
+    cwd: str | None = Field(
+        None,
+        description="Working directory used to resolve the project when project_id is omitted",
+    )
+    title: str | None = Field(None, description="Optional session title")
+    model: str | None = Field(None, description="Optional model override")
+    chat_mode: str | None = Field(None, description="Optional chat mode override")
