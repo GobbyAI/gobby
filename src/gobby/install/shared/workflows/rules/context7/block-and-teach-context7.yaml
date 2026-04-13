@@ -12,8 +12,6 @@ rules:
       and tool_input.get('file_path', '').rpartition('.')[2]
           in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
               'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala')
-    conditions:
-      - "variables.get('context7_available', False)"
     effects:
       - type: block
         reason: >
