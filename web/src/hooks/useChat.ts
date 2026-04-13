@@ -107,8 +107,8 @@ function uuid(): string {
 
 function loadConversationId(): string {
   return (
-    localStorage.getItem(DB_SESSION_ID_KEY) ||
     localStorage.getItem(CONVERSATION_ID_KEY) ||
+    localStorage.getItem(DB_SESSION_ID_KEY) ||
     ""
   );
 }
@@ -116,11 +116,9 @@ function loadConversationId(): string {
 function saveConversationId(id: string): void {
   if (!id) {
     localStorage.removeItem(CONVERSATION_ID_KEY);
-    localStorage.removeItem(DB_SESSION_ID_KEY);
     return;
   }
   localStorage.setItem(CONVERSATION_ID_KEY, id);
-  localStorage.setItem(DB_SESSION_ID_KEY, id);
 }
 
 function loadDbSessionId(): string | null {
@@ -130,7 +128,6 @@ function loadDbSessionId(): string | null {
 function saveDbSessionId(id: string | null): void {
   if (id) {
     localStorage.setItem(DB_SESSION_ID_KEY, id);
-    localStorage.setItem(CONVERSATION_ID_KEY, id);
   } else {
     localStorage.removeItem(DB_SESSION_ID_KEY);
   }
@@ -635,6 +632,7 @@ export function useChat() {
   );
   const dbSessionIdRef = useRef<string | null>(dbSessionId);
   const creatingSessionIdRef = useRef<Promise<string | null> | null>(null);
+  const lastSeqRef = useRef<number>(0);
 
   // Branch/worktree tracking
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
@@ -821,14 +819,17 @@ export function useChat() {
 
   const bindActiveSession = useCallback((sessionId: string | null) => {
     const nextId = sessionId ?? "";
+    lastSeqRef.current = 0;
     conversationIdRef.current = nextId;
     setConversationId(nextId);
     setDbSessionId(sessionId);
     dbSessionIdRef.current = sessionId;
+    saveDbSessionId(sessionId);
     saveConversationId(nextId);
   }, []);
 
   const resetMainChatState = useCallback(() => {
+    lastSeqRef.current = 0;
     activeRequestIdRef.current = null;
     setIsStreaming(false);
     setIsThinking(false);
@@ -944,9 +945,6 @@ export function useChat() {
 
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
-
-  // Track last seen message sequence for reconnect backfill
-  const lastSeqRef = useRef<number>(0);
 
   // Queue for messages sent while disconnected — flushed on reconnect
   const pendingMessagesRef = useRef<{ content: string; projectId?: string | null }[]>([]);
@@ -1979,6 +1977,7 @@ export function useChat() {
   // Resume a CLI session (e.g., Claude) — sets the conversation ID
   // so the next message triggers server-side resume
   const resumeSession = useCallback((externalId: string) => {
+    lastSeqRef.current = 0;
     conversationIdRef.current = externalId;
     setConversationId(externalId);
     setConversationSwitchKey((k) => k + 1);
@@ -2512,6 +2511,7 @@ export function useChat() {
     }
 
     // Reset chat state
+    lastSeqRef.current = 0;
     activeRequestIdRef.current = null;
     setIsStreaming(false);
     setIsThinking(false);

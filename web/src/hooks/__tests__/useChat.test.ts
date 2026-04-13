@@ -142,6 +142,82 @@ describe('useChat', () => {
     )
   })
 
+  it('keeps conversation and db session storage separate when resuming an external session', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    act(() => {
+      result.current.resumeSession('claude-ext-456')
+    })
+
+    expect(localStorage.getItem('gobby-conversation-id')).toBe('claude-ext-456')
+    expect(localStorage.getItem('gobby-db-session-id')).toBe('test-conversation-id')
+  })
+
+  it('resets reconnect backfill when the active chat identity changes', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadModule()
+      mockFetch.mockJsonResponse('/api/chat/db-session-2/messages?limit=100&after_seq=0', {
+        messages: [],
+        max_seq: 5,
+      })
+      mockFetch.mockJsonResponse('/api/sessions/db-session-2', {
+        session: {
+          id: 'db-session-2',
+          seq_num: 202,
+          title: 'Other chat',
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          usage_cache_read_tokens: 0,
+          usage_cache_creation_tokens: 0,
+          context_window: null,
+        },
+      })
+
+      const { result } = renderHook(() => useChat())
+      const ws = mockWs.instances[0]
+      act(() => ws.simulateOpen())
+
+      await act(async () => {
+        result.current.switchConversation('db-session-2')
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      act(() => {
+        result.current.resumeSession('claude-ext-789')
+      })
+
+      act(() => {
+        ws.simulateClose()
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(mockWs.instances).toHaveLength(2)
+
+      await act(async () => {
+        mockWs.instances[1].simulateOpen()
+        await Promise.resolve()
+      })
+
+      const requestedUrls = mockFetch.fn.mock.calls.map(([input]) =>
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url,
+      )
+      expect(
+        requestedUrls.some((url) =>
+          url.includes('/api/chat/claude-ext-789/messages?after_seq=5'),
+        ),
+      ).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('sendMessage adds user message and sends WS message', async () => {
     await loadModule()
     const { result } = renderHook(() => useChat())
