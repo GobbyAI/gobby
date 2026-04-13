@@ -7,11 +7,14 @@ These tests verify that the ToolProxyService:
 4. Valid parameters pass through normally
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.hooks.events import HookResponse
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -782,6 +785,133 @@ class TestCallToolBlockedToolsEnforcement:
         assert result["success"] is False
         assert "not in allowed list" in result["error"]
         assert "fetch_changes" in result["error"]
+
+
+class TestWorkflowBeforeToolEnforcement:
+    """Tests for workflow before_tool enforcement on direct MCP execution."""
+
+    @pytest.fixture
+    def mock_hook_manager(self):
+        """Create a mock HookManager with workflow handler and session lookup."""
+        workflow_handler = MagicMock()
+        workflow_handler.evaluate.return_value = HookResponse(decision="allow")
+
+        session = SimpleNamespace(
+            source="codex",
+            project_id="project-123",
+            external_id="conv-123",
+        )
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        hook_manager = MagicMock()
+        hook_manager._workflow_handler = workflow_handler
+        hook_manager._session_manager = session_manager
+        return hook_manager
+
+    @pytest.fixture
+    def tool_proxy_with_hooks(self, mock_mcp_manager, mock_internal_manager, mock_hook_manager):
+        """Create ToolProxyService with workflow hook access enabled."""
+        return ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+            hook_manager_resolver=lambda: mock_hook_manager,
+        )
+
+    @pytest.mark.asyncio
+    async def test_workflow_block_prevents_execution(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ):
+        """Blocked before_tool response should prevent registry dispatch."""
+        from gobby.mcp_proxy.models import ToolProxyErrorCode
+
+        mock_hook_manager._workflow_handler.evaluate.return_value = HookResponse(
+            decision="block",
+            reason="reopen_task is blocked",
+        )
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        result = await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="reopen_task",
+            arguments={"task_id": "#123"},
+            session_id="session-123",
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == ToolProxyErrorCode.TOOL_BLOCKED.value
+        assert "blocked" in result["error"]
+        mock_registry.call.assert_not_called()
+
+        event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
+        assert event.data["tool_name"] == "mcp__gobby__call_tool"
+        assert event.data["tool_input"]["server_name"] == "gobby-tasks"
+        assert event.data["tool_input"]["tool_name"] == "reopen_task"
+
+    @pytest.mark.asyncio
+    async def test_session_context_fallback_drives_workflow_enforcement(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ):
+        """SessionContext should be enough to enforce blocked MCP tools."""
+        from gobby.mcp_proxy.models import ToolProxyErrorCode
+
+        mock_hook_manager._workflow_handler.evaluate.return_value = HookResponse(
+            decision="block",
+            reason="MCP tool 'gobby-tasks:mark_task_needs_review' is blocked",
+        )
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        with session_context_for_test("session-from-context"):
+            result = await tool_proxy_with_hooks.call_tool(
+                server_name="gobby-tasks",
+                tool_name="mark_task_needs_review",
+                arguments={"task_id": "#123"},
+            )
+
+        assert result["success"] is False
+        assert result["error_code"] == ToolProxyErrorCode.TOOL_BLOCKED.value
+        mock_registry.call.assert_not_called()
+
+        event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
+        assert event.metadata["_platform_session_id"] == "session-from-context"
+
+    @pytest.mark.asyncio
+    async def test_modified_input_is_applied_before_execution(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ):
+        """rewrite_input responses should update the actual dispatched arguments."""
+        mock_hook_manager._workflow_handler.evaluate.return_value = HookResponse(
+            decision="allow",
+            modified_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#123", "skip_validation": False},
+            },
+        )
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        result = await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="close_task",
+            arguments={"task_id": "#123", "skip_validation": True},
+            session_id="session-123",
+        )
+
+        assert result["success"] is True
+        mock_registry.call.assert_called_once_with(
+            "close_task",
+            {"task_id": "#123", "skip_validation": False},
+        )
 
 
 class TestStripUnknownParameters:

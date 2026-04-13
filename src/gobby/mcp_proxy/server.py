@@ -4,6 +4,7 @@ Gobby Daemon Tools MCP Server.
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -39,6 +40,7 @@ class GobbyDaemonTools:
         config_manager: Any | None = None,
         semantic_search: Any | None = None,
         fallback_resolver: Any | None = None,
+        hook_manager_resolver: Callable[[], Any | None] | None = None,
     ):
         self.config = config
         self.internal_manager = internal_manager
@@ -54,6 +56,7 @@ class GobbyDaemonTools:
             mcp_manager,
             internal_manager=internal_manager,
             fallback_resolver=fallback_resolver,
+            hook_manager_resolver=hook_manager_resolver,
         )
         self.server_mgmt = ServerManagementService(
             mcp_manager, config_manager, config, llm_service=llm_service

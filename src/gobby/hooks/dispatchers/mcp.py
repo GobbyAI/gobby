@@ -307,7 +307,13 @@ def dispatch_mcp_calls(
                 if s == "_proxy":
                     result = await proxy_self_call(proxy, t, args)
                 else:
-                    result = await proxy.call_tool(s, t, args, strip_unknown=True)
+                    result = await proxy.call_tool(
+                        s,
+                        t,
+                        args,
+                        strip_unknown=True,
+                        enforce_workflow=False,
+                    )
 
                 if isinstance(result, dict) and result.get("success") is False:
                     logger.warning(

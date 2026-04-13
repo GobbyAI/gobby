@@ -22,6 +22,7 @@ from gobby.utils.project_context import (
 )
 from gobby.utils.session_context import (
     SessionContext,
+    get_current_session_id,
     reset_session_context,
     set_session_context,
 )
@@ -542,7 +543,12 @@ async def call_mcp_tool(
         try:
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
-                result = await server.tool_proxy.call_tool(server_name, tool_name, arguments)
+                result = await server.tool_proxy.call_tool(
+                    server_name,
+                    tool_name,
+                    arguments,
+                    session_id=get_current_session_id(),
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 
@@ -626,7 +632,12 @@ async def mcp_proxy(
         try:
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
-                result = await server.tool_proxy.call_tool(server_name, tool_name, arguments)
+                result = await server.tool_proxy.call_tool(
+                    server_name,
+                    tool_name,
+                    arguments,
+                    session_id=get_current_session_id(),
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 

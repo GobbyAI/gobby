@@ -1,12 +1,17 @@
 """Tool proxy service."""
 
+import asyncio
 import logging
+from collections.abc import Callable
+from copy import deepcopy
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 
 if TYPE_CHECKING:
+    from gobby.hooks.hook_manager import HookManager
     from gobby.mcp_proxy.services.fallback import ToolFallbackResolver
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 
@@ -61,12 +66,14 @@ class ToolProxyService:
         fallback_resolver: "ToolFallbackResolver | None" = None,
         validate_arguments: bool = True,
         tool_filter: Any = None,
+        hook_manager_resolver: Callable[[], "HookManager | None"] | None = None,
     ):
         self._mcp_manager = mcp_manager
         self._internal_manager = internal_manager
         self._fallback_resolver = fallback_resolver
         self._validate_arguments = validate_arguments
         self._tool_filter = tool_filter
+        self._hook_manager_resolver = hook_manager_resolver
 
     def _resolve_server_name(self, server_name: str) -> str:
         """Auto-redirect known server name aliases to the correct server."""
@@ -199,6 +206,194 @@ class ToolProxyService:
         # Default to execution error
         return ToolProxyErrorCode.EXECUTION_ERROR.value
 
+    @staticmethod
+    def _get_effective_session_id(session_id: str | None) -> str | None:
+        """Return the explicit session_id or the current session context UUID."""
+        if session_id:
+            return session_id
+
+        from gobby.utils.session_context import get_session_context
+
+        ctx = get_session_context()
+        return ctx.session_id if ctx else None
+
+    def _resolve_hook_manager(self) -> "HookManager | None":
+        """Resolve HookManager lazily to avoid startup-order cycles."""
+        if self._hook_manager_resolver is None:
+            return None
+
+        try:
+            return self._hook_manager_resolver()
+        except Exception as exc:
+            logger.debug(f"Failed to resolve HookManager for tool enforcement: {exc}")
+            return None
+
+    def _prepare_arguments(
+        self,
+        arguments: dict[str, Any] | str | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Normalize tool arguments to a dict or return a structured error response."""
+        arguments = arguments or {}
+
+        if isinstance(arguments, str):
+            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
+
+            parsed = coerce_string_arguments(arguments)
+            if parsed is not None:
+                arguments = parsed
+            else:
+                # Provide a more specific error when the JSON is valid but
+                # not a dict (e.g. a list or scalar).
+                import json as _json
+
+                try:
+                    val = _json.loads(arguments)
+                    type_name = type(val).__name__
+                except (ValueError, TypeError):
+                    type_name = None
+
+                if type_name:
+                    error_msg = f"Invalid arguments: expected dict, got {type_name}"
+                else:
+                    error_msg = "Invalid arguments: expected dict, got string that isn't valid JSON"
+                return None, {
+                    "success": False,
+                    "error": error_msg,
+                    "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
+                }
+
+        if isinstance(arguments, dict):
+            normalized_arguments = dict(arguments)
+            # Strip call_tool's own parameters that LLMs sometimes flatten into
+            # the arguments dict instead of passing as separate parameters.
+            for leaked_key in ("server_name", "tool_name"):
+                normalized_arguments.pop(leaked_key, None)
+            return normalized_arguments, None
+
+        return None, {
+            "success": False,
+            "error": f"Invalid arguments: expected dict, got {type(arguments).__name__}",
+            "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
+        }
+
+    def _build_before_tool_event(
+        self,
+        effective_session_id: str,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Build the synthetic before_tool event used for direct MCP execution."""
+        from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+        from gobby.utils.project_context import get_project_context
+
+        project_ctx = get_project_context()
+        cwd = project_ctx.get("project_path") if project_ctx else None
+        project_id = project_ctx.get("id") if project_ctx else None
+        source = SessionSource.CODEX
+        metadata: dict[str, Any] = {"_platform_session_id": effective_session_id}
+
+        hook_manager = self._resolve_hook_manager()
+        session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
+        if session_manager is not None:
+            try:
+                session = session_manager.get(effective_session_id)
+            except Exception as exc:
+                logger.debug(f"Failed to load session {effective_session_id} for tool event: {exc}")
+            else:
+                if session is not None:
+                    session_source = getattr(session, "source", None)
+                    if isinstance(session_source, str):
+                        try:
+                            source = SessionSource(session_source)
+                        except ValueError:
+                            logger.debug(
+                                "Unknown session source %r for %s; defaulting to codex",
+                                session_source,
+                                effective_session_id,
+                            )
+                    project_id = project_id or getattr(session, "project_id", None)
+                    external_id = getattr(session, "external_id", None)
+                    if external_id:
+                        metadata["external_id"] = external_id
+
+        if cwd:
+            metadata["project_path"] = cwd
+
+        return HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=effective_session_id,
+            source=source,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                    "arguments": deepcopy(arguments),
+                },
+            },
+            metadata=metadata,
+            cwd=cwd,
+            project_id=project_id,
+        )
+
+    async def _apply_before_tool_enforcement(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_id: str | None,
+    ) -> tuple[str, str, dict[str, Any], dict[str, Any] | None]:
+        """Run workflow before_tool evaluation for direct MCP tool execution."""
+        effective_session_id = self._get_effective_session_id(session_id)
+        if not effective_session_id:
+            return server_name, tool_name, arguments, None
+
+        hook_manager = self._resolve_hook_manager()
+        workflow_handler = (
+            getattr(hook_manager, "_workflow_handler", None) if hook_manager else None
+        )
+        if workflow_handler is None:
+            return server_name, tool_name, arguments, None
+
+        event = self._build_before_tool_event(
+            effective_session_id=effective_session_id,
+            server_name=server_name,
+            tool_name=tool_name,
+            arguments=arguments,
+        )
+        response = await asyncio.to_thread(workflow_handler.evaluate, event)
+
+        if response.decision != "allow":
+            return (
+                server_name,
+                tool_name,
+                arguments,
+                {
+                    "success": False,
+                    "error": response.reason or "Tool call blocked by workflow rules.",
+                    "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                },
+            )
+
+        modified_input = response.modified_input
+        if not isinstance(modified_input, dict):
+            return server_name, tool_name, arguments, None
+
+        updated_server_name = modified_input.get("server_name", server_name)
+        updated_tool_name = modified_input.get("tool_name", tool_name)
+        raw_arguments = modified_input.get("arguments", arguments)
+        updated_arguments, error = self._prepare_arguments(raw_arguments)
+        if error is not None:
+            error["server_name"] = str(updated_server_name)
+            error["tool_name"] = str(updated_tool_name)
+            return server_name, tool_name, arguments, error
+
+        return str(updated_server_name), str(updated_tool_name), updated_arguments or {}, None
+
     async def list_tools(
         self,
         server_name: str,
@@ -303,6 +498,7 @@ class ToolProxyService:
         arguments: dict[str, Any] | None = None,
         session_id: str | None = None,
         strip_unknown: bool = False,
+        enforce_workflow: bool = True,
     ) -> Any:
         """Execute a tool with optional pre-validation.
 
@@ -325,57 +521,10 @@ class ToolProxyService:
 
         """
         server_name = self._resolve_server_name(server_name)
-        arguments = arguments or {}
-        if isinstance(arguments, str):
-            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
-
-            parsed = coerce_string_arguments(arguments)
-            if parsed is not None:
-                arguments = parsed
-            else:
-                # Provide a more specific error when the JSON is valid but
-                # not a dict (e.g. a list or scalar).
-                import json as _json
-
-                try:
-                    val = _json.loads(arguments)
-                    type_name = type(val).__name__
-                except (ValueError, TypeError):
-                    type_name = None
-
-                if type_name:
-                    error_msg = f"Invalid arguments: expected dict, got {type_name}"
-                else:
-                    error_msg = "Invalid arguments: expected dict, got string that isn't valid JSON"
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
-                }
-        # Strip call_tool's own parameters that LLMs sometimes flatten into
-        # the arguments dict instead of passing as separate parameters.
-        if isinstance(arguments, dict):
-            for leaked_key in ("server_name", "tool_name"):
-                arguments.pop(leaked_key, None)
-
-        if not isinstance(arguments, dict):
-            return {
-                "success": False,
-                "error": f"Invalid arguments: expected dict, got {type(arguments).__name__}",
-                "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
-            }
-
-        # Check tool filter before execution
-        if self._tool_filter and session_id:
-            allowed, reason = self._tool_filter.is_tool_allowed(tool_name, session_id)
-            if not allowed:
-                return {
-                    "success": False,
-                    "error": reason,
-                    "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
-                    "server_name": server_name,
-                    "tool_name": tool_name,
-                }
+        prepared_arguments, error = self._prepare_arguments(arguments)
+        if error is not None:
+            return error
+        arguments = prepared_arguments or {}
 
         # Handle proxy namespace: auto-resolve to the real server
         if self._is_proxy_namespace(server_name):
@@ -387,6 +536,7 @@ class ToolProxyService:
                     arguments,
                     session_id,
                     strip_unknown=strip_unknown,
+                    enforce_workflow=enforce_workflow,
                 )
             return {
                 "success": False,
@@ -395,6 +545,35 @@ class ToolProxyService:
                 "server_name": server_name,
                 "tool_name": tool_name,
             }
+
+        if enforce_workflow:
+            (
+                server_name,
+                tool_name,
+                arguments,
+                workflow_error,
+            ) = await self._apply_before_tool_enforcement(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                session_id=session_id,
+            )
+            if workflow_error is not None:
+                return workflow_error
+
+        effective_session_id = self._get_effective_session_id(session_id)
+
+        # Check tool filter before execution
+        if self._tool_filter and effective_session_id:
+            allowed, reason = self._tool_filter.is_tool_allowed(tool_name, effective_session_id)
+            if not allowed:
+                return {
+                    "success": False,
+                    "error": reason,
+                    "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                }
 
         # Pre-validate arguments if enabled
         if self._validate_arguments and arguments:
@@ -446,7 +625,7 @@ class ToolProxyService:
 
             # Use MCP manager for external servers
             return await self._mcp_manager.call_tool(
-                server_name, tool_name, arguments, session_id=session_id
+                server_name, tool_name, arguments, session_id=effective_session_id
             )
 
         except Exception as e:
