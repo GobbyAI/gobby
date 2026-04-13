@@ -85,7 +85,11 @@ class GobbyDaemonTools:
             "uptime_seconds": round(uptime, 2),
         }
 
-    async def list_mcp_servers(self, name_filter: str | None = None) -> dict[str, Any]:
+    async def list_mcp_servers(
+        self,
+        name_filter: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """List configured MCP servers.
 
         Args:
@@ -126,12 +130,14 @@ class GobbyDaemonTools:
             server_list = [s for s in server_list if fnmatch.fnmatch(s["name"], name_filter)]
             connected_count = sum(1 for s in server_list if s.get("state") == "connected")
 
-        return {
+        result = {
             "success": True,
             "servers": server_list,
             "total": len(server_list),
             "connected": connected_count,
         }
+        self.tool_proxy.record_servers_listed(session_id)
+        return result
 
     # --- Tool Proxying ---
 
@@ -300,9 +306,18 @@ class GobbyDaemonTools:
         """List tools for a specific server, optionally filtered by workflow phase restrictions."""
         return await self.tool_proxy.list_tools(server_name, session_id=session_id)
 
-    async def get_tool_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
+    async def get_tool_schema(
+        self,
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Get tool schema."""
-        return await self.tool_proxy.get_tool_schema(server_name, tool_name)
+        return await self.tool_proxy.get_tool_schema(
+            server_name,
+            tool_name,
+            session_id=session_id,
+        )
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""

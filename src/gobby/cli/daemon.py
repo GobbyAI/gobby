@@ -245,15 +245,119 @@ def _wait_for_daemon_health(
     deadline = start + timeout
 
     while time.monotonic() < deadline:
-        try:
-            response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
-            if response.status_code == 200:
-                return time.monotonic() - start
-        except (httpx.ConnectError, httpx.TimeoutException):
-            pass
+        if _is_daemon_healthy(http_port):
+            return time.monotonic() - start
         time.sleep(interval)
 
     return None
+
+
+def _is_daemon_healthy(http_port: int) -> bool:
+    """Check whether the daemon health endpoint is currently healthy."""
+    try:
+        response = httpx.get(f"http://localhost:{http_port}/api/admin/health", timeout=1.0)
+        return response.status_code == 200
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return False
+
+
+def _wait_for_daemon_unhealthy(
+    http_port: int,
+    *,
+    timeout: float = 30.0,
+    interval: float = 0.25,
+) -> float | None:
+    """Wait for the daemon health endpoint to stop responding successfully."""
+    start = time.monotonic()
+    deadline = start + timeout
+
+    while time.monotonic() < deadline:
+        if not _is_daemon_healthy(http_port):
+            return time.monotonic() - start
+        time.sleep(interval)
+
+    return None
+
+
+def _read_pid_file() -> int | None:
+    """Read the daemon PID file if present and parseable."""
+    pid_file = get_gobby_home() / "gobby.pid"
+    if not pid_file.exists():
+        return None
+
+    try:
+        with open(pid_file) as f:
+            return int(f.read().strip())
+    except Exception:
+        return None
+
+
+def _get_running_daemon_pid(service_status: dict[str, Any] | None = None) -> int | None:
+    """Resolve the current daemon PID from service state or the pid file."""
+    status = service_status or get_service_status()
+
+    service_pid = status.get("pid")
+    if isinstance(service_pid, int) and service_pid > 0:
+        return service_pid
+
+    pid = _read_pid_file()
+    if pid is not None and _is_process_alive(pid):
+        return pid
+
+    return None
+
+
+def _wait_for_process_exit(
+    pid: int,
+    *,
+    timeout: float = 30.0,
+    interval: float = 0.25,
+) -> float | None:
+    """Wait for a specific process to exit."""
+    start = time.monotonic()
+    deadline = start + timeout
+
+    while time.monotonic() < deadline:
+        if not _is_process_alive(pid):
+            return time.monotonic() - start
+        time.sleep(interval)
+
+    return None
+
+
+def _wait_for_service_stop(
+    previous_pid: int | None,
+    *,
+    timeout: float = 30.0,
+    interval: float = 0.25,
+) -> float | None:
+    """Wait for a service-managed daemon stop to complete."""
+    if previous_pid is not None:
+        return _wait_for_process_exit(previous_pid, timeout=timeout, interval=interval)
+
+    start = time.monotonic()
+    deadline = start + timeout
+
+    while time.monotonic() < deadline:
+        if not get_service_status().get("running"):
+            return time.monotonic() - start
+        time.sleep(interval)
+
+    return None
+
+
+def _wait_for_service_restart_shutdown(
+    http_port: int,
+    *,
+    previous_pid: int | None,
+    timeout: float = 30.0,
+    interval: float = 0.25,
+) -> float | None:
+    """Wait for the pre-restart daemon generation to disappear."""
+    if previous_pid is not None:
+        return _wait_for_process_exit(previous_pid, timeout=timeout, interval=interval)
+
+    return _wait_for_daemon_unhealthy(http_port, timeout=timeout, interval=interval)
 
 
 @click.command()
@@ -285,6 +389,8 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
         _step("Starting via OS service manager...")
         result = service_start()
         if result.get("success"):
+            _step(f"Start request accepted by {svc.get('platform', 'OS')} service manager")
+            _step("Waiting for daemon health via service...")
             elapsed = _wait_for_daemon_health(config.daemon_port)
             if elapsed is None:
                 _step("Daemon did not become healthy after service start", error=True)
@@ -455,10 +561,19 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
     docker_stopped = False
     svc = get_service_status()
     if svc.get("installed") and svc.get("running"):
+        previous_pid = _get_running_daemon_pid(svc)
         click.echo("Stopping via OS service manager...")
         result = service_stop()
         if result.get("success"):
-            click.echo(f"Daemon stopped via {svc.get('platform', 'OS')} service")
+            if previous_pid is not None:
+                _step(f"Waiting for service-managed daemon (PID: {previous_pid}) to exit...")
+            else:
+                _step("Waiting for service-managed daemon to stop...")
+            elapsed = _wait_for_service_stop(previous_pid)
+            if elapsed is None:
+                _step("Service stop returned, but daemon is still running", error=True)
+                sys.exit(1)
+            _step(f"Daemon stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")
         else:
             click.echo(f"Service stop failed: {result.get('error')}", err=True)
             click.echo("Falling back to direct stop...")
@@ -509,9 +624,26 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
     # If OS service is installed, delegate to it
     svc = get_service_status()
     if svc.get("installed") and svc.get("enabled"):
+        previous_pid = _get_running_daemon_pid(svc)
         click.echo(f"Restarting via {svc.get('platform', 'OS')} service manager...")
         result = service_restart()
         if result.get("success"):
+            if previous_pid is not None:
+                _step(f"Waiting for previous daemon (PID: {previous_pid}) to exit...")
+            else:
+                _step("Waiting for current daemon to stop responding...")
+            shutdown_elapsed = _wait_for_service_restart_shutdown(
+                config.daemon_port,
+                previous_pid=previous_pid,
+            )
+            if shutdown_elapsed is None:
+                click.echo(
+                    "Service restart returned, but the previous daemon did not stop in time",
+                    err=True,
+                )
+                sys.exit(1)
+            _step(f"Shutdown barrier passed ({shutdown_elapsed:.1f}s)")
+            _step("Waiting for replacement daemon health...")
             elapsed = _wait_for_daemon_health(config.daemon_port)
             if elapsed is None:
                 click.echo("Service restart completed, but daemon did not become healthy", err=True)

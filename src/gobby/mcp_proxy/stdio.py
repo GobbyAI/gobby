@@ -7,6 +7,7 @@ tool calls to the HTTP daemon.
 
 import asyncio
 import logging
+import os
 import sys
 from typing import Any
 
@@ -69,7 +70,7 @@ class DaemonProxy:
         self.port = port
         self.base_url = f"http://localhost:{port}"
         self._project_id: str | None = self._read_project_id()
-        self._session_id: str | None = None  # Learned from first tool call
+        self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
 
     @staticmethod
     def _read_project_id() -> str | None:
@@ -376,7 +377,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
     """Register proxy tools on the MCP server."""
 
     @mcp.tool()
-    async def list_mcp_servers() -> dict[str, Any]:
+    async def list_mcp_servers(session_id: str | None = None) -> dict[str, Any]:
         """
         List all MCP servers configured in the daemon.
 
@@ -386,10 +387,12 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with servers list, total count, and connected count
         """
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
         return await proxy.list_mcp_servers()
 
     @mcp.tool()
-    async def list_tools(server_name: str) -> dict[str, Any]:
+    async def list_tools(server_name: str, session_id: str | None = None) -> dict[str, Any]:
         """
         List tools from MCP servers.
 
@@ -402,10 +405,16 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool listings
         """
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
         return await proxy.list_tools(server_name)
 
     @mcp.tool()
-    async def get_tool_schema(server_name: str, tool_name: str) -> dict[str, Any]:
+    async def get_tool_schema(
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Get full schema (inputSchema) for a specific MCP tool.
 
@@ -419,6 +428,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool name, description, and full inputSchema
         """
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
         return await proxy.get_tool_schema(server_name, tool_name)
 
     @mcp.tool()

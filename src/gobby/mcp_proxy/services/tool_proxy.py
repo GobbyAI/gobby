@@ -228,6 +228,81 @@ class ToolProxyService:
             logger.debug(f"Failed to resolve HookManager for tool enforcement: {exc}")
             return None
 
+    def _resolve_platform_session_id(self, session_id: str | None) -> str | None:
+        """Resolve the best available session reference to a platform session UUID."""
+        effective_session_id = self._get_effective_session_id(session_id)
+        if not effective_session_id:
+            return None
+
+        hook_manager = self._resolve_hook_manager()
+        session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
+        if session_manager is None:
+            return effective_session_id
+
+        try:
+            from gobby.utils.project_context import get_project_context
+
+            project_ctx = get_project_context()
+            project_id = project_ctx.get("id") if project_ctx else None
+            return session_manager.resolve_session_reference(effective_session_id, project_id)
+        except Exception:
+            return effective_session_id
+
+    def _record_discovery_state(
+        self,
+        session_id: str | None,
+        *,
+        servers_listed: bool = False,
+        listed_server: str | None = None,
+        unlocked_tool: tuple[str, str] | None = None,
+    ) -> None:
+        """Persist discovery state directly for proxy-executed discovery calls."""
+        resolved_session_id = self._resolve_platform_session_id(session_id)
+        if not resolved_session_id:
+            return
+
+        hook_manager = self._resolve_hook_manager()
+        db = getattr(hook_manager, "_database", None) if hook_manager else None
+        if db is None:
+            return
+
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            session_var_manager = SessionVariableManager(db)
+            if servers_listed:
+                session_var_manager.set_variable(resolved_session_id, "servers_listed", True)
+            if listed_server:
+                session_var_manager.append_to_set_variable(
+                    resolved_session_id, "listed_servers", [listed_server]
+                )
+            if unlocked_tool:
+                server_name, tool_name = unlocked_tool
+                session_var_manager.append_to_set_variable(
+                    resolved_session_id,
+                    "unlocked_tools",
+                    [f"{server_name}:{tool_name}"],
+                )
+        except Exception as exc:
+            logger.debug("Failed to record discovery state for %s: %s", resolved_session_id, exc)
+
+    def record_servers_listed(self, session_id: str | None = None) -> None:
+        """Record a successful list_mcp_servers call for a session."""
+        self._record_discovery_state(session_id, servers_listed=True)
+
+    def record_listed_server(self, server_name: str, session_id: str | None = None) -> None:
+        """Record a successful list_tools call for a specific server."""
+        self._record_discovery_state(session_id, listed_server=server_name)
+
+    def record_unlocked_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+    ) -> None:
+        """Record a successful get_tool_schema call for a specific tool."""
+        self._record_discovery_state(session_id, unlocked_tool=(server_name, tool_name))
+
     def _prepare_arguments(
         self,
         arguments: dict[str, Any] | str | None,
@@ -466,6 +541,7 @@ class ToolProxyService:
                 tools = registry.list_tools()
                 if self._tool_filter and session_id:
                     tools = self._tool_filter.filter_tools(tools, session_id)
+                self.record_listed_server(server_name, session_id=session_id)
                 return {"success": True, "tools": tools, "tool_count": len(tools)}
             error_msg = f"Internal server '{server_name}' not found"
             suggestion = self._get_server_suggestion(server_name)
@@ -500,6 +576,7 @@ class ToolProxyService:
                     )
             if self._tool_filter and session_id:
                 ext_brief_tools = self._tool_filter.filter_tools(ext_brief_tools, session_id)
+            self.record_listed_server(server_name, session_id=session_id)
             return {"success": True, "tools": ext_brief_tools, "tool_count": len(ext_brief_tools)}
 
         error_msg = f"Server '{server_name}' not found"
@@ -708,14 +785,25 @@ class ToolProxyService:
         """Read a resource."""
         return await self._mcp_manager.read_resource(server_name, uri)
 
-    async def get_tool_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
+    async def get_tool_schema(
+        self,
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+        record_discovery: bool = True,
+    ) -> dict[str, Any]:
         """Get full schema for a specific tool."""
         server_name = self._resolve_server_name(server_name)
         # Handle proxy namespace: auto-resolve to the real server
         if self._is_proxy_namespace(server_name):
             resolved = self._resolve_server_for_tool(tool_name)
             if resolved:
-                return await self.get_tool_schema(resolved, tool_name)
+                return await self.get_tool_schema(
+                    resolved,
+                    tool_name,
+                    session_id=session_id,
+                    record_discovery=record_discovery,
+                )
             return {
                 "success": False,
                 "error": f"Tool '{tool_name}' not found on any server (server_name='gobby' is not a real server — use list_mcp_servers() to discover server names)",
@@ -728,6 +816,8 @@ class ToolProxyService:
             if registry:
                 schema = registry.get_schema(tool_name)
                 if schema:
+                    if record_discovery:
+                        self.record_unlocked_tool(server_name, tool_name, session_id=session_id)
                     return {"success": True, "tool": schema}
                 return {
                     "success": False,
@@ -749,7 +839,10 @@ class ToolProxyService:
 
         # Use MCP manager for external servers
         try:
-            return await self._mcp_manager.get_tool_input_schema(server_name, tool_name)
+            result = await self._mcp_manager.get_tool_input_schema(server_name, tool_name)
+            if record_discovery and result.get("success"):
+                self.record_unlocked_tool(server_name, tool_name, session_id=session_id)
+            return result
         except Exception as e:
             raise MCPError(f"Failed to get schema for {tool_name} on {server_name}: {e}") from e
 

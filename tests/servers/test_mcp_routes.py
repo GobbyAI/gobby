@@ -302,6 +302,31 @@ class TestListMCPTools:
         assert len(data["tools"]) == 2
         assert "response_time_ms" in data
 
+    def test_list_tools_records_session_discovery_state(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Session header should drive listed_servers tracking for discovery routes."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        registry = FakeInternalRegistry(name="gobby-tasks")
+        server._internal_manager = FakeInternalManager([registry])
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with TestClient(server.app) as client:
+            response = client.get(
+                "/api/mcp/gobby-tasks/tools",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+            )
+
+        assert response.status_code == 200
+        server._tools_handler.tool_proxy.record_listed_server.assert_called_once_with(
+            "gobby-tasks",
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+        )
+
     def test_list_tools_internal_server_fallthrough(
         self, session_storage: LocalSessionManager
     ) -> None:
@@ -781,6 +806,36 @@ class TestGetToolSchema:
         assert data["name"] == "list_tasks"
         assert data["server"] == "gobby-tasks"
         assert "inputSchema" in data
+
+    def test_get_schema_records_session_discovery_state(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Session header should drive unlocked_tools tracking for schema lookups."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(name="gobby-tasks"),
+            ]
+        )
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/schema",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+                json={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            )
+
+        assert response.status_code == 200
+        server._tools_handler.tool_proxy.record_unlocked_tool.assert_called_once_with(
+            "gobby-tasks",
+            "list_tasks",
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+        )
 
     def test_get_schema_internal_server_tool_not_found(
         self, session_storage: LocalSessionManager

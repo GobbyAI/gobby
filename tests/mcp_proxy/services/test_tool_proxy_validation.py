@@ -8,7 +8,7 @@ These tests verify that the ToolProxyService:
 """
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -803,10 +803,14 @@ class TestWorkflowBeforeToolEnforcement:
         )
         session_manager = MagicMock()
         session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = (
+            lambda session_id, project_id=None: session_id
+        )
 
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
+        hook_manager._database = MagicMock()
         return hook_manager
 
     @pytest.fixture
@@ -911,6 +915,56 @@ class TestWorkflowBeforeToolEnforcement:
         mock_registry.call.assert_called_once_with(
             "close_task",
             {"task_id": "#123", "skip_validation": False},
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_tools_records_listed_server_for_session(
+        self, tool_proxy_with_hooks, mock_internal_manager
+    ):
+        """Successful discovery should persist listed_servers for the session."""
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.list_tools.return_value = [{"name": "create_task"}]
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
+            result = await tool_proxy_with_hooks.list_tools(
+                "gobby-tasks",
+                session_id="session-123",
+            )
+
+        assert result["success"] is True
+        mock_svm_cls.return_value.append_to_set_variable.assert_called_once_with(
+            "session-123",
+            "listed_servers",
+            ["gobby-tasks"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_tool_schema_records_unlocked_tool_for_session(
+        self, tool_proxy_with_hooks, mock_internal_manager
+    ):
+        """Successful schema lookup should persist unlocked_tools for the session."""
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.get_schema.return_value = {
+            "name": "create_task",
+            "inputSchema": {"type": "object"},
+        }
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
+            result = await tool_proxy_with_hooks.get_tool_schema(
+                "gobby-tasks",
+                "create_task",
+                session_id="session-123",
+            )
+
+        assert result["success"] is True
+        mock_svm_cls.return_value.append_to_set_variable.assert_called_once_with(
+            "session-123",
+            "unlocked_tools",
+            ["gobby-tasks:create_task"],
         )
 
 

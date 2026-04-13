@@ -366,7 +366,11 @@ class TestGobbyDaemonToolsGetToolSchema:
 
         await tools_handler.get_tool_schema("my-server", "my-tool")
 
-        tools_handler.tool_proxy.get_tool_schema.assert_called_once_with("my-server", "my-tool")
+        tools_handler.tool_proxy.get_tool_schema.assert_called_once_with(
+            "my-server",
+            "my-tool",
+            session_id=None,
+        )
 
 
 class TestGobbyDaemonToolsServerManagement:
