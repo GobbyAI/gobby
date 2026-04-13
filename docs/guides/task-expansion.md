@@ -4,7 +4,7 @@ Task expansion breaks a high-level epic into concrete, atomic subtasks with depe
 
 This guide covers the expansion pipeline end-to-end: how plans feed into expansion, how the expander agent produces a spec, how validation works, and how TDD gets applied.
 
-For the orchestrator that invokes expansion, see [Orchestrator Pattern](./orchestrator.md).
+For the orchestration flow that invokes expansion, see [Orchestration](./orchestration.md).
 
 ---
 
@@ -359,7 +359,7 @@ This means the expensive research phase doesn't need to be repeated.
 
 ## See Also
 
-- [Orchestrator Pattern](./orchestrator.md) — How orchestration invokes expansion
+- [Orchestration](./orchestration.md) — How orchestration invokes expansion
 - [TDD Enforcement](./tdd-enforcement.md) — TDD sandwich pattern details
 - [Pipelines](./pipelines.md) — Pipeline system reference
 - [Agents](./agents.md) — Agent definitions and step workflows

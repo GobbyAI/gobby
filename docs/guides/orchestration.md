@@ -42,7 +42,7 @@ The orchestrator pipeline (`orchestrator.yaml`) handles:
 4. **Monitor** — track agent health, detect stalls, handle failures
 5. **Merge** — when all tasks are approved, merge the clone and close the epic
 
-See [orchestrator-test-battery.md](orchestrator-test-battery.md) for a real-world example: 10 OTel tasks completed autonomously in ~3 hours.
+See [Pipelines](./pipelines.md) for concrete orchestration examples and step-by-step pipeline structure.
 
 ---
 

@@ -70,4 +70,4 @@ spawn_agent() called
 ## Guides
 
 - [Agents](../../docs/guides/agents.md) — Agent definitions, step workflows, isolation, lifecycle
-- [Orchestrator](../../docs/guides/orchestrator.md) — How agents are dispatched by the orchestrator
+- [Orchestration](../../docs/guides/orchestration.md) — How agents are dispatched in pipeline-based and MCP tool-based orchestration

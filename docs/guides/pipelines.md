@@ -481,7 +481,7 @@ steps:
 
 **Key patterns**: conditions for branching, `_` prefix for internal state. Each pass is a separate pipeline execution. The conductor manages re-invocation.
 
-See [Orchestrator Guide](./orchestrator.md) for the full conceptual walkthrough.
+See [Orchestration](./orchestration.md) for the full conceptual walkthrough.
 
 ### Expand-Task Pipeline
 
@@ -718,7 +718,6 @@ The CLI tries the daemon HTTP API first (full-featured). If daemon is unavailabl
 ## See Also
 
 - [Workflows Overview](./workflows-overview.md) — How pipelines, agents, and rules compose
-- [Orchestrator](./orchestrator.md) — The orchestrator pipeline pattern in depth
+- [Orchestration](./orchestration.md) — Pipeline-based and MCP tool-based orchestration patterns
 - [Task Expansion](./task-expansion.md) — The expand-task pipeline explained
 - [Rules](./rules.md) — Rule enforcement (separate system, complements pipelines)
-- [Pipeline Format Migration](./pipeline-format-migration.md) — Importing external pipeline formats

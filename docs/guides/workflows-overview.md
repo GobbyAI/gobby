@@ -253,6 +253,6 @@ Selector syntax:
 - **[Pipelines](./pipelines.md)** — Pipeline schema, step types, data flow, approval gates, webhooks
 - **[Agents](./agents.md)** — Agent definitions, step workflows, spawning, isolation, selectors
 - **[Variables](./variables.md)** — Session variables, initialization, mutation, condition helpers
-- **[Orchestrator](./orchestrator.md)** — The orchestrator pattern: expansion, dispatch, QA, merge
+- **[Orchestration](./orchestration.md)** — Pipeline-based and MCP tool-based orchestration patterns
 - **[Task Expansion](./task-expansion.md)** — How task expansion works end-to-end
 - **[TDD Enforcement](./tdd-enforcement.md)** — TDD sandwich pattern and enforcement rules

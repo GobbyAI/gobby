@@ -432,7 +432,6 @@ This workflow reads only the symbols needed, saving 90%+ tokens compared to read
 
 ## See Also
 
-- [tool-compression.md](tool-compression.md) — Output compression for shell commands
 - [mcp-tools.md](mcp-tools.md) — Complete MCP tool reference
 - [search.md](search.md) — Unified search with TF-IDF and embeddings
 - [rules.md](rules.md) — Rule engine reference

@@ -601,4 +601,4 @@ gobby agents kill <run_id>
 - [Workflows Overview](./workflows-overview.md) — How agents, rules, and pipelines compose
 - [Rules](./rules.md) — Rules that constrain agent behavior
 - [Pipelines](./pipelines.md) — Pipelines that orchestrate agent spawning
-- [Orchestrator](./orchestrator.md) — The orchestrator pattern using developer/QA/merge agents
+- [Orchestration](./orchestration.md) — Pipeline-based and MCP tool-based orchestration patterns
