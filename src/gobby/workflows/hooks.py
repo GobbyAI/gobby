@@ -6,7 +6,7 @@ import threading
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
@@ -58,6 +58,162 @@ class WorkflowHookHandler:
                 self._loop = asyncio.get_running_loop()
             except RuntimeError:
                 pass
+
+        # Codex can omit tool_input on AFTER_TOOL. Track the prior BEFORE_TOOL
+        # context so progressive-discovery and task observers still see parity.
+        self._codex_tool_context_lock = threading.Lock()
+        self._codex_tool_contexts: dict[str, list[dict[str, Any]]] = {}
+        self._codex_tool_context_by_id: dict[tuple[str, str], dict[str, Any]] = {}
+
+    @staticmethod
+    def _codex_tool_context_ids(data: dict[str, Any]) -> list[str]:
+        """Extract stable per-tool identifiers from Codex hook payloads."""
+        identifiers: list[str] = []
+        for key in (
+            "tool_use_id",
+            "toolUseId",
+            "tool_call_id",
+            "toolCallId",
+            "call_id",
+            "callId",
+            "item_id",
+            "itemId",
+            "id",
+        ):
+            value = data.get(key)
+            if isinstance(value, str) and value and value not in identifiers:
+                identifiers.append(value)
+        return identifiers
+
+    @staticmethod
+    def _needs_codex_tool_rehydration(data: dict[str, Any]) -> bool:
+        """Return True when a Codex AFTER_TOOL event lacks usable tool context."""
+        tool_name = data.get("tool_name")
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            return True
+
+        if data.get("tool_input") in (None, "", {}):
+            return True
+
+        if tool_name.startswith("mcp__") and (not data.get("mcp_server") or not data.get("mcp_tool")):
+            return True
+
+        return False
+
+    def _snapshot_codex_tool_context(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """Capture the Codex BEFORE_TOOL fields needed later on AFTER_TOOL."""
+        tool_name = data.get("tool_name")
+        if not isinstance(tool_name, str) or not tool_name:
+            return None
+
+        snapshot: dict[str, Any] = {"tool_name": tool_name}
+        for key in (
+            "tool_input",
+            "mcp_server",
+            "mcp_tool",
+            "item_id",
+            "tool_use_id",
+            "tool_call_id",
+            "call_id",
+        ):
+            value = data.get(key)
+            if value not in (None, ""):
+                snapshot[key] = deepcopy(value)
+
+        identifiers = self._codex_tool_context_ids(data)
+        if identifiers:
+            snapshot["_ids"] = identifiers
+
+        return snapshot
+
+    def _remember_codex_tool_context(self, session_id: str, data: dict[str, Any]) -> None:
+        """Store Codex BEFORE_TOOL context until the matching AFTER_TOOL arrives."""
+        snapshot = self._snapshot_codex_tool_context(data)
+        if snapshot is None:
+            return
+
+        with self._codex_tool_context_lock:
+            self._codex_tool_contexts.setdefault(session_id, []).append(snapshot)
+            for identifier in snapshot.get("_ids", []):
+                self._codex_tool_context_by_id[(session_id, identifier)] = snapshot
+
+    def _match_codex_tool_context(
+        self,
+        session_id: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Find the best stored Codex BEFORE_TOOL context for an AFTER_TOOL event."""
+        with self._codex_tool_context_lock:
+            for identifier in self._codex_tool_context_ids(data):
+                snapshot = self._codex_tool_context_by_id.get((session_id, identifier))
+                if snapshot is not None:
+                    return snapshot
+
+            pending = self._codex_tool_contexts.get(session_id, [])
+            if not pending:
+                return None
+
+            tool_name = data.get("tool_name")
+            if isinstance(tool_name, str) and tool_name:
+                for snapshot in reversed(pending):
+                    if snapshot.get("tool_name") == tool_name:
+                        return snapshot
+
+            return pending[-1]
+
+    def _forget_codex_tool_context(self, session_id: str, snapshot: dict[str, Any]) -> None:
+        """Remove stored Codex BEFORE_TOOL context after the tool completes."""
+        with self._codex_tool_context_lock:
+            pending = self._codex_tool_contexts.get(session_id, [])
+            if snapshot in pending:
+                pending.remove(snapshot)
+                if not pending:
+                    self._codex_tool_contexts.pop(session_id, None)
+
+            for identifier in snapshot.get("_ids", []):
+                self._codex_tool_context_by_id.pop((session_id, identifier), None)
+
+    def _clear_codex_tool_context(self, session_id: str) -> None:
+        """Drop any stored Codex tool context for a session."""
+        with self._codex_tool_context_lock:
+            snapshots = self._codex_tool_contexts.pop(session_id, [])
+            for snapshot in snapshots:
+                for identifier in snapshot.get("_ids", []):
+                    self._codex_tool_context_by_id.pop((session_id, identifier), None)
+
+    def _sync_codex_tool_context(self, event: HookEvent, session_id: str) -> None:
+        """Maintain Codex BEFORE/AFTER tool parity for rule evaluation."""
+        if event.source != SessionSource.CODEX or not session_id or not isinstance(event.data, dict):
+            return
+
+        if event.event_type == HookEventType.SESSION_END:
+            self._clear_codex_tool_context(session_id)
+            return
+
+        if event.event_type == HookEventType.BEFORE_TOOL:
+            self._remember_codex_tool_context(session_id, event.data)
+            return
+
+        if event.event_type != HookEventType.AFTER_TOOL:
+            return
+
+        snapshot = self._match_codex_tool_context(session_id, event.data)
+        if snapshot is None:
+            return
+
+        if self._needs_codex_tool_rehydration(event.data):
+            for key, value in snapshot.items():
+                if key.startswith("_"):
+                    continue
+                if event.data.get(key) in (None, "", {}):
+                    event.data[key] = deepcopy(value)
+
+            from gobby.hooks.normalization import normalize_tool_fields
+
+            normalize_tool_fields(event.data)
+            event.metadata["_codex_tool_context_rehydrated"] = True
+
+        self._forget_codex_tool_context(session_id, snapshot)
 
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:
         """Handle CancelledError by logging and returning appropriate response."""
@@ -127,6 +283,8 @@ class WorkflowHookHandler:
 
         try:
             session_id = event.metadata.get("_platform_session_id") or event.session_id or ""
+
+            self._sync_codex_tool_context(event, session_id)
 
             # Load session-scoped variables (canonical store)
             variables: dict[str, Any] = {}

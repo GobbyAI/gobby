@@ -146,6 +146,104 @@ class CodexAdapter(BaseAdapter):
         self._machine_id: str | None = None
 
     @staticmethod
+    def _extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
+        """Return the best-effort tool item payload from an item/completed event."""
+        item = params.get("item")
+        if isinstance(item, dict):
+            return item
+
+        toolish_fields = {
+            "type",
+            "itemType",
+            "name",
+            "toolName",
+            "tool_name",
+            "arguments",
+            "toolArgs",
+            "tool_input",
+            "input",
+            "output",
+            "result",
+            "toolResult",
+        }
+        if any(field in params for field in toolish_fields):
+            return params
+
+        return {}
+
+    @classmethod
+    def _looks_like_tool_item(cls, item: dict[str, Any]) -> bool:
+        """Identify completed Codex items that represent tool execution."""
+        item_type = item.get("type") or item.get("itemType")
+        if item_type in cls.TOOL_ITEM_TYPES:
+            return True
+
+        if any(isinstance(item.get(tool_type), dict) for tool_type in cls.TOOL_ITEM_TYPES):
+            return True
+
+        toolish_fields = (
+            "name",
+            "toolName",
+            "tool_name",
+            "arguments",
+            "toolArgs",
+            "tool_input",
+            "input",
+            "output",
+            "result",
+            "toolResult",
+            "callId",
+            "call_id",
+            "toolUseId",
+            "tool_use_id",
+        )
+        return any(field in item for field in toolish_fields)
+
+    def _build_completed_tool_data(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a completed Codex tool item into hook event data."""
+        item_type = item.get("type") or item.get("itemType") or ""
+        nested_payload = item.get(item_type)
+
+        item_data: dict[str, Any] = {}
+        if isinstance(nested_payload, dict):
+            item_data.update(nested_payload)
+        item_data.update(item)
+
+        item_id = item_data.get("id") or item_data.get("itemId") or ""
+        raw_tool_name = (
+            item_data.get("tool_name")
+            or item_data.get("toolName")
+            or item_data.get("name")
+        )
+        if isinstance(raw_tool_name, str) and raw_tool_name:
+            item_data.setdefault("tool_name", self.normalize_tool_name(raw_tool_name))
+        elif item_type == "commandExecution":
+            item_data.setdefault("tool_name", "Bash")
+        elif item_type == "fileChange":
+            item_data.setdefault("tool_name", "Write")
+
+        if "tool_input" not in item_data:
+            if "arguments" in item_data and "toolArgs" not in item_data:
+                item_data["toolArgs"] = item_data["arguments"]
+            elif "input" in item_data:
+                item_data["tool_input"] = item_data["input"]
+
+        if "tool_response" not in item_data and "tool_result" not in item_data:
+            if "output" in item_data:
+                item_data["tool_response"] = item_data["output"]
+            elif "result" in item_data:
+                item_data["tool_response"] = item_data["result"]
+
+        item_data.setdefault("item_id", item_id)
+        item_data.setdefault("item_type", item_type)
+        item_data.setdefault("status", item.get("status", item_data.get("status", "")))
+
+        from gobby.hooks.normalization import normalize_tool_fields
+
+        normalize_tool_fields(item_data)
+        return item_data
+
+    @staticmethod
     def is_codex_available() -> bool:
         """Check if Codex CLI is installed and available.
 
@@ -408,8 +506,8 @@ class CodexAdapter(BaseAdapter):
             )
 
         if method == "item/completed":
-            item = params.get("item", {})
-            item_type = item.get("type", "")
+            item = self._extract_completed_item_payload(params)
+            item_type = item.get("type") or item.get("itemType") or ""
 
             # contextCompaction items map to PRE_COMPACT (not AFTER_TOOL)
             if item_type == "contextCompaction":
@@ -427,15 +525,8 @@ class CodexAdapter(BaseAdapter):
                 )
 
             # Only translate tool-related items
-            if item_type in self.TOOL_ITEM_TYPES:
-                from gobby.hooks.normalization import normalize_tool_fields
-
-                item_data: dict[str, Any] = {
-                    "item_id": item.get("id", ""),
-                    "item_type": item_type,
-                    "status": item.get("status", ""),
-                }
-                normalize_tool_fields(item_data)
+            if self._looks_like_tool_item(item):
+                item_data = self._build_completed_tool_data(item)
 
                 return HookEvent(
                     event_type=HookEventType.AFTER_TOOL,

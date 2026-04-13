@@ -14,7 +14,7 @@ import concurrent.futures
 import json
 import threading
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1313,3 +1313,130 @@ class TestStopFailsClosedOnVariableLoadError:
 
         # Non-STOP events should still allow (fail-open)
         assert response.decision == "allow"
+
+
+class TestCodexToolContextRehydration:
+    """Codex AFTER_TOOL events should regain BEFORE_TOOL context when needed."""
+
+    @staticmethod
+    def _make_event(
+        event_type: HookEventType,
+        *,
+        data: dict[str, object],
+        source: SessionSource = SessionSource.CODEX,
+    ) -> HookEvent:
+        return HookEvent(
+            event_type=event_type,
+            session_id="external-codex-session",
+            source=source,
+            timestamp=datetime.now(UTC),
+            data=data,
+            metadata={"_platform_session_id": "platform-codex-session"},
+        )
+
+    @staticmethod
+    def _make_handler() -> tuple[WorkflowHookHandler, MagicMock]:
+        rule_engine = MagicMock()
+        rule_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+        rule_engine.db = MagicMock()
+
+        handler = WorkflowHookHandler(loop=None)
+        handler.rule_engine = rule_engine
+        handler._session_var_manager = MagicMock()
+        handler._session_var_manager.get_variables.return_value = {
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        }
+
+        return handler, rule_engine
+
+    @pytest.mark.asyncio
+    async def test_rehydrates_after_tool_by_tool_use_id(self) -> None:
+        """Codex AFTER_TOOL reuses stored BEFORE_TOOL data when tool_input is missing."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+                "tool_use_id": "codex-tool-1",
+            },
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_use_id": "codex-tool-1",
+                "tool_response": '{"success": true}',
+            },
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert after_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert after_event.metadata["_codex_tool_context_rehydrated"] is True
+        evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
+        assert evaluated_event.data["tool_input"]["tool_name"] == "claim_task"
+
+    @pytest.mark.asyncio
+    async def test_rehydrates_after_tool_without_identifier(self) -> None:
+        """Codex SDK/web flows can fall back to the latest matching BEFORE_TOOL."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+            },
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_response": '{"success": true}',
+            },
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert after_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert rule_engine.evaluate.await_args_list[-1].kwargs["event"].data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+
+    @pytest.mark.asyncio
+    async def test_non_codex_after_tool_is_unchanged(self) -> None:
+        """Other providers should not use Codex rehydration behavior."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "Read",
+                "tool_input": {"file_path": "src/main.py"},
+            },
+            source=SessionSource.CLAUDE,
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={"tool_name": "Read"},
+            source=SessionSource.CLAUDE,
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert "tool_input" not in after_event.data
+        evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
+        assert "tool_input" not in evaluated_event.data

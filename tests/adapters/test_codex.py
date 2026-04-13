@@ -1013,6 +1013,39 @@ class TestCodexAdapterTranslateToHookEvent:
             assert hook_event.event_type == HookEventType.AFTER_TOOL
             assert hook_event.data["item_type"] == item_type
 
+    def test_item_completed_mcp_tool_uses_raw_completed_fields(self) -> None:
+        """Tool-shaped item/completed payloads should preserve MCP tool identity."""
+        adapter = CodexAdapter()
+
+        native_event = {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-mcp-1",
+                    "status": "completed",
+                    "name": "mcp__gobby__get_tool_schema",
+                    "arguments": json.dumps(
+                        {"server_name": "gobby-tasks", "tool_name": "claim_task"}
+                    ),
+                    "output": {"success": True},
+                },
+            },
+        }
+
+        hook_event = adapter.translate_to_hook_event(native_event)
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.AFTER_TOOL
+        assert hook_event.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert hook_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert hook_event.data["mcp_server"] == "gobby"
+        assert hook_event.data["mcp_tool"] == "get_tool_schema"
+        assert hook_event.data["tool_output"] == {"success": True}
+
     def test_item_completed_non_tool(self) -> None:
         """item/completed for non-tool items returns None."""
         adapter = CodexAdapter()
