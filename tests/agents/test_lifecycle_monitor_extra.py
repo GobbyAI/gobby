@@ -282,6 +282,46 @@ class TestRecoverTaskFromFailedAgent:
         )
 
     @pytest.mark.asyncio
+    async def test_recover_task_uses_persisted_claimed_session_id(self) -> None:
+        """Recovery should not release a task claimed by a different live session."""
+        mock_run_mgr = MagicMock()
+        mock_task_mgr = MagicMock()
+        mock_stall = MagicMock()
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            task_manager=mock_task_mgr,
+        )
+        monitor._stall_classifier = mock_stall
+
+        db_run = AgentRun(
+            id="run-claim-owner",
+            parent_session_id="parent-1",
+            claimed_session_id="original-owner",
+            task_id="task-1",
+            provider="claude",
+            prompt="p",
+            status="error",
+            error="agent crashed",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+        )
+        mock_run_mgr.get.return_value = db_run
+
+        mock_task = MagicMock()
+        mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "different-owner"
+        mock_task.seq_num = 10
+        mock_task.dispatch_failure_count = 0
+        mock_task_mgr.get_task.return_value = mock_task
+        mock_stall.is_provider_error.return_value = False
+
+        await monitor._recover_task_from_failed_agent("run-claim-owner")
+
+        mock_task_mgr.release_task_claim.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_cleanup_stale_pending_runs(self) -> None:
         """Tests that cleanup_stale_pending_runs calls the manager method correctly."""
         mock_run_mgr = MagicMock()

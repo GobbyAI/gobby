@@ -95,6 +95,98 @@ def test_tasks_table_includes_claimed_by_session_id_on_fresh_db(tmp_path) -> Non
     assert "idx_tasks_claimed_session" in task_indexes
 
 
+def test_agent_runs_table_includes_claimed_session_id_on_fresh_db(tmp_path) -> None:
+    """Fresh baseline schema should include persisted agent run claim ownership."""
+    db_path = tmp_path / "agent_runs_claim_owner.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    agent_run_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(agent_runs)")}
+    assert "claimed_session_id" in agent_run_columns
+
+
+def test_migration_211_adds_claimed_session_id_to_agent_runs(tmp_path) -> None:
+    """Migration 211 should add the claimed_session_id column to existing databases."""
+    db_path = tmp_path / "agent_runs_claim_owner_partial.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    db.connection.executescript("""
+        PRAGMA foreign_keys=OFF;
+        DROP TABLE IF EXISTS agent_runs_legacy;
+        CREATE TABLE agent_runs_legacy AS
+        SELECT
+            id,
+            parent_session_id,
+            child_session_id,
+            workflow_name,
+            agent_name,
+            provider,
+            model,
+            status,
+            prompt,
+            result,
+            error,
+            tool_calls_count,
+            turns_used,
+            started_at,
+            completed_at,
+            created_at,
+            updated_at,
+            sdk_session_id,
+            continuation_prompt,
+            task_id,
+            pid,
+            tmux_session_name,
+            worktree_id,
+            clone_id,
+            timeout_seconds
+        FROM agent_runs;
+        DROP TABLE agent_runs;
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            parent_session_id TEXT NOT NULL REFERENCES sessions(id),
+            child_session_id TEXT REFERENCES sessions(id),
+            workflow_name TEXT,
+            agent_name TEXT,
+            provider TEXT NOT NULL,
+            model TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            prompt TEXT NOT NULL,
+            result TEXT,
+            error TEXT,
+            tool_calls_count INTEGER DEFAULT 0,
+            turns_used INTEGER DEFAULT 0,
+            started_at TEXT,
+            completed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            sdk_session_id TEXT,
+            continuation_prompt TEXT,
+            task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+            pid INTEGER,
+            tmux_session_name TEXT,
+            worktree_id TEXT,
+            clone_id TEXT,
+            timeout_seconds REAL
+        );
+        INSERT INTO agent_runs
+        SELECT * FROM agent_runs_legacy;
+        DROP TABLE agent_runs_legacy;
+        PRAGMA foreign_keys=ON;
+    """)
+    db.execute("DELETE FROM schema_version")
+    db.execute("INSERT INTO schema_version (version) VALUES (210)")
+
+    applied = run_migrations(db)
+
+    assert applied == EXPECTED_FINAL_VERSION - 210
+    agent_run_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(agent_runs)")}
+    assert "claimed_session_id" in agent_run_columns
+
+
 def test_migration_208_recovers_when_column_exists_but_version_does_not(tmp_path) -> None:
     """Migration 208 should heal partial application without duplicate-column failure."""
     db_path = tmp_path / "tasks_claim_owner_partial.db"

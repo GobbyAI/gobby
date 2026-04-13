@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 210
+BASELINE_VERSION = 211
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -335,6 +335,13 @@ def _migrate_claimed_by_session_id(db: LocalDatabase) -> None:
             )
     finally:
         conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_agent_run_claimed_session_id(db: LocalDatabase) -> None:
+    """Add persisted agent-run claim ownership and tolerate partial application."""
+    if _column_exists(db, "agent_runs", "claimed_session_id"):
+        return
+    db.execute("ALTER TABLE agent_runs ADD COLUMN claimed_session_id TEXT REFERENCES sessions(id)")
 
 
 def _migrate_task_lifecycle_stage(db: LocalDatabase) -> None:
@@ -994,6 +1001,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         210,
         "Replace task-attached expansion state with expansion_runs table",
         _migrate_expansion_runs,
+    ),
+    (
+        211,
+        "Persist agent run claimed session ownership for task recovery",
+        _migrate_agent_run_claimed_session_id,
     ),
 ]
 

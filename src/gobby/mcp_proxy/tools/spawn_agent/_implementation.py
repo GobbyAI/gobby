@@ -239,6 +239,7 @@ async def spawn_agent_impl(
     resolved_task_id: str | None = None
     task_title: str | None = None
     task_seq_num: int | None = None
+    claimed_session_id: str | None = None
 
     if task_id and task_manager:
         try:
@@ -247,6 +248,7 @@ async def spawn_agent_impl(
             if task:
                 task_title = task.title
                 task_seq_num = task.seq_num
+                claimed_session_id = get_claimed_session_id(task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
 
@@ -432,6 +434,7 @@ async def spawn_agent_impl(
         clone_id=isolation_ctx.clone_id,
         branch_name=isolation_ctx.branch_name,
         task_id=resolved_task_id,
+        claimed_session_id=claimed_session_id,
         title=spawn_title,
         agent_name=agent_display_name,
         session_manager=runner.child_session_manager,

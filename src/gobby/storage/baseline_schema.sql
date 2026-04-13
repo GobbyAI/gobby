@@ -136,6 +136,7 @@ CREATE TABLE agent_runs (
     id TEXT PRIMARY KEY,
     parent_session_id TEXT NOT NULL REFERENCES sessions(id),
     child_session_id TEXT REFERENCES sessions(id),
+    claimed_session_id TEXT REFERENCES sessions(id),
     workflow_name TEXT,
     agent_name TEXT,
     provider TEXT NOT NULL,

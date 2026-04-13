@@ -25,7 +25,6 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.tasks.state_semantics import (
-    get_claimed_session_id,
     is_task_actively_claimed,
 )
 
@@ -139,7 +138,7 @@ class AgentLifecycleMonitor:
                 )
 
             task = await asyncio.to_thread(self._task_manager.get_task, task_id)
-            expected_owner = db_run.child_session_id or get_claimed_session_id(task)
+            expected_owner = db_run.child_session_id or db_run.claimed_session_id
             if not task or not is_task_actively_claimed(task, expected_owner):
                 return
 
