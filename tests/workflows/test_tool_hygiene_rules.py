@@ -115,6 +115,22 @@ class TestRequireUvRule:
         assert body.when is not None
         assert "require_uv" in body.when
 
+    @pytest.mark.asyncio
+    async def test_bundled_rule_skips_already_compliant_uv_python(self, db, manager) -> None:
+        """Compliant uv commands should not emit modified_input."""
+        _sync_bundled(db)
+
+        event = _make_bash_event(
+            "uv run python -c \"print('hello')\"",
+            source=SessionSource.CODEX,
+        )
+        engine = RuleEngine(db)
+
+        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+
+        assert response.decision == "allow"
+        assert response.modified_input is None
+
 
 class TestTrackPendingMemoryReview:
     """Verify track-pending-memory-review sets variable after edits."""
@@ -152,12 +168,12 @@ class TestTrackPendingMemoryReview:
         assert "Write" in body.when
 
 
-def _make_bash_event(command: str) -> HookEvent:
+def _make_bash_event(command: str, source: SessionSource = SessionSource.CLAUDE) -> HookEvent:
     """Create a before_tool HookEvent with command nested in tool_input (like real adapters)."""
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="test-session",
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data={"tool_name": "Bash", "tool_input": {"command": command}},
     )

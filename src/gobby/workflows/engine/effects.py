@@ -189,8 +189,8 @@ class EffectsMixin:
 
         return True
 
-    def _should_block(self, effect: Any, event: HookEvent) -> bool:
-        """Check if a block effect matches the current tool/event."""
+    def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool:
+        """Check whether an effect's tool and command selectors match this event."""
         tool_name = event.data.get("tool_name")
         mcp_tool = event.data.get("mcp_tool")
         mcp_server = event.data.get("mcp_server") or event.data.get("server_name")
@@ -241,6 +241,10 @@ class EffectsMixin:
                         return True
 
         return False
+
+    def _should_block(self, effect: Any, event: HookEvent) -> bool:
+        """Check if a block effect matches the current tool/event."""
+        return self._effect_matches_event(effect, event)
 
     def _apply_set_variable(
         self,

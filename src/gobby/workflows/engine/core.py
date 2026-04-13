@@ -436,6 +436,9 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     rule_blocked = False
 
                     for effect in effects:
+                        if not self._effect_matches_event(effect, event):
+                            continue
+
                         # Check per-effect `when` condition
                         if effect.when:
                             if not self._evaluate_condition(
@@ -463,7 +466,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                     # Now apply deferred block (if any)
                     if deferred_block is not None:
-                        if self._should_block(deferred_block, event):
+                        if self._effect_matches_event(deferred_block, event):
                             rule_blocked = True
                             block_reason = deferred_block.reason or "Blocked by rule"
                             block_reason = self._render_template(block_reason, ctx, allowed_funcs)

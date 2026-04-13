@@ -350,6 +350,11 @@ class TestShlexQuoteFilter:
         assert result == "''"
 
 
+REQUIRE_UV_COMMAND_PATTERN = (
+    r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
+)
+
+
 class TestRequireUvRewrite:
     """Tests for the require-uv rewrite rule pattern."""
 
@@ -366,12 +371,12 @@ class TestRequireUvRewrite:
                 effects=[
                     RuleEffect(
                         type="inject_context",
-                        when="any(p in str(tool_input.get('command', '')) for p in ['python', 'pip'])",
+                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
                         template="Gobby rewrote your command to use uv.",
                     ),
                     RuleEffect(
                         type="rewrite_input",
-                        when="any(p in str(tool_input.get('command', '')) for p in ['python', 'pip'])",
+                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
                         input_updates={
                             "command": (
                                 "{{ event.data.tool_input.command"
@@ -413,7 +418,7 @@ class TestRequireUvRewrite:
                 effects=[
                     RuleEffect(
                         type="rewrite_input",
-                        when="any(p in str(tool_input.get('command', '')) for p in ['python', 'pip'])",
+                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
                         input_updates={
                             "command": (
                                 "{{ event.data.tool_input.command"
@@ -446,7 +451,7 @@ class TestRequireUvRewrite:
     async def test_passthrough_uv_command(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """Commands already using uv should not be modified (regex won't match)."""
+        """Commands already using uv should not trigger a rewrite at all."""
         _insert_rule(
             manager,
             "require-uv",
@@ -456,7 +461,7 @@ class TestRequireUvRewrite:
                 effects=[
                     RuleEffect(
                         type="rewrite_input",
-                        when="any(p in str(tool_input.get('command', '')) for p in ['python', 'pip'])",
+                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
                         input_updates={
                             "command": (
                                 "{{ event.data.tool_input.command"
@@ -481,11 +486,7 @@ class TestRequireUvRewrite:
         response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
         assert response.decision == "allow"
-        # The per-effect when still matches ('python' is in the string), so rewrite fires,
-        # but the regex shouldn't match 'uv run python' because it's preceded by 'uv run '
-        # not by a statement separator. The result should still contain 'uv run python'.
-        assert response.modified_input is not None
-        assert "uv run python" in response.modified_input["command"]
+        assert response.modified_input is None
 
     @pytest.mark.asyncio
     async def test_compound_command(
@@ -501,7 +502,7 @@ class TestRequireUvRewrite:
                 effects=[
                     RuleEffect(
                         type="rewrite_input",
-                        when="any(p in str(tool_input.get('command', '')) for p in ['python', 'pip'])",
+                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
                         input_updates={
                             "command": (
                                 "{{ event.data.tool_input.command"
@@ -545,7 +546,7 @@ class TestRequireUvRewrite:
                 effects=[
                     RuleEffect(
                         type="rewrite_input",
-                        when="any(p in str(tool_input.get('command', '')) for p in ['python', 'pip'])",
+                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
                         input_updates={
                             "command": (
                                 "{{ event.data.tool_input.command"

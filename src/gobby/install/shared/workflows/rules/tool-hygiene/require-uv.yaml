@@ -11,12 +11,12 @@ rules:
       and event.data.get('tool_name') == 'Bash'
     effects:
       - type: inject_context
-        when: "any(w in ('python', 'python3', 'pip', 'pip3') or w.startswith('python3.') for w in str(tool_input.get('command', '')).split())"
+        command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:3(?:\\.\\d+)?)?\\b)"
         template: |
           Gobby rewrote your command to use `uv`. Bare python/pip is not allowed in this project.
           Use `uv run python` or `uv pip` directly next time.
       - type: rewrite_input
-        when: "any(w in ('python', 'python3', 'pip', 'pip3') or w.startswith('python3.') for w in str(tool_input.get('command', '')).split())"
+        command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:3(?:\\.\\d+)?)?\\b)"
         input_updates:
           command: >
             {{ event.data.tool_input.command

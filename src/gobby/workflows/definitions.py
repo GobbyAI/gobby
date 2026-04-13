@@ -135,10 +135,11 @@ class RuleEffect(BaseModel):
         """Warn when fields irrelevant to the effect type are set."""
         import warnings
 
+        selector_fields = {"tools", "mcp_tools", "command_pattern", "command_not_pattern"}
         _fields_by_type: dict[str, set[str]] = {
-            "block": {"reason", "tools", "mcp_tools", "command_pattern", "command_not_pattern"},
+            "block": {"reason", *selector_fields},
             "set_variable": {"variable", "value"},
-            "inject_context": {"template"},
+            "inject_context": {"template", *selector_fields},
             "mcp_call": {
                 "server",
                 "tool",
@@ -147,10 +148,11 @@ class RuleEffect(BaseModel):
                 "inject_result",
                 "block_on_failure",
                 "block_on_success",
+                *selector_fields,
             },
-            "observe": {"category", "message"},
-            "rewrite_input": {"input_updates", "auto_approve"},
-            "load_skill": {"skill"},
+            "observe": {"category", "message", *selector_fields},
+            "rewrite_input": {"input_updates", "auto_approve", *selector_fields},
+            "load_skill": {"skill", *selector_fields},
         }
         # Fields with non-None defaults that shouldn't trigger warnings
         _default_skip = {
