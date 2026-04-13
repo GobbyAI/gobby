@@ -2,7 +2,7 @@
 
 Covers:
 - No provider -> SDK ChatSession (backward compat)
-- provider="claude" -> CLIChatSession
+- provider="claude" -> SDK ChatSession
 - Session registers with correct source
 """
 

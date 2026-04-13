@@ -1,8 +1,0 @@
-name: hello-world
-description: A simple pipeline that outputs Hello World
-type: pipeline
-version: "1.0"
-
-steps:
-  - id: greet
-    exec: "echo 'Hello World'"
