@@ -1,0 +1,242 @@
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from gobby.code_index.graph import CodeGraph
+
+
+@pytest.fixture
+def mock_client():
+    client = AsyncMock()
+    return client
+
+
+def test_available():
+    graph = CodeGraph()
+    assert graph.available is False
+
+    graph = CodeGraph(neo4j_client=MagicMock())
+    assert graph.available is True
+
+
+@pytest.mark.asyncio
+async def test_add_relationships_not_available():
+    graph = CodeGraph()
+    assert await graph.add_relationships("p1", "test.py") == 0
+
+
+@pytest.mark.asyncio
+async def test_add_relationships_success(mock_client):
+    graph = CodeGraph(neo4j_client=mock_client)
+
+    imports = [{"source_file": "a.py", "target_module": "sys"}]
+    calls = [{"caller_symbol_id": "sym1", "callee_name": "func", "file_path": "a.py", "line": 1}]
+    contains = [{"id": "sym1", "name": "c", "kind": "func", "line_start": 1}]
+
+    cnt = await graph.add_relationships("p1", "a.py", imports, calls, contains)
+    assert cnt == 3
+    assert mock_client.execute_write.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_add_relationships_exception(mock_client):
+    graph = CodeGraph(neo4j_client=mock_client)
+    mock_client.execute_write.side_effect = Exception("err")
+    imports = [{"source_file": "start.py"}]
+    # Should catch exception and log warning, return 0 for that insert
+    cnt = await graph.add_relationships("p1", "a.py", imports)
+    assert cnt == 0
+
+
+@pytest.mark.asyncio
+async def test_methods_not_available():
+    graph = CodeGraph()
+    assert await graph.find_callers("q", "p") == []
+    assert await graph.find_usages("q", "p") == []
+    assert await graph.get_imports("f", "p") == []
+    assert await graph.get_import_chain("m", "p") == []
+    assert await graph.find_blast_radius("s", None, "p") == []
+    res = await graph.get_file_graph("p")
+    assert res == {"nodes": [], "links": []}
+    res = await graph.get_file_symbols("f", "p")
+    assert res == {"nodes": [], "links": []}
+    res = await graph.get_symbol_neighbors("s", "p")
+    assert res == {"nodes": [], "links": []}
+
+    await graph.clear_project("p")
+    await graph.delete_file("f", "p")
+
+
+@pytest.mark.asyncio
+async def test_find_callers(mock_client):
+    graph = CodeGraph(mock_client)
+    mock_client.execute_read.return_value = [
+        {"caller_id": "c1", "caller_name": "cn", "file": "f", "line": 1}
+    ]
+    res = await graph.find_callers("n", "p1")
+    assert len(res) == 1
+    assert res[0]["caller_id"] == "c1"
+
+    mock_client.execute_read.side_effect = Exception("e")
+    res = await graph.find_callers("n", "p1")
+    assert res == []
+
+
+@pytest.mark.asyncio
+async def test_find_usages(mock_client):
+    graph = CodeGraph(mock_client)
+    mock_client.execute_read.return_value = [{"source_id": "s1"}]
+    assert await graph.find_usages("n", "p1") == [{"source_id": "s1"}]
+    mock_client.execute_read.side_effect = Exception("e")
+    assert await graph.find_usages("n", "p1") == []
+
+
+@pytest.mark.asyncio
+async def test_get_imports(mock_client):
+    graph = CodeGraph(mock_client)
+    mock_client.execute_read.return_value = [{"module_name": "m1"}]
+    assert await graph.get_imports("f", "p1") == [{"module_name": "m1"}]
+    mock_client.execute_read.side_effect = Exception("e")
+    assert await graph.get_imports("f", "p1") == []
+
+
+@pytest.mark.asyncio
+async def test_get_import_chain(mock_client):
+    graph = CodeGraph(mock_client)
+    mock_client.execute_read.return_value = [{"name": "n1"}]
+    assert await graph.get_import_chain("m", "p1") == [{"name": "n1"}]
+    mock_client.execute_read.side_effect = Exception("e")
+    assert await graph.get_import_chain("m", "p1") == []
+
+
+@pytest.mark.asyncio
+async def test_find_blast_radius(mock_client):
+    graph = CodeGraph(mock_client)
+
+    with pytest.raises(ValueError):
+        await graph.find_blast_radius("s", "f", "p")
+
+    with pytest.raises(ValueError):
+        await graph.find_blast_radius(None, None, "p")
+
+    # Path 1: symbol_name
+    mock_client.execute_read.return_value = [
+        {"symbol_id": "sym1", "distance": 1, "rel_type": "call"}
+    ]
+    res = await graph.find_blast_radius("s", None, "p")
+    assert len(res) == 1
+
+    # Path 2: file_path
+    mock_client.execute_read.side_effect = [
+        [{"symbol_id": "sym2", "distance": 1, "rel_type": "call"}],  # call_records
+        [{"file_path": "f2", "distance": 2, "rel_type": "import"}],  # import_records
+    ]
+    res = await graph.find_blast_radius(None, "f", "p")
+    assert len(res) == 2
+
+    mock_client.execute_read.side_effect = Exception("e")
+    assert await graph.find_blast_radius("s", None, "p") == []
+
+
+@pytest.mark.asyncio
+async def test_get_file_graph(mock_client):
+    graph = CodeGraph(mock_client)
+    mock_client.execute_read.side_effect = [
+        [{"id": "f1", "path": "p1", "type": "file", "symbol_count": 1}],  # file_records
+        [{"source": "f1", "target": "m1", "type": "IMPORTS"}],  # import_records
+        [{"source": "f1", "target": "sym1", "type": "DEFINES"}],  # defines_records
+        [{"source": "sym1", "target": "sym2", "type": "CALLS"}],  # call_records
+    ]
+    res = await graph.get_file_graph("p1", limit=1)
+    assert len(res["nodes"]) == 3  # f1 (file), m1 (module), sym1 (symbol)
+    assert len(res["links"]) == 3
+
+    mock_client.execute_read.side_effect = Exception("e")
+    assert await graph.get_file_graph("p1") == {"nodes": [], "links": []}
+
+
+@pytest.mark.asyncio
+async def test_get_file_symbols(mock_client):
+    graph = CodeGraph(mock_client)
+    mock_client.execute_read.side_effect = [
+        [{"id": "sym1", "name": "sym1"}],  # sym_records
+        [{"source": "sym1", "target": "sym2", "line": 1}],  # call_records
+    ]
+    res = await graph.get_file_symbols("f", "p")
+    assert len(res["nodes"]) == 2  # sym1, sym2
+    assert len(res["links"]) == 2  # 1 DEFINES, 1 CALLS
+
+    mock_client.execute_read.side_effect = Exception("e")
+    assert await graph.get_file_symbols("f", "p") == {"nodes": [], "links": []}
+
+
+@pytest.mark.asyncio
+async def test_get_symbol_neighbors(mock_client):
+    graph = CodeGraph(mock_client)
+    mock_client.execute_read.return_value = [
+        {
+            "id": "sym_in",
+            "name": "in",
+            "kind": "func",
+            "direction": "incoming",
+            "file_path": "f",
+            "line": 1,
+        },
+        {
+            "id": "sym_out",
+            "name": "out",
+            "kind": "func",
+            "direction": "outgoing",
+            "file_path": "f",
+            "line": 2,
+        },
+    ]
+    res = await graph.get_symbol_neighbors("s", "p")
+    assert len(res["nodes"]) == 2
+    assert len(res["links"]) == 2
+
+    mock_client.execute_read.side_effect = Exception("e")
+    assert await graph.get_symbol_neighbors("s", "p") == {"nodes": [], "links": []}
+
+
+@pytest.mark.asyncio
+async def test_get_blast_radius_graph(mock_client):
+    graph = CodeGraph(mock_client)
+    # Mock find_blast_radius since it's a wrapper
+    mock_client.execute_read.return_value = [
+        {
+            "symbol_id": "sym1",
+            "symbol_name": "nm",
+            "kind": "func",
+            "distance": 1,
+            "rel_type": "call",
+        },
+        {"file_path": "f1", "distance": 2, "rel_type": "import"},
+    ]
+    res = await graph.get_blast_radius_graph("s", None, "p")
+    assert res["center"] == "s"
+    assert len(res["nodes"]) == 3  # center + sym1 + f1
+    assert len(res["links"]) == 2
+
+    with pytest.raises(ValueError):
+        await graph.get_blast_radius_graph(None, None, "p")
+
+
+@pytest.mark.asyncio
+async def test_clear_project(mock_client):
+    graph = CodeGraph(mock_client)
+    await graph.clear_project("p1")
+    mock_client.execute_write.assert_called_once()
+
+    mock_client.execute_write.side_effect = Exception("e")
+    await graph.clear_project("p1")
+
+
+@pytest.mark.asyncio
+async def test_delete_file(mock_client):
+    graph = CodeGraph(mock_client)
+    await graph.delete_file("f", "p")
+    assert mock_client.execute_write.call_count == 2
+
+    mock_client.execute_write.side_effect = Exception("e")
+    await graph.delete_file("f", "p")
