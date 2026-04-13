@@ -95,7 +95,9 @@ class WorkflowHookHandler:
         if data.get("tool_input") in (None, "", {}):
             return True
 
-        if tool_name.startswith("mcp__") and (not data.get("mcp_server") or not data.get("mcp_tool")):
+        if tool_name.startswith("mcp__") and (
+            not data.get("mcp_server") or not data.get("mcp_tool")
+        ):
             return True
 
         return False
@@ -183,7 +185,11 @@ class WorkflowHookHandler:
 
     def _sync_codex_tool_context(self, event: HookEvent, session_id: str) -> None:
         """Maintain Codex BEFORE/AFTER tool parity for rule evaluation."""
-        if event.source != SessionSource.CODEX or not session_id or not isinstance(event.data, dict):
+        if (
+            event.source != SessionSource.CODEX
+            or not session_id
+            or not isinstance(event.data, dict)
+        ):
             return
 
         if event.event_type == HookEventType.SESSION_END:

@@ -196,7 +196,9 @@ def register_core_routes(
 
             machine_id = get_machine_id() or "unknown-machine"
             model = body.model if isinstance(body.model, str) and body.model else None
-            chat_mode = body.chat_mode if isinstance(body.chat_mode, str) and body.chat_mode else None
+            chat_mode = (
+                body.chat_mode if isinstance(body.chat_mode, str) and body.chat_mode else None
+            )
 
             session = server.session_manager.create_web_chat_session(
                 machine_id=machine_id,

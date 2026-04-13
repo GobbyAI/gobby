@@ -212,9 +212,7 @@ class CodexAdapter(BaseAdapter):
 
         item_id = item_data.get("id") or item_data.get("itemId") or ""
         raw_tool_name = (
-            item_data.get("tool_name")
-            or item_data.get("toolName")
-            or item_data.get("name")
+            item_data.get("tool_name") or item_data.get("toolName") or item_data.get("name")
         )
         if isinstance(raw_tool_name, str) and raw_tool_name:
             item_data.setdefault("tool_name", self.normalize_tool_name(raw_tool_name))

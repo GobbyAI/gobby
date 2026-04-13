@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
@@ -244,7 +244,10 @@ class ToolProxyService:
 
             project_ctx = get_project_context()
             project_id = project_ctx.get("id") if project_ctx else None
-            return session_manager.resolve_session_reference(effective_session_id, project_id)
+            return cast(
+                "str | None",
+                session_manager.resolve_session_reference(effective_session_id, project_id),
+            )
         except Exception:
             return effective_session_id
 

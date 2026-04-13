@@ -411,11 +411,11 @@ class ExpansionService:
                     )
                     created_task_map[_stable_test_id(phase_id)] = test_result["task"]["id"]
                     phase_child_ids[phase_id].append(test_result["task"]["id"])
-                    suggested_tests = (
-                        phase.get("test_intent", {}).get("suggested_test_files") or []
-                    )
+                    suggested_tests = phase.get("test_intent", {}).get("suggested_test_files") or []
                     if suggested_tests:
-                        self.af_manager.set_files(test_result["task"]["id"], suggested_tests, "expansion")
+                        self.af_manager.set_files(
+                            test_result["task"]["id"], suggested_tests, "expansion"
+                        )
 
                 for task_item in tasks_by_phase[phase_id]:
                     raw_description = task_item.get("description") or ""

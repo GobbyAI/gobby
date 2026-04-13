@@ -36,6 +36,7 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
+
 class UnsetType:
     """Sentinel type for optional parameters that were not provided."""
 
