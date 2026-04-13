@@ -131,13 +131,21 @@ class LocalTaskManager:
         """Add a listener to be called when tasks change."""
         self._change_listeners.append(listener)
 
-    def _notify_listeners(self) -> None:
+    def _run_change_listeners(self) -> None:
         """Notify all listeners of a change."""
         for listener in self._change_listeners:
             try:
                 listener()
             except Exception as e:
                 logger.error(f"Error in task change listener: {e}")
+
+    def _notify_listeners(self) -> None:
+        """Notify listeners immediately or defer until the current commit."""
+        after_commit = getattr(self.db, "after_commit", None)
+        if callable(after_commit):
+            after_commit(self._run_change_listeners)
+            return
+        self._run_change_listeners()
 
     def compute_path_cache(self, task_id: str) -> str | None:
         """Compute the hierarchical path for a task.

@@ -26,6 +26,8 @@ def service(task_manager, run_manager):
 
 def test_apply_run_rolls_back_partial_writes_on_failure(service, task_manager, run_manager, sample_project):
     parent = task_manager.create_task(project_id=sample_project["id"], title="Parent expansion")
+    listener_calls: list[str] = []
+    task_manager.add_change_listener(lambda: listener_calls.append("changed"))
     run = run_manager.create(
         parent_task_id=parent.id,
         project_id=sample_project["id"],
@@ -61,6 +63,8 @@ def test_apply_run_rolls_back_partial_writes_on_failure(service, task_manager, r
     dependencies = task_manager.db.fetchone("SELECT COUNT(*) AS count FROM task_dependencies")
     assert dependencies is not None
     assert dependencies["count"] == 0
+
+    assert listener_calls == []
 
     refreshed = run_manager.get(run.id)
     assert refreshed is not None

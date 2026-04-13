@@ -132,6 +132,32 @@ class TestLocalDatabase:
             (3, "outer-after"),
         ]
 
+    def test_after_commit_runs_after_outer_commit(self, temp_db: LocalDatabase) -> None:
+        """Callbacks registered in nested scopes should run only after outer commit."""
+        events: list[str] = []
+
+        with temp_db.transaction():
+            temp_db.after_commit(lambda: events.append("outer"))
+            with temp_db.transaction():
+                temp_db.after_commit(lambda: events.append("inner"))
+                assert events == []
+            assert events == []
+
+        assert events == ["outer", "inner"]
+
+    def test_after_commit_discards_callbacks_on_rollback(self, temp_db: LocalDatabase) -> None:
+        """Callbacks in rolled-back scopes should never run."""
+        events: list[str] = []
+
+        with pytest.raises(RuntimeError, match="boom"):
+            with temp_db.transaction():
+                temp_db.after_commit(lambda: events.append("outer"))
+                with temp_db.transaction():
+                    temp_db.after_commit(lambda: events.append("inner"))
+                    raise RuntimeError("boom")
+
+        assert events == []
+
     def test_thread_local_connections(self, temp_dir: Path) -> None:
         """Test that each thread gets its own connection."""
         db_path = temp_dir / "thread_test.db"
