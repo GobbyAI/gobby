@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from gobby.tasks.state_semantics import (
     TaskLifecycleStage,
+    get_pre_escalation_status,
     lifecycle_stage_from_status,
     project_legacy_status,
     serialize_task_state,
@@ -295,6 +296,7 @@ class Task:
             "commits": self.commits,
             "escalated_at": self.escalated_at,
             "escalation_reason": self.escalation_reason,
+            "pre_escalation_status": get_pre_escalation_status(self),
             "github_issue_number": self.github_issue_number,
             "github_pr_number": self.github_pr_number,
             "github_repo": self.github_repo,
@@ -343,6 +345,7 @@ class Task:
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
             "escalated_at": self.escalated_at,
+            "pre_escalation_status": get_pre_escalation_status(self),
             "start_date": self.start_date,
             "due_date": self.due_date,
             "github_issue_number": self.github_issue_number,

@@ -83,6 +83,10 @@ function getPreservedLifecycleStatus(task: GobbyTaskDetail): string {
   return 'open'
 }
 
+function getDeEscalationTargetStatus(task: GobbyTaskDetail): string {
+  return task.pre_escalation_status ?? 'open'
+}
+
 export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, actions, onSelectTask, onClose, onClone }: TaskDetailProps) {
   const [task, setTask] = useState<GobbyTaskDetail | null>(null)
   const [deps, setDeps] = useState<DependencyTree | null>(null)
@@ -246,10 +250,9 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             {taskState?.is_escalated && (
               <EscalationCard
                 task={task}
+                targetStatus={getDeEscalationTargetStatus(task)}
                 onResolve={() => {
-                  handleAction(() =>
-                    actions.deEscalateTask(task.id, 'Resolved from task detail', 'open')
-                  )
+                  void fetchDetail(task.id)
                 }}
               />
             )}
@@ -609,7 +612,12 @@ function getActionGroups(task: GobbyTaskDetail, actions: TaskActions): StatusAct
       blockingActions.push({
         label: 'Resume',
         variant: 'default',
-        onClick: () => actions.deEscalateTask(id, 'Resumed from task detail', 'open'),
+        onClick: () =>
+          actions.deEscalateTask(
+            id,
+            'Resumed from task detail',
+            getDeEscalationTargetStatus(task),
+          ),
       })
     } else {
       blockingActions.push({

@@ -16,7 +16,19 @@ vi.mock('../SessionViewer', () => ({ SessionViewer: () => null }))
 vi.mock('../CapabilityScope', () => ({ CapabilityScope: () => null }))
 vi.mock('../RawTraceView', () => ({ RawTraceView: () => null }))
 vi.mock('../OversightSelector', () => ({ OversightSelector: () => null }))
-vi.mock('../EscalationCard', () => ({ EscalationCard: () => null }))
+vi.mock('../EscalationCard', () => ({
+  EscalationCard: ({
+    onResolve,
+    targetStatus,
+  }: {
+    onResolve: (decision: string) => void
+    targetStatus?: string | null
+  }) => (
+    <button onClick={() => onResolve('mock decision')}>
+      {`Resolve escalation (${targetStatus ?? 'none'})`}
+    </button>
+  ),
+}))
 vi.mock('../TaskResults', () => ({ TaskResults: () => null }))
 vi.mock('../TokenTracker', () => ({ TokenTracker: () => null }))
 vi.mock('../TaskMemories', () => ({ TaskMemories: () => null }))
@@ -150,5 +162,65 @@ describe('TaskDetail', () => {
     await waitFor(() => {
       expect(defaultProps.getTask).toHaveBeenCalledWith('task-2')
     })
+  })
+
+  it('uses the server-provided pre-escalation status when resuming a task', async () => {
+    const escalatedTask: GobbyTaskDetail = {
+      ...SAMPLE_TASK,
+      status: 'escalated',
+      escalated_at: '2026-03-02T00:00:00Z',
+      escalation_reason: 'Blocked on user input',
+      pre_escalation_status: 'needs_review',
+    }
+
+    render(
+      <TaskDetail
+        {...defaultProps}
+        getTask={vi.fn().mockResolvedValue(escalatedTask)}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Fix the bug')).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Resume' }))
+
+    await waitFor(() => {
+      expect(defaultProps.actions.deEscalateTask).toHaveBeenCalledWith(
+        'task-1',
+        'Resumed from task detail',
+        'needs_review',
+      )
+    })
+  })
+
+  it('refreshes after escalation-card resolution instead of de-escalating twice', async () => {
+    const escalatedTask: GobbyTaskDetail = {
+      ...SAMPLE_TASK,
+      status: 'escalated',
+      escalated_at: '2026-03-02T00:00:00Z',
+      escalation_reason: 'Blocked on user input',
+      pre_escalation_status: 'needs_review',
+    }
+    const getTask = vi.fn().mockResolvedValue(escalatedTask)
+
+    render(
+      <TaskDetail
+        {...defaultProps}
+        getTask={getTask}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Resolve escalation (needs_review)' })).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Resolve escalation (needs_review)' }))
+
+    await waitFor(() => {
+      expect(getTask).toHaveBeenCalledTimes(2)
+    })
+    expect(defaultProps.actions.deEscalateTask).not.toHaveBeenCalled()
   })
 })

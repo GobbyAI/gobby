@@ -33,6 +33,7 @@ export interface GobbyTask {
   closed_at?: string | null
   closed_in_session_id?: string | null
   escalated_at?: string | null
+  pre_escalation_status?: string | null
   category?: string | null
 }
 
@@ -51,6 +52,7 @@ export interface GobbyTaskDetail extends GobbyTask {
   commits: string[] | null
   escalated_at: string | null
   escalation_reason: string | null
+  pre_escalation_status?: string | null
   created_in_session_id: string | null
   closed_in_session_id: string | null
   complexity_score: number | null

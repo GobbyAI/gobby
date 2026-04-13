@@ -589,6 +589,22 @@ class TestReopenTask:
 
 
 class TestDeEscalateTask:
+    def test_get_task_detail_exposes_pre_escalation_status(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
+
+        response = client.get(f"/api/tasks/{sample_task['id']}")
+
+        assert response.status_code == 200
+        assert response.json()["pre_escalation_status"] == "needs_review"
+
     def test_de_escalate_task(
         self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
     ) -> None:
@@ -611,18 +627,22 @@ class TestDeEscalateTask:
         assert "User approved the approach" in data["description"]
 
     def test_de_escalate_task_with_explicit_target_status(
-        self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
     ) -> None:
-        task_manager.update_task(
-            sample_task["id"],
-            status="escalated",
-            escalation_reason="Blocked on user input",
-        )
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
+        detail = client.get(f"/api/tasks/{sample_task['id']}").json()
+
         response = client.post(
             f"/api/tasks/{sample_task['id']}/de-escalate",
             json={
                 "decision_context": "Resume review",
-                "target_status": "needs_review",
+                "target_status": detail["pre_escalation_status"],
             },
         )
         assert response.status_code == 200

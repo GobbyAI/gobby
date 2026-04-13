@@ -5,6 +5,12 @@ from __future__ import annotations
 from typing import Any, Literal, cast
 
 TaskLifecycleStage = Literal["in_progress", "needs_review", "review_approved"]
+TaskDeEscalationTargetStatus = Literal[
+    "open",
+    "in_progress",
+    "needs_review",
+    "review_approved",
+]
 LegacyTaskStatus = Literal[
     "open",
     "in_progress",
@@ -28,7 +34,7 @@ ACTIVE_CLAIM_STATUSES: tuple[str, ...] = (
     "escalated",
 )
 
-DE_ESCALATION_TARGET_STATUSES: tuple[str, ...] = (
+DE_ESCALATION_TARGET_STATUSES: tuple[TaskDeEscalationTargetStatus, ...] = (
     "open",
     "in_progress",
     "needs_review",
@@ -151,6 +157,19 @@ def normalize_de_escalation_target_status(
         allowed = ", ".join(DE_ESCALATION_TARGET_STATUSES)
         raise ValueError(f"Invalid target_status '{target_status}'. Expected one of: {allowed}.")
     return normalized
+
+
+def get_pre_escalation_status(task: Any) -> TaskDeEscalationTargetStatus | None:
+    """Return the status an escalated task should resume to."""
+    if not is_task_escalated(task):
+        return None
+
+    projected = project_legacy_status(
+        lifecycle_stage=_coerce_task_lifecycle_stage(task),
+        closed_at=None,
+        escalated_at=None,
+    )
+    return cast(TaskDeEscalationTargetStatus, projected)
 
 
 def _coerce_task_lifecycle_stage(task: Any) -> TaskLifecycleStage | None:
