@@ -342,8 +342,13 @@ class TestLLMServiceCallFeature:
         local_provider.generate_text = AsyncMock(return_value="Fix Auth Bug")
 
         config = DigestConfig(provider="local", model="test-model")
-        result = await service.call_feature(config, "prompt text")
+        result = await service.call_feature(
+            config,
+            "prompt text",
+            caller="memory.title_synthesis",
+        )
         assert result == "Fix Auth Bug"
+        assert local_provider.generate_text.await_args.kwargs["caller"] == "memory.title_synthesis"
 
     @pytest.mark.asyncio
     @patch("gobby.llm.claude.ClaudeLLMProvider")
@@ -364,7 +369,11 @@ class TestLLMServiceCallFeature:
         local_provider.generate_text = AsyncMock(side_effect=ConnectionError("local server down"))
 
         config = DigestConfig(provider="local", model="test-model")
-        result = await service.call_feature(config, "prompt text")
+        result = await service.call_feature(
+            config,
+            "prompt text",
+            caller="memory.title_synthesis",
+        )
 
         assert result == "Fallback Title"
         # Should fall back to haiku (LOW tier). Inspect by inspecting bound
@@ -377,6 +386,7 @@ class TestLLMServiceCallFeature:
         if bound_model is None and len(call_args.args) >= 3:
             bound_model = call_args.args[2]
         assert bound_model == "haiku"
+        assert call_args.kwargs["caller"] == "memory.title_synthesis"
 
     @pytest.mark.asyncio
     @patch("gobby.llm.claude.ClaudeLLMProvider")

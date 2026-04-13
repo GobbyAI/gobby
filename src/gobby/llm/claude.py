@@ -369,6 +369,8 @@ class ClaudeLLMProvider(LLMProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """
         Generate text using Claude.
@@ -377,7 +379,13 @@ class ClaudeLLMProvider(LLMProvider):
         """
         cli_path = await self._verify_cli_path()
         if cli_path:
-            return await self._generate_text_sdk(prompt, system_prompt, model, max_tokens)
+            return await self._generate_text_sdk(
+                prompt,
+                system_prompt,
+                model,
+                max_tokens,
+                caller=caller,
+            )
         raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
     async def _generate_text_sdk(
@@ -386,6 +394,8 @@ class ClaudeLLMProvider(LLMProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """Generate text using Claude Agent SDK (subscription mode)."""
         cli_path = await self._verify_cli_path()
@@ -432,9 +442,8 @@ class ClaudeLLMProvider(LLMProvider):
                 self.logger.warning(f"generate_text: {message_count} messages but no text content")
             return result_text
 
-        result: str = await self._execute_sdk_query(
-            "generate_text", _run_query, options, max_retries=3
-        )
+        operation = f"generate_text[{caller}]" if caller else "generate_text"
+        result: str = await self._execute_sdk_query(operation, _run_query, options, max_retries=3)
         # SDK doesn't support max_tokens directly; post-truncate if needed
         if max_tokens and len(result) > max_tokens * 4:
             result = result[: max_tokens * 4]

@@ -219,6 +219,8 @@ class CodexProvider(LLMProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """
         Generate text using Codex/OpenAI.
@@ -240,8 +242,9 @@ class CodexProvider(LLMProvider):
             )
             return response.choices[0].message.content or ""
         except Exception as e:
-            self.logger.error(f"Failed to generate text with Codex: {e}")
-            raise RuntimeError(f"Failed to generate text with Codex: {e}") from e
+            caller_label = f"[{caller}]" if caller else ""
+            self.logger.error(f"Failed to generate text{caller_label} with Codex: {e}")
+            raise RuntimeError(f"Failed to generate text{caller_label} with Codex: {e}") from e
 
     async def generate_json(
         self,

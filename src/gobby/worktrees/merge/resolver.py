@@ -452,7 +452,11 @@ class MergeResolver:
                 else:
                     provider = self._llm_service.get_default_provider()
                     model = None
-                response = await provider.generate_text(prompt, model=model)
+                response = await provider.generate_text(
+                    prompt,
+                    model=model,
+                    caller="worktrees.merge.resolve_hunks",
+                )
 
                 if response:
                     # Simple parsing assumption - in real app would be more robust
@@ -511,7 +515,11 @@ class MergeResolver:
                 else:
                     provider = self._llm_service.get_default_provider()
                     model = None
-                response = await provider.generate_text(prompt, model=model)
+                response = await provider.generate_text(
+                    prompt,
+                    model=model,
+                    caller="worktrees.merge.resolve_full_file",
+                )
 
                 if response:
                     resolutions.append({"file": file_path, "content": response})

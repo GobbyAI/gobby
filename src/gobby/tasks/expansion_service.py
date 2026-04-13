@@ -719,6 +719,7 @@ class ExpansionService:
                 system_prompt=system_prompt,
                 model=model_name,
                 max_tokens=8000,
+                caller="tasks.expansion.text_fallback",
             )
             parsed = extract_json_object(response_text)
             if parsed is None:

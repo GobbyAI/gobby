@@ -334,7 +334,11 @@ async def _build_turn_record(
     except Exception:
         turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
 
-    last_turn = await provider.generate_text(turn_prompt, model=model)
+    last_turn = await provider.generate_text(
+        turn_prompt,
+        model=model,
+        caller="memory.turn_record",
+    )
     return str(last_turn).strip()
 
 
@@ -374,11 +378,21 @@ async def _synthesize_title(
         and hasattr(llm_service, "call_feature")
     ):
         title = await asyncio.wait_for(
-            llm_service.call_feature(digest_config, title_prompt), llm_timeout
+            llm_service.call_feature(
+                digest_config,
+                title_prompt,
+                caller="memory.title_synthesis",
+            ),
+            llm_timeout,
         )
     else:
         title = await asyncio.wait_for(
-            provider.generate_text(title_prompt, model=model), llm_timeout
+            provider.generate_text(
+                title_prompt,
+                model=model,
+                caller="memory.title_synthesis",
+            ),
+            llm_timeout,
         )
 
     title_str = str(title).strip().strip('"').strip("'")

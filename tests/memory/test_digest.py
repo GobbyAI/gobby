@@ -435,6 +435,7 @@ class TestBuildTurnAndDigest:
         call_args = provider.generate_text.call_args_list[0]
         prompt = call_args[0][0]
         assert "Implement the feature" in prompt or "feature" in prompt.lower()
+        assert call_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
     async def test_synthesize_title_respects_digest_timeout(self):
@@ -465,6 +466,8 @@ class TestBuildTurnAndDigest:
                 llm_service=llm_service,
                 digest_config=digest_config,
             )
+
+        assert llm_service.call_feature.await_args.kwargs["caller"] == "memory.title_synthesis"
 
 
 class TestBuildTurnAndDigestIdempotency:
@@ -908,6 +911,7 @@ class TestBuildTurnAndDigestCatchUp:
         assert "Exchange 2" in prompt_text
         assert "Second question" in prompt_text
         assert "Third question" in prompt_text
+        assert turn_prompt_call.kwargs["caller"] == "memory.turn_record"
 
         # Verify digest contains both turns
         digest_content = sm.update_digest_markdown.call_args[0][1]

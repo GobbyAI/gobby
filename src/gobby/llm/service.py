@@ -223,6 +223,8 @@ class LLMService:
         prompt: str,
         system_prompt: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """Call generate_text for a feature config with tier-based fallback.
 
@@ -242,7 +244,13 @@ class LLMService:
         """
         provider, model, _ = self.get_provider_for_feature(feature_config)
         try:
-            return await provider.generate_text(prompt, system_prompt, model, max_tokens)
+            return await provider.generate_text(
+                prompt,
+                system_prompt,
+                model,
+                max_tokens,
+                caller=caller,
+            )
         except Exception as e:
             if provider.provider_name != "local":
                 raise
@@ -258,7 +266,13 @@ class LLMService:
                 fallback_model,
             )
             fallback = self.get_provider("claude")
-            return await fallback.generate_text(prompt, system_prompt, fallback_model, max_tokens)
+            return await fallback.generate_text(
+                prompt,
+                system_prompt,
+                fallback_model,
+                max_tokens,
+                caller=caller,
+            )
 
     @property
     def enabled_providers(self) -> list[str]:

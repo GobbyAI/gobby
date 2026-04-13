@@ -129,6 +129,8 @@ class LocalLLMProvider(LLMProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
