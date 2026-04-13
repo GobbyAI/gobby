@@ -6,8 +6,7 @@
 <h1 align="center">Gobby</h1>
 
 <p align="center">
-  <strong>The control plane for AI coding tools.</strong><br>
-  One daemon. All your agents. No more context window roulette.
+  <strong>Local-first daemon and workflow control plane for AI coding tools.</strong>
 </p>
 
 <p align="center">
@@ -19,164 +18,138 @@
 
 ---
 
-Gobby is a local-first daemon that unifies your AI coding assistants—Claude Code, Gemini CLI, Cursor, Windsurf, Copilot, and Codex—under one persistent, extensible platform. It handles the stuff these tools forget: sessions that survive restarts, context that carries across compactions, declarative rules that keep agents from going off the rails, and an MCP proxy that doesn't eat half your context window just loading tool definitions.
+Gobby runs as a long-lived local daemon that unifies AI coding CLIs like Claude Code, Gemini CLI, and Codex, giving them shared sessions, memory, workflows, and guardrails instead of yet another one-off helper script. Because Claude Code natively supports OpenAI-compatible endpoints, local model providers like LM Studio and Ollama work out of the box — the same Gobby workflows run against both cloud and local models without changing your setup.
 
-**Gobby is built with Gobby.** Most of this codebase was written by AI agents running through Gobby's own task system and workflows — over 10,000 tasks tracked and counting. Case in point: the entire OpenTelemetry observability stack (tracing, metrics, logging bridge, trace viewer UI) was built autonomously — 10 tasks dispatched across Gemini devs and Claude Opus reviewers, orchestrated by a cron-driven pipeline, completed in ~3 hours with six infrastructure bugs discovered and fixed live. See [test-battery.md](test-battery.md) for the full story.
+**Gobby is built with Gobby.** Most of this codebase was written by AI agents running through Gobby's own task system and workflows — over 10,000 tasks tracked and counting.
 
-Note: Gobby is currently in alpha. Expect rough edges and breaking changes until the first stable release.
+> Deterministic when you need it, autonomous when you do not — with hooks and workflows enforcing guardrails either way.
 
-## Why Gobby?
+---
 
-### 🎯 A Task System That Actually Works
+## Why Gobby exists
 
-If you've tried Beads or TaskMaster, you know the pain: databases that corrupt, agents that can't figure out the schema, worktrees that fall out of sync. Gobby's task system was designed by someone who got fed up with all of them.
+Modern AI coding tools are powerful but fragmented: each CLI has its own idea of sessions, context, and tasks, and none of them give you a single place to coordinate agents across tools. They also tend to burn tokens on redundant MCP metadata, verbose shell output, and repeated code snippets instead of the information that actually matters to the current change.
 
-- **Dependency graphs** that agents actually understand
-- **TDD expansion** — describe a feature, get red/green/blue subtasks with test-first ordering
-- **Validation gates** — tasks can't close without passing criteria (with git diff context)
-- **Git-native sync** — `.gobby/tasks.jsonl` lives in your repo, works with worktrees
-- **Commit linking** — `[task-id] feat: thing` auto-links commits to tasks
+Gobby solves this by acting as the control plane for your AI coding stack rather than another agent competing for context. The daemon sits between CLIs, hooks, and MCP servers, orchestrating:
 
-Your AI assistant creates, expands, and closes tasks through MCP tools — no CLI needed:
+- **Session and state** shared across tools, terminals, and restarts
+- **Workflows and pipelines** that can run deterministically or autonomously under rule-enforced guardrails
+- **Memory and skills** that are captured automatically and injected only when they are relevant
+- **Token optimization** via AST-aware code indexing (`gcode`) and CLI-output compression (`gsqz`)
 
-```text
-create_task(title="Add user authentication", task_type="feature")
-expand_task(task_id="#42")           → TDD-ordered subtasks
-list_ready_tasks()                   → What's unblocked and ready
-```
+---
 
-### 🔌 MCP Proxy Without the Token Tax
+## Core concepts
 
-Connect 5 MCP servers and watch 50K+ tokens vanish before you write a single line of code. Gobby's proxy uses **progressive discovery**—tools stay as lightweight metadata until you actually need them:
+### Daemon, hooks, and CLIs
 
-```text
-list_tools()           → Just names and descriptions (~200 tokens)
-get_tool_schema(name)  → Full inputSchema when you need it
-call_tool(name, args)  → Execute
-```
+Gobby runs as a local daemon with HTTP, WebSocket, and MCP endpoints and never requires a cloud control plane. Your AI CLIs talk to it in two ways:
 
-Add servers dynamically. Import from GitHub repos. Search semantically. Your context window stays yours.
+- **Hooks**: lightweight adapters for Claude Code, Gemini CLI, and Codex that send structured events ("user executed this command", "assistant applied this edit", "session compacted context"), enabling deterministic, testable workflows around otherwise opaque sessions.
+- **MCP server**: a stdio-based FastMCP endpoint exposing Gobby's task, session, memory, workflow, and orchestration APIs as tools your assistants can call directly from within the editor.
 
-### 🔄 Session Handoffs That Don't Lose the Plot
+Because Claude Code natively supports OpenAI-compatible endpoints, local model providers like LM Studio and Ollama work through the same hooks and MCP tools as cloud providers. You can prototype workflows on local models and later swap in cloud providers without rewriting anything.
 
-When you `/compact` in Claude Code, Gobby captures what matters: the goal, what you changed, git status, recent tool calls. Next session, it injects that context automatically. No more "wait, what were we doing?"
+### Workflow engine and pipelines
 
-Works across CLIs too. Start in Claude Code, pick up in Gemini. Gobby remembers.
+At the heart of Gobby is a workflow and pipeline engine that can run in two distinct modes:
 
-### 🛤️ Rules That Enforce Discipline
+- **Deterministic pipelines**: declarative, step-based workflows (shell, prompts, nested pipelines, session spawns) that execute in a predictable order with explicit approval gates for human-in-the-loop control.
+- **Autonomous orchestration**: hook- and cron-driven flows that spawn agents, fan out tasks across worktrees or clones, and drive review loops until rule conditions are satisfied, all without manual intervention.
 
-Declarative rules that enforce behavior without relying on prompt compliance. The LLM doesn't need to remember constraints—the rule engine evaluates every event and enforces behavior through tool blocks, context injection, and state mutations:
+Pipelines are tick-based and can be triggered from hooks (for example, "on push to main" or "when a new epic is created"), from MCP tools, or via HTTP APIs, giving you a single orchestration layer for both manual and automated work.
 
-```yaml
-# Block git push - let the parent session handle pushing
-no-push:
-  event: before_tool
-  effect:
-    type: block
-    tools: [Bash]
-    command_pattern: "git\\s+push"
-    reason: "Do not push to remote. Let the parent session handle pushing."
+### Rules and hook-enforced guardrails
 
-# Block file edits without a claimed task
-require-task:
-  event: before_tool
-  when: "not task_claimed and not plan_mode"
-  effect:
-    type: block
-    tools: [Edit, Write, NotebookEdit]
-    reason: "Claim a task before editing files."
-```
+Gobby treats safety, discipline, and project conventions as **rules**, not prompts. Rules are evaluated on every hook and workflow event, and can:
 
-13 bundled rule groups covering safety, tool hygiene, task enforcement, stop gates, memory lifecycle, and more. Plus on-demand step-based workflows and deterministic pipelines.
+- Block unsafe or undesired tool calls (for example preventing `git push` from inside child agents)
+- Inject context or skills before a tool executes
+- Enforce task-claiming, test-first workflows, and stop-gates for risky changes
 
-### 🌳 Worktree Orchestration
+This makes autonomous execution far more predictable: if a rule is violated, the workflow is blocked or rerouted instead of relying on the model to "remember" instructions buried in system prompts.
 
-Spawn agents in isolated git worktrees. Run tasks in parallel without stepping on each other. Gobby tracks which agent is where and what they're doing.
+### Memory and skills
 
-```python
-call_tool("gobby-agents", "spawn_agent", {
-    "prompt": "Implement OAuth flow",
-    "task_id": "#123",
-    "isolation": "worktree",
-    "branch_name": "feature/oauth"
-})
-```
+Gobby's memory system is designed for **automated capture** and **context-driven injection**, not manual note-taking.
 
-### 🔗 Claude Code Task Integration
+- Hooks and MCP tools record persistent facts, decisions, and outcomes as the daemon observes your sessions.
+- During future work, Gobby injects only the memories and skills that match the current project, files, and tasks, rather than dumping the entire history into context.
+- Skills are structured instruction packs (defined in `SKILL.md`) that teach agents how to perform recurring workflows, and can be scoped globally or per project.
 
-Gobby transparently intercepts Claude Code's built-in task system (TaskCreate, TaskUpdate, etc.) and syncs operations to Gobby's persistent task store. Benefits:
+The end result is that your agents feel like they "remember" how your project works without you hand-curating prompts.
 
-- **Tasks persist** across sessions (unlike CC's session-scoped tasks)
-- **Commit linking** — tasks auto-link to git commits
-- **Validation gates** — define criteria for task completion
-- **LLM expansion** — break complex tasks into subtasks
+### MCP proxy with progressive discovery
 
-No configuration needed — just use Claude Code's native task tools and Gobby handles the rest.
+Connecting multiple MCP servers usually means paying a massive token tax every time your assistant loads tools. Gobby's MCP client proxy avoids this with **progressive discovery**:
 
-### 📚 Skills System
+- A cheap `list_tools` call returns just names and descriptions.
+- Full JSON schemas are only fetched when a tool is actually being used.
+- Gobby attaches its own context (task, session, project) when routing tool calls so downstream servers can behave more intelligently.
 
-Reusable instruction sets that teach agents how to perform specific tasks. Skills follow the SKILL.md format and are managed through the database.
+This keeps context focused on the current change instead of on static tool metadata.
 
-- **Core skills** bundled with Gobby — synced to the database on daemon startup
-- **Project skills** in `.gobby/skills/` for team-specific patterns
-- **Auto-injection** — skills with `alwaysApply: true` inject into every session
-- **Search and discovery** — your AI assistant finds and uses skills through MCP tools
+### Code intelligence and token optimization
 
-### 🌐 Web UI
+Two companion tools ship alongside Gobby to keep your context window focused on signal:
+
+- **`gcode`** (from the [`gobby-code`](https://github.com/gobby-cli/gobby-code) Rust crate) builds an AST-aware symbol index over your repositories. Gobby enhances it with a knowledge graph and vector database, giving you Reciprocal Rank Fusion scoring that combines FTS5 full-text search, semantic similarity, graph traversal, and graph-associated memory-to-code-symbol references. The result is retrieval by symbol instead of by file — agents find functions, types, and usages without loading entire files.
+- **`gsqz`** (from the [`gobby-squeeze`](https://github.com/gobby-cli/gobby-squeeze) Rust crate) wraps shell commands and compresses their output via configurable pipelines, collapsing verbose test runs, linters, and git noise down to concise summaries before injecting them into prompts.
+
+Together, these tools turn "show me everything" patterns into "show me just enough structure to act" while dramatically reducing token spend.
+
+### Web UI
 
 Gobby ships a built-in web interface that auto-starts with the daemon:
 
-- **Chat** with MCP tool support, voice chat, model switching, slash commands
+- **Chat** with MCP tool support, voice chat, model switching, and slash commands
 - **Tasks** — kanban board, tree view, dependency graph, Gantt chart, detail panel
 - **Memory** — table view, Neo4j 3D knowledge graph
 - **Sessions** — lineage tree, transcript viewer, AI summary generation
-- **Cron Jobs**, **Configuration**, **Skills**, **Projects**, **Agent Registry** pages
-- File browser/editor, terminal panel with xterm.js
+- **Observability** — OpenTelemetry tracing, metrics, and a built-in trace viewer with waterfall visualization
+- Cron jobs, configuration, skills, projects, agent registry, file browser, and terminal panel
 
 Access at `http://localhost:60887` when the daemon is running.
 
-### 🔍 Observability (OpenTelemetry)
+---
 
-Full observability built on OpenTelemetry — no custom metrics frameworks, no vendor lock-in:
+## Supported CLIs and providers
 
-- **Tracing** — `@traced` decorator, span context propagation, SQLite span storage
-- **Metrics** — instruments for MCP calls, pipeline executions, task lifecycle, hook events
-- **Logging** — OTel logging bridge replaces custom logging
-- **Exporters** — OTLP gRPC, Prometheus
-- **Trace viewer** — built-in UI with waterfall visualization and span detail panel
+### AI coding CLIs
 
-### 🧬 Code Indexing
+Gobby's 0.3.x series provides first-class integration with three primary CLIs, all with functional parity through hooks and MCP:
 
-AST-based symbol indexing via the `gobby-code` MCP server. Search and retrieve code by symbol instead of reading entire files — saves 90%+ tokens on large codebases:
+| CLI         | Integration style    | What Gobby adds                                                |
+|------------|----------------------|----------------------------------------------------------------|
+| Claude Code| Hooks + MCP server   | Persistent sessions, task syncing, rule-enforced workflows     |
+| Gemini CLI | Hooks + MCP server   | Shared memory and tasks, cross-session context, pipelines      |
+| Codex      | Hooks + MCP server   | Centralized orchestration, tool access, and background agents  |
 
-```text
-search_symbols("TaskExpander")  → Find symbols by name
-get_file_outline("src/foo.py")  → Hierarchical symbol map
-get_symbol(symbol_id)           → Just the source you need
-```
+All three CLIs talk to the same daemon, so a task started in Claude Code can be finished from Gemini CLI or Codex with full context and validation.
 
-Tree-sitter parsing for 15+ languages. Auto-indexes on commit, on init, and on session start.
+### Local model providers
 
-### 🚀 Pipelines & Orchestration
+Claude Code supports OpenAI-compatible endpoints, which means local model providers work seamlessly through Gobby's hooks and MCP layer:
 
-Deterministic automation with approval gates — from simple scripts to autonomous multi-agent orchestration:
+- **LM Studio** exposes an OpenAI-compatible API on `localhost` — point Claude Code at it for completely local execution.
+- **Ollama** does the same via `ollama serve` on `localhost:11434`.
 
-- Step types: `exec`, `prompt`, `invoke_pipeline`, `spawn_session`
-- Tick-based orchestrator pipeline with cron scheduling
-- Clone-based agent isolation — one clone per epic, sequential or parallel dispatch
-- Provider fallback rotation — auto-retry across providers on failures
-- Approval gates for human-in-the-loop workflows
-- Condition evaluation with safe expression engine
-- CLI, MCP, and HTTP API access
+Because Gobby orchestrates at the session and workflow level rather than the model level, the same tasks, rules, memory, and pipelines apply regardless of whether the underlying model is local or cloud-hosted.
+
+---
 
 ## Installation
 
+Gobby is distributed as a Python package and installs as a CLI that manages the daemon, MCP server, and web UI.
+
 ### Try it instantly
+
 ```bash
 uvx gobby --help
 ```
 
 ### Install globally
+
 ```bash
 # With uv (recommended)
 uv tool install gobby
@@ -188,44 +161,27 @@ pipx install gobby
 pip install gobby
 ```
 
-## Quick Start
+Python 3.13+ is recommended for the 0.3.x series.
+
+---
+
+## Quick start
+
+From a project directory:
 
 ```bash
-gobby start              # Start the daemon
-gobby init               # In your project directory
-gobby install            # Installs hooks for detected CLIs
+gobby start   # Start the daemon
+gobby init    # Initialize .gobby state for this repo
+gobby install # Detect and install hooks for supported CLIs
 ```
 
-Then add Gobby as an MCP server in your AI CLI (see below) and start coding. Gobby handles sessions, tasks, rules, and context automatically.
-
-**Requirements:** Python 3.13+ and [Claude Code](https://claude.ai/code). Additional CLIs ([Gemini CLI](https://github.com/google-gemini/gemini-cli), [Codex CLI](https://github.com/openai/codex), Cursor, Windsurf, Copilot) are supported but Claude Code is the primary development target. Works with your existing subscriptions — or bring your own API keys.
-
-## Configure Your AI CLI
-
-Add Gobby as an MCP server. Choose the `command` and `args` that match your installation:
-
-- **pip/pipx install**: `"command": "gobby"`, `"args": ["mcp-server"]`
-- **uv tool install**: `"command": "uv"`, `"args": ["run", "gobby", "mcp-server"]`
-
-**Claude Code** (`.mcp.json` or `~/.claude.json`):
+`gobby install` auto-detects your installed CLIs and configures hooks and the MCP server for each one. Under the hood, all three CLIs get the same stdio-based MCP configuration:
 
 ```json
 {
   "mcpServers": {
     "gobby": {
-      "command": "gobby",
-      "args": ["mcp-server"]
-    }
-  }
-}
-```
-
-Or with uv:
-
-```json
-{
-  "mcpServers": {
-    "gobby": {
+      "type": "stdio",
       "command": "uv",
       "args": ["run", "gobby", "mcp-server"]
     }
@@ -233,212 +189,32 @@ Or with uv:
 }
 ```
 
-**Gemini CLI** (`.gemini/settings.json`):
+Once the daemon is running and hooks are installed, you can start issuing tasks, invoking workflows, and letting agents orchestrated by Gobby handle the rest.
 
-```json
-{
-  "mcpServers": {
-    "gobby": {
-      "command": "gobby",
-      "args": ["mcp-server"]
-    }
-  }
-}
-```
+---
 
-**Codex CLI** (`~/.codex/config.toml`):
+## Deterministic vs autonomous usage
 
-```toml
-[mcp_servers.gobby]
-command = "gobby"
-args = ["mcp-server"]
-```
+Gobby is built to support two complementary usage patterns rather than forcing a single "agent does everything" philosophy.
 
-**Gemini Antigravity** (`~/.gemini/antigravity/mcp_config.json`):
+- **Deterministic mode**: use pipelines and workflows as testable automation, where each step is explicit, reviewable, and subject to approval gates.
+- **Autonomous mode**: let agents spawned through Gobby run multi-step changes under rule-enforced guardrails, with worktrees or clones keeping experiments isolated until you are ready to merge.
 
-```json
-{
-  "mcpServers": {
-    "gobby": {
-      "command": "/path/to/uv",
-      "args": ["run", "--directory", "/path/to/gobby", "gobby", "mcp-server"],
-      "disabled": false
-    }
-  }
-}
-```
+Because both modes share the same daemon, hooks, memory, and skills, you can start with deterministic automation and progressively hand more levers to agents as you gain confidence.
 
-## CLI Support
+---
 
-| CLI | Hooks | Status |
-| :--- | :--- | :--- |
-| **Claude Code** | ✅ Full support | Native adapter, 12 hook types |
-| **Gemini CLI** | ✅ Full support | Native adapter, all hook types |
-| **Codex CLI** | ⚠️ Partial | Notify hooks only (fire-and-forget) — no blocking or context injection for interactive sessions* |
-| **Cursor** | ✅ Full support | Native adapter, 17 hook types |
-| **Windsurf** | ✅ Full support | Native adapter, 11 hook types |
-| **Copilot** | ✅ Full support | Native adapter, 6 hook types |
-
-\* **Codex hook limitation:** Codex CLI only supports fire-and-forget notify hooks for interactive terminal sessions. Bidirectional hook enforcement (tool blocking, context injection, workflow enforcement) is not possible because Codex lacks a blocking hook protocol — see [openai/codex#2109](https://github.com/openai/codex/issues/2109). Gobby includes a Codex app-server adapter that provides full bidirectional control via JSON-RPC, but this runs Codex as a daemon-controlled subprocess rather than an interactive terminal session. Codex agents spawned via pipelines (`--full-auto`) work fully but bypass hook enforcement. All CLIs connect via MCP for tool access regardless of hook support.
-
-### Hook Installation
-
-Run `gobby install` in your project to auto-detect and set up hooks for all supported CLIs. Hooks handle terminal context capture, session tracking, and rule enforcement. All CLIs also connect via MCP for tool access.
-
-## How It Compares
-
-| | Gobby | TaskMaster | Beads | mcp-agent |
-| :--- | :---: | :---: | :---: | :---: |
-| Task dependencies | ✅ | ✅ | ✅ | ❌ |
-| TDD expansion | ✅ | ❌ | ❌ | ❌ |
-| Validation gates | ✅ | ❌ | ❌ | ❌ |
-| Progressive MCP discovery | ✅ | Partial | ❌ | ❌ |
-| Multi-CLI orchestration | ✅ | ❌ | ❌ | ❌ |
-| Session handoffs | ✅ | ❌ | ❌ | ❌ |
-| Declarative rules | ✅ | ❌ | ❌ | ✅ |
-| Worktree/clone orchestration | ✅ | ❌ | ❌ | ❌ |
-| Pipeline automation | ✅ | ❌ | ❌ | ❌ |
-| Observability (OTel) | ✅ | ❌ | ❌ | ❌ |
-| Code indexing (AST) | ✅ | ❌ | ❌ | ❌ |
-| Zero external deps | ✅ | ❌ | ✅ | ❌ |
-| Local-first | ✅ | ✅ | ✅ | ✅ |
-
-## Architecture
-
-```text
-AI CLI (Claude/Gemini/Cursor/Windsurf/Copilot)
-        │ hooks fire
-        ▼
-   Hook Dispatcher
-        │ HTTP POST
-        ▼
-  Gobby Daemon (:60887)
-        │
-   ┌────┼────────┐
-   ▼    ▼        ▼
-FastAPI WebSocket FastMCP
-   │    │         │
-   ▼    ▼         ▼
-┌──────────────────────┐
-│  RuleEngine          │
-│  HookManager         │
-│  SessionManager      │
-│  AgentRunner         │
-│  WorkflowEngine      │
-│  PipelineExecutor    │
-│  MCPClientProxy      │
-│  TaskStore           │
-│  MemoryStore         │
-│  WebUI               │
-└──────────────────────┘
-        │
-        ▼
-     SQLite
-  (~/.gobby/gobby-hub.db)
-```
-
-Everything runs locally. No cloud. No API keys required (beyond what your AI CLIs need). Works offline.
-
-## MCP Tools
-
-Gobby exposes tools via MCP that your AI coding assistant can use:
-
-**Task Management** (`gobby-tasks`)
-`create_task`, `expand_task`, `validate_task`, `close_task`, `claim_task`, `list_ready_tasks`, `suggest_next_task`, `link_commit`, and more.
-
-**Orchestration** (`gobby-orchestration`)
-`orchestrate_ready_tasks`, `wait_for_task`, `poll_agent_status`, `spawn_review_agent`, `approve_and_cleanup`, and more.
-
-**Session Management** (`gobby-sessions`)
-`get_current_session`, `pickup` (restore context), `get_handoff_context`, `list_sessions`, `send_message`
-
-**Memory** (`gobby-memory`)
-`remember`, `recall`, `forget` — persistent facts across sessions
-
-**Workflows and Rules** (`gobby-workflows`)
-`list_rules`, `toggle_rule`, `get_rule_detail`, `activate_workflow`, `set_variable`, `get_variable`, `get_workflow_status`
-
-**Agents** (`gobby-agents`)
-`spawn_agent` (unified API with `isolation`: current/worktree/clone), `list_agents`, `get_agent`, `kill_agent`, `send_message`, `send_command`, `complete_command`, `deliver_pending_messages`
-
-**Worktrees** (`gobby-worktrees`)
-`create_worktree`, `list_worktrees`, `delete_worktree`, `merge_worktree`
-
-**Clones** (`gobby-clones`)
-`create_clone`, `list_clones`, `delete_clone`, `merge_clone`
-
-**Pipelines** (`gobby-pipelines`)
-`list_pipelines`, `run_pipeline`, `approve_pipeline`, `reject_pipeline`, `get_pipeline_status`
-
-**MCP Proxy**
-`list_mcp_servers`, `add_mcp_server`, `import_mcp_server`, `list_tools`, `get_tool_schema`, `call_tool`, `recommend_tools`, `search_tools`
-
-**Skills** (`gobby-skills`)
-`list_skills`, `get_skill`, `search_skills`, `install_skill`, `remove_skill`, `update_skill`
-
-## For AI Agents
+## For AI agents
 
 **If you're an AI agent reading this:** Check out [CLAUDE.md](CLAUDE.md) for operating guidance.
 
-## Authentication & AI Vendor Policies
+---
 
-Gobby uses the Claude Agent SDK for web chat and workflow agents (subscription mode by default, intended for individual use). For commercial/production use, configure API keys per your AI vendor's terms. Recent Gemini CLI TOS changes prohibit using Gemini CLI OAuth tokens in third-party software.
+## Status, roadmap, and contributing
 
-See [AUTH.md](AUTH.md) for details on authentication modes and AI vendor policies.
+Gobby's 0.3.x line is still pre-1.0 and evolving quickly; APIs and configuration formats may change as the daemon, workflow engine, and hook integrations are hardened for long-running use. Roadmap items include deeper local-model integration, additional CLIs, and more prebuilt workflows for common engineering tasks.
 
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for the full plan, but highlights:
-
-**Shipped:** Task system v2, TDD expansion, rule engine (13 bundled rule groups), MCP proxy with progressive discovery, session handoffs, memory v5 (Qdrant + knowledge graph), hooks for all 6 CLIs, orchestration v3 (tick-based pipeline, clone isolation, provider fallback rotation, QA-dev agent), OpenTelemetry observability (tracing, metrics, logging, trace viewer UI), native AST code indexing, autonomous SDK agent execution, session handoff & digest overhaul, stop-gate enforcement, pipeline system with approval gates, web UI (tasks, memory, sessions, chat with voice, cron, config, skills, projects, agents, file browser, traces), skills system, worktree/clone orchestration
-
-**In progress:** v1 release prep — bug fixing, orchestration battle-hardening, UI polish, documentation
-
-**After v1:** Ollama support
-
-**Future:** Pro cloud features, fleet management, plugin ecosystem v2
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for release history and detailed changes.
-
-## Development
-
-```bash
-uv sync                    # Install deps
-uv run gobby start -v      # Run daemon (verbose)
-uv run pytest              # Tests
-uv run ruff check src/     # Lint
-uv run mypy src/           # Type check
-```
-
-### Using Gobby in other projects (from source)
-
-If you're running Gobby from a source checkout, use `-C` to target another project directory:
-
-```bash
-uv run --project ~/Projects/gobby gobby init -C /path/to/other/project
-uv run --project ~/Projects/gobby gobby install -C /path/to/other/project
-```
-
-The `--project` flag tells uv to use the Gobby installation from your source repo, and `-C` tells Gobby which directory to operate on.
-
-Coverage threshold: 80%. We're serious about it.
-
-## Contributing
-
-We'd love your help. Gobby is built by developers who got frustrated with the state of AI coding tool orchestration. If that's you too, jump in:
-
-- **Found a bug?** Open an issue
-- **Have a feature idea?** Open a discussion first
-- **Want to contribute code?** PRs welcome — check the roadmap for what's in flight
-- **UI/UX skills?** We *really* need you. The maintainer is colorblind and Photoshop makes him itch.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## License
-
-[Apache 2.0](LICENSE.md) — Use it, fork it, build on it.
+The project is Apache 2.0 licensed and welcomes contributions from developers who want a more transparent, developer-centric control plane for AI coding tools. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ---
 
