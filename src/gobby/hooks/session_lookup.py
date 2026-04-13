@@ -105,17 +105,15 @@ class SessionLookupService:
             )
             return
 
-        if (
-            tmux_pane_added
-            and updated_session is not None
-            and getattr(updated_session, "title", None)
-            and getattr(updated_session, "digest_markdown", None)
-        ):
-            schedule_tmux_window_rename(
-                updated_session,
-                updated_session.title,
-                loop=getattr(self._session_coordinator, "_event_loop", None),
-            )
+        if tmux_pane_added and updated_session is not None:
+            title = getattr(updated_session, "title", None)
+            digest = getattr(updated_session, "digest_markdown", None)
+            if title and digest:
+                schedule_tmux_window_rename(
+                    updated_session,
+                    title,
+                    loop=getattr(self._session_coordinator, "_event_loop", None),
+                )
 
     def _resolve_session_id(self, external_id: str, event: HookEvent) -> str | None:
         """Look up or create platform session ID for the given external_id."""

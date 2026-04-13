@@ -485,6 +485,8 @@ class SessionStartMixin(EventHandlersBase):
                                                 current_owner,
                                             )
                                             continue
+                                        if self._task_manager is None:
+                                            continue
                                         try:
                                             self._task_manager.claim_task(
                                                 claimed_id,
@@ -618,16 +620,15 @@ class SessionStartMixin(EventHandlersBase):
             if refreshed is not None:
                 session_obj = refreshed
 
-        if (
-            tmux_pane_added
-            and getattr(session_obj, "title", None)
-            and getattr(session_obj, "digest_markdown", None)
-        ):
-            schedule_tmux_window_rename(
-                session_obj,
-                session_obj.title,
-                loop=getattr(self._session_coordinator, "_event_loop", None),
-            )
+        if tmux_pane_added:
+            title = getattr(session_obj, "title", None)
+            digest = getattr(session_obj, "digest_markdown", None)
+            if title and digest:
+                schedule_tmux_window_rename(
+                    session_obj,
+                    title,
+                    loop=getattr(self._session_coordinator, "_event_loop", None),
+                )
 
         # Cache mapping so subsequent hooks skip DB lookup
         if self._session_manager:

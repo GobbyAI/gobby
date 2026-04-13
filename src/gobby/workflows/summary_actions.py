@@ -302,21 +302,20 @@ def schedule_tmux_window_rename(
     except RuntimeError:
         pass
 
-    loop_is_usable = False
     if loop is not None:
         try:
             loop_is_usable = not loop.is_closed()
         except Exception:
             loop_is_usable = False
 
-    if loop_is_usable:
-        try:
-            asyncio.run_coroutine_threadsafe(coro, loop)
-            return
-        except Exception:
-            logger.debug("Failed to schedule tmux rename on captured loop", exc_info=True)
-            coro.close()
-            return
+        if loop_is_usable:
+            try:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+                return
+            except Exception:
+                logger.debug("Failed to schedule tmux rename on captured loop", exc_info=True)
+                coro.close()
+                return
 
     try:
         asyncio.run(coro)
