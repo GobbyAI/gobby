@@ -42,7 +42,7 @@ def _coerce_conditioning_audio(value: Any) -> Any:
     try:
         import torch
     except ImportError:  # pragma: no cover - torch is required when this is used
-        torch = None  # type: ignore[assignment]
+        torch = None
 
     if isinstance(value, np.ndarray):
         if np.issubdtype(value.dtype, np.floating) and value.dtype != np.float32:
