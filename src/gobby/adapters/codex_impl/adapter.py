@@ -96,6 +96,7 @@ class CodexAdapter(BaseAdapter):
         # Approval requests map to BEFORE_TOOL
         "item/commandExecution/requestApproval": HookEventType.BEFORE_TOOL,
         "item/fileChange/requestApproval": HookEventType.BEFORE_TOOL,
+        "item/mcpToolCall/requestApproval": HookEventType.BEFORE_TOOL,
         # Completed items map to AFTER_TOOL
         "item/completed": HookEventType.AFTER_TOOL,
     }
@@ -373,32 +374,66 @@ class CodexAdapter(BaseAdapter):
             return None
 
         thread_id = params.get("threadId", "")
-        item_id = params.get("itemId", "")
+        item_type = method.removeprefix("item/").removesuffix("/requestApproval")
 
-        # Determine tool name from method and normalize to CC-style
-        if "commandExecution" in method:
+        approval_payload: dict[str, Any] = {}
+        nested_payload = params.get(item_type)
+        if isinstance(nested_payload, dict):
+            approval_payload.update(nested_payload)
+        approval_payload.update(params)
+
+        item_id = approval_payload.get("itemId", params.get("itemId", ""))
+
+        data = {
+            "item_id": item_id,
+            "item_type": item_type,
+            "turn_id": approval_payload.get("turnId", params.get("turnId", "")),
+            "reason": approval_payload.get("reason"),
+            "risk": approval_payload.get("risk"),
+        }
+
+        # Determine tool name and payload from the Codex item type.
+        if item_type == "commandExecution":
             original_tool = "commandExecution"
-            tool_name = self.normalize_tool_name(original_tool)  # -> "Bash"
-            tool_input = params.get("parsedCmd", params.get("command", ""))
-        elif "fileChange" in method:
+            tool_name = self.normalize_tool_name(original_tool)
+            data["tool_name"] = tool_name
+            data["tool_input"] = approval_payload.get(
+                "parsedCmd", approval_payload.get("command", "")
+            )
+        elif item_type == "fileChange":
             original_tool = "fileChange"
-            tool_name = "Write"  # File changes are writes
-            tool_input = params.get("changes", [])
+            tool_name = "Write"
+            data["tool_name"] = tool_name
+            data["tool_input"] = approval_payload.get("changes", [])
+        elif item_type == "mcpToolCall":
+            original_tool = (
+                approval_payload.get("tool_name")
+                or approval_payload.get("toolName")
+                or approval_payload.get("name")
+                or item_type
+            )
+            tool_name = self.normalize_tool_name(original_tool)
+            data["tool_name"] = tool_name
+            if "tool_input" in approval_payload:
+                data["tool_input"] = approval_payload["tool_input"]
+            elif "toolArgs" in approval_payload:
+                data["toolArgs"] = approval_payload["toolArgs"]
+            elif "arguments" in approval_payload:
+                data["toolArgs"] = approval_payload["arguments"]
+            elif "input" in approval_payload:
+                data["tool_input"] = approval_payload["input"]
+            elif "params" in approval_payload:
+                data["tool_input"] = approval_payload["params"]
+            else:
+                data["tool_input"] = {}
         else:
             original_tool = "unknown"
             tool_name = "unknown"
-            tool_input = params
+            data["tool_name"] = tool_name
+            data["tool_input"] = approval_payload
 
         from gobby.hooks.normalization import normalize_tool_fields
 
-        data = {
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "item_id": item_id,
-            "turn_id": params.get("turnId", ""),
-            "reason": params.get("reason"),
-            "risk": params.get("risk"),
-        }
         normalize_tool_fields(data)
 
         return HookEvent(
@@ -786,6 +821,12 @@ class CodexHooksAdapter(BaseAdapter):
         from gobby.hooks.normalization import normalize_tool_fields
 
         normalized_data = normalize_tool_fields(dict(input_data))
+        raw_tool_name = normalized_data.get("tool_name")
+        if isinstance(raw_tool_name, str):
+            normalized_tool_name = CodexAdapter.TOOL_MAP.get(raw_tool_name, raw_tool_name)
+            if normalized_tool_name != raw_tool_name:
+                normalized_data.setdefault("_original_tool_name", raw_tool_name)
+                normalized_data["tool_name"] = normalized_tool_name
 
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
