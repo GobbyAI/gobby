@@ -201,11 +201,12 @@ class TestWireAffectedFilesFromRun:
         }
         run = _make_mock_run(spec, {"task-1": "child-1", "task-2": "child-2"})
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
-        ) as MockMgr, patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
-        ) as MockRunMgr:
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager") as MockMgr,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+            ) as MockRunMgr,
+        ):
             mock_mgr = MockMgr.return_value
             mock_mgr.set_files.return_value = []
             MockRunMgr.return_value.get.return_value = run
@@ -234,11 +235,12 @@ class TestWireAffectedFilesFromRun:
         }
         run = _make_mock_run(spec, {"task-2": "child-2"})
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
-        ) as MockMgr, patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
-        ) as MockRunMgr:
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager") as MockMgr,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+            ) as MockRunMgr,
+        ):
             mock_mgr = MockMgr.return_value
             mock_mgr.set_files.return_value = []
             MockRunMgr.return_value.get.return_value = run
@@ -255,10 +257,11 @@ class TestWireAffectedFilesFromRun:
     def test_wire_errors_when_run_missing(self, ctx, mock_resolve) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
-        ) as MockRunMgr, patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+            ) as MockRunMgr,
+            patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"),
         ):
             MockRunMgr.return_value.get.return_value = None
             registry = create_ops_affected_files_registry(ctx)
@@ -273,10 +276,11 @@ class TestWireAffectedFilesFromRun:
 
         run = _make_mock_run(compiled_spec=None, task_id_map={"task-1": "child-1"})
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
-        ) as MockRunMgr, patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+            ) as MockRunMgr,
+            patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"),
         ):
             MockRunMgr.return_value.get.return_value = run
             registry = create_ops_affected_files_registry(ctx)
@@ -291,10 +295,11 @@ class TestWireAffectedFilesFromRun:
 
         run = _make_mock_run(compiled_spec={"tasks": []}, task_id_map=None)
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
-        ) as MockRunMgr, patch(
-            "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+            ) as MockRunMgr,
+            patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"),
         ):
             MockRunMgr.return_value.get.return_value = run
             registry = create_ops_affected_files_registry(ctx)

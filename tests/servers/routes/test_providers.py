@@ -84,7 +84,9 @@ class TestProviderRoutes:
             startup_error="gemini failed" if provider == "gemini" else None,
         )
         server = SimpleNamespace(
-            services=SimpleNamespace(config=DaemonConfig(), web_chat_runtime_manager=runtime_manager)
+            services=SimpleNamespace(
+                config=DaemonConfig(), web_chat_runtime_manager=runtime_manager
+            )
         )
         app.include_router(create_providers_router(server))
         client = TestClient(app)
@@ -163,7 +165,9 @@ class TestProviderModelsRoute:
             startup_error="codex failed" if provider == "codex" else None,
         )
         server = SimpleNamespace(
-            services=SimpleNamespace(config=DaemonConfig(), web_chat_runtime_manager=runtime_manager)
+            services=SimpleNamespace(
+                config=DaemonConfig(), web_chat_runtime_manager=runtime_manager
+            )
         )
         app.include_router(create_providers_router(server))
         client = TestClient(app)

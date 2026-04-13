@@ -274,7 +274,9 @@ class TestStart:
         assert client.session_id == "prev-123"
 
     @pytest.mark.asyncio
-    async def test_create_session_uses_init_notification_session_id_when_response_is_empty(self) -> None:
+    async def test_create_session_uses_init_notification_session_id_when_response_is_empty(
+        self,
+    ) -> None:
         proc = _mock_process(
             stdout_lines=_initialize_only_lines()
             + [

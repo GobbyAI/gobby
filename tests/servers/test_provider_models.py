@@ -16,7 +16,9 @@ pytestmark = pytest.mark.unit
 class TestProviderModelCatalog:
     @pytest.mark.asyncio
     async def test_probe_claude_model_records_canonical_id(self, temp_dir: Path) -> None:
-        catalog = ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
         process = AsyncMock()
         process.communicate = AsyncMock(
             return_value=(
@@ -44,8 +46,12 @@ class TestProviderModelCatalog:
         }
 
     @pytest.mark.asyncio
-    async def test_discover_claude_models_keeps_successful_alias_probes(self, temp_dir: Path) -> None:
-        catalog = ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
+    async def test_discover_claude_models_keeps_successful_alias_probes(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
 
         async def probe(alias: str, label: str) -> dict[str, str]:
             if alias == "haiku":
@@ -53,7 +59,9 @@ class TestProviderModelCatalog:
             return {"value": alias, "label": label, "canonical_id": f"claude-{alias}"}
 
         with (
-            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/local/bin/claude"),
+            patch(
+                "gobby.servers.provider_models.shutil.which", return_value="/usr/local/bin/claude"
+            ),
             patch.object(catalog, "_probe_claude_model", side_effect=probe),
         ):
             models = await catalog._discover_claude_models()

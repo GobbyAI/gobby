@@ -86,7 +86,9 @@ class TestStartCommand:
 
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
     @patch("gobby.cli.daemon.service_start", return_value={"success": True})
-    @patch("gobby.cli.daemon.get_service_status", return_value={"installed": True, "platform": "macos"})
+    @patch(
+        "gobby.cli.daemon.get_service_status", return_value={"installed": True, "platform": "macos"}
+    )
     @patch("gobby.cli.load_config")
     def test_start_via_service_waits_for_health(
         self,

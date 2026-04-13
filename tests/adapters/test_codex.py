@@ -898,7 +898,7 @@ class TestCodexAdapterTranslateToHookEvent:
                     "modelProvider": "openai",
                     "createdAt": 1704067200,
                     "path": "/tmp/codex-session.jsonl",
-                }
+                },
             },
         }
 
@@ -1621,7 +1621,10 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
         assert result["decision"] == "block"
-        assert result["reason"] == "Retry the tool call with the corrected input from the hook message."
+        assert (
+            result["reason"]
+            == "Retry the tool call with the corrected input from the hook message."
+        )
         assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert (

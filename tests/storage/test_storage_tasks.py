@@ -85,7 +85,9 @@ class TestLocalTaskManager:
         assert closed.status == "closed"
         assert closed.closed_reason == "Done"
 
-    def test_close_task_preserves_lifecycle_stage_projection(self, task_manager, project_id) -> None:
+    def test_close_task_preserves_lifecycle_stage_projection(
+        self, task_manager, project_id
+    ) -> None:
         """Closed tasks keep their last lifecycle stage as latent context."""
         task = task_manager.create_task(project_id=project_id, title="To Close Cleanly")
         reviewed = task_manager.update_task(task.id, status="review_approved")
@@ -316,16 +318,22 @@ class TestLocalTaskManager:
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
         task_manager.update_task(blocker.id, status="needs_review")
-        assert blocked.id not in {t.id for t in task_manager.list_ready_tasks(project_id=project_id)}
+        assert blocked.id not in {
+            t.id for t in task_manager.list_ready_tasks(project_id=project_id)
+        }
         assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
 
         task_manager.update_task(blocker.id, status="review_approved")
-        assert blocked.id not in {t.id for t in task_manager.list_ready_tasks(project_id=project_id)}
+        assert blocked.id not in {
+            t.id for t in task_manager.list_ready_tasks(project_id=project_id)
+        }
         assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
 
         task_manager.close_task(blocker.id)
         assert blocked.id in {t.id for t in task_manager.list_ready_tasks(project_id=project_id)}
-        assert blocked.id not in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+        assert blocked.id not in {
+            t.id for t in task_manager.list_blocked_tasks(project_id=project_id)
+        }
 
     def test_list_blocked_tasks_includes_escalated_tasks(
         self, task_manager, dep_manager, project_id

@@ -141,4 +141,3 @@ class TestCodexBackend:
 
         client.interrupt_turn.assert_awaited_once_with("thread-1", "turn-9")
         assert session._turn_id is None
-
