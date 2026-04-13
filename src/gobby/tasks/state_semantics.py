@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 TaskLifecycleStage = Literal["in_progress", "needs_review", "review_approved"]
 LegacyTaskStatus = Literal[
@@ -39,7 +39,7 @@ DE_ESCALATION_TARGET_STATUSES: tuple[str, ...] = (
 def lifecycle_stage_from_status(status: str | None) -> TaskLifecycleStage | None:
     """Map a legacy projected status back to canonical lifecycle stage."""
     if status in LIFECYCLE_STAGES:
-        return status
+        return cast(TaskLifecycleStage, status)
     return None
 
 
@@ -51,7 +51,7 @@ def normalize_lifecycle_stage(stage: str | None) -> TaskLifecycleStage | None:
     if normalized == "open":
         return None
     if normalized in LIFECYCLE_STAGES:
-        return normalized
+        return cast(TaskLifecycleStage, normalized)
     raise ValueError(
         f"Invalid lifecycle_stage '{stage}'. Expected one of: open, {', '.join(LIFECYCLE_STAGES)}."
     )
@@ -75,7 +75,7 @@ def project_legacy_status(
         return normalized_stage
 
     if legacy_status in ("in_progress", "needs_review", "review_approved"):
-        return legacy_status
+        return cast(LegacyTaskStatus, legacy_status)
     return "open"
 
 

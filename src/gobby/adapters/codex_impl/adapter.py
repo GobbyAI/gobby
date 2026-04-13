@@ -748,7 +748,7 @@ class CodexHooksAdapter(BaseAdapter):
                 "Retry this tool call with the corrected input below:\n"
                 f"{json.dumps(response.modified_input, indent=2, sort_keys=True)}"
             )
-            result: dict[str, Any] = {
+            retry_result: dict[str, Any] = {
                 "decision": "block",
                 "reason": retry_reason,
                 "hookSpecificOutput": {
@@ -757,12 +757,12 @@ class CodexHooksAdapter(BaseAdapter):
                     "permissionDecisionReason": retry_reason,
                 },
             }
-            result["systemMessage"] = compress_and_truncate("\n\n".join(retry_parts))[0]
-            return result
+            retry_result["systemMessage"] = compress_and_truncate("\n\n".join(retry_parts))[0]
+            return retry_result
 
         if response.decision in ("deny", "block"):
             if hook_event_name == "PreToolUse":
-                result: dict[str, Any] = {
+                deny_result: dict[str, Any] = {
                     "decision": "block",
                     "hookSpecificOutput": {
                         "hookEventName": "PreToolUse",
@@ -770,8 +770,8 @@ class CodexHooksAdapter(BaseAdapter):
                     },
                 }
                 if response.reason:
-                    result["reason"] = response.reason
-                    result["hookSpecificOutput"]["permissionDecisionReason"] = response.reason
+                    deny_result["reason"] = response.reason
+                    deny_result["hookSpecificOutput"]["permissionDecisionReason"] = response.reason
 
                 system_parts: list[str] = []
                 if response.system_message:
@@ -779,13 +779,15 @@ class CodexHooksAdapter(BaseAdapter):
                 if response.context:
                     system_parts.append(response.context)
                 if system_parts:
-                    result["systemMessage"] = compress_and_truncate("\n\n".join(system_parts))[0]
-                return result
+                    deny_result["systemMessage"] = compress_and_truncate("\n\n".join(system_parts))[
+                        0
+                    ]
+                return deny_result
 
-            result = {"continue": False, "decision": "block"}
+            block_result: dict[str, Any] = {"continue": False, "decision": "block"}
             if response.reason:
-                result["reason"] = response.reason
-            return result
+                block_result["reason"] = response.reason
+            return block_result
 
         result: dict[str, Any] = {"continue": True}
 

@@ -7,7 +7,7 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jinja2 import Environment, StrictUndefined
 
@@ -701,9 +701,10 @@ class ExpansionService:
 
         provider = self.llm_service.get_provider(provider_name)
         try:
-            return await provider.generate_json(
+            result = await provider.generate_json(
                 user_prompt, system_prompt=system_prompt, model=model_name
             )
+            return cast(dict[str, Any], result)
         except Exception as e:
             logger.debug(
                 "generate_json failed for expansion run %s; falling back to generate_text",
@@ -1109,7 +1110,7 @@ class ExpansionService:
         blocker_phase_id = blocker_task["phase_id"]
         if phase_has_tdd.get(blocker_phase_id) and blocker_task.get("category") in _TDD_CATEGORIES:
             return _stable_ref_id(blocker_phase_id)
-        return blocker_task["id"]
+        return cast(str, blocker_task["id"])
 
     def _resolve_created_blocker(
         self,

@@ -289,6 +289,7 @@ class ChatSessionMixin:
 
         runtime_manager = getattr(self, "web_chat_runtime_manager", None)
         provider_name = effective_provider or "claude"
+        session: ChatSessionProtocol
         if runtime_manager is not None:
             session = runtime_manager.create_session(
                 provider=provider_name,

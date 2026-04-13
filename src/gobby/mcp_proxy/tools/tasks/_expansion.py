@@ -104,21 +104,21 @@ async def _notify_completion(
         logger.debug("Failed to notify expansion completion for %s", run_id, exc_info=True)
 
 
-def _resolve_current_session(ctx: RegistryContext) -> tuple[str, str] | tuple[None, dict[str, Any]]:
+def _resolve_current_session(ctx: RegistryContext) -> tuple[str, str] | dict[str, Any]:
     """Resolve the current MCP session to both caller ref and storage UUID."""
     session_ref = get_current_session_id()
     if not session_ref:
-        return None, {"error": "No session context available. Ensure session_id is set."}
+        return {"error": "No session context available. Ensure session_id is set."}
     try:
         resolved_session_id = ctx.resolve_session_id(session_ref)
     except (ValueError, LookupError) as e:
-        return None, {"error": f"Cannot resolve session '{session_ref}': {e}"}
+        return {"error": f"Cannot resolve session '{session_ref}': {e}"}
     return session_ref, resolved_session_id
 
 
 def _summarize_run(run: Any) -> dict[str, Any]:
     """Return a run dict with lightweight compiled-spec counts."""
-    result = run.to_dict()
+    result: dict[str, Any] = run.to_dict()
     compiled_spec = run.compiled_spec or {}
     result["compiled_summary"] = {
         "phase_count": len(compiled_spec.get("phases") or []),
@@ -149,23 +149,27 @@ async def _execute_run_background(
             message=f"Task expansion completed for {run.parent_task_id}.",
         )
     except asyncio.CancelledError:
-        run = run_manager.cancel(run_id, error="Expansion run cancelled")
-        if run is not None:
+        cancelled_run = run_manager.cancel(run_id, error="Expansion run cancelled")
+        if cancelled_run is not None:
             await _notify_completion(
                 ctx,
                 run_id,
-                {"status": run.status, "run": _summarize_run(run)},
-                message=f"Task expansion cancelled for {run.parent_task_id}.",
+                {"status": cancelled_run.status, "run": _summarize_run(cancelled_run)},
+                message=f"Task expansion cancelled for {cancelled_run.parent_task_id}.",
             )
         raise
     except Exception as e:
-        run = run_manager.fail(run_id, str(e))
-        if run is not None:
+        failed_run = run_manager.fail(run_id, str(e))
+        if failed_run is not None:
             await _notify_completion(
                 ctx,
                 run_id,
-                {"status": run.status, "error": str(e), "run": _summarize_run(run)},
-                message=f"Task expansion failed for {run.parent_task_id}.",
+                {
+                    "status": failed_run.status,
+                    "error": str(e),
+                    "run": _summarize_run(failed_run),
+                },
+                message=f"Task expansion failed for {failed_run.parent_task_id}.",
             )
 
 
@@ -185,10 +189,10 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
         model: str | None = None,
         project: str | None = None,
     ) -> dict[str, Any]:
-        session_ref, session_result = _resolve_current_session(ctx)
-        if session_ref is None:
+        session_result = _resolve_current_session(ctx)
+        if isinstance(session_result, dict):
             return session_result
-        resolved_session_id = session_result
+        _session_ref, resolved_session_id = session_result
 
         try:
             project_id = ctx.resolve_project_filter(project)
@@ -350,10 +354,10 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     async def resume_expansion_run(run_id: str) -> dict[str, Any]:
-        session_ref, session_result = _resolve_current_session(ctx)
-        if session_ref is None:
+        session_result = _resolve_current_session(ctx)
+        if isinstance(session_result, dict):
             return session_result
-        resolved_session_id = session_result
+        _session_ref, resolved_session_id = session_result
 
         run_manager = LocalExpansionRunManager(ctx.task_manager.db)
         run = run_manager.get(run_id)
