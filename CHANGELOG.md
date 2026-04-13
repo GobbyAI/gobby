@@ -8,6 +8,171 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6]
+
+### Features
+
+#### Multi-provider web chat
+
+Web chat now routes to Claude (SDK), Gemini (ACP client), and Codex (CLI subprocess) through a unified `ChatSessionProtocol`, with hold-open permission gating, reconnect rebroadcast, and a shared `PendingInteractionManager`.
+
+- Stream JSON parser and session launcher for the Claude CLI path (#11448, #11449)
+- `pending_interactions` table plus `PendingInteractionManager` lifecycle (#11451, #11452, #11460)
+- Slim `ChatSessionProtocol` and wire provider routing end to end (#11454, #11458, #11464)
+- `CLIChatSession` for Claude, `CodexCLIChatSession`, and `GeminiCLIChatSession` on top of a new Gemini ACP client (#11453, #11463, #11461, #11462, #11473)
+- Hold-open permission gate at the hook endpoint (#11456)
+- Provider availability, switching, and local LLM support (Phase 4) (#11465–#11467, #11475)
+- Frontend provider selection, persistence, toolbar picker, and model picker modal with confirmation (#11459, #11513–#11515)
+- Daemon-backed model catalog with static fallback and startup model discovery (#11541, #11662)
+- Daemon-owned web chat backends and unified session identity (#11654, #11663)
+- `session_type` column and Session model field so web chats are first-class (#11435, #11436)
+- Watching session semantics and new-chat parking in the Sessions tab (#11516, #11542)
+- Session swap and proxy interaction for seamless handoff between web and CLI sessions (#11634)
+
+#### Task lifecycle v2
+
+- Project canonical task state across external interfaces and migrate the web task views onto it (#11674, #11676)
+- Canonical task transitions, claimed-session persistence on agent runs, and validation-override escalation (#11672, #11673, #11704)
+- Replace the legacy task expansion flow with a transactional, atomically logged pipeline (#11667, #11706, #11707)
+- Allow native task tools while a Gobby task is claimed (#11626)
+- Block cross-project task claiming (#11561)
+- Block `gobby tasks` CLI and redirect to the `gobby-tasks` MCP server (#11648, #11652)
+
+#### Memory system
+
+- `memories_fts` FTS5 virtual table, `MemoryFTS5Searcher`, keyword fallback, and promotion to a parallel search path (#11490, #11491, #11557)
+- YAKE keyword extraction for memory search queries (#11558)
+- nomic `search_query` / `search_document` prefixes in the embedding layer (#11556, #11578)
+- Below-threshold diagnostics in memory search and score provenance (`via`) on results (#11493, #11529)
+- `gobby memory invalidate` CLI split into fast clear plus background rebuild with interval progress logging (#11492, #11602, #11630)
+- Relevance threshold and word-count gates on memory recall injection (#11487, #11555)
+- Raise `min_recall_score` default from 0.35 to 0.6 and suppress empty project-memory blocks (#11533, #11534)
+
+#### Voice
+
+- Replace Kokoro TTS with Chatterbox voice cloning (#11567)
+- Lazy voice model loading with idle eviction, mic gated on warmup, and preloaded voice models (#11573, #11613)
+- Settings-driven STT/TTS controls in web voice UI (#11645)
+
+#### Skills, rules, and discovery
+
+- JIT Python skill injection on first `.py` file read and `inject-rust-skill` rule template (#11387, #11401)
+- Rust best practices skill, `code-reviewer` rename, and new `pr-review-expert` / `adversarial-reviewer` skills (#11478)
+- `block-and-teach-context7` rule for library doc lookup (#11565)
+- `dev_mode` override and in-place refresh of bundled rule rows on YAML change (#11393, #11657)
+- Unified template sync that always overwrites installed rows (#11396)
+- `update_rule` MCP tool on `gobby-workflows` (#11698)
+- Cross-CLI `turn_end` workflow trigger and a Codex task enforcement walkthrough skill (#11646, #11696)
+- Split `gobby-tasks` MCP server into core + ops (#11385)
+- `project_id` parameter on `call_tool` for cross-project operations (#11394)
+- Brave Search added as a default MCP server during install (#11544)
+
+#### Startup, CLI, and infrastructure
+
+- Overhauled `gobby start/stop/status` output with step-by-step progress, polled startup tracker, and compact ready summary (#11631)
+- Persist discovery state and harden service-managed restart waits (#11720)
+- `set_config_batch` for atomic multi-key config updates (#11606)
+- Local LLM provider with tier-based fallback and `gsqz` input compression integrated into the context injection pipeline (#11552, #11603)
+
+### Refactors
+
+#### Session source identity
+
+`SessionSource` has been collapsed to bare providers (`claude`, `gemini`, `codex`, `web_chat`) and a new `session_type` column now carries the chat-mode distinction that used to be overloaded onto the source.
+
+- Collapse `SessionSource` enum to bare providers (#11437)
+- Migrate frontend, agent/skill configs, and test fixtures to bare provider sources (#11438–#11440)
+
+#### Context injection and compression
+
+- Unify context compression across all adapters (#11559)
+- Replace startup skill auto-injection with targeted loading (#11560)
+- Lean `SessionStart` path — defer instructions to the first `before_agent` (#11535)
+- Remove auto-extraction of memories from the digest pipeline and reduce per-turn context injection (#11392, #11532)
+- Remove dead post-tool output compression stack (#11695)
+- Remove session ref injection on subsequent hooks and canvas skill auto-injection (#11482, #11483, #11486)
+
+#### Cleanup and consolidation
+
+- Consolidate agent spawn command builders (#11468)
+- Remove USD cost tracking in favor of token-only metrics (#11564, #11664)
+- Remove inline hardcoded model names and `default_model` fallbacks from LLM providers (#11522, #11537)
+- Remove Codex web chat implementation, Lobster branding references, and six dead dependencies (#11384, #11434, #11610)
+- Consolidate memory `source_type` to a strict `user`/`agent` enum (#11400)
+- Collapse session title synthesis path and migrate legacy `session_title` config on load (#11638, #11639)
+- Type the task `UNSET` sentinel, web chat session requests, and collapse web chat session setup (#11709–#11711)
+- Chat mode badges replaced with session type + agent badges (#11612)
+- Move lint/format from pre-commit to pre-push (#11660)
+
+### Fixes
+
+#### Codex hook parity
+
+A long tail of Codex hook fixes brings the Codex adapter to parity with the Claude Code path — routing context to the correct event field, normalizing tool names, honoring `PreToolUse` responses, and avoiding no-op rewrites.
+
+- Route Codex hook context to the correct field per event type and fix `Stop` hook to return exit 2 (#11485, #11545)
+- Honor Codex `PreToolUse` hook responses and align rewrites with Codex 0.120.0 (#11690)
+- Avoid `uv` no-op rewrites for Codex and normalize write paths for task gating (#11691, #11722)
+- Restore Codex tmux title parity, schema unlock parity, and close remaining hook parity gaps (#11670, #11716, #11719)
+- Codex `hooks.json` was silently swallowed by the wrong adapter (#11678)
+- Strip per-tool approval overrides from Codex config during install (#11601)
+- Rewrite the Codex transcript parser for the real envelope format and configure transcript retries (#11611, #11712)
+- Map Gemini `replace` tool to canonical `Edit` and normalize Gemini tool names/inputs for consistent rule enforcement (#11679)
+- Normalize Gemini `AfterAgent`, handle user-cancel turns, and fix summarizer crash on Gemini JSON transcripts (#11655, #11680)
+- Surface Gemini web chat replies and rename Codex chat interrupt to `turn/interrupt` (#11641, #11656)
+
+#### Rule engine and MCP dispatch
+
+- Replace invalid `append_to_set` effect with `set_variable` expression (#11391)
+- Dispatch `inject_result` `mcp_call`s inline in the rule engine and inject prompt context in that path (#11481, #11488)
+- `partition` / `rpartition` added to the safe evaluator allowlist, fixing `block-and-teach-*` rules that were blocking all file types (#11569)
+- Enforce `before_tool` rules on direct MCP calls and remove unsupported workflow rule conditions (#11693, #11694)
+- `search_tools` no longer returns `unknown` for internal tool names (#11546)
+- Resilient JSON coercion for `call_tool` escaped-quote arguments and stop stripping `session_id` from tool arguments in the proxy (#11518, #11526)
+- JSON extraction fallback and retry improvements in `generate_json`, plus handling `ResultMessage` in the SDK query loop (#11495, #11507)
+- Clarify `require-task-close` block reason and restore phase hierarchy in plan/expand skills (#11431, #11697)
+- Change `inject-python` / `inject-rust-skill` rules from `after_tool` to `before_tool` (#11477)
+
+#### Web chat and frontend
+
+- Route session clicks to the activity panel instead of Observing mode; filter `web_chat` and current session from the Sessions tab (#11510, #11512)
+- Render project selector dropdown via portal to escape stacking context (#11511)
+- Restore local model selection, provider switching, and activity panel flows in web chat (#11579, #11581, #11625)
+- Unify web chat model catalog and Gemini routing; harden provider verification (#11628)
+- Replace `window.confirm()` with `useConfirmDialog` in Integrations and Files tabs (#11519)
+- WebSocket real-time updates for the `TasksTab`, status filter fix, and Tailwind conversion (#11615, #11622–#11624)
+- Attach-file button restored, batch bridge UI fixes, and restricted web chat attach routing (#11549, #11616–#11620, #11637)
+- Replace provider icons with developer-icons brand logos (#11562)
+- Break `useChat` infinite loop after observing a `web_chat` session and separate stored web chat session ids (#11700, #11713)
+- ESLint v10 flat config, ratchet frontend lint, and enable remaining react-hooks canary rules (#11591, #11593)
+- Fully qualified LM Studio embedding model identifier and auto-reload embedding model on eviction (#11580, #11592)
+- Reset `_agent_context_injected` on daemon restart re-registration; preserve project context across daemon restarts (#11563, #11570)
+
+#### Voice and TTS
+
+- Float32 defaults and MPS conditioning audio dtype for Chatterbox compatibility (#11568)
+- Preserve TTS sentence ordering and prevent audio cutoff on conversation ID re-key (#11577, #11605)
+- Pass voice readiness through the chat page and reset title counter via `conversationSwitchKey` (#11575, #11609)
+
+#### Tasks, lifecycle, and agents
+
+- Complete task lifecycle v2 Phase 0 stabilization and recover partial claimed-owner migration (#11668, #11672)
+- Null task ownership on session delete and restore task detail de-escalation status (#11705, #11714)
+- Align lifecycle orchestration with claimed task semantics (#11675)
+- Surface silent errors in the tmux title rename pipeline (#11682)
+- `transcript_path` no longer destroyed on registration race; re-derive at read time (#11508)
+- Use `app.state.server.services.database` instead of the non-existent `hook_manager._db` (#11531)
+- Guard `PendingInteractionManager` init against missing DB and fetch available providers from the API instead of hardcoding (#11460, #11498)
+- Route Claude to SDK and only Gemini/Codex to the CLI subprocess (#11500)
+
+#### Types, lint, and CI
+
+- Resolve mypy errors across memory, codex, storage, LLM providers, `chat_session`, session hooks, and pre-existing drift (#11496, #11521, #11536, #11547, #11627, #11699)
+- Resolve 28 pytest + 1 vitest failures from CI reports and 2026-04-12 pytest drift (#11550, #11701)
+- Disable mypy incremental cache to avoid the google namespace crash, then re-enable after removing `google-genai` (#11604, #11607)
+- Bump `cryptography` to `>=46.0.7` for CVE-2026-39892
+- Batch CodeRabbit review fixes across source, tests, skills, docs, memories, MCP proxy, CLI, and web (#11551, #11635, #11703)
+
 ## [0.3.5]
 
 ### Features
