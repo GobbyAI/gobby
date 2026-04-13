@@ -67,7 +67,9 @@ def validate_plan_cmd(plan_file: str) -> None:
 
 @expand_cmd.command("compile")
 @click.argument("task_ref")
-@click.option("--plan-file", default=None, help="Optional plan file path relative to the project root.")
+@click.option(
+    "--plan-file", default=None, help="Optional plan file path relative to the project root."
+)
 @click.option("--provider", default=None, help="Optional provider override.")
 @click.option("--model", default=None, help="Optional model override.")
 @click.option("--json-output", "json_output", is_flag=True, help="Emit JSON.")

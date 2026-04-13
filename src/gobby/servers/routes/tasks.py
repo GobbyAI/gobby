@@ -83,11 +83,11 @@ class TaskClaimRequest(BaseModel):
 class TaskReleaseClaimRequest(BaseModel):
     """Request body for releasing task ownership."""
 
-    status: Literal["open", "in_progress", "needs_review", "review_approved", "escalated"] | None = (
-        Field(
-            default=None,
-            description="Optional projected legacy status to preserve during ownership release.",
-        )
+    status: (
+        Literal["open", "in_progress", "needs_review", "review_approved", "escalated"] | None
+    ) = Field(
+        default=None,
+        description="Optional projected legacy status to preserve during ownership release.",
     )
 
 
@@ -183,7 +183,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         project_id: str | None = Query(None, description="Filter by project ID"),
         status: str | None = Query(None, description="Filter by status"),
         lifecycle_stage: str | None = Query(
-            None, description="Filter by canonical lifecycle stage (open, in_progress, needs_review, review_approved)"
+            None,
+            description="Filter by canonical lifecycle stage (open, in_progress, needs_review, review_approved)",
         ),
         claimed: bool | None = Query(None, description="Filter by whether the task is claimed"),
         closed: bool | None = Query(None, description="Filter by canonical closed state"),

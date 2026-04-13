@@ -283,7 +283,10 @@ class ExpansionService:
             run_id,
             level="info",
             message="Expansion compile completed",
-            extra={"task_count": len(compiled_spec["tasks"]), "phase_count": len(compiled_spec["phases"])},
+            extra={
+                "task_count": len(compiled_spec["tasks"]),
+                "phase_count": len(compiled_spec["phases"]),
+            },
         )
         refreshed = self.run_manager.get(run_id)
         if refreshed is None:
@@ -395,7 +398,9 @@ class ExpansionService:
                 test_result = self.task_manager.create_task_with_decomposition(
                     project_id=task.project_id,
                     title=f"[TEST] Phase {phase_number}: Write failing tests",
-                    description=f"{plan_ref_block}{test_description}" if plan_ref_block else test_description,
+                    description=f"{plan_ref_block}{test_description}"
+                    if plan_ref_block
+                    else test_description,
                     priority=self._phase_priority(tasks_by_phase[phase_id]),
                     task_type="task",
                     parent_task_id=parent_id,
@@ -407,11 +412,15 @@ class ExpansionService:
                 phase_child_ids[phase_id].append(test_result["task"]["id"])
                 suggested_tests = phase.get("test_intent", {}).get("suggested_test_files") or []
                 if suggested_tests:
-                    self.af_manager.set_files(test_result["task"]["id"], suggested_tests, "expansion")
+                    self.af_manager.set_files(
+                        test_result["task"]["id"], suggested_tests, "expansion"
+                    )
 
             for task_item in tasks_by_phase[phase_id]:
                 raw_description = task_item.get("description") or ""
-                description = f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
+                description = (
+                    f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
+                )
                 create_result = self.task_manager.create_task_with_decomposition(
                     project_id=task.project_id,
                     title=task_item["title"],
@@ -436,7 +445,9 @@ class ExpansionService:
                 ref_result = self.task_manager.create_task_with_decomposition(
                     project_id=task.project_id,
                     title=f"[REF] Phase {phase_number}: Refactor with green tests",
-                    description=f"{plan_ref_block}{ref_description}" if plan_ref_block else ref_description,
+                    description=f"{plan_ref_block}{ref_description}"
+                    if plan_ref_block
+                    else ref_description,
                     priority=self._phase_priority(tasks_by_phase[phase_id]),
                     task_type="task",
                     parent_task_id=parent_id,
@@ -508,7 +519,11 @@ class ExpansionService:
             run_id,
             task_id_map=created_task_map,
             created_task_ids=created_ids,
-            checkpoints={"apply_validation": self.validate_applied_run(run_id, compiled_spec=spec, task_id_map=created_task_map)},
+            checkpoints={
+                "apply_validation": self.validate_applied_run(
+                    run_id, compiled_spec=spec, task_id_map=created_task_map
+                )
+            },
             completed=True,
         )
         self.run_manager.append_log(
@@ -562,9 +577,13 @@ class ExpansionService:
         max_subtasks = expansion_config.max_subtasks if expansion_config else 15
 
         if "phases" in raw_spec and "tasks" in raw_spec:
-            normalized = self._normalize_native_compiled_spec(raw_spec, task=task, plan_file=plan_file)
+            normalized = self._normalize_native_compiled_spec(
+                raw_spec, task=task, plan_file=plan_file
+            )
         elif "subtasks" in raw_spec:
-            normalized = self._normalize_legacy_subtask_spec(raw_spec, task=task, plan_file=plan_file)
+            normalized = self._normalize_legacy_subtask_spec(
+                raw_spec, task=task, plan_file=plan_file
+            )
         else:
             raise ValueError("Expansion compiler must return either {phases,tasks} or {subtasks}")
 
@@ -598,7 +617,9 @@ class ExpansionService:
         valid_phase_ids = set(phase_ids)
         for task_item in tasks:
             if task_item.get("phase_id") not in valid_phase_ids:
-                errors.append(f"Task {task_item.get('id')} references unknown phase {task_item.get('phase_id')}")
+                errors.append(
+                    f"Task {task_item.get('id')} references unknown phase {task_item.get('phase_id')}"
+                )
             if not task_item.get("title"):
                 errors.append(f"Task {task_item.get('id')} is missing a title")
 
@@ -661,7 +682,11 @@ class ExpansionService:
 
         prompt_context = self._build_prompt_context(run, task)
         expansion_config = self._get_expansion_config()
-        prompt_path = expansion_config.prompt_path if expansion_config and expansion_config.prompt_path else "expansion/user"
+        prompt_path = (
+            expansion_config.prompt_path
+            if expansion_config and expansion_config.prompt_path
+            else "expansion/user"
+        )
         system_path = (
             expansion_config.system_prompt_path
             if expansion_config and expansion_config.system_prompt_path
@@ -669,14 +694,22 @@ class ExpansionService:
         )
         system_prompt = self._render_prompt(system_path, {"tdd_mode": True, **prompt_context})
         user_prompt = self._render_prompt(prompt_path, prompt_context)
-        provider_name = run.provider or (expansion_config.provider if expansion_config else "claude")
+        provider_name = run.provider or (
+            expansion_config.provider if expansion_config else "claude"
+        )
         model_name = run.model or (expansion_config.model if expansion_config else "opus")
 
         provider = self.llm_service.get_provider(provider_name)
         try:
-            return await provider.generate_json(user_prompt, system_prompt=system_prompt, model=model_name)
+            return await provider.generate_json(
+                user_prompt, system_prompt=system_prompt, model=model_name
+            )
         except Exception as e:
-            logger.debug("generate_json failed for expansion run %s; falling back to generate_text", run.id, exc_info=True)
+            logger.debug(
+                "generate_json failed for expansion run %s; falling back to generate_text",
+                run.id,
+                exc_info=True,
+            )
             response_text = await provider.generate_text(
                 user_prompt,
                 system_prompt=system_prompt,
@@ -698,7 +731,11 @@ class ExpansionService:
         verification_lines = []
         for name, command in verification.items():
             verification_lines.append(f"- `{name}`: `{command}`")
-        verification_str = "\n".join(verification_lines) if verification_lines else "- No verification commands configured."
+        verification_str = (
+            "\n".join(verification_lines)
+            if verification_lines
+            else "- No verification commands configured."
+        )
 
         research_sections: list[str] = [f"Project verification commands:\n{verification_str}"]
         if plan_content:
@@ -773,7 +810,8 @@ class ExpansionService:
                 "category": task_item.get("category", "code"),
                 "validation": task_item.get("validation") or task_item.get("validation_criteria"),
                 "affected_files": affected_files,
-                "execution_group": task_item.get("execution_group") or task_item.get("parallel_group"),
+                "execution_group": task_item.get("execution_group")
+                or task_item.get("parallel_group"),
             }
             tasks.append(normalized_task)
             phase_by_id.setdefault(
@@ -873,7 +911,8 @@ class ExpansionService:
                         "priority": int(subtask.get("priority", 2)),
                         "task_type": subtask.get("task_type", "task"),
                         "category": subtask.get("category", "code"),
-                        "validation": subtask.get("validation") or subtask.get("validation_criteria"),
+                        "validation": subtask.get("validation")
+                        or subtask.get("validation_criteria"),
                         "affected_files": affected_files,
                         "execution_group": subtask.get("parallel_group"),
                     }
@@ -918,8 +957,12 @@ class ExpansionService:
         phase_num: int,
     ) -> dict[str, Any]:
         """Derive explicit phase test metadata from legacy subtask output."""
-        impl_titles = [task.get("title", "") for task in phase_tasks if task.get("category") in _TDD_CATEGORIES]
-        affected_files = [file_path for task in phase_tasks for file_path in (task.get("affected_files") or [])]
+        impl_titles = [
+            task.get("title", "") for task in phase_tasks if task.get("category") in _TDD_CATEGORIES
+        ]
+        affected_files = [
+            file_path for task in phase_tasks for file_path in (task.get("affected_files") or [])
+        ]
         return {
             "summary": f"Verify Phase {phase_num} implementation behavior",
             "behaviors": [title for title in impl_titles if title],
@@ -959,7 +1002,9 @@ class ExpansionService:
 
     def _get_verification_commands(self, repo_path: Path | None) -> dict[str, str]:
         """Resolve project verification commands from project.json or daemon defaults."""
-        project_ctx = get_project_context(cwd=repo_path) if repo_path is not None else get_project_context()
+        project_ctx = (
+            get_project_context(cwd=repo_path) if repo_path is not None else get_project_context()
+        )
         verification = project_ctx.get("verification") if project_ctx else None
         if isinstance(verification, dict):
             return {key: str(value) for key, value in verification.items() if value}
@@ -967,7 +1012,9 @@ class ExpansionService:
             return self.config.get_verification_defaults().all_commands()
         return {}
 
-    def _build_file_context(self, task: Task, repo_path: Path | None, plan_content: str | None) -> str:
+    def _build_file_context(
+        self, task: Task, repo_path: Path | None, plan_content: str | None
+    ) -> str:
         """Build a focused repository context block for expansion prompts."""
         if repo_path is None:
             return ""
@@ -1055,7 +1102,9 @@ class ExpansionService:
             "Review for duplication, naming, dead code, and unnecessarily complex flows."
         )
 
-    def _external_blocker_id(self, blocker_task: dict[str, Any], phase_has_tdd: dict[str, bool]) -> str:
+    def _external_blocker_id(
+        self, blocker_task: dict[str, Any], phase_has_tdd: dict[str, bool]
+    ) -> str:
         """Map an external blocker to the effective created task that should gate downstream work."""
         blocker_phase_id = blocker_task["phase_id"]
         if phase_has_tdd.get(blocker_phase_id) and blocker_task.get("category") in _TDD_CATEGORIES:
@@ -1082,7 +1131,9 @@ class ExpansionService:
     def _add_dependency(self, task_id: str, depends_on: str) -> None:
         """Best-effort dependency creation that ignores duplicates."""
         try:
-            self.dep_manager.add_dependency(task_id=task_id, depends_on=depends_on, dep_type="blocks")
+            self.dep_manager.add_dependency(
+                task_id=task_id, depends_on=depends_on, dep_type="blocks"
+            )
         except ValueError:
             pass
 

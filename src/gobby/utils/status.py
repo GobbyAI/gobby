@@ -322,7 +322,9 @@ def format_status_message(
         source = info.get("source")
         error = info.get("error")
         if source == "cache":
-            health_issues.append(f"Provider models: {name} — using cache ({error or 'probe failed'})")
+            health_issues.append(
+                f"Provider models: {name} — using cache ({error or 'probe failed'})"
+            )
         elif source == "failed":
             health_issues.append(f"Provider models: {name} — {error or 'discovery failed'}")
 

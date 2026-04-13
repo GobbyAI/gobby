@@ -180,7 +180,7 @@ def list_ready_tasks(
     WITH RECURSIVE ready_tasks AS (
         -- Base case: open/in_progress tasks with no parent and no external blocking deps
         SELECT t.id FROM tasks t
-        WHERE {is_ready_sql('t')}
+        WHERE {is_ready_sql("t")}
         AND t.parent_task_id IS NULL
         AND NOT EXISTS (
             SELECT 1 FROM task_dependencies d
@@ -207,7 +207,7 @@ def list_ready_tasks(
         -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
         SELECT t.id FROM tasks t
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
-        WHERE {is_ready_sql('t')}
+        WHERE {is_ready_sql("t")}
         AND NOT EXISTS (
             SELECT 1 FROM task_dependencies d
             JOIN tasks blocker ON d.depends_on = blocker.id

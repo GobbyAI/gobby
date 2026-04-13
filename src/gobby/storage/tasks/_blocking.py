@@ -8,9 +8,7 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._models import Task
 
 
-def _fetch_all_blocker_map(
-    db: DatabaseProtocol, task_ids: Sequence[str]
-) -> dict[str, set[str]]:
+def _fetch_all_blocker_map(db: DatabaseProtocol, task_ids: Sequence[str]) -> dict[str, set[str]]:
     """Return all direct blocker IDs for the given tasks."""
     if not task_ids:
         return {}
@@ -28,9 +26,7 @@ def _fetch_all_blocker_map(
     return blocker_map
 
 
-def _fetch_active_blocker_map(
-    db: DatabaseProtocol, task_ids: Sequence[str]
-) -> dict[str, set[str]]:
+def _fetch_active_blocker_map(db: DatabaseProtocol, task_ids: Sequence[str]) -> dict[str, set[str]]:
     """Return unresolved external blocker IDs for the given tasks."""
     if not task_ids:
         return {}

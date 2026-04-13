@@ -93,7 +93,7 @@ def count_ready_tasks(
     # ancestor chain and check if the blocked task (t.id) appears anywhere.
     query = f"""
     SELECT COUNT(*) as count FROM tasks t
-    WHERE {is_ready_sql('t')}
+    WHERE {is_ready_sql("t")}
     AND NOT EXISTS (
         SELECT 1 FROM task_dependencies d
         JOIN tasks blocker ON d.depends_on = blocker.id

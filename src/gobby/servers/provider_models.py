@@ -97,7 +97,9 @@ class ProviderModelCatalog:
         if not isinstance(payload, dict):
             return
         if payload.get("version") not in (None, _CACHE_VERSION):
-            logger.warning("Ignoring unsupported provider model cache version: %s", payload.get("version"))
+            logger.warning(
+                "Ignoring unsupported provider model cache version: %s", payload.get("version")
+            )
             return
 
         providers = payload.get("providers")

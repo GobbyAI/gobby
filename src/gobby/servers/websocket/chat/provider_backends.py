@@ -741,7 +741,11 @@ class CodexWebChatBackend:
 
         def _matches(params: dict[str, Any]) -> bool:
             thread_id = params.get("threadId")
-            if isinstance(thread_id, str) and session._thread_id and thread_id != session._thread_id:
+            if (
+                isinstance(thread_id, str)
+                and session._thread_id
+                and thread_id != session._thread_id
+            ):
                 return False
             turn_id = params.get("turnId")
             if isinstance(turn_id, str) and session._turn_id and turn_id != session._turn_id:

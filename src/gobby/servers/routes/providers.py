@@ -63,7 +63,9 @@ def _build_model_catalog(
     We intentionally do not mirror arbitrary daemon config model strings into
     the picker because that reintroduces stale or retired model IDs.
     """
-    provider_model_catalog = getattr(getattr(server, "services", None), "provider_model_catalog", None)
+    provider_model_catalog = getattr(
+        getattr(server, "services", None), "provider_model_catalog", None
+    )
     if provider_model_catalog is not None:
         catalog = {
             provider: (

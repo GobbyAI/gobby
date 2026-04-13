@@ -314,9 +314,7 @@ class ChatSessionMixin:
         session._on_pre_compact = lambda data: self._fire_lifecycle(
             session_key, HookEventType.PRE_COMPACT, data
         )
-        session._on_stop = lambda data: self._fire_lifecycle(
-            session_key, HookEventType.STOP, data
-        )
+        session._on_stop = lambda data: self._fire_lifecycle(session_key, HookEventType.STOP, data)
 
         # Wire mode-change callback so agent-initiated plan mode transitions
         # (EnterPlanMode/ExitPlanMode) are broadcast to conversation clients only

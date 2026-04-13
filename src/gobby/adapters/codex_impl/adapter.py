@@ -732,10 +732,7 @@ class CodexHooksAdapter(BaseAdapter):
         # for PreToolUse hooks. When Gobby wants to rewrite a tool call, block the
         # current execution and tell the model exactly how to retry instead.
         has_retry_signal = bool(
-            response.auto_approve
-            or response.reason
-            or response.context
-            or response.system_message
+            response.auto_approve or response.reason or response.context or response.system_message
         )
         if response.modified_input and hook_event_name == "PreToolUse" and has_retry_signal:
             retry_reason = (

@@ -139,7 +139,9 @@ async def _execute_run_background(
     service = _build_expansion_service(ctx)
     run_manager = LocalExpansionRunManager(ctx.task_manager.db)
     try:
-        run = await service.compile_and_apply_run(run_id, session_id=session_id, auto_apply=auto_apply)
+        run = await service.compile_and_apply_run(
+            run_id, session_id=session_id, auto_apply=auto_apply
+        )
         await _notify_completion(
             ctx,
             run_id,

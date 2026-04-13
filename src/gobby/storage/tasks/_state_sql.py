@@ -53,9 +53,7 @@ def is_merge_ready_sql(alias: str | None = None) -> str:
     escalated_at = _col(alias, "escalated_at")
     lifecycle_stage = _col(alias, "lifecycle_stage")
     return (
-        f"{closed_at} IS NULL "
-        f"AND {escalated_at} IS NULL "
-        f"AND {lifecycle_stage} = 'review_approved'"
+        f"{closed_at} IS NULL AND {escalated_at} IS NULL AND {lifecycle_stage} = 'review_approved'"
     )
 
 

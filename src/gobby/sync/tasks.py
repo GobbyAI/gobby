@@ -397,7 +397,9 @@ class TaskSyncManager:
                                 "lifecycle_stage": lifecycle_stage,
                                 "commits": commits_json,
                                 "closed_at": data.get("closed_at", state.get("closed_at")),
-                                "closed_reason": data.get("closed_reason", state.get("closed_reason")),
+                                "closed_reason": data.get(
+                                    "closed_reason", state.get("closed_reason")
+                                ),
                                 "closed_in_session_id": closed_in_session_id,
                                 "closed_commit_sha": data.get(
                                     "closed_commit_sha", state.get("closed_commit_sha")

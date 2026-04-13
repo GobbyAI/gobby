@@ -50,9 +50,7 @@ from gobby.utils.project_context import get_project_context
 @click.option(
     "--ready", is_flag=True, help="Show only ready tasks (open/in_progress with no blocking deps)"
 )
-@click.option(
-    "--blocked", is_flag=True, help="Show only canonically blocked tasks"
-)
+@click.option("--blocked", is_flag=True, help="Show only canonically blocked tasks")
 @click.option("--closed", "closed_only", is_flag=True, help="Show only canonically closed tasks")
 @click.option("--limit", "-l", default=50, help="Max tasks to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")

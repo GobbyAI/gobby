@@ -168,4 +168,3 @@ class GeminiWebChatPermissionsMixin:
     @property
     def has_pending_approval(self) -> bool:
         return self._pending_approval is not None
-

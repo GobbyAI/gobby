@@ -202,9 +202,7 @@ def get_touched_file_paths(tool_input: Any) -> list[str]:
         file_paths = tool_input.get("file_paths")
         if isinstance(file_paths, list):
             normalized = [
-                path.strip()
-                for path in file_paths
-                if isinstance(path, str) and path.strip()
+                path.strip() for path in file_paths if isinstance(path, str) and path.strip()
             ]
             if normalized:
                 return _dedupe_paths(normalized)
@@ -222,7 +220,9 @@ def get_touched_file_paths(tool_input: Any) -> list[str]:
         return []
 
     if isinstance(tool_input, list):
-        return _dedupe_paths([path for change in tool_input if (path := _extract_change_path(change))])
+        return _dedupe_paths(
+            [path for change in tool_input if (path := _extract_change_path(change))]
+        )
 
     return []
 

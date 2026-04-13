@@ -113,7 +113,12 @@ class ExpansionRun:
 class LocalExpansionRunManager:
     """Manager for expansion run storage operations."""
 
-    _ACTIVE_STATUSES: tuple[ExpansionRunStatus, ...] = ("pending", "running", "compiled", "applying")
+    _ACTIVE_STATUSES: tuple[ExpansionRunStatus, ...] = (
+        "pending",
+        "running",
+        "compiled",
+        "applying",
+    )
 
     def __init__(self, db: DatabaseProtocol):
         self.db = db
@@ -212,10 +217,7 @@ class LocalExpansionRunManager:
             params.extend(statuses)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        return [
-            ExpansionRun.from_row(row)
-            for row in self.db.fetchall(query, tuple(params))
-        ]
+        return [ExpansionRun.from_row(row) for row in self.db.fetchall(query, tuple(params))]
 
     def start(self, run_id: str) -> ExpansionRun | None:
         """Mark a run as running."""
