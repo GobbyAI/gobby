@@ -1291,18 +1291,28 @@ class TestHookManagerWebhookDispatch:
 
         loop_thread = threading.Thread(target=run_loop, daemon=True)
         loop_thread.start()
+        dispatched = threading.Event()
 
         try:
+
+            async def mock_dispatch(*args, **kwargs):
+                dispatched.set()
+                return None
+
             with (
                 patch.object(manager._webhook_dispatcher, "_build_payload", return_value={}),
                 patch.object(
                     manager._webhook_dispatcher,
                     "_dispatch_single",
                     new_callable=AsyncMock,
-                ),
+                    side_effect=mock_dispatch,
+                ) as mock_dispatch_single,
             ):
                 # Should schedule async task
                 manager._dispatch_webhooks_async(event)
+                assert dispatched.wait(timeout=1), "Async webhook dispatch never ran"
+                assert mock_dispatch_single.await_count == 1
+                asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=1)
         finally:
             loop.call_soon_threadsafe(loop.stop)
             loop_thread.join(timeout=1)
