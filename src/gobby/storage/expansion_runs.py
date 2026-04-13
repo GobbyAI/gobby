@@ -335,27 +335,26 @@ class LocalExpansionRunManager:
         extra: dict[str, Any] | None = None,
     ) -> ExpansionRun | None:
         """Append a structured log entry to a run."""
-        run = self.get(run_id)
-        if run is None:
-            return None
-        logs = list(run.logs or [])
-        logs.append(
+        now = datetime.now(UTC).isoformat()
+        entry_json = json.dumps(
             {
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": now,
                 "level": level,
                 "message": message,
                 "extra": extra or {},
             }
         )
-        now = datetime.now(UTC).isoformat()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE expansion_runs
-            SET logs_json = ?, updated_at = ?
+            SET logs_json = json_insert(COALESCE(NULLIF(logs_json, ''), '[]'), '$[#]', json(?)),
+                updated_at = ?
             WHERE id = ?
             """,
-            (json.dumps(logs), now, run_id),
+            (entry_json, now, run_id),
         )
+        if cursor.rowcount == 0:
+            return None
         return self.get(run_id)
 
     def update_checkpoints(
