@@ -1,258 +1,153 @@
 # Workflows Overview
 
-Gobby's workflow system gives AI coding agents **enforced behavior** through three composable layers: rules, agents, and pipelines. Instead of hoping the LLM follows instructions, the workflow system blocks disallowed actions, injects context at the right time, and coordinates multi-agent orchestration deterministically.
+Gobby's workflow system is the control plane that keeps sessions, agents, and
+automation aligned with the repo's rules. It is **CLI agnostic**: Claude,
+Codex, and Gemini sessions all flow through the same normalized hook events,
+session variables, rule engine, and MCP tool surface.
 
-This guide is the starting point. It explains the mental model, shows how the layers compose, and points to the detailed reference for each.
+This guide is the high-level map. Use it to decide whether a behavior belongs
+in a rule, an agent definition, a pipeline, or an orchestration flow.
 
 ## Mental Model
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    PIPELINES                        │
-│            Deterministic orchestration              │
-│        "The assembly line — coordinates who         │
-│         does what and in what order"                │
-│                                                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │
-│  │  MCP step   │→ │ Spawn agent │→ │  MCP step  │  │
-│  │ (scan tasks)│  │ (developer) │  │  (merge)   │  │
-│  └─────────────┘  └──────┬──────┘  └────────────┘  │
-│                          │                          │
-└──────────────────────────┼──────────────────────────┘
-                           │
-┌──────────────────────────┼──────────────────────────┐
-│                     AGENTS                          │
-│              Intelligent workers                    │
-│        "LLMs with a playbook — phased              │
-│         behavior with tool constraints"            │
-│                                                     │
-│  ┌──────────┐   ┌─────────────┐   ┌─────────────┐  │
-│  │  claim   │ → │  implement  │ → │  terminate  │  │
-│  │(locked)  │   │ (creative)  │   │  (locked)   │  │
-│  └──────────┘   └─────────────┘   └─────────────┘  │
-│                                                     │
-└──────────────────────────┬──────────────────────────┘
-                           │ (rules enforce throughout)
-┌──────────────────────────┼──────────────────────────┐
-│                      RULES                          │
-│             Reactive enforcement                    │
-│        "Guardrails — react to events and           │
-│         enforce invariants everywhere"              │
-│                                                     │
-│  before_tool → condition? → block / set_variable    │
-│  session_start → inject_context / mcp_call          │
-│  stop → require task close                          │
-│                                                     │
-└─────────────────────────────────────────────────────┘
-```
+Gobby has four layers that compose together:
 
-**Rules** are reactive enforcement. They fire on hook events (before a tool call, on session start, when the agent tries to stop) and apply effects: block the action, set a variable, inject context into the system message, or call an MCP tool. Rules are stateless — they read session variables but don't own state. They define what you *can't* do.
+| Layer | Purpose | Where it lives | Runtime surface |
+| --- | --- | --- | --- |
+| Rules | Enforce invariants on hook events | `workflow_definitions` / bundled YAML | `gobby-workflows` + rule engine |
+| Agents | Define persona, restrictions, and step workflows | `workflow_definitions` / bundled YAML | `gobby-workflows` definitions, `gobby-agents` runtime |
+| Pipelines | Run deterministic multi-step automation | `workflow_definitions` / bundled YAML | `gobby-workflows` pipeline tools |
+| Orchestration | Coordinate tasks, agents, isolation, and completion | Pipeline + task/agent tooling | `gobby-workflows`, `gobby-tasks`, `gobby-agents`, `gobby-worktrees`, `gobby-clones`, `gobby-merge` |
 
-**Agents** are intelligent workers with phased behavior. An agent definition combines identity (prompts) with a step workflow (phases with tool constraints, goals, and automatic transitions). The developer agent claims a task, implements it, submits for review, then terminates — each phase enforced, each transition automatic.
+The shared state across all four layers is:
 
-**Pipelines** are deterministic orchestration. They sequence operations: MCP calls, shell commands, agent spawning, nested pipelines. When they need intelligence, they spawn an agent. When they need mechanical work, they run an MCP step directly. Typed data flows between steps via `${{ }}` templates.
+- Session variables, which rules and step workflows read and mutate.
+- Workflow definitions, which live in the database and are synced from bundled
+  or project YAML.
+- Completion events, which let agents and pipelines wake a waiting parent flow.
 
-**Variables** are the shared state that ties it all together. Rules read and write variables to coordinate behavior across the session. Variables are initialized at session start and mutated by `set_variable` effects as events fire.
+## How The Pieces Fit
 
-## How They Compose
+### Rules
 
-The orchestrator pipeline is the canonical composition example:
+Rules are reactive. They fire on normalized hook events such as `before_tool`,
+`after_tool`, `before_agent`, `session_start`, or semantic `turn_end`.
 
-```yaml
-# Pipeline dispatches agents, constrained by rules
-Pipeline: orchestrator
-  ├── mcp step: scan open tasks          # mechanical
-  ├── mcp step: suggest_next_tasks       # mechanical
-  ├── spawn agent: developer             # intelligent work
-  │     ├── step: claim                  # tool-locked: only claim_task, get_task
-  │     ├── step: implement              # creative freedom (most tools allowed)
-  │     │     └── rules enforce: no git push, require uv, task before edit
-  │     └── step: terminate              # tool-locked: only kill_agent
-  ├── spawn agent: qa-reviewer           # review + approve/reject
-  ├── spawn agent: merge                 # merge approved branches
-  └── register continuations, exit        # re-invoked on agent completion
-```
+Rules are the right tool when you need to:
 
-Each layer does what it's good at:
-- The **pipeline** decides *what happens next* (deterministic control flow)
-- The **agent** decides *how to do it* (LLM reasoning within phased constraints)
-- The **rules** ensure *invariants hold* (no git push, require task, etc.)
+- Block a tool call or stop attempt.
+- Rewrite tool input before execution.
+- Inject guidance into the session context.
+- Set or track session variables.
+- Trigger MCP side effects in response to hooks.
 
-## Decision Matrix
+Rules do **not** decide the broader workflow. They enforce local invariants.
 
-| You want to... | Use | Why |
-|----------------|-----|-----|
-| Block a tool or action | **Rule** | Stateless, event-driven, fires on every hook |
-| Inject context into the system message | **Rule** | `inject_context` effect accumulates text |
-| Track state across events | **Rule** (`set_variable`) | Variables persist across the session |
-| Guide an LLM through phased work | **Agent** (step workflow) | Tool restrictions + automatic transitions |
-| Run a deterministic sequence of operations | **Pipeline** | Sequential steps with typed data flow |
-| Coordinate multiple agents | **Pipeline** | Spawn, wait, dispatch in defined order |
-| Gate an action on human approval | **Pipeline** (approval gate) | Built-in approval tokens with resume |
-| Call MCP tools mechanically | **Pipeline** (`mcp` step) | No LLM needed, direct tool invocation |
-| Initialize session state | **Variable definition** | Loaded at session start, used in conditions |
+### Agents
+
+Agents are reusable worker definitions. They combine:
+
+- Persona and prompt fields such as `role`, `goal`, `personality`, and `instructions`.
+- Provider and isolation preferences.
+- Rule selectors, variable overrides, and optional inline step workflows.
+- Tool restrictions that apply either globally or per step.
+
+An agent definition can be applied to the current session with
+`gobby-agents:apply_persona`, or used to spawn a child session with
+`gobby-agents:spawn_agent` or `dispatch_batch`.
+
+### Pipelines
+
+Pipelines are deterministic automation. They execute ordered steps such as:
+
+- `exec` for shell commands
+- `prompt` for LLM reasoning
+- `mcp` for direct tool calls
+- `invoke_pipeline` for nested pipelines
+- `activate_workflow` for step-workflow activation inside pipeline execution
+- `wait` for completion-event blocking
+
+Pipelines are the right tool when you need explicit sequencing, resumability,
+approval gates, or non-interactive orchestration.
+
+### Orchestration
+
+Orchestration is not a separate legacy server anymore. In current Gobby,
+orchestration is built by composing:
+
+- Task state from `gobby-tasks`
+- Agent runtime from `gobby-agents`
+- Deterministic control flow from `gobby-workflows` pipelines
+- Isolation from `gobby-worktrees` or `gobby-clones`
+- Landing and conflict handling from `gobby-worktrees`, `gobby-clones`, and `gobby-merge`
+
+The bundled `orchestrator` and `dev-orchestrator` pipelines are the canonical
+examples.
+
+## Current Public Surface
+
+These are the servers readers should think in terms of when authoring workflow
+behavior today:
+
+| Server | What it owns |
+| --- | --- |
+| `gobby-workflows` | Workflow, rule, variable, agent-definition, and pipeline definitions; pipeline execution and completion waiting |
+| `gobby-agents` | Agent spawning, runtime inspection, persona application, inter-agent messaging, and commands |
+| `gobby-tasks` | Task lifecycle, dependencies, readiness, and review states |
+| `gobby-worktrees` | Worktree creation, sync, merge, and cleanup |
+| `gobby-clones` | Clone-based isolation lifecycle |
+| `gobby-merge` | AI-assisted conflict resolution for merge flows |
+
+## Decision Guide
+
+| You need to... | Put it in... | Why |
+| --- | --- | --- |
+| Block `git push`, destructive shell, or invalid task lifecycle actions | Rule | Reactive enforcement belongs at hook time |
+| Inject reminders or dynamic context into the next agent turn | Rule | `inject_context` and `load_skill` are event-driven |
+| Guide a worker through claim → implement → terminate | Agent | Inline step workflows model phased behavior |
+| Spawn child workers for ready tasks | Pipeline or orchestration flow | Dispatch is deterministic control flow |
+| Wait for a spawned worker or nested run to finish | Pipeline | `wait` steps and `wait_for_completion` exist for this |
+| Keep work moving on a cron/tick loop | Pipeline orchestration | Tick-based pipelines are the current orchestration model |
 
 ## Event Flow
 
-When a CLI hook fires, here's what happens:
+At runtime, the control flow looks like this:
 
-```mermaid
-sequenceDiagram
-    participant CLI as CLI (Claude/Gemini/etc.)
-    participant Hook as Hook Manager
-    participant RE as Rule Engine
-    participant Vars as Session Variables
+1. A CLI session starts or a child session is spawned.
+2. Gobby resolves the session's persona, active rules, variables, and skills.
+3. Hook events fire as the session works: tool calls, model requests, stop
+   attempts, compaction, notifications, and more.
+4. The rule engine evaluates matching rules in priority order and returns a
+   merged response: allow/block, context injections, rewritten input, variable
+   updates, and deferred MCP calls.
+5. Pipelines or parent sessions use MCP tools to spawn agents, wait for
+   completion, inspect task state, and continue orchestration.
 
-    CLI->>Hook: Hook event (e.g., before_tool)
-    Hook->>RE: evaluate(event, session_id, variables)
+One important abstraction here is `turn_end`:
 
-    RE->>RE: Load enabled rules for event type
-    RE->>RE: Apply session overrides (enable/disable)
-    RE->>RE: Filter by agent_scope
-    RE->>RE: Filter by active rule selectors
-    RE->>RE: Sort by priority (ascending)
+- `turn_end` is a semantic workflow event.
+- It fires alongside the raw hook event when a session reaches the end of a
+  turn, whether that arrives as `after_agent` or `stop`.
+- That keeps stop gates and end-of-turn policies consistent across supported
+  CLIs.
 
-    loop Each rule (priority order)
-        RE->>RE: Evaluate `when` condition
-        alt Condition true (or no condition)
-            alt Effect: block
-                RE->>RE: Check tool match
-                RE-->>Hook: BLOCK (first block wins, stop evaluation)
-            else Effect: set_variable
-                RE->>Vars: Mutate variable (visible to later rules)
-            else Effect: inject_context
-                RE->>RE: Append to context list
-            else Effect: mcp_call
-                RE->>RE: Record for dispatch after evaluation
-            else Effect: observe
-                RE->>Vars: Append to _observations list
-            end
-        end
-    end
+## Definitions vs Runtime State
 
-    RE-->>Hook: Response (allow/block + context + mcp_calls)
-    Hook-->>CLI: Hook response
-```
+Keep this split clear:
 
-Key behaviors:
-- **First block wins** — evaluation stops at the first matching block effect
-- **Variables mutate in-place** — `set_variable` effects are visible to later rules in the same pass
-- **Context accumulates** — multiple `inject_context` effects combine (separated by `\n\n`)
-- **MCP calls collect** — all `mcp_call` effects dispatch after evaluation completes
-- **Conditions skip, not stop** — a `when: false` skips the rule but evaluation continues
+- **Definitions** are reusable YAML-backed objects synced into
+  `workflow_definitions`.
+- **Runtime state** is session-specific: variables, active workflow instances,
+  agent runs, pipeline executions, completion subscriptions, and task claims.
 
-## Step Workflow Lifecycle
+When a guide says "enable a rule" or "update an agent definition", that is a
+definition change. When it says "the step transitioned" or "the pipeline is
+waiting for approval", that is runtime state.
 
-Agents with step workflows move through phases automatically:
+## Recommended Reading
 
-```mermaid
-stateDiagram-v2
-    [*] --> claim: Agent spawned
-    claim --> implement: task_claimed = true
-    implement --> terminate: review_submitted = true
-    terminate --> [*]: kill_agent called
-
-    state claim {
-        [*] --> ClaimTask
-        ClaimTask: Only claim_task and get_task allowed
-        ClaimTask: on_mcp_success sets task_claimed
-    }
-
-    state implement {
-        [*] --> Coding
-        Coding: Most tools allowed
-        Coding: close_task, spawn_agent BLOCKED
-        Coding: on_mcp_success(mark_task_needs_review) sets review_submitted
-    }
-
-    state terminate {
-        [*] --> Shutdown
-        Shutdown: Only kill_agent allowed
-    }
-```
-
-Transitions fire automatically when an MCP tool succeeds and sets a step variable via `on_mcp_success`. The agent doesn't decide when to transition — the rule engine does.
-
-## Pipeline Execution
-
-Pipelines execute steps sequentially with typed data flow:
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING
-    PENDING --> RUNNING: Pipeline starts
-    RUNNING --> COMPLETED: All steps succeed
-    RUNNING --> FAILED: Step fails
-    RUNNING --> WAITING_APPROVAL: Approval gate hit
-    WAITING_APPROVAL --> RUNNING: Token approved
-    WAITING_APPROVAL --> CANCELLED: Token rejected
-```
-
-Each step produces output accessible to later steps via `${{ steps.<id>.output }}`. Six step types:
-
-| Type | What it does |
-|------|-------------|
-| `exec` | Runs a shell command |
-| `prompt` | Sends a prompt to the LLM |
-| `mcp` | Calls an MCP tool directly |
-| `invoke_pipeline` | Runs a nested pipeline |
-| `activate_workflow` | Activates a step workflow on a session |
-| `wait` | Blocks until a completion event fires |
-
-## Templates vs Active Enforcement
-
-Files in `src/gobby/install/shared/` (rules, agents, pipelines) are **templates**. They ship with Gobby but are **not automatically active**. Templates have `enabled: false` by design.
-
-For a rule, pipeline, or agent to be active:
-1. It must be synced to the `workflow_definitions` DB table (happens automatically on daemon start)
-2. It must be **enabled** in the database
-3. For rules: it must match the session's active rule selectors (set by the agent definition)
-
-The database is the source of truth for what's active, not the YAML template files.
-
-## Agent Selectors
-
-Agent definitions control which rules, skills, and variables are active for their sessions using **selectors**:
-
-```yaml
-# default.yaml — the baseline interactive agent
-workflows:
-  rule_selectors:
-    include: ["tag:gobby"]     # All gobby-tagged rules
-  # skill_selectors: null      # All enabled skills (permissive default)
-  # variable_selectors: null   # All enabled variables (permissive default)
-```
-
-Selector syntax:
-- `*` — match everything
-- `<name>` — exact name match
-- `tag:<tag>` — match by tag
-- `group:<group>` — match by group
-- `source:<source>` — match by origin (bundled, installed, user)
-
-`exclude` always beats `include`. If a rule matches both, it's excluded.
-
-## File Locations
-
-| Path | What it is |
-|------|-----------|
-| `src/gobby/workflows/rule_engine.py` | Rule evaluation engine |
-| `src/gobby/workflows/pipeline_executor.py` | Pipeline execution engine |
-| `src/gobby/workflows/definitions.py` | All definition models (rules, agents, pipelines, steps) |
-| `src/gobby/workflows/safe_evaluator.py` | AST-based condition evaluator |
-| `src/gobby/agents/spawn.py` | Agent spawning |
-| `src/gobby/agents/runner.py` | Agent process management |
-| `src/gobby/install/shared/rules/` | Bundled rule templates (14 groups) |
-| `src/gobby/install/shared/agents/` | Bundled agent templates |
-| `src/gobby/install/shared/workflows/` | Bundled pipeline templates |
-| `~/.gobby/gobby-hub.db` | SQLite database (source of truth for active definitions) |
-
-## Detailed Guides
-
-- **[Rules](./rules.md)** — Rule YAML format, event types, effect types, conditions, bundled groups
-- **[Pipelines](./pipelines.md)** — Pipeline schema, step types, data flow, approval gates, webhooks
-- **[Agents](./agents.md)** — Agent definitions, step workflows, spawning, isolation, selectors
-- **[Variables](./variables.md)** — Session variables, initialization, mutation, condition helpers
-- **[Orchestration](./orchestration.md)** — Pipeline-based and MCP tool-based orchestration patterns
-- **[Task Expansion](./task-expansion.md)** — How task expansion works end-to-end
-- **[TDD Enforcement](./tdd-enforcement.md)** — TDD sandwich pattern and enforcement rules
+- [Rules](./rules.md) for the event model and effect types
+- [Agents](./agents.md) for agent definitions, isolation, and step workflows
+- [Pipelines](./pipelines.md) for execution semantics and pipeline tools
+- [Orchestration](./orchestration.md) for the current task/agent coordination model
+- [Rule Authoring Guide](./workflow-rules.md) for engine caveats and safety rules

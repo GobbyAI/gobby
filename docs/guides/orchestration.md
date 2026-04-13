@@ -1,234 +1,165 @@
-# Task Orchestration
+# Orchestration
 
-Gobby provides two orchestration modes: **pipeline-based** (v3, recommended) and **MCP tool-based** (v2, legacy).
+Current Gobby orchestration is **pipeline-based**. There is no separate
+orchestration server in the live daemon. Multi-agent flows are built by
+composing pipelines, task state, agent runtime, isolation managers, and
+completion events.
 
-## Pipeline-Based Orchestration (v3)
+This guide describes the current model.
 
-The recommended approach uses a tick-based orchestrator pipeline driven by a cron job. Each tick scans task states, dispatches agents for ready work, monitors progress, handles review, and merges results.
+## The Current Stack
 
-### Key concepts
+Orchestration spans several MCP servers:
 
-- **Clone-based isolation** — one shared clone per epic, agents work sequentially within it
-- **Tick-based loop** — cron fires every N seconds, pipeline evaluates state and dispatches
-- **Provider fallback rotation** — comma-separated provider lists (e.g., `"gemini,claude"`) with auto-retry on failures
-- **Stall detection** — lifecycle monitor detects provider-side stalls and triggers provider rotation
-- **Agent types** — developer agents write code, QA-dev agents review AND fix, merge agents handle landing
+| Server | Role in orchestration |
+| --- | --- |
+| `gobby-workflows` | Run pipelines, inspect executions, wait for completion, evaluate helper expressions |
+| `gobby-tasks` | Find ready work, claim/review/close tasks, inspect dependency state |
+| `gobby-agents` | Spawn workers, dispatch batches, inspect runs, message or command descendants |
+| `gobby-worktrees` | Create and manage worktree isolation |
+| `gobby-clones` | Create and manage clone isolation |
+| `gobby-merge` | Resolve merge conflicts in landing flows |
 
-### Running the orchestrator
+That is the control plane today.
 
-```bash
-# Create a cron job to tick the orchestrator every 4 minutes
-gobby cron create --name orchestrator-tick \
-  --interval 240 \
-  --action-type pipeline \
-  --pipeline orchestrator \
-  --inputs '{"epic_task_id": "#100", "developer_provider": "gemini,claude"}'
-```
+## Canonical Orchestration Model
 
-### Agent templates
+The bundled `orchestrator` and `dev-orchestrator` pipelines are the reference
+patterns:
 
-| Template | Role | Behavior |
-| :--- | :--- | :--- |
-| `developer` | Write code | Claim → implement → commit → needs_review |
-| `qa-dev` | Review + fix | Claim → review & fix → approve or escalate |
-| `merge` | Land code | Merge clone branch, resolve conflicts |
+1. Scan task state.
+2. Determine whether the target is a standalone task or an epic tree.
+3. Resolve or create isolation for the orchestration target.
+4. Count currently active claims.
+5. Suggest ready work.
+6. Dispatch developer or reviewer agents.
+7. Exit.
 
-### Pipeline template
+The loop itself is **tick-based**, not an infinite in-process agent loop. A
+cron trigger or outer caller re-runs the pipeline on a schedule.
 
-The orchestrator pipeline (`orchestrator.yaml`) handles:
-1. **Setup** — resolve or create clone for the epic
-2. **Scan** — check task states (open, in_progress, needs_review, review_approved)
-3. **Dispatch** — spawn dev agents for open tasks, QA agents for needs_review tasks
-4. **Monitor** — track agent health, detect stalls, handle failures
-5. **Merge** — when all tasks are approved, merge the clone and close the epic
+## Bundled Building Blocks
 
-See [Pipelines](./pipelines.md) for concrete orchestration examples and step-by-step pipeline structure.
+### Pipelines
 
----
+Current bundled orchestration pipelines include:
 
-## MCP Tool-Based Orchestration (v2)
+- `orchestrator`
+- `dev-orchestrator`
 
-The `gobby-orchestration` MCP server provides tools for manual orchestration — spawning agents for ready subtasks, monitoring their progress, handling review, and cleaning up worktrees.
+Both live under `src/gobby/install/shared/workflows/pipelines/`.
 
-All orchestration tools live on the **`gobby-orchestration`** server (not `gobby-tasks`). Task CRUD, dependencies, and readiness queries remain on `gobby-tasks`.
+### Agent Definitions
 
-## Quick Reference
+Common orchestration-facing agent definitions include:
 
-| Tool | Purpose |
-| :--- | :--- |
-| `orchestrate_ready_tasks` | Spawn agents in worktrees for ready subtasks |
-| `get_orchestration_status` | Get subtask summary (open/in_progress/review/closed) |
-| `poll_agent_status` | Check spawned agents, move completed to tracking list |
-| `spawn_review_agent` | Spawn a review agent for a completed task |
-| `process_completed_agents` | Route completed agents to review or cleanup |
-| `approve_and_cleanup` | Approve reviewed task, merge and delete worktree |
-| `cleanup_reviewed_worktrees` | Merge branches and delete worktrees for reviewed agents |
-| `cleanup_stale_worktrees` | Delete worktrees with no active agent |
-| `wait_for_task` | Block until a single task completes |
-| `wait_for_any_task` | Block until the first of multiple tasks completes |
-| `wait_for_all_tasks` | Block until all tasks complete |
+- `developer`
+- `qa-reviewer`
+- `merge`
+- `conductor`
 
-## Spawning Agents
+The `conductor` definition is a persona for orchestration decisions. It is not
+a standalone orchestration server or a separate command surface.
 
-`orchestrate_ready_tasks` finds open subtasks under a parent that have no unresolved dependencies, then spawns an agent in an isolated worktree for each:
+## Typical Flow
 
-```python
-call_tool(server_name="gobby-orchestration", tool_name="orchestrate_ready_tasks", arguments={
-    "parent_task_id": "#100",
-    "session_id": "<orchestrator_session_id>"
-})
-```
-
-Each agent gets its own worktree branched from the current branch. The tool tracks spawned agents in workflow state so they can be polled later.
-
-## Monitoring
-
-### Orchestration status
-
-`get_orchestration_status` returns a summary of all subtasks under a parent, grouped by status:
-
-```python
-call_tool(server_name="gobby-orchestration", tool_name="get_orchestration_status", arguments={
-    "parent_task_id": "#100",
-    "project_path": "/path/to/project"
-})
-# Returns: summary, open_tasks, in_progress_tasks, review_tasks, closed_tasks
-```
-
-### Polling agents
-
-`poll_agent_status` checks whether spawned agents have finished and updates the tracking lists:
-
-```python
-call_tool(server_name="gobby-orchestration", tool_name="poll_agent_status", arguments={
-    "parent_task_id": "#100"
-})
-```
-
-## Review and Completion
-
-### Processing completed agents
-
-`process_completed_agents` routes finished agents — spawns review agents for validation or moves directly to cleanup:
-
-```python
-call_tool(server_name="gobby-orchestration", tool_name="process_completed_agents", arguments={
-    "parent_task_id": "#100"
-})
-```
-
-### Approving and merging
-
-`approve_and_cleanup` transitions a task from `needs_review` to `closed`, merges its branch, and deletes the worktree:
-
-```python
-call_tool(server_name="gobby-orchestration", tool_name="approve_and_cleanup", arguments={
-    "task_id": "#101"
-})
-```
-
-## Waiting
-
-Block until tasks reach `closed` or `needs_review` status. All wait tools accept a `timeout_seconds` parameter.
-
-```python
-# Single task
-call_tool(server_name="gobby-orchestration", tool_name="wait_for_task", arguments={
-    "task_id": "#101",
-    "timeout_seconds": 300
-})
-
-# First of multiple tasks
-call_tool(server_name="gobby-orchestration", tool_name="wait_for_any_task", arguments={
-    "task_ids": ["#101", "#102", "#103"],
-    "timeout_seconds": 300
-})
-
-# All tasks
-call_tool(server_name="gobby-orchestration", tool_name="wait_for_all_tasks", arguments={
-    "task_ids": ["#101", "#102", "#103"],
-    "timeout_seconds": 600
-})
-```
-
-## Cleanup
-
-```python
-# Merge branches and delete worktrees for reviewed agents
-call_tool(server_name="gobby-orchestration", tool_name="cleanup_reviewed_worktrees", arguments={
-    "parent_task_id": "#100"
-})
-
-# Delete stale worktrees with no active agent
-call_tool(server_name="gobby-orchestration", tool_name="cleanup_stale_worktrees", arguments={
-    "max_age_hours": 24
-})
-```
-
-## Inter-Agent Messaging
-
-Beyond orchestration tools, agents can communicate directly using P2P messaging on `gobby-agents`:
-
-### P2P Messages
-
-Any two sessions in the same project can exchange messages:
-
-```python
-# Agent sends status update to parent
-call_tool("gobby-agents", "send_message", {
-    "from_session": "<agent_session>",
-    "to_session": "<parent_session>",
-    "content": "Task #101 completed. 47 tests pass.",
-    "priority": "normal"
-})
-
-# Parent retrieves pending messages
-call_tool("gobby-agents", "deliver_pending_messages", {
-    "session_id": "<parent_session>"
-})
-```
-
-### Command Coordination
-
-Ancestors can send structured commands to descendants with tool restrictions and exit conditions:
-
-```python
-# Orchestrator sends command to worker
-call_tool("gobby-agents", "send_command", {
-    "from_session": "<orchestrator_session>",
-    "to_session": "<worker_session>",
-    "command_text": "Run the full test suite and report failures",
-    "allowed_tools": ["Bash", "Read", "Grep"],
-    "exit_condition": "task_complete()"
-})
-
-# Worker activates the command (sets session variables)
-call_tool("gobby-agents", "activate_command", {
-    "session_id": "<worker_session>",
-    "command_id": "<command_id>"
-})
-
-# Worker completes the command (clears variables, sends result)
-call_tool("gobby-agents", "complete_command", {
-    "session_id": "<worker_session>",
-    "command_id": "<command_id>",
-    "result": "All tests pass. Coverage: 92%."
-})
-```
-
-### Command Lifecycle
+Here is the current orchestration shape in practical terms:
 
 ```text
-send_command → activate_command → [work] → complete_command
-                    ↓                            ↓
-            session variables set        variables cleared
-            (command_id, allowed_tools)  result sent to parent
+run_pipeline(orchestrator)
+  -> gobby-tasks:list_tasks / list_ready_tasks / suggest_next_task
+  -> gobby-worktrees or gobby-clones: get/create isolation
+  -> gobby-agents:dispatch_batch or spawn_agent
+  -> worker claims task and runs its step workflow
+  -> parent waits on completion events or checks task state next tick
+  -> review/merge work happens through task state + merge tooling
 ```
 
-Commands enforce structure: only one active command per session, ancestor validation, and automatic variable cleanup on completion.
+## Isolation Strategy
 
-## Related
+Orchestration chooses an isolation mode per flow:
 
-- [MCP Tools Reference](mcp-tools.md#task-orchestration-gobby-orchestration) — full tool table
-- [Agents Guide](agents.md) — agent spawning, definitions, and isolation modes
-- [CLI Commands](cli-commands.md#conductor) — conductor CLI for persistent orchestration loops
+| Isolation | When it fits |
+| --- | --- |
+| `worktree` | Default isolated development inside the same repo |
+| `clone` | Full isolation when a separate clone is safer or required |
+| `none` | Review, merge, or read-only helper work |
+
+The orchestrator resolves existing isolation first and only creates a new
+worktree or clone when needed.
+
+## Dispatch Patterns
+
+### Single Worker
+
+Use `gobby-agents:spawn_agent` when a pipeline is handing off one bounded job.
+
+### Batch Dispatch
+
+Use `gobby-agents:dispatch_batch` when `suggest_next_task` or a similar task
+selection flow returns multiple non-conflicting pieces of work.
+
+### Current Session Persona
+
+Use `gobby-agents:apply_persona` when the caller should behave like an
+orchestrator or worker without spawning another child session.
+
+## Completion And Coordination
+
+There are two main coordination mechanisms:
+
+### Completion Events
+
+Pipelines and parents use completion IDs to block or resume:
+
+- `gobby-workflows:wait_for_completion`
+- pipeline `wait` steps
+
+This is how orchestration waits on child agents or nested pipelines.
+
+### Inter-Agent Messaging
+
+For richer parent/child coordination, use `gobby-agents` messaging tools:
+
+- `send_message`
+- `send_command`
+- `activate_command`
+- `complete_command`
+- `deliver_pending_messages`
+- `wait_for_command`
+
+Messaging is useful when a parent needs to redirect or constrain a descendant
+without baking every branch into pipeline YAML.
+
+## Task-Centric View
+
+A good mental model is that orchestration is mostly task-state management plus
+dispatch:
+
+- `list_ready_tasks` finds work that is unblocked.
+- `suggest_next_task` prioritizes among ready tasks.
+- worker agents claim tasks themselves via `claim_task`.
+- review and merge phases are represented through task statuses such as
+  `needs_review`, `review_approved`, and `escalated`.
+
+That keeps orchestration declarative: the pipeline reacts to task state instead
+of storing a second shadow scheduler.
+
+## Recommended Entry Points
+
+Use one of these depending on what you are building:
+
+- `gobby-workflows:run_pipeline` for orchestration runs
+- `gobby-cron` or `gobby cron ...` to trigger orchestration on a schedule
+- `gobby-agents:spawn_agent` or `dispatch_batch` for worker dispatch
+- `gobby-workflows:wait_for_completion` for blocking callers
+
+If you find yourself looking for a dedicated orchestration server or older
+one-shot orchestration tools, you are reading an older design. The current
+system does that work in pipelines and shared MCP servers instead.
+
+## Related Guides
+
+- [Pipelines](./pipelines.md) for execution semantics
+- [Agents](./agents.md) for worker definitions and messaging
+- [MCP Tools](./mcp-tools.md) for the current server/tool surface

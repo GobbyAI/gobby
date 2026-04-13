@@ -4,7 +4,11 @@ Complete reference for all MCP tools exposed by the Gobby daemon.
 
 ## Overview
 
-Gobby exposes **145+ internal tools** across 11 tool registries, plus direct tools on the main MCP server. Tools are accessed via:
+Gobby exposes direct MCP proxy tools plus a set of internal `gobby-*`
+registries. The exact live surface changes over time, so treat
+`list_mcp_servers()` and `list_tools()` as the source of truth.
+
+Tools are accessed via:
 
 1. **Direct Tools** - Called directly on the Gobby MCP server
 2. **Internal Tools** - Called via `call_tool()` to `gobby-*` registries
@@ -21,7 +25,7 @@ list_tools(server_name="gobby-tasks")
 get_tool_schema(server_name="gobby-tasks", tool_name="create_task")
 
 # 3. Execute - run the tool
-call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "session_id": "..."})
+call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "category": "docs"})
 ```
 
 This pattern is **96% more token-efficient** than loading all schemas upfront.
@@ -97,7 +101,7 @@ call_tool("context7", "get-library-docs", {"libraryId": "/react/react"})
 call_tool("gobby-tasks", "create_task", {
     "title": "Fix bug",
     "priority": 1,
-    "session_id": "<your_session_id>"
+    "category": "docs"
 })
 ```
 
@@ -146,9 +150,9 @@ Get full inputSchema for a specific tool.
       "type": "object",
       "properties": {
         "title": {"type": "string"},
-        "session_id": {"type": "string", "description": "Required - your session ID"}
+        "category": {"type": "string"}
       },
-      "required": ["title", "session_id"]
+      "required": ["title", "category"]
     }
   }
 }
@@ -238,7 +242,8 @@ Search for tools using semantic similarity.
 
 #### `call_hook(hook_type, params?, source?)`
 
-Trigger session hooks for non-Claude-Code CLIs.
+Trigger session hooks for external integrations that are not using a native
+Gobby hook adapter.
 
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
@@ -262,22 +267,25 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 
 ### Quick Reference
 
-| Registry | Tools | Purpose |
-| :--- | :--- | :--- |
+| Registry | Purpose |
+| :--- | :--- |
+| `gobby-tasks` | Task lifecycle, dependencies, readiness, and review state |
+| `gobby-tasks-ops` | Expansion, affected-file wiring, GitHub issue import, and task reindexing |
+| `gobby-sessions` | Session lifecycle, handoffs, transcripts, and messaging |
+| `gobby-memory` | Persistent memory and recall |
+| `gobby-workflows` | Rules, variables, agent definitions, pipelines, and pipeline execution |
+| `gobby-agents` | Agent spawning, runtime inspection, persona application, messaging, and commands |
+| `gobby-worktrees` | Worktree isolation lifecycle |
+| `gobby-clones` | Clone isolation lifecycle |
+| `gobby-merge` | Merge conflict resolution |
+| `gobby-skills` | Skill discovery and loading |
+| `gobby-metrics` | Metrics and budget tracking |
+| `gobby-hub` | Cross-project queries |
+| `gobby-cron` | Scheduled triggers |
 
-| `gobby-tasks` | ~30 | Task management, dependencies, lifecycle |
-| `gobby-tasks-ops` | 13 | Expansion, affected files, GitHub issues, reindex |
-| `gobby-orchestration` | 11 | Task orchestration, agent spawning, monitoring, waiting |
-| `gobby-sessions` | 11 | Session lifecycle, handoffs, messages |
-| `gobby-memory` | 11 | Persistent memory storage and retrieval |
-| `gobby-workflows` | 12 | Workflow engine, step transitions |
-| `gobby-agents` | 15 | Subagent spawning and management |
-| `gobby-worktrees` | 13 | Git worktree management |
-| `gobby-skills` | 6 | Skill discovery and management |
-| `gobby-merge` | 5 | AI-powered merge conflict resolution |
-| `gobby-clones` | 6 | Git clone management |
-| `gobby-metrics` | 10 | Tool metrics and usage tracking |
-| `gobby-hub` | 4 | Cross-project queries |
+There is no separate orchestration server in the current daemon. Orchestration
+is built across `gobby-workflows`, `gobby-tasks`, `gobby-agents`,
+`gobby-worktrees`, `gobby-clones`, and `gobby-merge`.
 
 ---
 
@@ -375,20 +383,19 @@ call_tool("gobby-tasks", "create_task", {
     "title": "Implement authentication",
     "priority": 1,
     "task_type": "feature",
-    "session_id": "<your_session_id>",
+    "category": "code",
+    "validation_criteria": "Login flow works and has targeted test coverage.",
     "claim": True
 })
 
-# 3. Add validation criteria
-call_tool("gobby-tasks", "generate_validation_criteria", {
+# 3. Inspect the task
+call_tool("gobby-tasks", "get_task", {
     "task_id": "#123"
 })
 
-# 4. Close when done (auto-validates)
+# 4. Close when done
 call_tool("gobby-tasks", "close_task", {
-    "task_id": "#123",
-    "reason": "completed",
-    "commit_sha": "abc123"
+    "task_id": "#123"
 })
 ```
 
@@ -437,32 +444,19 @@ call_tool("gobby-tasks", "close_task", {
 
 ---
 
-## Task Orchestration (`gobby-orchestration`)
+## Orchestration Surface
 
-11 tools for automated task orchestration, agent spawning, monitoring, and waiting.
+Current orchestration is pipeline-based. The main tools involved are:
 
-### Orchestration
-
-| Tool | Description |
+| Server | Key tools |
 | :--- | :--- |
+| `gobby-workflows` | `run_pipeline`, `get_pipeline_status`, `wait_for_completion`, `pipeline_eval` |
+| `gobby-tasks` | `list_ready_tasks`, `suggest_next_task`, `list_tasks`, `claim_task`, review lifecycle tools |
+| `gobby-agents` | `spawn_agent`, `dispatch_batch`, `apply_persona`, messaging and command tools |
+| `gobby-worktrees` / `gobby-clones` | isolation lookup, creation, sync, cleanup |
+| `gobby-merge` | conflict-resolution flows |
 
-| `orchestrate_ready_tasks` | Spawn agents for ready subtasks |
-| `get_orchestration_status` | Get orchestration status for parent |
-| `poll_agent_status` | Poll running agents, update tracking |
-| `spawn_review_agent` | Spawn review agent for completed task |
-| `process_completed_agents` | Route completed agents to review/cleanup |
-| `approve_and_cleanup` | Approve reviewed task, cleanup worktree |
-| `cleanup_reviewed_worktrees` | Clean up worktrees for reviewed agents |
-| `cleanup_stale_worktrees` | Clean up inactive worktrees |
-
-### Waiting
-
-| Tool | Description |
-| :--- | :--- |
-
-| `wait_for_task` | Block until task completes |
-| `wait_for_any_task` | Wait for first of multiple tasks |
-| `wait_for_all_tasks` | Wait for all tasks to complete |
+See [orchestration.md](./orchestration.md) for the current model.
 
 ---
 
@@ -543,59 +537,54 @@ call_tool("gobby-memory", "search_memories", {
 
 ## Workflow Engine (`gobby-workflows`)
 
-Tools for rule management, variable control, and step-based workflow management.
+`gobby-workflows` is the umbrella server for workflow definitions and pipeline
+execution.
 
-### Rule Tools
-
-| Tool | Description |
-| :--- | :--- |
-| `list_rules` | List rules with optional event/group filter |
-| `list_rule_groups` | List available rule groups |
-| `get_rule_detail` | Get full rule definition |
-| `toggle_rule` | Enable/disable a rule for the session |
-
-### Workflow and Variable Tools
+### Definitions
 
 | Tool | Description |
 | :--- | :--- |
-| `list_workflows` | List available workflow definitions |
-| `get_workflow` | Get workflow details |
-| `activate_workflow` | Activate on-demand workflow for session |
-| `end_workflow` | End active workflow |
-| `get_workflow_status` | Get current step and state |
-| `request_step_transition` | Request transition to different step |
-| `set_variable` | Set session-scoped variable |
-| `get_variable` | Get variable value(s) |
-| `import_workflow` | Import workflow from file |
-| `reload_cache` | Clear workflow cache after edits |
+| `list_workflows` / `get_workflow` | Inspect workflow and step-workflow definitions |
+| `create_workflow` / `update_workflow` / `delete_workflow` / `restore_workflow` / `export_workflow` | Manage generic workflow definitions |
+| `list_pipelines` / `get_pipeline` | Inspect pipeline definitions |
+| `create_pipeline` / `update_pipeline` / `delete_pipeline` / `export_pipeline` | Manage pipeline definitions |
+| `list_agent_definitions` / `get_agent_definition` | Inspect agent definitions |
+| `create_agent_definition`, `toggle_agent_definition`, `delete_agent_definition` | Manage agent definitions |
+| `update_agent_rules`, `update_agent_variables`, `update_agent_steps` | Edit parts of an agent definition |
+| `list_rules`, `get_rule`, `create_rule`, `update_rule`, `toggle_rule`, `delete_rule` | Manage standalone rules |
+| `list_variables`, `get_variable_definition`, `create_variable`, `update_variable`, `delete_variable`, `export_variable` | Manage variable definitions |
 
-### Example: Rule Management
+### Execution
+
+| Tool | Description |
+| :--- | :--- |
+| `get_workflow_status` | Show current session workflow/runtime state |
+| `evaluate_workflow` | Validate a workflow definition without executing it |
+| `run_pipeline` | Start a pipeline and return an `execution_id` immediately |
+| `get_pipeline_status` | Inspect a pipeline execution and its steps |
+| `list_pipeline_executions` / `search_pipeline_executions` | Query pipeline history |
+| `wait_for_completion` | Block on an agent or pipeline completion event |
+| `resume_pipeline` | Resume a failed pipeline execution |
+| `approve_pipeline` / `reject_pipeline` | Resolve approval gates |
+| `cancel_pipeline` | Cancel a running pipeline execution |
+| `pipeline_eval` | Evaluate data expressions inside orchestration flows |
+| `fail_pipeline` | Mark the current pipeline as failed from inside a run |
+| `import_workflow` / `reload_cache` | Import definitions or refresh the synced cache |
+
+There is **no public `activate_workflow` MCP tool** in the current surface.
+`activate_workflow` is a pipeline step type used internally during execution.
+
+### Example: Run And Wait For A Pipeline
 
 ```python
-# List rules by event
-call_tool("gobby-workflows", "list_rules", {
-    "event": "before_tool"
+result = call_tool("gobby-workflows", "run_pipeline", {
+    "name": "orchestrator",
+    "inputs": {"task_id": "#100"}
 })
 
-# Toggle a rule for the session
-call_tool("gobby-workflows", "toggle_rule", {
-    "name": "require-task",
-    "enabled": false
-})
-```
-
-### Example: Workflow Activation
-
-```python
-# Activate a workflow
-call_tool("gobby-workflows", "activate_workflow", {
-    "workflow_name": "developer",
-    "session_id": "<your_session_id>"
-})
-
-# Check current step
-call_tool("gobby-workflows", "get_workflow_status", {
-    "session_id": "<your_session_id>"
+call_tool("gobby-workflows", "wait_for_completion", {
+    "completion_id": result["execution_id"],
+    "timeout": 1200
 })
 ```
 
@@ -603,25 +592,34 @@ call_tool("gobby-workflows", "get_workflow_status", {
 
 ## Agent Management (`gobby-agents`)
 
-15 tools for subagent spawning, management, and inter-agent messaging.
+Current `gobby-agents` tools cover agent runs plus inter-agent coordination.
+
+### Runtime
 
 | Tool | Description |
 | :--- | :--- |
-| `spawn_agent` | Spawn subagent with isolation options |
-| `get_agent_result` | Get result of completed agent |
-| `list_agents` | List agent runs for session |
-| `stop_agent` | Stop agent (marks cancelled) |
-| `kill_agent` | Kill agent process |
-| `can_spawn_agent` | Check if spawning is allowed |
-| `list_running_agents` | List currently running agents |
-| `get_running_agent` | Get in-memory process state |
-| `unregister_agent` | Remove from running registry |
-| `running_agent_stats` | Get running agent statistics |
-| `send_message` | P2P message between sessions (same project) |
-| `send_command` | Send command from ancestor to descendant |
-| `complete_command` | Complete command, clear variables, send result |
-| `deliver_pending_messages` | Fetch and mark undelivered messages |
-| `activate_command` | Activate pending command, set session variables |
+| `spawn_agent` | Spawn a worker session with optional isolation |
+| `dispatch_batch` | Spawn multiple workers from task suggestions |
+| `apply_persona` | Apply an agent definition to the current session |
+| `get_agent_result` | Read the final result of a completed run |
+| `list_agents` | List runs for a parent session |
+| `list_running_agents` / `get_running_agent` | Inspect live runtime state |
+| `stop_agent` | Mark a run cancelled without killing the process |
+| `kill_agent` | Terminate the process/terminal |
+| `can_spawn_agent`, `evaluate_spawn`, `running_agent_stats` | Spawn validation and runtime stats |
+| `unregister_agent` | Internal registry cleanup helper |
+
+### Messaging And Commands
+
+| Tool | Description |
+| :--- | :--- |
+| `send_message` | P2P session messaging |
+| `send_command` | Send a constrained command to a descendant |
+| `activate_command` | Activate a pending command in the target session |
+| `complete_command` | Mark a command complete and send the result back |
+| `deliver_pending_messages` | Fetch and mark pending messages delivered |
+| `wait_for_command` | Block until a pending command arrives |
+| `get_inter_session_messages` | Read message history |
 
 ### Example: Agent Spawning
 
@@ -630,13 +628,13 @@ call_tool("gobby-workflows", "get_workflow_status", {
 call_tool("gobby-agents", "spawn_agent", {
     "prompt": "Implement the login feature",
     "task_id": "#123",
-    "session_id": "<your_session_id>",
+    "parent_session_id": "<your_session_id>",
     "isolation": "worktree"
 })
 
-# Check if can spawn
-call_tool("gobby-agents", "can_spawn_agent", {
-    "session_id": "<your_session_id>"
+# Apply a persona to the current session instead of spawning
+call_tool("gobby-agents", "apply_persona", {
+    "agent": "developer"
 })
 ```
 
@@ -663,7 +661,7 @@ call_tool("gobby-agents", "send_command", {
 
 ## Worktree Management (`gobby-worktrees`)
 
-13 tools for git worktree parallel development.
+14 tools for git worktree parallel development.
 
 | Tool | Description |
 | :--- | :--- |
@@ -787,23 +785,19 @@ call_tool("gobby-merge", "merge_apply", {})
 
 ---
 
-## Conductor (CLI-Based Orchestration)
+## Orchestration Note
 
-The **Conductor** is a persistent orchestration loop that automatically manages task execution across multiple agents. Unlike the MCP orchestration tools (which are single-shot operations), the Conductor runs continuously.
+The current daemon does not expose a separate conductor CLI or orchestration
+server.
 
-The Conductor is managed via CLI commands, not MCP tools:
+Use:
 
-```bash
-gobby conductor start      # Start the orchestration loop
-gobby conductor stop       # Stop the loop
-gobby conductor status     # Check loop status
-gobby conductor chat       # Send message to conductor
-gobby conductor restart    # Restart the loop
-```
+- `gobby-workflows:run_pipeline` for orchestration runs
+- `gobby-workflows:wait_for_completion` for blocking callers
+- `gobby-agents` runtime tools for worker dispatch
+- `gobby cron ...` or `gobby-cron` for scheduled ticks
 
-The Conductor uses the orchestration tools from `gobby-orchestration` internally (`orchestrate_ready_tasks`, `poll_agent_status`, `process_completed_agents`, etc.).
-
-See [cli-commands.md](cli-commands.md#conductor) for full CLI reference.
+See [orchestration.md](./orchestration.md) for the current design.
 
 ---
 
