@@ -149,3 +149,48 @@ class TestGetMessagesRendered:
 
         assert response.status_code == 503
         assert "Transcript reader not available" in response.json()["detail"]
+
+    def test_transcript_status_uses_reader(
+        self,
+        session_storage: LocalSessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """Transcript status should delegate to TranscriptReader when available."""
+        session = session_storage.register(
+            external_id="status-test",
+            machine_id="machine",
+            source="claude",
+            project_id=test_project["id"],
+        )
+
+        mock_reader = AsyncMock()
+        mock_reader.get_transcript_status = AsyncMock(
+            return_value={
+                "session_id": session.id,
+                "live_exists": True,
+                "archive_exists": False,
+                "availability": "live",
+                "content_state": "unparseable",
+                "session_source": "claude",
+                "detected_source": None,
+                "source_mismatch": False,
+                "raw_record_count": 10,
+                "parsed_message_count": 0,
+            }
+        )
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+            transcript_reader=mock_reader,
+        )
+
+        test_client = TestClient(server.app)
+        response = test_client.get(f"/api/sessions/{session.id}/transcript/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["content_state"] == "unparseable"
+        assert data["raw_record_count"] == 10
+        mock_reader.get_transcript_status.assert_called_once_with(session.id)

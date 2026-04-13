@@ -20,6 +20,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_session_record(session_manager: Any, session_id: str) -> Any | None:
+    """Fetch a session from either storage or service-layer managers."""
+    if hasattr(session_manager, "get"):
+        return session_manager.get(session_id)
+    if hasattr(session_manager, "get_session"):
+        return session_manager.get_session(session_id)
+    return None
+
+
+def _session_attr(session: Any, name: str) -> Any:
+    """Read an attribute from an object or dict-shaped session."""
+    if isinstance(session, dict):
+        return session.get(name)
+    return getattr(session, name, None)
+
+
 def register_message_routes(
     router: APIRouter,
     server: "HTTPServer",
@@ -95,15 +111,53 @@ def register_message_routes(
     async def transcript_status(session_id: str) -> dict[str, Any]:
         """Check if a transcript archive exists for this session."""
         try:
+            if server.transcript_reader is not None and hasattr(
+                server.transcript_reader, "get_transcript_status"
+            ):
+                status = await server.transcript_reader.get_transcript_status(session_id)
+                return dict(status)
+
             sm = get_session_manager()
-            session = sm.get_session(session_id)
-            if not session or not session.external_id:
-                return {"exists": False, "session_id": session_id}
+            session = _get_session_record(sm, session_id)
+            if not session:
+                return {
+                    "session_id": session_id,
+                    "live_exists": False,
+                    "archive_exists": False,
+                    "availability": "missing",
+                    "content_state": "missing",
+                    "session_source": None,
+                    "detected_source": None,
+                    "source_mismatch": False,
+                    "raw_record_count": 0,
+                    "parsed_message_count": 0,
+                }
+
+            transcript_path = _session_attr(session, "transcript_path")
+            external_id = _session_attr(session, "external_id")
+            live_exists = bool(transcript_path and os.path.isfile(transcript_path))
+
             archive_dir = get_archive_dir()
-            archive_path = archive_dir / f"{session.external_id}.jsonl.gz"
-            exists = archive_path.is_file()
-            result: dict[str, Any] = {"exists": exists, "session_id": session_id}
-            if exists:
+            archive_path = archive_dir / f"{external_id}.jsonl.gz" if external_id else None
+            archive_exists = bool(archive_path and archive_path.is_file())
+
+            result: dict[str, Any] = {
+                "session_id": session_id,
+                "live_exists": live_exists,
+                "archive_exists": archive_exists,
+                "availability": "live"
+                if live_exists
+                else "archive_only"
+                if archive_exists
+                else "missing",
+                "content_state": "empty" if (live_exists or archive_exists) else "missing",
+                "session_source": _session_attr(session, "source"),
+                "detected_source": None,
+                "source_mismatch": False,
+                "raw_record_count": 0,
+                "parsed_message_count": 0,
+            }
+            if archive_exists and archive_path is not None:
                 result["compressed_size"] = archive_path.stat().st_size
                 result["archive_path"] = str(archive_path)
             return result

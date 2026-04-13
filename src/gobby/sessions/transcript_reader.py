@@ -36,6 +36,125 @@ from gobby.sessions.transcript_renderer import render_transcript
 logger = logging.getLogger(__name__)
 
 
+def _count_nonempty_lines(lines: list[str]) -> int:
+    """Count non-empty JSONL records."""
+    return sum(1 for line in lines if line.strip())
+
+
+def _detect_source_from_path(path: str | None) -> str | None:
+    """Infer transcript source from a known path shape."""
+    if not path:
+        return None
+
+    normalized = str(Path(path).expanduser())
+    lowered = normalized.lower()
+    parts = Path(normalized).parts
+
+    if ".codex" in parts and "sessions" in parts:
+        return "codex"
+    if Path(normalized).name.startswith("rollout-") and lowered.endswith(".jsonl"):
+        return "codex"
+    if ".gemini" in parts or lowered.endswith(".json"):
+        return "gemini"
+    if ".claude" in parts and "projects" in parts:
+        return "claude"
+
+    return None
+
+
+def _load_json_object(raw: str) -> dict[str, Any] | None:
+    """Parse a JSON object, returning None for non-dict or invalid values."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _detect_source_from_record(data: dict[str, Any]) -> str | None:
+    """Infer transcript source from a decoded transcript record."""
+    if "sessionId" in data or isinstance(data.get("messages"), list):
+        return "gemini"
+
+    line_type = data.get("type")
+    payload = data.get("payload")
+    message = data.get("message")
+
+    if isinstance(payload, dict) and line_type in {
+        "response_item",
+        "event_msg",
+        "session_meta",
+        "turn_context",
+    }:
+        return "codex"
+
+    if isinstance(message, dict):
+        if "role" in message:
+            return "claude"
+        if "content" in message:
+            return "claude"
+
+    if line_type in {"assistant", "summary", "system"}:
+        return "claude"
+    if line_type == "user":
+        return "claude" if isinstance(message, dict) else "gemini"
+
+    if line_type in {"init", "message", "tool_use", "tool_result", "result", "model", "gemini"}:
+        return "gemini"
+
+    return None
+
+
+def _detect_source_from_json_session(data: dict[str, Any]) -> str | None:
+    """Infer transcript source from a native JSON session file."""
+    if "sessionId" in data or isinstance(data.get("messages"), list):
+        return "gemini"
+    return _detect_source_from_record(data)
+
+
+def _detect_source_from_jsonl_lines(lines: list[str]) -> str | None:
+    """Infer transcript source from JSONL content."""
+    for raw_line in lines:
+        if not raw_line.strip():
+            continue
+        data = _load_json_object(raw_line)
+        if not data:
+            continue
+        detected = _detect_source_from_record(data)
+        if detected:
+            return detected
+    return None
+
+
+def _resolve_effective_source(
+    session: Session,
+    *,
+    transcript_path: str | None = None,
+    lines: list[str] | None = None,
+    data: dict[str, Any] | None = None,
+    session_id: str | None = None,
+) -> tuple[str, str | None]:
+    """Choose the parser source from transcript evidence, with DB source as fallback."""
+    detected_source = _detect_source_from_path(transcript_path)
+    if detected_source is None and data is not None:
+        detected_source = _detect_source_from_json_session(data)
+    if detected_source is None and lines is not None:
+        detected_source = _detect_source_from_jsonl_lines(lines)
+
+    effective_source = detected_source or session.source or "claude"
+    stored_source = getattr(session, "source", None)
+    if detected_source and stored_source and detected_source != stored_source:
+        logger.warning(
+            "Transcript source mismatch for session %s: stored=%s detected=%s path=%s",
+            session_id,
+            stored_source,
+            detected_source,
+            transcript_path,
+        )
+
+    return effective_source, detected_source
+
+
 def _find_transcript_on_disk(
     source: str,
     external_id: str,
@@ -246,8 +365,9 @@ class TranscriptReader:
             List of message dicts
         """
         # 1. Try live transcript file (active/paused sessions)
+        has_live_transcript = await self._has_live_transcript(session_id)
         file_messages = await self._read_from_file(session_id, limit, offset, role)
-        if file_messages:
+        if has_live_transcript:
             return file_messages
 
         # 2. Transcript gone — try gzip archive (expired sessions)
@@ -273,10 +393,11 @@ class TranscriptReader:
             List of RenderedMessage objects
         """
         # 1. Try live transcript file
+        has_live_transcript = await self._has_live_transcript(session_id)
         parsed_messages = await self._get_parsed_messages_from_file(session_id)
 
         # 2. Fallback to gzip archive
-        if not parsed_messages:
+        if not has_live_transcript:
             parsed_messages = await self._get_parsed_messages_from_archive(session_id)
 
         if not parsed_messages:
@@ -294,32 +415,108 @@ class TranscriptReader:
         if not session:
             return 0
 
-        transcript_path = getattr(session, "transcript_path", None)
-        if transcript_path and os.path.isfile(transcript_path):
-            try:
-                if _is_json_session_file(transcript_path):
-                    # JSON session file: parse to count messages
-                    data = await asyncio.to_thread(self._read_json_file, transcript_path)
-                    source = session.source or "claude"
-                    parsed = _parse_json_session(data, source, session_id=session_id)
-                    return len(parsed)
-                else:
-                    lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
-                    return sum(1 for line in lines if line.strip())
-            except Exception as e:
-                logger.warning(
-                    f"Failed to count messages from transcript for session {session_id}: {e}",
-                )
+        if await self._has_live_transcript(session_id):
+            return len(await self._get_parsed_messages_from_file(session_id))
 
         # Fallback: count lines from gzip archive
-        if session.external_id:
-            archive_dir = get_archive_dir(self._archive_dir)
-            archive_path = archive_dir / f"{session.external_id}.jsonl.gz"
-            if archive_path.is_file():
-                lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
-                return sum(1 for line in lines if line.strip())
+        return len(await self._get_parsed_messages_from_archive(session_id))
 
-        return 0
+    async def get_transcript_status(self, session_id: str) -> dict[str, Any]:
+        """Report transcript availability and parseability for a session."""
+        session = self._session_manager.get(session_id)
+        if not session:
+            return {
+                "session_id": session_id,
+                "live_exists": False,
+                "archive_exists": False,
+                "availability": "missing",
+                "content_state": "missing",
+                "session_source": None,
+                "detected_source": None,
+                "source_mismatch": False,
+                "raw_record_count": 0,
+                "parsed_message_count": 0,
+            }
+
+        transcript_path = await self._get_live_transcript_path(session_id, session)
+        live_exists = bool(transcript_path and os.path.isfile(transcript_path))
+
+        archive_exists = False
+        archive_path: Path | None = None
+        if session.external_id:
+            archive_path = get_archive_dir(self._archive_dir) / f"{session.external_id}.jsonl.gz"
+            archive_exists = archive_path.is_file()
+
+        raw_record_count = 0
+        parsed_message_count = 0
+        detected_source: str | None = None
+
+        if live_exists and transcript_path:
+            if _is_json_session_file(transcript_path):
+                data = await asyncio.to_thread(self._read_json_file, transcript_path)
+                raw_record_count = len(data.get("messages", [])) if isinstance(data, dict) else 0
+                effective_source, detected_source = _resolve_effective_source(
+                    session,
+                    transcript_path=transcript_path,
+                    data=data,
+                    session_id=session_id,
+                )
+                parsed_message_count = len(
+                    _parse_json_session(data, effective_source, session_id=session_id)
+                )
+            else:
+                lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
+                raw_record_count = _count_nonempty_lines(lines)
+                effective_source, detected_source = _resolve_effective_source(
+                    session,
+                    transcript_path=transcript_path,
+                    lines=lines,
+                    session_id=session_id,
+                )
+                parsed_message_count = len(
+                    _parse_lines(lines, effective_source, session_id=session_id)
+                )
+        elif archive_exists and archive_path is not None:
+            lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+            raw_record_count = _count_nonempty_lines(lines)
+            _, detected_source = _resolve_effective_source(
+                session,
+                transcript_path=getattr(session, "transcript_path", None),
+                lines=lines,
+                session_id=session_id,
+            )
+            parsed_message_count = len(await self._get_parsed_messages_from_archive(session_id))
+
+        availability = "missing"
+        if live_exists:
+            availability = "live"
+        elif archive_exists:
+            availability = "archive_only"
+
+        content_state = "missing"
+        if availability != "missing":
+            if parsed_message_count > 0:
+                content_state = "messages"
+            elif raw_record_count > 0 and detected_source is None:
+                content_state = "unparseable"
+            else:
+                content_state = "empty"
+
+        session_source = getattr(session, "source", None)
+        return {
+            "session_id": session_id,
+            "live_exists": live_exists,
+            "archive_exists": archive_exists,
+            "availability": availability,
+            "content_state": content_state,
+            "session_source": session_source,
+            "detected_source": detected_source,
+            "source_mismatch": bool(
+                detected_source and session_source and detected_source != session_source
+            ),
+            "raw_record_count": raw_record_count,
+            "parsed_message_count": parsed_message_count,
+        }
 
     async def _get_parsed_messages_from_archive(self, session_id: str) -> list[ParsedMessage]:
         """Read and parse ParsedMessages from gzip archive."""
@@ -333,14 +530,33 @@ class TranscriptReader:
         if not archive_path.is_file():
             return []
 
-        source = session.source or "claude"
-
         try:
             lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+            source, _ = _resolve_effective_source(
+                session,
+                transcript_path=getattr(session, "transcript_path", None),
+                lines=lines,
+                session_id=session_id,
+            )
             return _parse_lines(lines, source, session_id=session_id)
         except Exception as e:
             logger.warning(f"Failed to read archive for session {session_id}: {e}")
             return []
+
+    async def _get_live_transcript_path(self, session_id: str, session: Session) -> str | None:
+        """Resolve a usable live transcript path for a session."""
+        transcript_path = getattr(session, "transcript_path", None)
+        source = session.source or "claude"
+        return await self._ensure_transcript_path(session_id, session, source, transcript_path)
+
+    async def _has_live_transcript(self, session_id: str) -> bool:
+        """Return True when a live transcript file exists for the session."""
+        session = self._session_manager.get(session_id)
+        if not session:
+            return False
+
+        transcript_path = await self._get_live_transcript_path(session_id, session)
+        return bool(transcript_path and os.path.isfile(transcript_path))
 
     async def _ensure_transcript_path(
         self,
@@ -390,20 +606,28 @@ class TranscriptReader:
         if not session:
             return []
 
-        transcript_path = getattr(session, "transcript_path", None)
-        source = session.source or "claude"
-        transcript_path = await self._ensure_transcript_path(
-            session_id, session, source, transcript_path
-        )
+        transcript_path = await self._get_live_transcript_path(session_id, session)
         if not transcript_path:
             return []
 
         try:
             if _is_json_session_file(transcript_path):
                 data = await asyncio.to_thread(self._read_json_file, transcript_path)
+                source, _ = _resolve_effective_source(
+                    session,
+                    transcript_path=transcript_path,
+                    data=data,
+                    session_id=session_id,
+                )
                 return _parse_json_session(data, source, session_id=session_id)
             else:
                 lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
+                source, _ = _resolve_effective_source(
+                    session,
+                    transcript_path=transcript_path,
+                    lines=lines,
+                    session_id=session_id,
+                )
                 return _parse_lines(lines, source, session_id=session_id)
         except Exception as e:
             logger.warning(f"Failed to read transcript for session {session_id}: {e}")
@@ -427,10 +651,14 @@ class TranscriptReader:
         if not archive_path.is_file():
             return []
 
-        source = session.source or "claude"
-
         try:
             lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+            source, _ = _resolve_effective_source(
+                session,
+                transcript_path=getattr(session, "transcript_path", None),
+                lines=lines,
+                session_id=session_id,
+            )
             all_messages = _parse_lines_to_dicts(lines, source, session_id=session_id)
         except Exception as e:
             logger.warning(f"Failed to read archive for session {session_id}: {e}")
@@ -464,21 +692,29 @@ class TranscriptReader:
         if not session:
             return []
 
-        transcript_path = getattr(session, "transcript_path", None)
-        source = session.source or "claude"
-        transcript_path = await self._ensure_transcript_path(
-            session_id, session, source, transcript_path
-        )
+        transcript_path = await self._get_live_transcript_path(session_id, session)
         if not transcript_path:
             return []
 
         try:
             if _is_json_session_file(transcript_path):
                 data = await asyncio.to_thread(self._read_json_file, transcript_path)
+                source, _ = _resolve_effective_source(
+                    session,
+                    transcript_path=transcript_path,
+                    data=data,
+                    session_id=session_id,
+                )
                 parsed = _parse_json_session(data, source, session_id=session_id)
                 all_messages = _parsed_to_dicts(parsed)
             else:
                 lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
+                source, _ = _resolve_effective_source(
+                    session,
+                    transcript_path=transcript_path,
+                    lines=lines,
+                    session_id=session_id,
+                )
                 all_messages = _parse_lines_to_dicts(lines, source, session_id=session_id)
         except Exception as e:
             logger.warning(f"Failed to read transcript for session {session_id}: {e}")

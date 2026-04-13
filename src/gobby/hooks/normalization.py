@@ -12,6 +12,7 @@ Used by all adapters and the web-chat path.
 
 import json as _json
 import re as _re
+import shlex as _shlex
 from typing import Any
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -35,6 +36,7 @@ _SHELL_TOOLS = frozenset(
 _EXIT_CODE_RE = _re.compile(r"[Ee]xit.?code[:\s]+(\d+)")
 _APPLY_PATCH_FILE_RE = _re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$")
 _APPLY_PATCH_MOVE_RE = _re.compile(r"^\*\*\* Move to: (.+)$")
+_SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<"})
 
 
 def is_shell_tool(tool_name: Any) -> bool:
@@ -156,6 +158,94 @@ def _normalize_apply_patch_input(tool_input: Any) -> dict[str, Any]:
     return normalized_input
 
 
+def _get_command_text(tool_input: Any) -> str | None:
+    """Extract a shell command string from normalized tool input."""
+    if not isinstance(tool_input, dict):
+        return None
+
+    command = tool_input.get("command")
+    if isinstance(command, str) and command.strip():
+        return command
+
+    cmd = tool_input.get("cmd")
+    if isinstance(cmd, str) and cmd.strip():
+        return cmd
+
+    return None
+
+
+def _shell_positional_args(parts: list[str]) -> list[str]:
+    """Return non-option shell args, excluding obvious control operators."""
+    return [
+        part
+        for part in parts[1:]
+        if part and part not in _SHELL_CONTROL_TOKENS and not part.startswith("-")
+    ]
+
+
+def _normalize_shell_tool_metadata(command: str) -> tuple[str | None, str | None]:
+    """Infer canonical kind/path from simple shell read and search commands."""
+    try:
+        parts = _shlex.split(command)
+    except ValueError:
+        return None, None
+
+    if not parts or any(token in _SHELL_CONTROL_TOKENS for token in parts):
+        return None, None
+
+    cmd = parts[0]
+    if cmd in {"rg", "grep", "git"}:
+        if cmd == "git" and len(parts) > 1 and parts[1] != "grep":
+            return None, None
+        return "search", None
+
+    if cmd in {"cat", "head", "tail", "bat", "nl"}:
+        positional = _shell_positional_args(parts)
+        if len(positional) == 1:
+            return "read", positional[0]
+        return "read", None
+
+    if cmd in {"sed", "awk"} and len(parts) >= 2:
+        candidate = parts[-1]
+        if candidate and candidate not in _SHELL_CONTROL_TOKENS and not candidate.startswith("-"):
+            return "read", candidate
+        return "read", None
+
+    return None, None
+
+
+def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
+    """Annotate events with canonical read/search/write semantics across CLIs."""
+    tool_name = data.get("tool_name")
+    tool_input = data.get("tool_input")
+
+    canonical_tool_kind: str | None = None
+    canonical_file_path: str | None = None
+
+    if tool_name == "Read":
+        canonical_tool_kind = "read"
+    elif tool_name == "Write":
+        canonical_tool_kind = "write"
+    elif isinstance(tool_name, str) and tool_name.lower() in {"grep_search", "grep"}:
+        canonical_tool_kind = "search"
+    elif tool_name == "Bash":
+        command = _get_command_text(tool_input)
+        if command:
+            canonical_tool_kind, canonical_file_path = _normalize_shell_tool_metadata(command)
+    elif "mcp_server" in data and "mcp_tool" in data:
+        canonical_tool_kind = "mcp"
+
+    if canonical_tool_kind and isinstance(tool_input, dict) and canonical_file_path is None:
+        file_path = tool_input.get("file_path")
+        if isinstance(file_path, str) and file_path.strip():
+            canonical_file_path = file_path.strip()
+
+    if canonical_tool_kind:
+        data["canonical_tool_kind"] = canonical_tool_kind
+    if canonical_file_path:
+        data["canonical_file_path"] = canonical_file_path
+
+
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize tool-related fields in hook event data.
 
@@ -241,6 +331,9 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     # ── Phase 2: MCP prefix/inner extraction + output aliases ──────────
     normalize_mcp_fields(data)
+
+    # ── Phase 2.5: infer canonical read/search/write semantics ────────
+    _set_canonical_tool_metadata(data)
 
     # ── Phase 3: infer is_error from tool output for shell tools ──────
     _detect_tool_error(data)

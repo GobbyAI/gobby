@@ -251,7 +251,8 @@ export const SessionsTab = memo(function SessionsTab({
   }, [focusSessionId, loading, onFocusHandled]);
 
   // Fetch selected session messages
-  const { messages, isLoading } = useSessionDetail(selectedSessionId);
+  const { messages, isLoading, transcriptStatus } =
+    useSessionDetail(selectedSessionId);
   const chatMessages: ChatMessage[] = useMemo(
     () =>
       messages.map((m) => {
@@ -299,6 +300,16 @@ export const SessionsTab = memo(function SessionsTab({
     () => entries.find((entry) => entry.id === selectedSessionId) ?? null,
     [entries, selectedSessionId],
   );
+
+  const emptyStateMessage = useMemo(() => {
+    if (transcriptStatus?.content_state === "unparseable") {
+      return "Transcript exists but could not be parsed";
+    }
+    if (transcriptStatus?.content_state === "missing") {
+      return "Session has no transcript";
+    }
+    return "No messages yet";
+  }, [transcriptStatus]);
 
   const handleExpire = useCallback(
     async (entry: SessionEntry) => {
@@ -541,7 +552,7 @@ export const SessionsTab = memo(function SessionsTab({
                 </div>
               ) : chatMessages.length === 0 ? (
                 <div className="activity-tab-empty">
-                  <p>No messages yet</p>
+                  <p>{emptyStateMessage}</p>
                 </div>
               ) : (
                 <>

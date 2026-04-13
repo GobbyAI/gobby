@@ -477,6 +477,50 @@ class TestWriteNormalization:
         assert "file_path" not in data["tool_input"]
 
 
+class TestCanonicalToolMetadata:
+    """Tests for derived canonical tool semantics."""
+
+    def test_read_tool_sets_canonical_read_fields(self) -> None:
+        data = {"tool_name": "Read", "tool_input": {"file_path": "/repo/main.py"}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_file_path"] == "/repo/main.py"
+
+    def test_exec_command_cat_sets_canonical_read_fields(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "cat src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_file_path"] == "src/app.py"
+
+    def test_exec_command_rg_sets_canonical_search_kind(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "rg session_lookup src"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "search"
+        assert "canonical_file_path" not in data
+
+    def test_write_tool_sets_canonical_write_fields(self) -> None:
+        data = {"tool_name": "Write", "tool_input": {"file_path": "/repo/main.py"}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_path"] == "/repo/main.py"
+
+
 class TestToolErrorDetection:
     """Tests for Phase 3: shell tool error detection from output text."""
 

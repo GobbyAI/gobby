@@ -358,6 +358,29 @@ class LocalSessionManager:
         row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
 
+    def find_by_external_id_all_sources(
+        self,
+        external_id: str,
+        machine_id: str,
+        project_id: str | None,
+        session_type: str | None = None,
+    ) -> list[Session]:
+        """Find all sessions sharing an external_id across sources within one project."""
+        query = """
+            SELECT * FROM sessions
+            WHERE external_id = ?
+              AND machine_id = ?
+              AND ((project_id = ?) OR (project_id IS NULL AND ? IS NULL))
+        """
+        params: list[str | None] = [external_id, machine_id, project_id, project_id]
+        if session_type is not None:
+            query += " AND session_type = ?"
+            params.append(session_type)
+        query += " ORDER BY created_at ASC, id ASC"
+
+        rows = self.db.fetchall(query, tuple(params))
+        return [Session.from_row(row) for row in rows]
+
     def find_parent(
         self,
         machine_id: str,

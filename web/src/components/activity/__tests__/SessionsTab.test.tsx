@@ -3,6 +3,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SessionsTab } from "../SessionsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../test/mocks/fetch";
 
+type SessionDetailMock = {
+  messages: Array<{ id?: string; content?: string }>
+  isLoading: boolean
+  transcriptStatus: { content_state: string } | null
+}
+
+const mockUseSessionDetail = vi.fn<() => SessionDetailMock>(() => ({
+  messages: [],
+  isLoading: false,
+  transcriptStatus: null,
+}));
+
 vi.mock("../../chat/artifacts/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
@@ -14,7 +26,7 @@ vi.mock("../../shared/SourceIcon", () => ({
 }));
 
 vi.mock("../../../hooks/useSessionDetail", () => ({
-  useSessionDetail: () => ({ messages: [], isLoading: false }),
+  useSessionDetail: () => mockUseSessionDetail(),
 }));
 
 vi.mock("../../../hooks/useConfirmDialog", () => ({
@@ -166,6 +178,12 @@ const activeSessions = [
 
 describe("SessionsTab", () => {
   beforeEach(() => {
+    mockUseSessionDetail.mockReset();
+    mockUseSessionDetail.mockReturnValue({
+      messages: [],
+      isLoading: false,
+      transcriptStatus: null,
+    });
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
     mockFetch.mockJsonResponse("/api/sessions?status=active", {
@@ -217,6 +235,34 @@ describe("SessionsTab", () => {
       sessionId: "web-other",
       sessionType: "web_chat",
       agentRunId: "run-auto-203",
+    });
+  });
+
+  it("shows parser mismatch empty state for unparseable transcripts", async () => {
+    mockUseSessionDetail.mockReturnValue({
+      messages: [],
+      isLoading: false,
+      transcriptStatus: { content_state: "unparseable" },
+    });
+
+    render(<SessionsTab focusSessionId="terminal-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript exists but could not be parsed")).toBeTruthy();
+    });
+  });
+
+  it("shows missing transcript empty state", async () => {
+    mockUseSessionDetail.mockReturnValue({
+      messages: [],
+      isLoading: false,
+      transcriptStatus: { content_state: "missing" },
+    });
+
+    render(<SessionsTab focusSessionId="terminal-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Session has no transcript")).toBeTruthy();
     });
   });
 });
