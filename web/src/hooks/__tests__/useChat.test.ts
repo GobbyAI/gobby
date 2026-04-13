@@ -25,8 +25,16 @@ beforeEach(() => {
   mockFetch = createMockFetch()
   // Mock localStorage — jsdom's localStorage doesn't delegate to Storage.prototype,
   // so vi.spyOn(Storage.prototype, ...) won't intercept calls. Replace the object directly.
+  // Seed a conversation id so useChat initializes with a bound session on mount.
+  // After the session identity unification (cb80f0462), loadConversationId() no
+  // longer auto-generates a uuid — it returns "" unless localStorage has one,
+  // and a real main session is created lazily via ensureMainSession/REST. Tests
+  // can't hit that REST endpoint, so we pre-bind here to match runtime state.
   originalLocalStorage = globalThis.localStorage
-  const store: Record<string, string> = {}
+  const store: Record<string, string> = {
+    'gobby-conversation-id': 'test-conversation-id',
+    'gobby-db-session-id': 'test-conversation-id',
+  }
   const mockStorage = {
     getItem: vi.fn((key: string) => store[key] ?? null),
     setItem: vi.fn((key: string, value: string) => { store[key] = value }),
@@ -174,7 +182,22 @@ describe('useChat', () => {
     expect(sentMsg.provider).toBe('gemini')
   })
 
-  it('switchProvider primes a new conversation with provider and agent messages', async () => {
+  it('switchProvider creates a new server-owned session with the requested provider', async () => {
+    // After the session identity unification, switchProvider no longer sends
+    // set_provider/set_agent via WebSocket. It calls ensureMainSession with
+    // forceNew=true and the provider, which POSTs to /api/sessions/web-chat.
+    // The backend persists the provider on the new session.
+    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
+      session: {
+        id: 'new-codex-session',
+        source: 'codex',
+        model: null,
+        chat_mode: null,
+        seq_num: 42,
+        title: null,
+      },
+    })
+
     await loadModule()
     const { result } = renderHook(() => useChat())
 
@@ -185,9 +208,13 @@ describe('useChat', () => {
       result.current.switchProvider('codex')
     })
 
-    const payloads = ws.send.mock.calls.map(([raw]) => JSON.parse(raw))
-    expect(payloads.some((msg) => msg.type === 'set_provider' && msg.provider === 'codex')).toBe(true)
-    expect(payloads.some((msg) => msg.type === 'set_agent' && msg.agent_name === 'default-web-chat')).toBe(true)
+    // REST call should include the provider in its request body
+    const sessionCalls = mockFetch.fn.mock.calls.filter(([url]) =>
+      typeof url === 'string' && url.includes('/api/sessions/web-chat'),
+    )
+    expect(sessionCalls.length).toBeGreaterThan(0)
+    const body = JSON.parse(sessionCalls[sessionCalls.length - 1][1].body as string)
+    expect(body.provider).toBe('codex')
   })
 
   it('sendMessage queues message when WS not connected', async () => {

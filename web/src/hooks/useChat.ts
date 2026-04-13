@@ -1425,7 +1425,12 @@ export function useChat() {
           setIsStreaming(false);
           setIsThinking(false);
           setSessionRef((result.ref as string) ?? null);
-          setDbSessionId(sid);
+          // Do NOT set dbSessionId here. Under the unified session identity
+          // model, dbSessionId mirrors the user's main chat conversation id,
+          // not an observed/attached session. Observed state lives on
+          // observedSessionIdRef / viewingSessionIdRef / attachedSessionIdRef.
+          // Overwriting dbSessionId here would diverge it from conversationId
+          // and trap sendMessage in an infinite ensureMainSession retry loop.
           if (!meta.agentName && meta.agentRunId) {
             void resolveAgentName(meta.agentRunId).then((agentName) => {
               if (!agentName || viewingSessionIdRef.current !== sid) return;

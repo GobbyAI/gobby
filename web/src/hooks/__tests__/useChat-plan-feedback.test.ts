@@ -11,9 +11,14 @@ let originalLocalStorage: Storage
 beforeEach(() => {
   mockWs = createMockWebSocket()
   mockFetch = createMockFetch()
-  // Mock localStorage
+  // Mock localStorage — seed a conversation id so useChat initializes with
+  // one on mount. Matches real-world flow: by the time plan_pending_approval
+  // arrives, a session has already been bound via ensureMainSession.
   originalLocalStorage = globalThis.localStorage
-  const store: Record<string, string> = {}
+  const store: Record<string, string> = {
+    'gobby-conversation-id': 'test-conversation-id',
+    'gobby-db-session-id': 'test-conversation-id',
+  }
   const mockStorage = {
     getItem: vi.fn((key: string) => store[key] ?? null),
     setItem: vi.fn((key: string, value: string) => { store[key] = value }),
