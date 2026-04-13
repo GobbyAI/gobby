@@ -25,9 +25,15 @@ class WebChatRuntimeManager:
         *,
         codex_client: CodexAppServerClient | None = None,
         gemini_default_model: str | None = None,
+        codex_transcript_retry_attempts: int = 5,
+        codex_transcript_retry_delay_seconds: float = 0.1,
     ) -> None:
         self._claude_backend = ClaudeWebChatBackend()
-        self._codex_backend = CodexWebChatBackend(client=codex_client)
+        self._codex_backend = CodexWebChatBackend(
+            client=codex_client,
+            transcript_retry_attempts=codex_transcript_retry_attempts,
+            transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
+        )
         self._gemini_backend = GeminiWebChatBackend(default_model=gemini_default_model)
 
     @property
@@ -87,6 +93,8 @@ class WebChatRuntimeManager:
                 conversation_id=conversation_id,
                 _backend=self._codex_backend,
                 _model=model,
+                _transcript_retry_attempts=self._codex_backend.transcript_retry_attempts,
+                _transcript_retry_delay_seconds=self._codex_backend.transcript_retry_delay_seconds,
             )
 
         session: ChatSessionProtocol = self._claude_backend.create_session(conversation_id)

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -41,6 +42,19 @@ class TestWebChatRuntimeManager:
         assert isinstance(claude_session, ChatSession)
         assert isinstance(gemini_session, GeminiManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
+
+    def test_create_session_applies_codex_transcript_retry_config(self) -> None:
+        manager = WebChatRuntimeManager(
+            codex_client=None,
+            codex_transcript_retry_attempts=2,
+            codex_transcript_retry_delay_seconds=0.25,
+        )
+
+        codex_session = manager.create_session(provider="codex", conversation_id="conv-3")
+
+        assert isinstance(codex_session, CodexManagedChatSession)
+        assert codex_session._transcript_retry_attempts == 2
+        assert codex_session._transcript_retry_delay_seconds == 0.25
 
 
 class TestGeminiBackend:
@@ -141,3 +155,35 @@ class TestCodexBackend:
 
         client.interrupt_turn.assert_awaited_once_with("thread-1", "turn-9")
         assert session._turn_id is None
+
+    @pytest.mark.asyncio
+    async def test_transcript_retry_uses_configured_timing(self, tmp_path: Path) -> None:
+        transcript = tmp_path / "codex.jsonl"
+        transcript.write_text("ignored\n", encoding="utf-8")
+
+        session = CodexManagedChatSession(
+            conversation_id="conv-codex",
+            _backend=MagicMock(),
+            _thread_id="thread-1",
+            _transcript_path=str(transcript),
+            _transcript_retry_attempts=2,
+            _transcript_retry_delay_seconds=0.25,
+        )
+
+        parsed_batches = [
+            [],
+            [SimpleNamespace(role="assistant", content="Recovered from transcript")],
+        ]
+
+        sleep = AsyncMock()
+        with (
+            patch(
+                "gobby.servers.websocket.chat.provider_backends.CodexTranscriptParser.parse_lines",
+                side_effect=parsed_batches,
+            ),
+            patch("gobby.servers.websocket.chat.provider_backends.asyncio.sleep", sleep),
+        ):
+            assistant_text = await session._get_transcript_assistant_text_since(0)
+
+        assert assistant_text == "Recovered from transcript"
+        sleep.assert_awaited_once_with(0.25)

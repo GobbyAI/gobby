@@ -30,6 +30,8 @@ from gobby.sessions.transcripts.codex import CodexTranscriptParser
 logger = logging.getLogger(__name__)
 
 _BACKEND_START_TIMEOUT_SECONDS = 15.0
+_CODEX_TRANSCRIPT_RETRY_ATTEMPTS = 5
+_CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS = 0.1
 
 # GeminiAdapter is stateless w.r.t. tool-name normalization; share one instance
 # instead of constructing a new adapter on every tool call.
@@ -383,6 +385,14 @@ class CodexManagedChatSession(ManagedChatSessionBase):
     _thread_id: str | None = field(default=None, repr=False)
     _turn_id: str | None = field(default=None, repr=False)
     _transcript_path: str | None = field(default=None, repr=False)
+    _transcript_retry_attempts: int = field(
+        default=_CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
+        repr=False,
+    )
+    _transcript_retry_delay_seconds: float = field(
+        default=_CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
+        repr=False,
+    )
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
         if not self._connected:
@@ -457,11 +467,11 @@ class CodexManagedChatSession(ManagedChatSessionBase):
             ]
             return "\n\n".join(assistant_chunks)
 
-        for _ in range(5):
+        for _ in range(self._transcript_retry_attempts):
             assistant_text = await asyncio.to_thread(_read_assistant_text)
             if assistant_text:
                 return assistant_text
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(self._transcript_retry_delay_seconds)
         return ""
 
 
@@ -624,7 +634,13 @@ class CodexWebChatBackend:
 
     provider = "codex"
 
-    def __init__(self, *, client: CodexAppServerClient | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        client: CodexAppServerClient | None = None,
+        transcript_retry_attempts: int = _CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
+        transcript_retry_delay_seconds: float = _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
+    ) -> None:
         self._client = client
         self._health = ProviderBackendHealth(
             provider=self.provider,
@@ -632,6 +648,8 @@ class CodexWebChatBackend:
             startup_error="Codex app-server client not configured",
         )
         self._startup_task: asyncio.Task[None] | None = None
+        self.transcript_retry_attempts = transcript_retry_attempts
+        self.transcript_retry_delay_seconds = transcript_retry_delay_seconds
 
     @property
     def client(self) -> CodexAppServerClient | None:
