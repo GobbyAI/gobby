@@ -43,8 +43,8 @@ dependencies = [
     "python-multipart>=0.0.22",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
-    # cryptography <46.0.6 has CVE-2026-26007, CVE-2026-34073
-    "cryptography>=46.0.6",
+    # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
+    "cryptography>=46.0.7",
     "cisco-ai-skill-scanner>=0.1.1",
     # pyjwt <2.12.0 has CVE-2026-32597 (transitive via mcp)
     "pyjwt>=2.12.0",
