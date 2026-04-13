@@ -8,13 +8,14 @@ import json
 import logging
 import sqlite3
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._models import (
     UNSET,
+    MaybeUnset,
     SeqNumCollisionError,
     Task,
     TaskIDCollisionError,
@@ -46,9 +47,9 @@ def _session_exists(db: DatabaseProtocol, session_id: str) -> bool:
 def _derive_claimed_by_session_id(
     db: DatabaseProtocol,
     *,
-    assignee: Any = UNSET,
-    claimed_by_session_id: Any = UNSET,
-) -> Any:
+    assignee: MaybeUnset[str | None] = UNSET,
+    claimed_by_session_id: MaybeUnset[str | None] = UNSET,
+) -> MaybeUnset[str | None]:
     """Project canonical ownership from explicit owner or session assignee.
 
     `claimed_by_session_id` is authoritative when explicitly provided.
@@ -292,34 +293,34 @@ def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
 def update_task(
     db: DatabaseProtocol,
     task_id: str,
-    title: Any = UNSET,
-    description: Any = UNSET,
-    status: Any = UNSET,
-    priority: Any = UNSET,
-    task_type: Any = UNSET,
-    assignee: Any = UNSET,
-    claimed_by_session_id: Any = UNSET,
-    lifecycle_stage: Any = UNSET,
-    labels: Any = UNSET,
-    parent_task_id: Any = UNSET,
-    closed_reason: Any = UNSET,
-    closed_at: Any = UNSET,
-    closed_in_session_id: Any = UNSET,
-    closed_commit_sha: Any = UNSET,
-    validation_status: Any = UNSET,
-    validation_feedback: Any = UNSET,
-    category: Any = UNSET,
-    validation_criteria: Any = UNSET,
-    validation_fail_count: Any = UNSET,
-    dispatch_failure_count: Any = UNSET,
-    escalated_at: Any = UNSET,
-    escalation_reason: Any = UNSET,
-    github_issue_number: Any = UNSET,
-    github_pr_number: Any = UNSET,
-    github_repo: Any = UNSET,
-    linear_issue_id: Any = UNSET,
-    linear_team_id: Any = UNSET,
-    validation_override_reason: Any = UNSET,
+    title: MaybeUnset[str | None] = UNSET,
+    description: MaybeUnset[str | None] = UNSET,
+    status: MaybeUnset[str | None] = UNSET,
+    priority: MaybeUnset[int | None] = UNSET,
+    task_type: MaybeUnset[str | None] = UNSET,
+    assignee: MaybeUnset[str | None] = UNSET,
+    claimed_by_session_id: MaybeUnset[str | None] = UNSET,
+    lifecycle_stage: MaybeUnset[str | None] = UNSET,
+    labels: MaybeUnset[list[str] | None] = UNSET,
+    parent_task_id: MaybeUnset[str | None] = UNSET,
+    closed_reason: MaybeUnset[str | None] = UNSET,
+    closed_at: MaybeUnset[str | None] = UNSET,
+    closed_in_session_id: MaybeUnset[str | None] = UNSET,
+    closed_commit_sha: MaybeUnset[str | None] = UNSET,
+    validation_status: MaybeUnset[str | None] = UNSET,
+    validation_feedback: MaybeUnset[str | None] = UNSET,
+    category: MaybeUnset[str | None] = UNSET,
+    validation_criteria: MaybeUnset[str | None] = UNSET,
+    validation_fail_count: MaybeUnset[int | None] = UNSET,
+    dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalation_reason: MaybeUnset[str | None] = UNSET,
+    github_issue_number: MaybeUnset[int | None] = UNSET,
+    github_pr_number: MaybeUnset[int | None] = UNSET,
+    github_repo: MaybeUnset[str | None] = UNSET,
+    linear_issue_id: MaybeUnset[str | None] = UNSET,
+    linear_team_id: MaybeUnset[str | None] = UNSET,
+    validation_override_reason: MaybeUnset[str | None] = UNSET,
 ) -> bool:
     """Update task fields.
 
@@ -401,12 +402,14 @@ def update_task(
     normalized_status = _normalize_legacy_status(status) if status is not UNSET else None
     next_lifecycle_stage = current_task.lifecycle_stage
     if lifecycle_stage is not UNSET:
-        next_lifecycle_stage = normalize_lifecycle_stage(lifecycle_stage)
+        next_lifecycle_stage = normalize_lifecycle_stage(cast(str | None, lifecycle_stage))
     if normalized_status in {"open", "in_progress", "needs_review", "review_approved"}:
         next_lifecycle_stage = lifecycle_stage_from_status(normalized_status)
 
-    next_closed_at = current_task.closed_at if closed_at is UNSET else closed_at
-    next_escalated_at = current_task.escalated_at if escalated_at is UNSET else escalated_at
+    next_closed_at = current_task.closed_at if closed_at is UNSET else cast(str | None, closed_at)
+    next_escalated_at = (
+        current_task.escalated_at if escalated_at is UNSET else cast(str | None, escalated_at)
+    )
 
     if normalized_status == "closed" and next_closed_at is None:
         next_closed_at = now

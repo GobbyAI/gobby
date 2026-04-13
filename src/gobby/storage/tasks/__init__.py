@@ -15,10 +15,12 @@ from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
     VALID_CATEGORIES,
+    MaybeUnset,
     SeqNumCollisionError,
     Task,
     TaskIDCollisionError,
     TaskNotFoundError,
+    UnsetType,
     normalize_priority,
     validate_category,
 )
@@ -40,5 +42,7 @@ __all__ = [
     # Constants
     "PRIORITY_MAP",
     "VALID_CATEGORIES",
+    "MaybeUnset",
     "UNSET",
+    "UnsetType",
 ]

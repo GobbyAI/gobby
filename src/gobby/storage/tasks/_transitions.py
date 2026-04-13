@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
-from gobby.storage.tasks._models import UNSET, Task
+from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
 from gobby.tasks.state_semantics import is_task_closed, normalize_de_escalation_target_status
 
 logger = logging.getLogger(__name__)
@@ -65,12 +64,12 @@ def release_task_claim(
     db: DatabaseProtocol,
     task_id: str,
     *,
-    status: Any = UNSET,
-    description: Any = UNSET,
-    validation_fail_count: Any = UNSET,
-    dispatch_failure_count: Any = UNSET,
-    escalated_at: Any = UNSET,
-    escalation_reason: Any = UNSET,
+    status: MaybeUnset[str | None] = UNSET,
+    description: MaybeUnset[str | None] = UNSET,
+    validation_fail_count: MaybeUnset[int | None] = UNSET,
+    dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalation_reason: MaybeUnset[str | None] = UNSET,
 ) -> Task:
     """Clear canonical and legacy ownership while optionally changing lifecycle state."""
     update_task(
@@ -200,7 +199,7 @@ def mark_task_needs_review(
             "Task must be active (not closed or escalated)."
         )
 
-    description = UNSET
+    description: MaybeUnset[str | None] = UNSET
     if review_notes:
         description = (task.description or "") + f"\n\n[Review Notes]\n{review_notes}"
 
@@ -227,7 +226,7 @@ def mark_task_review_approved(
             "Task must be in 'needs_review', 'in_progress', or 'escalated' status to approve."
         )
 
-    description = UNSET
+    description: MaybeUnset[str | None] = UNSET
     if approval_notes:
         description = (task.description or "") + f"\n\n[Approval Notes]\n{approval_notes}"
 

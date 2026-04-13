@@ -35,8 +35,17 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
-# Sentinel for unset optional parameters
-UNSET: Any = object()
+class UnsetType:
+    """Sentinel type for optional parameters that were not provided."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = UnsetType()
+type MaybeUnset[T] = T | UnsetType
 
 
 def validate_category(category: str | None) -> str | None:
