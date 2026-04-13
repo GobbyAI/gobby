@@ -197,6 +197,8 @@ class LocalSessionManager:
         project_id: str,
         source: str,
         title: str | None = None,
+        model: str | None = None,
+        chat_mode: str | None = None,
     ) -> Session:
         """Create a new web-chat session with a temporary runtime identity.
 
@@ -204,8 +206,13 @@ class LocalSessionManager:
         ``external_id`` is still required at row creation time and is later
         replaced with the provider-native runtime/session identifier when known.
         """
+        if chat_mode is not None and chat_mode not in self._VALID_CHAT_MODES:
+            raise ValueError(
+                f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
+            )
+
         bootstrap_external_id = f"web-chat-bootstrap:{uuid.uuid4()}"
-        return self.register(
+        session = self.register(
             external_id=bootstrap_external_id,
             machine_id=machine_id,
             source=source,
@@ -213,6 +220,24 @@ class LocalSessionManager:
             title=title,
             session_type="web_chat",
         )
+        if model is None and chat_mode is None:
+            return session
+
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """
+            UPDATE sessions
+            SET model = COALESCE(?, model),
+                chat_mode = COALESCE(?, chat_mode),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (model, chat_mode, now, session.id),
+        )
+        session.model = model if model is not None else session.model
+        session.chat_mode = chat_mode if chat_mode is not None else session.chat_mode
+        session.updated_at = now
+        return session
 
     def get(self, session_id: str) -> Session | None:
         """Get session by ID."""

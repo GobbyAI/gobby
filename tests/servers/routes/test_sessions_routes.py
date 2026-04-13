@@ -439,10 +439,8 @@ class TestCreateWebChatSession:
     """Test POST /sessions/web-chat endpoint."""
 
     def test_create_web_chat_session_success(self, client, mock_server) -> None:
-        session = _make_session(source="claude")
-        refreshed = _make_session(source="claude")
+        session = _make_session(source="claude", model="sonnet", chat_mode="plan")
         mock_server.session_manager.create_web_chat_session.return_value = session
-        mock_server.session_manager.get.return_value = refreshed
 
         with patch("gobby.utils.machine_id.get_machine_id", return_value="machine-123"):
             response = client.post(
@@ -466,12 +464,11 @@ class TestCreateWebChatSession:
             project_id="proj-123",
             source="claude",
             title="Web Chat",
+            model="sonnet",
+            chat_mode="plan",
         )
-        mock_server.session_manager.update_model.assert_called_once_with("sess-abc123", "sonnet")
-        mock_server.session_manager.update_chat_mode.assert_called_once_with(
-            "sess-abc123",
-            "plan",
-        )
+        mock_server.session_manager.update_model.assert_not_called()
+        mock_server.session_manager.update_chat_mode.assert_not_called()
 
     def test_create_web_chat_session_rejects_invalid_provider(self, client, mock_server) -> None:
         response = client.post(

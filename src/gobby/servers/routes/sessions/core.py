@@ -195,26 +195,17 @@ def register_core_routes(
             from gobby.utils.machine_id import get_machine_id
 
             machine_id = get_machine_id() or "unknown-machine"
+            model = body.model if isinstance(body.model, str) and body.model else None
+            chat_mode = body.chat_mode if isinstance(body.chat_mode, str) and body.chat_mode else None
+
             session = server.session_manager.create_web_chat_session(
                 machine_id=machine_id,
                 project_id=project_id,
                 source=provider,
                 title=body.title,
+                model=model,
+                chat_mode=chat_mode,
             )
-
-            model = body.model
-            if isinstance(model, str) and model:
-                server.session_manager.update_model(session.id, model)
-                refreshed = server.session_manager.get(session.id)
-                if refreshed is not None:
-                    session = refreshed
-
-            chat_mode = body.chat_mode
-            if isinstance(chat_mode, str) and chat_mode:
-                server.session_manager.update_chat_mode(session.id, chat_mode)
-                refreshed = server.session_manager.get(session.id)
-                if refreshed is not None:
-                    session = refreshed
 
             inc_counter("session_registrations_total")
             await broadcast_session("session_created", session.id)

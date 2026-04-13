@@ -434,6 +434,29 @@ class TestLocalSessionManager:
         assert updated is not None
         assert updated.model == "claude-opus-4-5-20251101"
 
+    @pytest.mark.unit
+    def test_create_web_chat_session_sets_model_and_chat_mode(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.create_web_chat_session(
+            machine_id="machine",
+            project_id=sample_project["id"],
+            source="claude",
+            title="Web Chat",
+            model="claude-opus-4-5-20251101",
+            chat_mode="accept_edits",
+        )
+
+        assert session.model == "claude-opus-4-5-20251101"
+        assert session.chat_mode == "accept_edits"
+
+        reloaded = session_manager.get(session.id)
+        assert reloaded is not None
+        assert reloaded.model == "claude-opus-4-5-20251101"
+        assert reloaded.chat_mode == "accept_edits"
+
     def test_update_summary(
         self,
         session_manager: LocalSessionManager,
