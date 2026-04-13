@@ -185,19 +185,6 @@ def _response_to_post_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOu
         return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
 
-    # Compressed MCP output (compress_output effect)
-    modified_output = resp.get("modified_output")
-    if modified_output is not None:
-        hook_specific = PostToolUseHookSpecificOutput(
-            hookEventName="PostToolUse",
-        )
-        hook_specific["updatedMCPToolOutput"] = modified_output
-        context = resp.get("context")
-        if context:
-            hook_specific["additionalContext"] = _truncate(context)
-        output["hookSpecificOutput"] = hook_specific
-        return output
-
     context = resp.get("context")
     if context:
         output["hookSpecificOutput"] = PostToolUseHookSpecificOutput(

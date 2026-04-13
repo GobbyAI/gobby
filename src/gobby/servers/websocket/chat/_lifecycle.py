@@ -187,42 +187,6 @@ class ChatLifecycleMixin:
                 "system_message": response.system_message,
             }
 
-            # --- Output compression (parity with hook_manager.py:392-416) ---
-            compression_cfg = (response.metadata or {}).get("compression")
-            if compression_cfg and event_type == HookEventType.AFTER_TOOL:
-                try:
-                    tool_output = (data or {}).get("tool_output", "")
-                    if isinstance(tool_output, str) and tool_output:
-                        strategy = compression_cfg.get("strategy")
-
-                        if strategy == "code_index":
-                            import subprocess
-
-                            tool_input = (data or {}).get("tool_input") or {}
-                            file_path = tool_input.get("file_path") or tool_input.get("path", "")
-                            if file_path:
-                                proc = subprocess.run(
-                                    ["gcode", "outline", file_path],
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=10,
-                                )
-                                if proc.returncode == 0 and proc.stdout:
-                                    outline = proc.stdout
-                                    if len(outline) < len(tool_output):
-                                        savings_pct = (1 - len(outline) / len(tool_output)) * 100
-                                        result["modified_output"] = (
-                                            f"[Output compressed by Gobby — code_index outline, "
-                                            f"{savings_pct:.0f}% reduction]\n{outline}"
-                                        )
-                                        logger.info(
-                                            f"code_index outline: saved {savings_pct:.0f}%"
-                                            f" ({len(tool_output)}->{len(outline)} chars)"
-                                        )
-                                        # gcode self-reports savings to HTTP API (gsqz pattern)
-                except Exception as exc:
-                    logger.warning(f"Output compression failed: {exc}")
-
             # --- Input rewriting (parity with hook_manager.py:387-390) ---
             if response.modified_input:
                 result["modified_input"] = response.modified_input

@@ -91,7 +91,6 @@ class RuleEffect(BaseModel):
         "mcp_call",
         "observe",
         "rewrite_input",
-        "compress_output",
         "load_skill",
     ]
 
@@ -129,10 +128,6 @@ class RuleEffect(BaseModel):
     input_updates: dict[str, Any] | None = None
     auto_approve: bool = False
 
-    # compress_output — compress tool output after execution (PostToolUse)
-    strategy: str | None = None
-    max_lines: int | None = None
-
     # load_skill — resolve and inject a skill's content into agent context
     skill: str | None = None
 
@@ -155,7 +150,6 @@ class RuleEffect(BaseModel):
             },
             "observe": {"category", "message"},
             "rewrite_input": {"input_updates", "auto_approve"},
-            "compress_output": {"strategy", "max_lines"},
             "load_skill": {"skill"},
         }
         # Fields with non-None defaults that shouldn't trigger warnings

@@ -136,11 +136,6 @@ class TestHookResponseConverters:
     def test_post_tool_output(self) -> None:
         assert _response_to_post_tool_output(None) == SyncHookJSONOutput()
 
-        # Modified output + context
-        res = _response_to_post_tool_output({"modified_output": "compressed", "context": "ctx"})
-        assert res["hookSpecificOutput"]["updatedMCPToolOutput"] == "compressed"
-        assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
-
         # Just context
         res = _response_to_post_tool_output({"context": "ctx"})
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"

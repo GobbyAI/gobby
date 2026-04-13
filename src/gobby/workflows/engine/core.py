@@ -2,7 +2,7 @@
 
 Rules are stateless event handlers: event comes in, conditions match, effect fires.
 Effect types: block, set_variable, inject_context, mcp_call, observe,
-rewrite_input, compress_output, load_skill.
+rewrite_input, load_skill.
 """
 
 import logging
@@ -508,11 +508,6 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if rewrite_meta and isinstance(rewrite_meta, dict):
                     modified_input = rewrite_meta.get("input_updates")
                     auto_approve = rewrite_meta.get("auto_approve", False)
-
-                # Propagate compress_output directive to metadata
-                compress_meta = variables.pop("_compress_output", None)
-                if compress_meta and isinstance(compress_meta, dict):
-                    meta["compression"] = compress_meta
 
                 if override_decision == "block":
                     resp = HookResponse(

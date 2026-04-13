@@ -188,57 +188,9 @@ The CLI runs the command via `subprocess`, compresses the output, and exits with
 
 ---
 
-## Code Index Compression
-
-### Overview
-
-A PostToolUse hook that replaces large Read outputs with a compact symbol outline for indexed files. Instead of flooding the context with thousands of lines, the agent gets the first 50 lines plus a symbol map with IDs for targeted retrieval.
-
-### How It Works
-
-1. Agent reads a file via the Read tool
-2. Output exceeds the compression threshold (20,000 chars, or `max_file_size_bytes / 5`)
-3. The file is indexed in `gobby-code`
-4. Output is replaced with:
-   - First 50 lines of the file
-   - Symbol outline table (name, kind, line range, ID prefix, signature)
-   - Instructions for using `get_symbol()` and `search_symbols()`
-
-### Output Format
-
-```
-[First 50 lines of original file]
-
---- Symbol Outline (23 symbols) ---
-
-  function parse_config            [L12-L45]   id: a1b2c3d4 sig: def parse_config(path: str) -> Config
-  class    AppServer               [L48-L200]  id: e5f6a7b8 sig: class AppServer:
-    method   __init__              [L50-L65]   id: c9d0e1f2 sig: def __init__(self, config: Config)
-    method   start                 [L67-L120]  id: 34567890 sig: async def start(self) -> None
-  function main                    [L202-L215] id: abcdef01 sig: def main() -> None
-
-To retrieve a specific symbol:
-  get_symbol("a1b2c3d4-...")
-To search across the index:
-  search_symbols("your query")
-```
-
-### Enabling
-
-The `compress-large-reads` rule template must be installed and enabled:
-
-- **Rule name:** `code-index-compress-reads`
-- **Event:** `after_tool` (Read)
-- **Trigger:** Output > 20,000 characters and `code_index_available` is true
-- **Effect:** `compress_output` with `compressor: code_index`
-
-Alternatively, the `nudge-on-large-read` rule (trigger: > 10,000 chars) injects a context hint suggesting `gobby-code` tools without replacing the output.
-
----
-
 ## Token Savings
 
-Both compression systems track savings via the `/api/metrics/counter` endpoint:
+Output compression tracks savings via the `/api/metrics/counter` endpoint:
 
 - **Metric name:** `compression_chars_saved`
 - **Labels:** `{"strategy": "strategy_name"}`
@@ -250,7 +202,6 @@ Typical savings by category:
 | Test output (pytest, jest) | 70–90% |
 | Git diff | 60–80% |
 | Lint output | 50–70% |
-| File reads (code index) | 90–98% |
 | Build output | 60–80% |
 
 ## When to Use What
@@ -258,7 +209,6 @@ Typical savings by category:
 | Scenario | System | How |
 |----------|--------|-----|
 | Verbose shell commands (git, pytest, linters) | Output Compression | `gobby compress -- command` or enable `output_compression.enabled` |
-| Reading large indexed source files | Code Index Compression | Enable `compress-large-reads` rule |
 | Gentle nudge toward `gobby-code` tools | Nudge Rule | Enable `nudge-on-large-read` rule |
 | Custom command output | Output Compression | Falls back to `truncate(head=20, tail=20)` |
 

@@ -133,9 +133,6 @@ class HookResponse:
     modified_input: dict[str, Any] | None = None
     auto_approve: bool = False
 
-    # Output compression (PostToolUse compress_output effect)
-    modified_output: str | None = None
-
     # Future extensibility
     modify_args: dict[str, Any] | None = None
     trigger_action: str | None = None

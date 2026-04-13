@@ -1,7 +1,7 @@
 """Effect handling for the rule engine.
 
 Handles applying rule effects: set_variable, inject_context, observe,
-mcp_call, rewrite_input, compress_output, load_skill, and block matching.
+mcp_call, rewrite_input, load_skill, and block matching.
 """
 
 import json
@@ -164,12 +164,6 @@ class EffectsMixin:
                 rewrite_meta = variables.setdefault("_rewrite_input", {})
                 rewrite_meta["input_updates"] = rendered_updates
                 rewrite_meta["auto_approve"] = effect.auto_approve
-
-        elif effect.type == "compress_output":
-            variables["_compress_output"] = {
-                "strategy": effect.strategy,
-                "max_lines": effect.max_lines,
-            }
 
         elif effect.type == "load_skill":
             if effect.skill and self._skill_manager:
