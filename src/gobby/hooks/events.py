@@ -58,12 +58,9 @@ class HookEventType(str, Enum):
 class SessionSource(str, Enum):
     """Identifies which CLI originated the session."""
 
-    CLAUDE = "claude"  # Claude Code CLI
+    CLAUDE = "claude"
     GEMINI = "gemini"
     CODEX = "codex"
-    CLAUDE_SDK = "claude_sdk"
-    CLAUDE_SDK_WEB_CHAT = "claude_sdk_web_chat"  # Web chat UI (uses Claude SDK)
-    CODEX_WEB_CHAT = "codex_web_chat"  # Web chat UI (uses Codex app-server)
 
 
 @dataclass
@@ -135,9 +132,6 @@ class HookResponse:
     # Input rewriting (PreToolUse rewrite_input effect)
     modified_input: dict[str, Any] | None = None
     auto_approve: bool = False
-
-    # Output compression (PostToolUse compress_output effect)
-    modified_output: str | None = None
 
     # Future extensibility
     modify_args: dict[str, Any] | None = None

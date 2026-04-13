@@ -60,10 +60,12 @@ from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
     VALID_CATEGORIES,
+    MaybeUnset,
     SeqNumCollisionError,
     Task,
     TaskIDCollisionError,
     TaskNotFoundError,
+    UnsetType,
     normalize_priority,
     validate_category,
 )
@@ -83,11 +85,30 @@ from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
 from gobby.storage.tasks._search import TaskFTS5Searcher
+from gobby.storage.tasks._transitions import (
+    claim_task as _claim_task,
+)
+from gobby.storage.tasks._transitions import (
+    de_escalate_task as _de_escalate_task,
+)
+from gobby.storage.tasks._transitions import (
+    escalate_task as _escalate_task,
+)
+from gobby.storage.tasks._transitions import (
+    mark_task_needs_review as _mark_task_needs_review,
+)
+from gobby.storage.tasks._transitions import (
+    mark_task_review_approved as _mark_task_review_approved,
+)
+from gobby.storage.tasks._transitions import (
+    release_task_claim as _release_task_claim,
+)
 
 logger = logging.getLogger(__name__)
 
 # Re-export for backward compatibility
 __all__ = [
+    "MaybeUnset",
     "PRIORITY_MAP",
     "UNSET",
     "VALID_CATEGORIES",
@@ -95,6 +116,7 @@ __all__ = [
     "Task",
     "TaskIDCollisionError",
     "TaskNotFoundError",
+    "UnsetType",
     "normalize_priority",
     "validate_category",
     "generate_task_id",
@@ -113,13 +135,21 @@ class LocalTaskManager:
         """Add a listener to be called when tasks change."""
         self._change_listeners.append(listener)
 
-    def _notify_listeners(self) -> None:
+    def _run_change_listeners(self) -> None:
         """Notify all listeners of a change."""
         for listener in self._change_listeners:
             try:
                 listener()
             except Exception as e:
                 logger.error(f"Error in task change listener: {e}")
+
+    def _notify_listeners(self) -> None:
+        """Notify listeners immediately or defer until the current commit."""
+        after_commit = getattr(self.db, "after_commit", None)
+        if callable(after_commit):
+            after_commit(self._run_change_listeners)
+            return
+        self._run_change_listeners()
 
     def compute_path_cache(self, task_id: str) -> str | None:
         """Compute the hierarchical path for a task.
@@ -170,9 +200,10 @@ class LocalTaskManager:
         priority: int = 2,
         task_type: str = "task",
         assignee: str | None = None,
+        claimed_by_session_id: str | None = None,
+        lifecycle_stage: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
-        expansion_context: str | None = None,
         validation_criteria: str | None = None,
         github_issue_number: int | None = None,
         github_pr_number: int | None = None,
@@ -192,9 +223,10 @@ class LocalTaskManager:
             priority=priority,
             task_type=task_type,
             assignee=assignee,
+            claimed_by_session_id=claimed_by_session_id,
+            lifecycle_stage=lifecycle_stage,
             labels=labels,
             category=category,
-            expansion_context=expansion_context,
             validation_criteria=validation_criteria,
             github_issue_number=github_issue_number,
             github_pr_number=github_pr_number,
@@ -257,30 +289,34 @@ class LocalTaskManager:
     def update_task(
         self,
         task_id: str,
-        title: str | None | Any = UNSET,
-        description: str | None | Any = UNSET,
-        status: str | None | Any = UNSET,
-        priority: int | None | Any = UNSET,
-        task_type: str | None | Any = UNSET,
-        assignee: str | None | Any = UNSET,
-        labels: list[str] | None | Any = UNSET,
-        parent_task_id: str | None | Any = UNSET,
-        validation_status: str | None | Any = UNSET,
-        validation_feedback: str | None | Any = UNSET,
-        category: str | None | Any = UNSET,
-        expansion_context: str | None | Any = UNSET,
-        validation_criteria: str | None | Any = UNSET,
-        validation_fail_count: int | None | Any = UNSET,
-        dispatch_failure_count: int | None | Any = UNSET,
-        escalated_at: str | None | Any = UNSET,
-        escalation_reason: str | None | Any = UNSET,
-        github_issue_number: int | None | Any = UNSET,
-        github_pr_number: int | None | Any = UNSET,
-        github_repo: str | None | Any = UNSET,
-        linear_issue_id: str | None | Any = UNSET,
-        linear_team_id: str | None | Any = UNSET,
-        expansion_status: str | None | Any = UNSET,
-        validation_override_reason: str | None | Any = UNSET,
+        title: MaybeUnset[str | None] = UNSET,
+        description: MaybeUnset[str | None] = UNSET,
+        status: MaybeUnset[str | None] = UNSET,
+        priority: MaybeUnset[int | None] = UNSET,
+        task_type: MaybeUnset[str | None] = UNSET,
+        assignee: MaybeUnset[str | None] = UNSET,
+        claimed_by_session_id: MaybeUnset[str | None] = UNSET,
+        lifecycle_stage: MaybeUnset[str | None] = UNSET,
+        labels: MaybeUnset[list[str] | None] = UNSET,
+        parent_task_id: MaybeUnset[str | None] = UNSET,
+        closed_reason: MaybeUnset[str | None] = UNSET,
+        closed_at: MaybeUnset[str | None] = UNSET,
+        closed_in_session_id: MaybeUnset[str | None] = UNSET,
+        closed_commit_sha: MaybeUnset[str | None] = UNSET,
+        validation_status: MaybeUnset[str | None] = UNSET,
+        validation_feedback: MaybeUnset[str | None] = UNSET,
+        category: MaybeUnset[str | None] = UNSET,
+        validation_criteria: MaybeUnset[str | None] = UNSET,
+        validation_fail_count: MaybeUnset[int | None] = UNSET,
+        dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+        escalated_at: MaybeUnset[str | None] = UNSET,
+        escalation_reason: MaybeUnset[str | None] = UNSET,
+        github_issue_number: MaybeUnset[int | None] = UNSET,
+        github_pr_number: MaybeUnset[int | None] = UNSET,
+        github_repo: MaybeUnset[str | None] = UNSET,
+        linear_issue_id: MaybeUnset[str | None] = UNSET,
+        linear_team_id: MaybeUnset[str | None] = UNSET,
+        validation_override_reason: MaybeUnset[str | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
         """Update task fields."""
@@ -293,12 +329,17 @@ class LocalTaskManager:
             priority=priority,
             task_type=task_type,
             assignee=assignee,
+            claimed_by_session_id=claimed_by_session_id,
+            lifecycle_stage=lifecycle_stage,
             labels=labels,
             parent_task_id=parent_task_id,
+            closed_reason=closed_reason,
+            closed_at=closed_at,
+            closed_in_session_id=closed_in_session_id,
+            closed_commit_sha=closed_commit_sha,
             validation_status=validation_status,
             validation_feedback=validation_feedback,
             category=category,
-            expansion_context=expansion_context,
             validation_criteria=validation_criteria,
             validation_fail_count=validation_fail_count,
             dispatch_failure_count=dispatch_failure_count,
@@ -309,7 +350,6 @@ class LocalTaskManager:
             github_repo=github_repo,
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
-            expansion_status=expansion_status,
             validation_override_reason=validation_override_reason,
         )
 
@@ -319,6 +359,37 @@ class LocalTaskManager:
 
         self._notify_listeners()
         return self.get_task(task_id)
+
+    def claim_task(self, task_id: str, session_id: str, force: bool = False) -> Task:
+        """Claim a task for a session, preserving non-open lifecycle states."""
+        task = _claim_task(self.db, task_id=task_id, session_id=session_id, force=force)
+        self._notify_listeners()
+        return task
+
+    def release_task_claim(
+        self,
+        task_id: str,
+        *,
+        status: MaybeUnset[str | None] = UNSET,
+        description: MaybeUnset[str | None] = UNSET,
+        validation_fail_count: MaybeUnset[int | None] = UNSET,
+        dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+        escalated_at: MaybeUnset[str | None] = UNSET,
+        escalation_reason: MaybeUnset[str | None] = UNSET,
+    ) -> Task:
+        """Clear ownership while optionally changing lifecycle metadata."""
+        task = _release_task_claim(
+            self.db,
+            task_id=task_id,
+            status=status,
+            description=description,
+            validation_fail_count=validation_fail_count,
+            dispatch_failure_count=dispatch_failure_count,
+            escalated_at=escalated_at,
+            escalation_reason=escalation_reason,
+        )
+        self._notify_listeners()
+        return task
 
     def close_task(
         self,
@@ -374,6 +445,65 @@ class LocalTaskManager:
         _reopen_task(self.db, task_id=task_id, reason=reason)
         self._notify_listeners()
         return self.get_task(task_id)
+
+    def escalate_task(
+        self,
+        task_id: str,
+        reason: str,
+        *,
+        validation_override_reason: str | None = None,
+    ) -> Task:
+        """Escalate a task for human intervention.
+
+        Optionally persists a validation override reason in the same write
+        so callers don't need a follow-up update_task call.
+        """
+        task = _escalate_task(
+            self.db,
+            task_id=task_id,
+            reason=reason,
+            validation_override_reason=validation_override_reason,
+        )
+        self._notify_listeners()
+        return task
+
+    def de_escalate_task(
+        self,
+        task_id: str,
+        reason: str,
+        target_status: str | None = None,
+        reset_validation: bool = False,
+    ) -> Task:
+        """Return an escalated task to an explicit next status."""
+        task = _de_escalate_task(
+            self.db,
+            task_id=task_id,
+            reason=reason,
+            target_status=target_status,
+            reset_validation=reset_validation,
+        )
+        self._notify_listeners()
+        return task
+
+    def mark_task_needs_review(self, task_id: str, review_notes: str | None = None) -> Task:
+        """Mark a task as ready for review without dropping ownership."""
+        task = _mark_task_needs_review(self.db, task_id=task_id, review_notes=review_notes)
+        self._notify_listeners()
+        return task
+
+    def mark_task_review_approved(
+        self,
+        task_id: str,
+        approval_notes: str | None = None,
+    ) -> Task:
+        """Mark a task as review-approved without dropping ownership."""
+        task = _mark_task_review_approved(
+            self.db,
+            task_id=task_id,
+            approval_notes=approval_notes,
+        )
+        self._notify_listeners()
+        return task
 
     def add_label(self, task_id: str, label: str) -> Task:
         """Add a label to a task if not present."""
@@ -453,8 +583,12 @@ class LocalTaskManager:
         self,
         project_id: str | None = None,
         status: str | list[str] | None = None,
+        lifecycle_stage: str | list[str] | None = None,
         priority: int | None = None,
         assignee: str | None = None,
+        claimed_by_session_id: str | None = None,
+        claimed: bool | None = None,
+        closed: bool | None = None,
         task_type: str | None = None,
         label: str | None = None,
         parent_task_id: str | None = None,
@@ -475,8 +609,12 @@ class LocalTaskManager:
             self.db,
             project_id=project_id,
             status=status,
+            lifecycle_stage=lifecycle_stage,
             priority=priority,
             assignee=assignee,
+            claimed_by_session_id=claimed_by_session_id,
+            claimed=claimed,
+            closed=closed,
             task_type=task_type,
             label=label,
             parent_task_id=parent_task_id,
@@ -612,7 +750,6 @@ class LocalTaskManager:
         assignee: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
-        expansion_context: str | None = None,
         validation_criteria: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -628,7 +765,6 @@ class LocalTaskManager:
             assignee=assignee,
             labels=labels,
             category=category,
-            expansion_context=expansion_context,
             validation_criteria=validation_criteria,
         )
         return {"task": task.to_dict()}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { formatAssigneeDisplay, getBaseUrl, shortId, agentIcon } from './assigneeUtils'
 
 // =============================================================================
 // Types
@@ -11,29 +12,6 @@ interface KnownAgent {
 }
 
 type OwnershipMode = 'single' | 'joint'
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-function getBaseUrl(): string {
-  return ''
-}
-
-function agentIcon(type: KnownAgent['type']): string {
-  if (type === 'agent') return '\u2699'    // ⚙
-  if (type === 'human') return '\u{1F464}' // 👤
-  return '\u{1F4BB}'                        // 💻
-}
-
-function shortId(id: string): string {
-  if (id.startsWith('#')) return id
-  return id.length > 12 ? id.slice(0, 8) + '...' : id
-}
-
-// =============================================================================
-// AssigneePicker
-// =============================================================================
 
 interface AssigneePickerProps {
   currentAssignee: string | null
@@ -230,38 +208,5 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
         </div>
       )}
     </div>
-  )
-}
-
-// =============================================================================
-// Display helper (also used by KanbanCard)
-// =============================================================================
-
-export function formatAssigneeDisplay(assignee: string | null, agentName: string | null): string {
-  if (!assignee) return 'Unassigned'
-
-  // Joint format: "id1+id2"
-  if (assignee.includes('+')) {
-    const parts = assignee.split('+')
-    return parts.map(p => shortId(p)).join(' + ')
-  }
-
-  return agentName || shortId(assignee)
-}
-
-export function AssigneeBadge({ assignee, agentName }: { assignee: string | null; agentName: string | null }) {
-  if (!assignee) return null
-
-  const isJoint = assignee.includes('+')
-  const display = formatAssigneeDisplay(assignee, agentName)
-  const type = agentName ? 'agent' : 'session'
-
-  return (
-    <span className="assignee-badge" title={assignee}>
-      <span className="assignee-badge-icon">
-        {isJoint ? '\u{1F91D}' : agentIcon(type)}
-      </span>
-      <span className="assignee-badge-label">{display}</span>
-    </span>
   )
 }

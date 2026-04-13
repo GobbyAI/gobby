@@ -9,8 +9,7 @@ rules:
     when: >
       variables.get('require_task_before_edit')
       and not variables.get('task_claimed')
-      and not is_plan_file(tool_input.get('file_path', ''), source)
-      and not (variables.get('plan_mode') and tool_input.get('file_path', '').endswith('.md'))
+      and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))
     effects:
       - type: block
         tools: [Edit, Write, NotebookEdit]

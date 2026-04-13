@@ -94,7 +94,6 @@ export interface TokenUsage {
   output_tokens: number;
   cache_creation_tokens?: number;
   cache_read_tokens?: number;
-  total_cost_usd?: number;
 }
 
 export interface RenderedMessage {
@@ -152,6 +151,18 @@ export interface SessionObservationMeta {
   chatMode?: string | null;
   gitBranch?: string | null;
   contextWindow?: number | null;
+  agentRunId?: string | null;
+  workflowName?: string | null;
+  agentName?: string | null;
+  sessionType?: "terminal" | "web_chat" | null;
+}
+
+export type SessionInteractionMode = "none" | "observe" | "proxy";
+
+export interface SwappedSessionTarget {
+  sessionId: string;
+  sessionType?: string | null;
+  agentRunId?: string | null;
 }
 
 export interface ChatState {
@@ -183,9 +194,16 @@ export interface ChatState {
   onCanvasInteraction: (canvasId: string, action: UserAction) => void;
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
+  onModeChangeLocal?: (mode: ChatMode) => void;
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
   activeAgent?: string;
   onAgentChange?: (agentName: string) => void;
+  onSwitchProvider?: (provider: string) => void;
+  continueSessionInChat?: (
+    sourceDbSessionId: string,
+    projectId?: string,
+    options?: { provider?: string | null; model?: string | null },
+  ) => Promise<string>;
   planPendingApproval: boolean;
   onApprovePlan: () => void;
   onRequestPlanChanges: (feedback: string) => void;
@@ -198,12 +216,22 @@ export interface ChatState {
       title?: string,
     ) => void,
   ) => void;
+  provider?: string | null;
+  onProviderChange?: (provider: string | null) => void;
   dbSessionId?: string | null;
   conversationSwitchKey?: number;
+  viewSession?: (sessionId: string) => void;
+  clearViewingSession?: () => void;
   viewingSessionId?: string | null;
   viewingSessionMeta?: SessionObservationMeta | null;
   attachedSessionId?: string | null;
   attachedSessionMeta?: SessionObservationMeta | null;
+  sessionInteractionMode?: SessionInteractionMode;
+  proxyDeliveryNotice?: string | null;
+  observeSession?: (
+    sessionId: string,
+    mode?: Exclude<SessionInteractionMode, "none">,
+  ) => void;
   onAttachToViewed?: () => void;
   onDetachFromSession?: () => void;
 }
@@ -246,11 +274,20 @@ export interface ProjectProps {
 }
 
 export interface VoiceProps {
-  voiceMode?: boolean;
+  sttEnabled?: boolean;
+  ttsEnabled?: boolean;
+  voiceInputMode?: "ptt" | "vad";
   voiceAvailable?: boolean;
+  voiceReady?: boolean;
+  voiceLoading?: boolean;
   isListening?: boolean;
   isSpeechDetected?: boolean;
+  isRecording?: boolean;
   isTranscribing?: boolean;
+  isSpeaking?: boolean;
   voiceError?: string | null;
-  onToggleVoice?: () => void;
+  startRecording?: () => Promise<void>;
+  stopRecording?: () => Promise<void>;
+  cancelRecording?: () => void;
+  stopTTS?: () => void;
 }

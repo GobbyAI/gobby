@@ -58,8 +58,8 @@ def register_savings_routes(router: APIRouter, server: "HTTPServer") -> None:
         """Record a savings event from an external caller (e.g. gsqz).
 
         When ``model`` is not provided, the endpoint resolves it from
-        the most recently active session so cost can be calculated
-        server-side — callers like gsqz only need to report chars.
+        the most recently active session — callers like gsqz only need
+        to report chars.
         """
         tracker = _get_tracker(server)
         if tracker is None:
@@ -126,11 +126,9 @@ def _get_tracker(server: "HTTPServer") -> Any:
 
     try:
         from gobby.savings.tracker import SavingsTracker
-        from gobby.storage.model_costs import ModelCostStore
 
         db = server.services.database
-        model_costs = ModelCostStore(db)
-        tracker = SavingsTracker(db=db, model_costs=model_costs)
+        tracker = SavingsTracker(db=db)
         server._savings_tracker = tracker
         return tracker
     except Exception as e:

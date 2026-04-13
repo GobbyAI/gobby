@@ -22,6 +22,7 @@ from gobby.utils.project_context import (
 )
 from gobby.utils.session_context import (
     SessionContext,
+    get_current_session_id,
     reset_session_context,
     set_session_context,
 )
@@ -272,6 +273,8 @@ async def _call_internal_tool(
 
 async def list_mcp_tools(
     server_name: str,
+    request: Request,
+    server: "HTTPServer" = Depends(get_server),
     internal_manager: "InternalToolRegistryManager | None" = Depends(get_internal_manager),
     mcp_manager: "MCPClientManager | None" = Depends(get_mcp_manager),
 ) -> dict[str, Any]:
@@ -287,6 +290,7 @@ async def list_mcp_tools(
         List of available tools with their descriptions
     """
     start_time = time.perf_counter()
+    ctx_token = _set_context_for_request(server, {}, request)
 
     try:
         # Check internal registries first (gobby-tasks, gobby-memory, etc.)
@@ -296,6 +300,11 @@ async def list_mcp_tools(
                 tools = registry.list_tools()
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 observe_histogram("list_mcp_tools", response_time_ms / 1000)
+                if server.tool_proxy:
+                    server.tool_proxy.record_listed_server(
+                        server_name,
+                        session_id=get_current_session_id(),
+                    )
                 return {
                     "success": True,
                     "tools": tools,
@@ -372,6 +381,11 @@ async def list_mcp_tools(
                     "response_time_ms": response_time_ms,
                 },
             )
+            if server.tool_proxy:
+                server.tool_proxy.record_listed_server(
+                    server_name,
+                    session_id=get_current_session_id(),
+                )
 
             return {
                 "success": True,
@@ -399,6 +413,8 @@ async def list_mcp_tools(
         logger.error(f"MCP list tools error: {server_name}", exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+    finally:
+        _reset_context(ctx_token)
 
 
 async def get_tool_schema(
@@ -430,68 +446,88 @@ async def get_tool_schema(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
-        # Check internal first
-        if server._internal_manager and server._internal_manager.is_internal(server_name):
-            registry = server._internal_manager.get_registry(server_name)
-            if registry:
-                schema = registry.get_schema(tool_name)
-                if schema:
-                    response_time_ms = (time.perf_counter() - start_time) * 1000
-                    # Build response with description only if present
-                    result: dict[str, Any] = {
-                        "success": True,
-                        "name": schema.get("name", tool_name),
-                        "inputSchema": schema.get("inputSchema"),
-                        "server": server_name,
-                        "response_time_ms": response_time_ms,
-                    }
-                    if schema.get("description"):
-                        result["description"] = schema["description"]
-                    return result
+        ctx_token = _set_context_for_request(server, body, request)
+
+        try:
+            # Check internal first
+            if server._internal_manager and server._internal_manager.is_internal(server_name):
+                registry = server._internal_manager.get_registry(server_name)
+                if registry:
+                    schema = registry.get_schema(tool_name)
+                    if schema:
+                        response_time_ms = (time.perf_counter() - start_time) * 1000
+                        if server.tool_proxy:
+                            server.tool_proxy.record_unlocked_tool(
+                                server_name,
+                                tool_name,
+                                session_id=get_current_session_id(),
+                            )
+                        # Build response with description only if present
+                        result: dict[str, Any] = {
+                            "success": True,
+                            "name": schema.get("name", tool_name),
+                            "inputSchema": schema.get("inputSchema"),
+                            "server": server_name,
+                            "response_time_ms": response_time_ms,
+                        }
+                        if schema.get("description"):
+                            result["description"] = schema["description"]
+                        return result
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "success": False,
+                            "error": f"Tool '{tool_name}' not found on server '{server_name}'",
+                        },
+                    )
+
+            if server.mcp_manager is None:
                 raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "success": False,
-                        "error": f"Tool '{tool_name}' not found on server '{server_name}'",
-                    },
+                    status_code=503,
+                    detail={"success": False, "error": "MCP manager not available"},
                 )
 
-        if server.mcp_manager is None:
-            raise HTTPException(
-                status_code=503,
-                detail={"success": False, "error": "MCP manager not available"},
-            )
+            # Get from external MCP server
+            try:
+                tool_info = await server.mcp_manager.get_tool_info(server_name, tool_name)
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                if server.tool_proxy:
+                    server.tool_proxy.record_unlocked_tool(
+                        server_name,
+                        tool_name,
+                        session_id=get_current_session_id(),
+                    )
 
-        # Get from external MCP server
-        try:
-            tool_info = await server.mcp_manager.get_tool_info(server_name, tool_name)
-            response_time_ms = (time.perf_counter() - start_time) * 1000
+                # Build response with description only if present
+                response: dict[str, Any] = {
+                    "success": True,
+                    "name": tool_info.get("name", tool_name),
+                    "inputSchema": tool_info.get("inputSchema"),
+                    "server": server_name,
+                    "response_time_ms": response_time_ms,
+                }
+                if tool_info.get("description"):
+                    response["description"] = tool_info["description"]
+                return response
 
-            # Build response with description only if present
-            response: dict[str, Any] = {
-                "success": True,
-                "name": tool_info.get("name", tool_name),
-                "inputSchema": tool_info.get("inputSchema"),
-                "server": server_name,
-                "response_time_ms": response_time_ms,
-            }
-            if tool_info.get("description"):
-                response["description"] = tool_info["description"]
-            return response
-
-        except (KeyError, ValueError) as e:
-            # Tool or server not found
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
-        except Exception as e:
-            # Connection, timeout, or internal errors
-            logger.error(f"Failed to get tool schema {server_name}/{tool_name}: {e}", exc_info=True)
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {
-                "success": False,
-                "error": f"Failed to get tool schema: {e}",
-                "response_time_ms": response_time_ms,
-            }
+            except (KeyError, ValueError) as e:
+                # Tool or server not found
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+            except Exception as e:
+                # Connection, timeout, or internal errors
+                logger.error(
+                    f"Failed to get tool schema {server_name}/{tool_name}: {e}",
+                    exc_info=True,
+                )
+                response_time_ms = (time.perf_counter() - start_time) * 1000
+                return {
+                    "success": False,
+                    "error": f"Failed to get tool schema: {e}",
+                    "response_time_ms": response_time_ms,
+                }
+        finally:
+            _reset_context(ctx_token)
 
     except HTTPException:
         raise
@@ -535,14 +571,19 @@ async def call_mcp_tool(
 
         # Set project context from session_id or stdio proxy headers
         ctx_token = _set_context_for_request(server, arguments, request)
-        # Strip session_id from arguments — it's consumed by context setup above,
-        # not by individual tools (they read from SessionContext ContextVar).
-        if isinstance(arguments, dict):
-            arguments.pop("session_id", None)
+        # Note: session_id is NOT stripped from arguments — tools like
+        # get_session and get_handoff_context use it as their own parameter.
+        # _set_context_for_request reads it non-destructively via .get().
+        # InternalToolRegistry.call strips unknown kwargs via signature inspection.
         try:
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
-                result = await server.tool_proxy.call_tool(server_name, tool_name, arguments)
+                result = await server.tool_proxy.call_tool(
+                    server_name,
+                    tool_name,
+                    arguments,
+                    session_id=get_current_session_id(),
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 
@@ -623,13 +664,15 @@ async def mcp_proxy(
 
         # Set project context from session_id or stdio proxy headers
         ctx_token = _set_context_for_request(server, arguments, request)
-        # Strip session_id from arguments — consumed by context setup above.
-        if isinstance(arguments, dict):
-            arguments.pop("session_id", None)
         try:
             # Route through ToolProxyService for consistent error enrichment
             if server.tool_proxy:
-                result = await server.tool_proxy.call_tool(server_name, tool_name, arguments)
+                result = await server.tool_proxy.call_tool(
+                    server_name,
+                    tool_name,
+                    arguments,
+                    session_id=get_current_session_id(),
+                )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 

@@ -166,7 +166,10 @@ class RecommendationService:
             prompt = self._loader.render(prompt_path, context)
 
             provider = self._llm_service.get_default_provider()
-            response = await provider.generate_text(prompt)
+            response = await provider.generate_text(
+                prompt,
+                caller="mcp_proxy.recommendation.hybrid_rerank",
+            )
 
             # Parse LLM response
             if "```json" in response:
@@ -205,7 +208,10 @@ class RecommendationService:
             prompt = self._loader.render(prompt_path, context)
 
             provider = self._llm_service.get_default_provider()
-            response = await provider.generate_text(prompt)
+            response = await provider.generate_text(
+                prompt,
+                caller="mcp_proxy.recommendation.llm",
+            )
 
             try:
                 if "```json" in response:

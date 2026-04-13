@@ -2,8 +2,8 @@
 
 Verifies auto-task rules sync correctly and have proper structure:
 - inject-autonomous-mode: inject_context on before_agent (when auto_task_ref set)
-- guide-task-continuation: block on stop (when task tree incomplete)
-- notify-task-tree-complete: inject_context on stop (when task tree complete)
+- guide-task-continuation: block on turn_end (when task tree incomplete)
+- notify-task-tree-complete: inject_context on turn_end (when task tree complete)
 """
 
 from __future__ import annotations
@@ -130,14 +130,14 @@ class TestInjectAutoTaskContext:
 
 
 class TestGuideTaskContinuation:
-    """Block stop when task tree is incomplete."""
+    """Block turn_end when task tree is incomplete."""
 
     def test_event_and_effect(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("guide-task-continuation")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "stop"
+        assert body.event.value == "turn_end"
         assert body.effects[0].type == "block"
         assert body.effects[0].reason is not None
 
@@ -179,7 +179,7 @@ class TestNotifyTaskTreeComplete:
         row = manager.get_by_name("notify-task-tree-complete")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "stop"
+        assert body.event.value == "turn_end"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
 

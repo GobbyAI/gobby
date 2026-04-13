@@ -82,6 +82,7 @@ def rule_tools(db, def_manager):
         get_rule,
         list_rules,
         toggle_rule,
+        update_rule,
     )
 
     return {
@@ -90,6 +91,7 @@ def rule_tools(db, def_manager):
         "toggle_rule": lambda **kw: toggle_rule(def_manager, **kw),
         "create_rule": lambda **kw: create_rule(def_manager, **kw),
         "delete_rule": lambda **kw: delete_rule(def_manager, **kw),
+        "update_rule": lambda **kw: update_rule(def_manager, **kw),
     }
 
 
@@ -220,6 +222,135 @@ class TestToggleRule:
     def test_not_found(self, rule_tools) -> None:
         result = rule_tools["toggle_rule"](name="nonexistent", enabled=True)
         assert result["success"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# update_rule
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestUpdateRule:
+    """update_rule mirrors PUT /api/rules/{name}: partial field updates."""
+
+    def test_update_description(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule")
+
+        result = rule_tools["update_rule"](name="my-rule", description="Updated")
+        assert result["success"] is True
+        assert result["rule"]["description"] == "Updated"
+
+        row = def_manager.get_by_name("my-rule")
+        assert row.description == "Updated"
+
+    def test_update_priority(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule")
+
+        result = rule_tools["update_rule"](name="my-rule", priority=42)
+        assert result["success"] is True
+        assert result["rule"]["priority"] == 42
+
+    def test_update_tags(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule", tags=["old"])
+
+        result = rule_tools["update_rule"](name="my-rule", tags=["new", "user"])
+        assert result["success"] is True
+        assert result["rule"]["tags"] == ["new", "user"]
+
+        row = def_manager.get_by_name("my-rule")
+        assert row.tags == ["new", "user"]
+
+    def test_update_enabled(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule", enabled=True)
+
+        result = rule_tools["update_rule"](name="my-rule", enabled=False)
+        assert result["success"] is True
+        assert result["rule"]["enabled"] is False
+
+        row = def_manager.get_by_name("my-rule")
+        assert row.enabled is False
+
+    def test_update_definition_replaces_body(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule", event="before_tool")
+
+        new_body = {
+            "event": "turn_end",
+            "group": "stop-gates",
+            "effects": [{"type": "block", "reason": "replaced"}],
+        }
+        result = rule_tools["update_rule"](name="my-rule", definition=new_body)
+        assert result["success"] is True
+        assert result["rule"]["event"] == "turn_end"
+        assert result["rule"]["effects"] == [{"type": "block", "reason": "replaced"}]
+
+        row = def_manager.get_by_name("my-rule")
+        body = json.loads(row.definition_json)
+        assert body["event"] == "turn_end"
+        assert body["effects"] == [{"type": "block", "reason": "replaced"}]
+
+    def test_update_definition_invalid(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule")
+
+        result = rule_tools["update_rule"](
+            name="my-rule",
+            definition={"event": "turn_end"},  # missing required effects
+        )
+        assert result["success"] is False
+        assert "invalid rule definition" in result["error"].lower()
+
+    def test_update_definition_extracts_metadata(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule")
+
+        body_with_meta = {
+            "event": "turn_end",
+            "effects": [{"type": "block", "reason": "x"}],
+            "description": "From body",
+            "priority": 7,
+        }
+        result = rule_tools["update_rule"](name="my-rule", definition=body_with_meta)
+        assert result["success"] is True
+        assert result["rule"]["description"] == "From body"
+        assert result["rule"]["priority"] == 7
+
+        # Metadata should be hoisted off the body, not duplicated inside it.
+        row = def_manager.get_by_name("my-rule")
+        stored_body = json.loads(row.definition_json)
+        assert "description" not in stored_body
+        assert "priority" not in stored_body
+
+    def test_update_definition_explicit_metadata_wins(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule")
+
+        result = rule_tools["update_rule"](
+            name="my-rule",
+            description="Explicit",
+            definition={
+                "event": "turn_end",
+                "effects": [{"type": "block", "reason": "x"}],
+                "description": "From body",
+            },
+        )
+        assert result["success"] is True
+        assert result["rule"]["description"] == "Explicit"
+
+    def test_update_no_fields(self, def_manager, rule_tools) -> None:
+        _create_test_rule(def_manager, name="my-rule")
+
+        result = rule_tools["update_rule"](name="my-rule")
+        assert result["success"] is False
+        assert "no fields" in result["error"].lower()
+
+    def test_update_not_found(self, rule_tools) -> None:
+        result = rule_tools["update_rule"](name="nonexistent", description="x")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_update_skips_workflows(self, def_manager, rule_tools) -> None:
+        """Workflows (non-rule rows) should not be updatable through update_rule."""
+        _create_test_workflow(def_manager, name="my-wf")
+
+        result = rule_tools["update_rule"](name="my-wf", description="x")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════

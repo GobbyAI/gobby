@@ -5,6 +5,7 @@ Exposes functionality for:
 - get_config(key): Get a config value by dotted key
 - get_config_section(prefix): Get an entire section as nested dict
 - set_config(key, value): Set a config value by dotted key
+- set_config_batch(entries): Set multiple keys atomically (validates once)
 - list_config_keys(prefix?): List all config keys
 - ensure_defaults(section): Populate missing keys from Pydantic defaults
 """
@@ -165,6 +166,68 @@ def create_config_registry(
             return result
         except Exception as e:
             logger.exception(f"Failed to set config key '{key}'")
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="set_config_batch",
+        description=(
+            "Set multiple config keys atomically. Validates all keys together "
+            "before persisting — required when a config section has multiple "
+            "required fields (e.g. 'local' needs both url and model). "
+            "Pass a list of {key, value} entries."
+        ),
+    )
+    def set_config_batch(entries: list[dict[str, Any]]) -> dict[str, Any]:
+        """Set multiple config values in one validated, atomic operation.
+
+        Each entry is ``{"key": "dotted.key", "value": <any scalar>}``.
+        All entries are merged, validated via DaemonConfig once, then
+        persisted together via ``config_store.set_many()``.
+        """
+        if not entries:
+            return {"success": False, "error": "entries list is empty"}
+
+        from gobby.config.app import DaemonConfig as DaemonConfigCls
+        from gobby.config.app import deep_merge
+
+        try:
+            # Collect and validate entry shapes
+            flat_updates: dict[str, Any] = {}
+            for entry in entries:
+                key = entry.get("key")
+                value = entry.get("value")
+                if not key or not isinstance(key, str):
+                    return {"success": False, "error": f"Invalid entry — 'key' required: {entry}"}
+                if isinstance(value, dict | list):
+                    return {
+                        "success": False,
+                        "error": f"Cannot set '{key}' to a {type(value).__name__}. "
+                        "Use dotted keys for nested values.",
+                    }
+                flat_updates[key] = value
+
+            # Unflatten all keys → nested dict, merge into current config
+            update_nested = unflatten_config(flat_updates)
+            current_dict = _current_config().model_dump(mode="json")
+            deep_merge(current_dict, update_nested)
+
+            # Validate by constructing a new DaemonConfig
+            new_config = DaemonConfigCls(**current_dict)
+
+            # Persist all keys atomically
+            config_store.set_many(flat_updates, source="mcp")
+
+            # Update in-memory config
+            _state["config"] = new_config
+            config_setter(new_config)
+
+            return {
+                "success": True,
+                "keys_set": sorted(flat_updates.keys()),
+                "count": len(flat_updates),
+            }
+        except Exception as e:
+            logger.exception("Failed to set config batch")
             return {"success": False, "error": str(e)}
 
     @registry.tool(

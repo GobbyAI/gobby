@@ -1,13 +1,14 @@
-import type { TaskStats } from "../../hooks/useTasks";
+import type { TaskStats } from '../../hooks/useTasks'
+import { TASK_BUCKET_LABELS, type TaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // TaskOverview
 // =============================================================================
 
 interface TaskOverviewProps {
-  stats: TaskStats;
-  activeFilter: string | null;
-  onFilterStatus: (status: string | null) => void;
+  stats: TaskStats
+  activeFilter: string | null
+  onFilterStatus: (status: string | null) => void
 }
 
 export function TaskOverview({
@@ -15,64 +16,63 @@ export function TaskOverview({
   activeFilter,
   onFilterStatus,
 }: TaskOverviewProps) {
-  const openCount = stats["open"] || 0;
-  const inProgressCount = stats["in_progress"] || 0;
-  const needsReviewCount = stats["needs_review"] || 0;
-  const reviewApprovedCount = stats["review_approved"] || 0;
-  const escalatedCount = stats["escalated"] || 0;
-  const closedCount = stats["closed"] || 0;
-
   const cards = [
     {
-      key: "open",
-      label: "Open",
-      count: openCount,
-      filterStatus: "open",
-      className: "task-overview-card--now",
+      key: 'ready',
+      label: TASK_BUCKET_LABELS.ready,
+      count: stats.ready || 0,
+      filterStatus: 'ready',
+      className: 'task-overview-card--now',
     },
     {
-      key: "in_progress",
-      label: "In Progress",
-      count: inProgressCount,
-      filterStatus: "in_progress",
-      className: "task-overview-card--progress",
+      key: 'in_progress',
+      label: TASK_BUCKET_LABELS.in_progress,
+      count: stats.in_progress || 0,
+      filterStatus: 'in_progress',
+      className: 'task-overview-card--progress',
     },
     {
-      key: "needs_review",
-      label: "Needs Review",
-      count: needsReviewCount,
-      filterStatus: "needs_review",
-      className: "task-overview-card--review",
+      key: 'review',
+      label: TASK_BUCKET_LABELS.review,
+      count: stats.review || 0,
+      filterStatus: 'review',
+      className: 'task-overview-card--review',
     },
     {
-      key: "review_approved",
-      label: "Approved",
-      count: reviewApprovedCount,
-      filterStatus: "review_approved",
-      className: "task-overview-card--approved",
+      key: 'merge_ready',
+      label: TASK_BUCKET_LABELS.merge_ready,
+      count: stats.merge_ready || 0,
+      filterStatus: 'merge_ready',
+      className: 'task-overview-card--approved',
     },
     {
-      key: "escalated",
-      label: "Escalated",
-      count: escalatedCount,
-      filterStatus: "escalated",
-      className: "task-overview-card--escalated",
+      key: 'blocked',
+      label: TASK_BUCKET_LABELS.blocked,
+      count: stats.blocked || 0,
+      filterStatus: 'blocked',
+      className: 'task-overview-card--escalated',
     },
     {
-      key: "closed",
-      label: "Closed",
-      count: closedCount,
-      filterStatus: "closed",
-      className: "task-overview-card--recent",
+      key: 'closed',
+      label: TASK_BUCKET_LABELS.closed,
+      count: stats.closed || 0,
+      filterStatus: 'closed',
+      className: 'task-overview-card--recent',
     },
-  ];
+  ] satisfies Array<{
+    key: TaskBucket
+    label: string
+    count: number
+    filterStatus: TaskBucket
+    className: string
+  }>
 
   return (
     <div className="task-overview">
       {cards.map((card) => (
         <button
           key={card.key}
-          className={`task-overview-card ${card.className} ${activeFilter === card.filterStatus ? "task-overview-card--active" : ""}`}
+          className={`task-overview-card ${card.className} ${activeFilter === card.filterStatus ? 'task-overview-card--active' : ''}`}
           onClick={() =>
             onFilterStatus(
               activeFilter === card.filterStatus ? null : card.filterStatus,
@@ -84,5 +84,5 @@ export function TaskOverview({
         </button>
       ))}
     </div>
-  );
+  )
 }

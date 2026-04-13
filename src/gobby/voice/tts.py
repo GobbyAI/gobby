@@ -47,16 +47,28 @@ class KokoroTTS:
     def __init__(self, config: VoiceConfig) -> None:
         self._config = config
         self._model: Any | None = None
-        self._load_lock: asyncio.Lock | None = None
+        # Initialize the lock eagerly so two coroutines arriving in
+        # _ensure_model concurrently cannot create separate locks.
+        self._load_lock: asyncio.Lock = asyncio.Lock()
         self._sample_rate = 24000  # Kokoro outputs 24kHz
+
+    async def warmup(self) -> None:
+        """Public entry point for preloading the TTS model."""
+        await self._ensure_model()
+
+    def unload(self) -> None:
+        """Release the model to reclaim memory.
+
+        Safe to call from sync contexts: ``synthesize_stream`` captures the
+        model in a local variable, so clearing ``self._model`` cannot affect
+        an in-flight synthesis. Python attribute assignment is GIL-atomic.
+        """
+        self._model = None
 
     async def _ensure_model(self) -> Any:
         """Lazy-load the Kokoro model (thread-safe, async)."""
         if self._model is not None:
             return self._model
-
-        if self._load_lock is None:
-            self._load_lock = asyncio.Lock()
 
         async with self._load_lock:
             # Double-check after acquiring lock
@@ -121,13 +133,17 @@ class KokoroTTS:
 
     @property
     def is_available(self) -> bool:
-        """Check if kokoro-onnx is installed."""
+        """Check if kokoro-onnx is installed and model files exist."""
         try:
             import kokoro_onnx  # noqa: F401
-
-            return True
         except ImportError:
             return False
+
+        from pathlib import Path
+
+        model_path = Path(self._config.tts_model_path).expanduser()
+        voices_path = Path(self._config.tts_voices_path).expanduser()
+        return model_path.exists() and voices_path.exists()
 
     @property
     def sample_rate(self) -> int:

@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { ChatInput } from '../ChatInput'
 
-// Mock sub-components to isolate ChatInput
 vi.mock('../ModeSelector', () => ({
   ModeSelector: ({ mode }: { mode: string }) => <div data-testid="mode-selector">{mode}</div>,
 }))
@@ -24,6 +24,55 @@ vi.mock('./ui/Button', () => ({
   ),
 }))
 
+function installPointerHelpers(button: HTMLButtonElement) {
+  Object.assign(button, {
+    setPointerCapture: vi.fn(),
+    releasePointerCapture: vi.fn(),
+    hasPointerCapture: vi.fn(() => true),
+    getBoundingClientRect: () => ({
+      left: 0,
+      right: 36,
+      top: 0,
+      bottom: 36,
+      width: 36,
+      height: 36,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }),
+  })
+}
+
+function PTTHarness({
+  onSend = vi.fn(),
+  onStopRecording = vi.fn(),
+  onCancelRecording = vi.fn(),
+}: {
+  onSend?: (message: string, files?: unknown) => void
+  onStopRecording?: () => void
+  onCancelRecording?: () => void
+}) {
+  const [isRecording, setIsRecording] = useState(false)
+
+  return (
+    <ChatInput
+      onSend={onSend}
+      sttEnabled={true}
+      voiceInputMode="ptt"
+      isRecording={isRecording}
+      startRecording={async () => setIsRecording(true)}
+      stopRecording={async () => {
+        onStopRecording()
+        setIsRecording(false)
+      }}
+      cancelRecording={() => {
+        onCancelRecording()
+        setIsRecording(false)
+      }}
+    />
+  )
+}
+
 describe('ChatInput', () => {
   const defaultProps = {
     onSend: vi.fn(),
@@ -32,6 +81,10 @@ describe('ChatInput', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('renders textarea with placeholder', () => {
@@ -106,53 +159,123 @@ describe('ChatInput', () => {
     expect(screen.getByText('accept_edits')).toBeTruthy()
   })
 
-  it('renders attach file button', () => {
-    render(<ChatInput {...defaultProps} />)
-
-    expect(screen.getByTitle('Attach file')).toBeTruthy()
-  })
-
-  it('renders voice button when voice is available', () => {
-    render(
-      <ChatInput {...defaultProps} voiceAvailable={true} onToggleVoice={vi.fn()} />,
-    )
-
-    expect(screen.getByTitle('Enable voice mode')).toBeTruthy()
-  })
-
-  it('shows voice listening indicator when voice mode active', () => {
+  it('shows a mic button in PTT mode with empty input', () => {
     render(
       <ChatInput
         {...defaultProps}
-        voiceMode={true}
-        voiceAvailable={true}
-        isListening={true}
-        onToggleVoice={vi.fn()}
+        sttEnabled={true}
+        voiceInputMode="ptt"
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
       />,
     )
 
-    expect(screen.getByText('Ready — speak to send')).toBeTruthy()
+    expect(screen.getByLabelText('Start push to talk')).toBeTruthy()
   })
 
-  it('shows speech detected indicator', () => {
+  it('shows Stop as the only primary action while streaming', () => {
     render(
       <ChatInput
         {...defaultProps}
-        voiceMode={true}
-        voiceAvailable={true}
-        isListening={true}
-        isSpeechDetected={true}
-        onToggleVoice={vi.fn()}
+        isStreaming={true}
+        sttEnabled={true}
+        voiceInputMode="ptt"
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
       />,
     )
 
-    expect(screen.getByText('Listening...')).toBeTruthy()
+    expect(screen.getByLabelText('Stop generating')).toBeTruthy()
+    expect(screen.queryByLabelText('Send message')).toBeNull()
   })
 
-  it('shows voice error', () => {
-    render(<ChatInput {...defaultProps} voiceError="Mic not found" />)
+  it('shows Send instead of Mic when there is text input', async () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        voiceInputMode="ptt"
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+      />,
+    )
 
-    expect(screen.getByText('Mic not found')).toBeTruthy()
+    await userEvent.type(screen.getByRole('textbox'), 'hello')
+
+    expect(screen.getByLabelText('Send message')).toBeTruthy()
+    expect(screen.queryByLabelText('Start push to talk')).toBeNull()
+  })
+
+  it('short tap latches recording and second tap stops it', () => {
+    vi.useFakeTimers()
+    const onStopRecording = vi.fn()
+    render(<PTTHarness onStopRecording={onStopRecording} />)
+
+    const button = screen.getByLabelText('Start push to talk') as HTMLButtonElement
+    installPointerHelpers(button)
+
+    fireEvent.pointerDown(button, { pointerId: 1, button: 0 })
+    fireEvent.pointerUp(button, { pointerId: 1 })
+
+    const recordingButton = screen.getByLabelText('Push to talk recording') as HTMLButtonElement
+    installPointerHelpers(recordingButton)
+
+    fireEvent.pointerDown(recordingButton, { pointerId: 2, button: 0 })
+    fireEvent.pointerUp(recordingButton, { pointerId: 2 })
+
+    expect(onStopRecording).toHaveBeenCalledTimes(1)
+  })
+
+  it('long press stops and sends on release', () => {
+    vi.useFakeTimers()
+    const onStopRecording = vi.fn()
+    render(<PTTHarness onStopRecording={onStopRecording} />)
+
+    const button = screen.getByLabelText('Start push to talk') as HTMLButtonElement
+    installPointerHelpers(button)
+
+    fireEvent.pointerDown(button, { pointerId: 1, button: 0 })
+    vi.advanceTimersByTime(300)
+    fireEvent.pointerUp(button, { pointerId: 1 })
+
+    expect(onStopRecording).toHaveBeenCalledTimes(1)
+  })
+
+  it('dragging off during a held recording cancels it', () => {
+    vi.useFakeTimers()
+    const onCancelRecording = vi.fn()
+    render(<PTTHarness onCancelRecording={onCancelRecording} />)
+
+    const button = screen.getByLabelText('Start push to talk') as HTMLButtonElement
+    installPointerHelpers(button)
+
+    fireEvent.pointerDown(button, { pointerId: 1, button: 0 })
+    vi.advanceTimersByTime(300)
+    fireEvent.pointerMove(button, { pointerId: 1, clientX: 100, clientY: 100 })
+
+    expect(onCancelRecording).toHaveBeenCalledTimes(1)
+  })
+
+  it('Escape cancels an in-flight recording', () => {
+    const onCancelRecording = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        voiceInputMode="ptt"
+        isRecording={true}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={onCancelRecording}
+      />,
+    )
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(onCancelRecording).toHaveBeenCalledTimes(1)
   })
 
   it('clears input after sending', async () => {
@@ -190,5 +313,58 @@ describe('ChatInput', () => {
     await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
 
     expect(onSend).toHaveBeenCalledWith('Hello', undefined)
+  })
+
+  it('shows model selection in the toolbar for a single-provider setup', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        provider="claude"
+        availableProviders={['claude']}
+        currentModel="local"
+        onModelChange={vi.fn()}
+        onSwitchProvider={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText('Select model')).toBeTruthy()
+  })
+
+  it('forwards non-local slash commands in proxy mode', async () => {
+    const onSend = vi.fn()
+    const onPaletteSelect = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onPaletteSelect={onPaletteSelect}
+        proxySlashMode={true}
+        paletteItems={[
+          { kind: 'command' as const, name: 'settings', description: 'Settings', action: 'open_settings' },
+          { kind: 'command' as const, name: 'clear', description: 'Clear', action: 'clear_history' },
+        ]}
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, '/plan')
+    await userEvent.keyboard('{Enter}')
+
+    expect(onSend).toHaveBeenCalledWith('/plan', undefined)
+    expect(onPaletteSelect).not.toHaveBeenCalled()
+  })
+
+  it('renders the observe overlay and calls attach', async () => {
+    const onAttachObservedSession = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        showObserveOverlay={true}
+        onAttachObservedSession={onAttachObservedSession}
+      />,
+    )
+
+    await userEvent.click(screen.getByText('Attach'))
+    expect(onAttachObservedSession).toHaveBeenCalled()
   })
 })

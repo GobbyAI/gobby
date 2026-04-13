@@ -1,13 +1,11 @@
 ---
 name: canvas
-description: Instructions for rendering rich A2UI canvas elements to the chat interface. Auto-injected for web UI sessions.
+description: Instructions for rendering rich A2UI canvas elements to the chat interface.
 category: core
 triggers: canvas, ui, interface, form, a2ui, interactive
 injectionFormat: content
 metadata:
-  gobby:
-    audience: all
-    sources: [claude_sdk_web_chat, gemini_sdk_web_chat]
+  gobby: {}
 ---
 
 # Canvas Frontend Integration

@@ -185,7 +185,7 @@ class TestDeEscalateCommand:
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
-        mock_manager.update_task.return_value = mock_task
+        mock_manager.de_escalate_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(
@@ -237,7 +237,7 @@ class TestDeEscalateCommand:
         mock_resolve.return_value = mock_task
 
         mock_manager = MagicMock()
-        mock_manager.update_task.return_value = mock_task
+        mock_manager.de_escalate_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(
@@ -248,6 +248,45 @@ class TestDeEscalateCommand:
         # With valid args and an escalated task, command should succeed
         assert result.exit_code == 0, (
             f"Expected exit code 0 for valid de-escalate command, got {result.exit_code}: {result.output}"
+        )
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_de_escalate_with_target_status(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test de-escalate can target needs_review explicitly."""
+        mock_task = MagicMock()
+        mock_task.id = "gt-test123"
+        mock_task.status = "escalated"
+        mock_resolve.return_value = mock_task
+
+        mock_manager = MagicMock()
+        mock_manager.update_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "de-escalate",
+                "gt-test123",
+                "--reason",
+                "Resume review",
+                "--target-status",
+                "needs_review",
+            ],
+        )
+
+        assert result.exit_code == 0
+        mock_manager.de_escalate_task.assert_called_once_with(
+            "gt-test123",
+            reason="Resume review",
+            target_status="needs_review",
+            reset_validation=False,
         )
 
 

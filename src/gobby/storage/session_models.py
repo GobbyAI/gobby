@@ -45,10 +45,9 @@ class Session:
     usage_output_tokens: int = 0
     usage_cache_creation_tokens: int = 0
     usage_cache_read_tokens: int = 0
-    usage_total_cost_usd: float = 0.0
     context_window: int | None = None
     model: str | None = None  # LLM model used (e.g., "claude-3-5-sonnet-20241022")
-    # Terminal context (JSON blob with tty, parent_pid, term_session_id, etc.)
+    # Terminal context (JSON blob with tty, parent_pid, tmux_pane, term_program)
     terminal_context: dict[str, Any] | None = None
     # Global sequence number
     seq_num: int | None = None
@@ -67,10 +66,10 @@ class Session:
     turn_count: int = 0
     tool_call_count: int = 0
     last_assistant_content: str | None = None
-    # Pending plan file path (for restart recovery)
-    pending_plan_path: str | None = None
     # JSON array of user-approved tool names (approve_always)
     approved_tools_json: str | None = None
+    # Session type: 'terminal' (CLI) or 'web_chat' (browser UI)
+    session_type: str = "terminal"
 
     @classmethod
     def from_row(cls, row: Any) -> Session:
@@ -100,7 +99,6 @@ class Session:
             usage_output_tokens=row["usage_output_tokens"] or 0,
             usage_cache_creation_tokens=row["usage_cache_creation_tokens"] or 0,
             usage_cache_read_tokens=row["usage_cache_read_tokens"] or 0,
-            usage_total_cost_usd=row["usage_total_cost_usd"] or 0.0,
             context_window=row["context_window"] if "context_window" in row.keys() else None,
             model=row["model"] if "model" in row.keys() else None,
             terminal_context=cls._parse_terminal_context(row["terminal_context"]),
@@ -120,12 +118,10 @@ class Session:
             last_assistant_content=row["last_assistant_content"]
             if "last_assistant_content" in row.keys()
             else None,
-            pending_plan_path=row["pending_plan_path"]
-            if "pending_plan_path" in row.keys()
-            else None,
             approved_tools_json=row["approved_tools_json"]
             if "approved_tools_json" in row.keys()
             else None,
+            session_type=row["session_type"] if "session_type" in row.keys() else "terminal",
         )
 
     @classmethod
@@ -192,7 +188,6 @@ class Session:
             "usage_output_tokens": self.usage_output_tokens,
             "usage_cache_creation_tokens": self.usage_cache_creation_tokens,
             "usage_cache_read_tokens": self.usage_cache_read_tokens,
-            "usage_total_cost_usd": self.usage_total_cost_usd,
             "context_window": self.context_window,
             "model": self.model,
             "terminal_context": self.terminal_context,
@@ -205,8 +200,8 @@ class Session:
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,
             "last_assistant_content": self.last_assistant_content,
-            "pending_plan_path": self.pending_plan_path,
             "approved_tools_json": self.approved_tools_json,
+            "session_type": self.session_type,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
@@ -228,6 +223,7 @@ class Session:
             "message_count": self.message_count,
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,
+            "session_type": self.session_type,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,

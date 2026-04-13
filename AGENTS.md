@@ -25,4 +25,12 @@ Pytest is the test runner, with markers including `unit`, `slow`, `integration`,
 Recent history uses task-linked commits like `[gobby-#11184] fix: stop retrying transcript processing when JSONL file is missing`. Keep that pattern: `[gobby-#NNNNN] <type>: <summary>`. Typical types include `fix`, `feat`, `refactor`, and `chore`. PRs should explain the behavioral change, reference the task or issue, list validation performed, and include screenshots only for UI changes.
 
 ## Agent-Specific Workflow
-Before editing files, create or claim a Gobby task and work under that task. If you change code, link the resulting commit back to the task before closing it. If blocked, document the blocker in the task rather than bypassing the workflow.
+Before editing files, create or claim a Gobby task and work under that task. For AI agents, use the `gobby-tasks` MCP server for task lifecycle operations, not the `gobby tasks` CLI and not direct storage/SQL/REST mutations. The MCP path updates workflow/session state such as claims, session links, and `task_claimed`; bypassing it can leave the repo in an inconsistent state.
+
+When working task state as an agent:
+- Prefer lifecycle MCP tools such as `create_task` with `claim=true`, `claim_task`, `mark_task_needs_review`, `close_task`, `reopen_task`, and `escalate_task`.
+- Do not claim work by setting generic `status`/`assignee` fields through `update_task`, CLI commands, database writes, or ad hoc scripts.
+- Treat `gobby tasks ...` as a human/operator interface. Use it for manual inspection only when MCP is unavailable, not for agent task lifecycle writes.
+- If the `gobby-tasks` MCP server is unavailable, stop and surface that as the blocker instead of mutating task state through another path.
+
+If you change code, link the resulting commit back to the task before closing it. If blocked, document the blocker in the task rather than bypassing the workflow.

@@ -231,8 +231,16 @@ def terminate_process_tree(pid: int, timeout: float = 5.0) -> None:
 
 @pytest.fixture(scope="function")
 def e2e_project_dir() -> Generator[Path]:
-    """Create an isolated project directory for E2E tests."""
-    with tempfile.TemporaryDirectory(prefix="gobby_e2e_") as tmpdir:
+    """Create an isolated project directory for E2E tests.
+
+    ``ignore_cleanup_errors=True`` protects against ENOTEMPTY on macOS when a
+    daemon subprocess (or one of its helpers — Gemini CLI, gcode, etc.) still
+    holds file descriptors inside the tree at teardown. terminate_process_tree
+    gives children a few seconds to exit, but the kernel may still report a
+    directory as non-empty briefly after. Without this flag, the whole test
+    errors at teardown even though the assertions already passed.
+    """
+    with tempfile.TemporaryDirectory(prefix="gobby_e2e_", ignore_cleanup_errors=True) as tmpdir:
         project_dir = Path(tmpdir)
         gobby_dir = project_dir / ".gobby"
         gobby_dir.mkdir(parents=True, exist_ok=True)
@@ -348,13 +356,13 @@ session_summary:
   summary_file_path: "{gobby_home}/session_summaries"
 
 conductor:
-  daily_budget_usd: 1.0
+  daily_budget_tokens: 10_000_000
   warning_threshold: 0.8
   throttle_threshold: 0.9
   tracking_window_days: 7
 
 metrics:
-  daily_budget_usd: 1.0
+  daily_budget_tokens: 10_000_000
 """
 
     config_path.write_text(config_content)
@@ -441,6 +449,19 @@ def daemon_instance(
         extra_info = f"\nProcess exited with code: {exit_code}" if exit_code is not None else ""
         pytest.fail(
             f"Daemon failed to start within timeout.{extra_info}\n"
+            f"Logs:\n{logs}\nError logs:\n{error_logs}"
+        )
+
+    # HTTP health check passes as soon as /api/admin/status responds, but the
+    # WebSocket server comes up on a separate port and can lag by a few hundred
+    # ms. Tests like test_daemon_listens_on_configured_ports race against that
+    # gap — probe the WS port explicitly so it's listening before yield.
+    if not wait_for_port(ws_port, timeout=10.0):
+        logs = instance.read_logs()
+        error_logs = instance.read_error_logs()
+        terminate_process_tree(process.pid)
+        pytest.fail(
+            f"Daemon WebSocket port {ws_port} did not become ready within timeout.\n"
             f"Logs:\n{logs}\nError logs:\n{error_logs}"
         )
 
@@ -643,7 +664,6 @@ class CLIEventSimulator:
         output_tokens: int = 0,
         cache_creation_tokens: int = 0,
         cache_read_tokens: int = 0,
-        total_cost_usd: float = 0.0,
     ) -> dict[str, Any]:
         """Set usage statistics for a test session.
 
@@ -655,7 +675,6 @@ class CLIEventSimulator:
             "output_tokens": output_tokens,
             "cache_creation_tokens": cache_creation_tokens,
             "cache_read_tokens": cache_read_tokens,
-            "total_cost_usd": total_cost_usd,
         }
 
         response = self.client.post("/api/admin/test/set-session-usage", json=payload)
@@ -675,15 +694,25 @@ def cli_events(daemon_instance: DaemonInstance) -> Generator[CLIEventSimulator]:
 
 
 class MCPTestClient:
-    """Helper for testing MCP proxy functionality."""
+    """Helper for testing MCP proxy functionality.
+
+    Set ``session_id`` to have the client send ``X-Gobby-Session-Id`` on tool
+    calls. The daemon's MCP execution endpoint populates the SessionContext
+    ContextVar from this header, which tools like ``gobby-tasks.create_task``
+    now require (session_id was removed from their argument schemas).
+    """
 
     def __init__(self, daemon_url: str):
         self.daemon_url = daemon_url
         self.client = httpx.Client(base_url=daemon_url, timeout=30.0)
+        self.session_id: str | None = None
 
     def close(self) -> None:
         """Close the HTTP client."""
         self.client.close()
+
+    def _session_headers(self) -> dict[str, str]:
+        return {"X-Gobby-Session-Id": self.session_id} if self.session_id else {}
 
     def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""
@@ -736,7 +765,9 @@ class MCPTestClient:
         }
 
         # Endpoint is /mcp/tools/call
-        response = self.client.post("/api/mcp/tools/call", json=payload)
+        response = self.client.post(
+            "/api/mcp/tools/call", json=payload, headers=self._session_headers()
+        )
         response.raise_for_status()
         return response.json()
 
@@ -746,6 +777,7 @@ class MCPTestClient:
         response = self.client.post(
             "/api/mcp/tools/schema",
             json={"server_name": server_name, "tool_name": tool_name},
+            headers=self._session_headers(),
         )
         response.raise_for_status()
         return response.json()
@@ -763,15 +795,22 @@ def mcp_client(daemon_instance: DaemonInstance) -> Generator[MCPTestClient]:
 
 
 class AsyncMCPTestClient:
-    """Async helper for testing MCP proxy functionality."""
+    """Async helper for testing MCP proxy functionality.
+
+    See ``MCPTestClient`` for the session-context rationale.
+    """
 
     def __init__(self, daemon_url: str):
         self.daemon_url = daemon_url
         self.client = httpx.AsyncClient(base_url=daemon_url, timeout=30.0)
+        self.session_id: str | None = None
 
     async def close(self) -> None:
         """Close the HTTP client."""
         await self.client.aclose()
+
+    def _session_headers(self) -> dict[str, str]:
+        return {"X-Gobby-Session-Id": self.session_id} if self.session_id else {}
 
     async def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""
@@ -824,7 +863,9 @@ class AsyncMCPTestClient:
         }
 
         # Endpoint is /mcp/tools/call
-        response = await self.client.post("/api/mcp/tools/call", json=payload)
+        response = await self.client.post(
+            "/api/mcp/tools/call", json=payload, headers=self._session_headers()
+        )
         response.raise_for_status()
         return response.json()
 
@@ -879,6 +920,16 @@ def _production_daemon_running() -> bool:
 # Known daemon artifacts that the production daemon may create/touch
 _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_source.json"}
 
+# Transient per-daemon-instance files that we never flag as a leak. The test
+# daemon runs with HOME overridden to a tmp dir, so any write to real ~/.gobby/
+# for one of these paths is necessarily the production daemon on the dev box
+# (or a subsequent one). Their creation is inherently racy against the
+# before/after snapshot — if the production daemon writes during the test
+# window, the prod-running TCP/PID-file detector may not catch it in time.
+# A real sandbox escape would also leak db/config files that aren't listed
+# here, so these omissions do not weaken the check.
+_ALWAYS_EXEMPT_BASENAMES = {"shutdown_source.json"}
+
 
 @pytest.fixture(autouse=True)
 def assert_no_external_writes() -> Generator[None]:
@@ -915,6 +966,8 @@ def assert_no_external_writes() -> Generator[None]:
         if rel_path not in before:
             # CREATED file — check if it's a known daemon artifact
             basename = Path(rel_path).name
+            if basename in _ALWAYS_EXEMPT_BASENAMES:
+                continue  # Transient per-daemon file — see _ALWAYS_EXEMPT_BASENAMES
             if prod_running and (
                 basename in _DAEMON_ARTIFACTS
                 or rel_path.startswith("logs/")

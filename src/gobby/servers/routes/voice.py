@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, UploadFile
@@ -27,15 +28,26 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
     @router.get("/status")
     async def voice_status() -> dict[str, Any]:
         """Check voice feature availability."""
+        ws_server = server.services.websocket_server or server.websocket_server
+        if ws_server and hasattr(ws_server, "get_voice_status"):
+            return ws_server.get_voice_status()
+
         config = server.config
         if not config or not hasattr(config, "voice"):
             return {
                 "enabled": False,
                 "stt_available": False,
                 "reason": "Voice config not found",
+                "voice_ready": False,
+                "voice_loading": False,
+                "stt_warmup_status": "idle",
+                "tts_warmup_status": "idle",
+                "stt_warmup_error": "",
+                "tts_warmup_error": "",
             }
 
         voice_config = config.voice
+        tts_provider = getattr(voice_config, "tts_provider", "kokoro")
 
         # Check STT availability
         stt_available = False
@@ -49,8 +61,8 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 import faster_whisper  # noqa: F401
 
                 stt_available = True
-            except ImportError:
-                stt_reason = "faster-whisper not installed (pip install faster-whisper)"
+            except ImportError as e:
+                stt_reason = f"faster-whisper not installed (uv sync --extra voice): {e}"
 
         # Check TTS availability
         tts_available = False
@@ -59,25 +71,58 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             tts_reason = "Voice not enabled in config"
         elif not voice_config.tts_enabled:
             tts_reason = "TTS disabled in config"
+        elif tts_provider == "chatterbox":
+            try:
+                import chatterbox  # noqa: F401
+
+                tts_available = True
+            except ImportError as e:
+                tts_reason = f"chatterbox not installed (uv sync --extra voice): {e}"
+
+            if tts_available:
+                ref = Path(voice_config.tts_reference_audio).expanduser()
+                if not ref.exists():
+                    tts_reason = f"Reference audio not found: {ref}"
         else:
             try:
                 import kokoro_onnx  # noqa: F401
+            except ImportError as e:
+                tts_reason = f"kokoro-onnx not installed (uv sync --extra voice): {e}"
+            else:
+                model_path = Path(voice_config.tts_model_path).expanduser()
+                voices_path = Path(voice_config.tts_voices_path).expanduser()
+                if model_path.exists() and voices_path.exists():
+                    tts_available = True
+                else:
+                    tts_reason = "Kokoro model files not found"
 
-                tts_available = True
-            except ImportError:
-                tts_reason = "kokoro-onnx not installed (pip install kokoro-onnx)"
-
-        return {
+        result: dict[str, Any] = {
             "enabled": voice_config.enabled,
             "stt_enabled": voice_config.stt_enabled,
             "stt_available": stt_available,
             "stt_reason": stt_reason,
             "whisper_model": voice_config.whisper_model_size,
+            "stt_warmup_status": "idle",
+            "stt_warmup_error": "",
             "tts_enabled": voice_config.tts_enabled,
+            "tts_provider": tts_provider,
             "tts_available": tts_available,
             "tts_reason": tts_reason,
-            "tts_voice": voice_config.tts_voice,
+            "tts_warmup_status": "idle",
+            "tts_warmup_error": "",
+            "voice_ready": False,
+            "voice_loading": False,
         }
+
+        if tts_provider == "chatterbox":
+            ref = Path(voice_config.tts_reference_audio).expanduser()
+            result["tts_reference_audio"] = str(ref)
+            result["tts_reference_audio_exists"] = ref.exists()
+            result["tts_device"] = voice_config.tts_device
+        else:
+            result["tts_voice"] = voice_config.tts_voice
+
+        return result
 
     @router.post("/transcribe")
     async def transcribe_audio(file: UploadFile = File(...)) -> dict[str, Any]:

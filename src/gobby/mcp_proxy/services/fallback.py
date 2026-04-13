@@ -288,8 +288,8 @@ class ToolFallbackResolver:
         Returns:
             Tool description or None
         """
-        # The tool info is in the database, accessed via _get_tool_info_map
-        # But we don't have project_id here, so we search all
+        # Look up tool description from the database
+        # We don't have project_id here, so we search all
         try:
             row = self._semantic_search.db.fetchone(
                 """

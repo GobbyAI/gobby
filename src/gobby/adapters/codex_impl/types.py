@@ -30,6 +30,7 @@ class CodexThread:
     preview: str = ""
     model_provider: str = "openai"
     created_at: int = 0
+    path: str | None = None
 
 
 @dataclass

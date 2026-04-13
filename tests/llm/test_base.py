@@ -26,6 +26,9 @@ class ConcreteProvider(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         return "test text"
 
@@ -62,6 +65,9 @@ class IncompleteProviderMissingDescribeImage(LLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         model: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         return "text"
 

@@ -61,7 +61,6 @@ class TestSessionSource:
         assert SessionSource.CLAUDE.value == "claude"
         assert SessionSource.GEMINI.value == "gemini"
         assert SessionSource.CODEX.value == "codex"
-        assert SessionSource.CLAUDE_SDK.value == "claude_sdk"
 
 
 class TestHookEvent:

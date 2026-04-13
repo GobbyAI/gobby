@@ -7,6 +7,7 @@ tool calls to the HTTP daemon.
 
 import asyncio
 import logging
+import os
 import sys
 from typing import Any
 
@@ -46,7 +47,6 @@ LLM_TASK_TOOLS = (
     "expand_task",
     "apply_tdd",
     "suggest_next_task",
-    "validate_task",
 )
 
 
@@ -70,7 +70,7 @@ class DaemonProxy:
         self.port = port
         self.base_url = f"http://localhost:{port}"
         self._project_id: str | None = self._read_project_id()
-        self._session_id: str | None = None  # Learned from first tool call
+        self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
 
     @staticmethod
     def _read_project_id() -> str | None:
@@ -377,7 +377,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
     """Register proxy tools on the MCP server."""
 
     @mcp.tool()
-    async def list_mcp_servers() -> dict[str, Any]:
+    async def list_mcp_servers(session_id: str | None = None) -> dict[str, Any]:
         """
         List all MCP servers configured in the daemon.
 
@@ -387,10 +387,12 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with servers list, total count, and connected count
         """
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
         return await proxy.list_mcp_servers()
 
     @mcp.tool()
-    async def list_tools(server_name: str) -> dict[str, Any]:
+    async def list_tools(server_name: str, session_id: str | None = None) -> dict[str, Any]:
         """
         List tools from MCP servers.
 
@@ -403,10 +405,16 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool listings
         """
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
         return await proxy.list_tools(server_name)
 
     @mcp.tool()
-    async def get_tool_schema(server_name: str, tool_name: str) -> dict[str, Any]:
+    async def get_tool_schema(
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Get full schema (inputSchema) for a specific MCP tool.
 
@@ -420,6 +428,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool name, description, and full inputSchema
         """
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
         return await proxy.get_tool_schema(server_name, tool_name)
 
     @mcp.tool()
@@ -449,13 +459,15 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dictionary with success status and tool execution result
         """
-        # Coerce string arguments to dict (agents often stringify JSON)
+        # Coerce string arguments to dict (agents often stringify JSON,
+        # sometimes with literal \" escapes instead of proper quotes)
         if isinstance(arguments, str):
-            import json as _json
+            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 
-            try:
-                arguments = _json.loads(arguments)
-            except (ValueError, TypeError):
+            parsed = coerce_string_arguments(arguments)
+            if parsed is not None:
+                arguments = parsed
+            else:
                 return {
                     "success": False,
                     "error": f"Invalid JSON in 'arguments' parameter: {str(arguments)[:200]}",
@@ -467,11 +479,12 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             if isinstance(args, dict):
                 effective_args = args
             elif isinstance(args, str):
-                import json as _json
+                from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 
-                try:
-                    effective_args = _json.loads(args)
-                except (ValueError, TypeError):
+                parsed = coerce_string_arguments(args)
+                if parsed is not None:
+                    effective_args = parsed
+                else:
                     return {
                         "success": False,
                         "error": f"Invalid JSON in 'args' parameter: {args[:200]}",
@@ -485,12 +498,12 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             for leaked_key in ("server_name", "tool_name"):
                 final_args.pop(leaked_key, None)
 
-        # Inject session_id into args so _request() sniffing picks it up
-        # and sets the X-Gobby-Session-Id header for the daemon.
-        if session_id:
-            if final_args is None:
-                final_args = {}
-            final_args["session_id"] = session_id
+        # Set session_id on proxy directly so _request() sends it via
+        # X-Gobby-Session-Id header. Don't inject into tool arguments —
+        # that collides with tools that accept session_id as a parameter
+        # (get_session, get_handoff_context, etc.).
+        if session_id and not proxy._session_id:
+            proxy._session_id = session_id
 
         return await proxy.call_tool(server_name, tool_name, final_args)
 

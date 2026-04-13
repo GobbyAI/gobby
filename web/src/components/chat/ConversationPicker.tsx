@@ -3,6 +3,7 @@ import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { AgentPickerDropdown } from "./AgentPickerDropdown";
+import { PROVIDER_COLORS, SOURCE_COLORS } from "../shared/sourceTheme";
 
 interface AgentInfo {
   run_id: string;
@@ -37,23 +38,6 @@ interface ConversationPickerProps {
   agentHasGlobal?: boolean;
   agentHasProject?: boolean;
 }
-
-const PROVIDER_COLORS: Record<string, string> = {
-  claude: "#c084fc",
-  gemini: "#4ade80",
-  codex: "#3b82f6",
-  unknown: "#737373",
-};
-
-const SOURCE_COLORS: Record<string, string> = {
-  claude_code: "#c084fc",
-  gemini_cli: "#4ade80",
-  codex: "#3b82f6",
-  windsurf: "#38bdf8",
-  cursor: "#f472b6",
-  copilot: "#818cf8",
-  unknown: "#737373",
-};
 
 const TERMINAL_INITIAL_LIMIT = 5;
 
@@ -167,7 +151,7 @@ export function ConversationPicker({
                 const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
                 const titleText = session.title || `Chat ${session.ref}`;
                 const title = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
-                const isActive = session.external_id === activeSessionId && !viewingSessionId;
+                const isActive = session.id === activeSessionId && !viewingSessionId;
                 const isDeleting = deletingIds?.has(session.id) ?? false;
                 return (
                   <div

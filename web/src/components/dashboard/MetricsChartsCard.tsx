@@ -12,6 +12,14 @@ import {
   Legend,
 } from 'recharts'
 import { useMetricSnapshots, type MetricSnapshot } from '../../hooks/useMetrics'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardChartCellClass,
+  dashboardChartEmptyClass,
+  dashboardChartGridClass,
+  dashboardChartLabelClass,
+  dashboardFullCardClass,
+} from './dashboardStyles'
 
 interface ChartPoint {
   time: string
@@ -96,7 +104,7 @@ const AXIS_STYLE = { fontSize: 10, fill: 'var(--text-secondary)' }
 
 function EmptyChart() {
   return (
-    <div className="dash-chart-empty">
+    <div className={dashboardChartEmptyClass}>
       No metrics data yet. Snapshots are taken every 60s.
     </div>
   )
@@ -115,18 +123,16 @@ export function MetricsChartsCard({ hours }: Props) {
   const hasData = chartData.length > 0
 
   return (
-    <div className="dash-card dash-card--full">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Metrics</h3>
-      </div>
-      <div className="dash-card-body">
+    <DashboardCard title="Metrics" className={dashboardFullCardClass}>
         {isLoading && !hasData ? (
-          <div className="dash-loading" style={{ padding: '20px' }}>Loading metrics...</div>
+          <div className="flex items-center justify-center p-5 text-sm text-muted-foreground">
+            Loading metrics...
+          </div>
         ) : (
-          <div className="dash-chart-grid">
+          <div className={dashboardChartGridClass}>
             {/* HTTP Traffic */}
-            <div className="dash-chart-cell">
-              <div className="dash-chart-label">HTTP Traffic (per interval)</div>
+            <div className={dashboardChartCellClass}>
+              <div className={dashboardChartLabelClass}>HTTP Traffic (per interval)</div>
               {hasData ? (
                 <ResponsiveContainer width="100%" height={160}>
                   <AreaChart data={chartData} margin={CHART_MARGIN}>
@@ -134,7 +140,7 @@ export function MetricsChartsCard({ hours }: Props) {
                     <XAxis dataKey="time" tick={AXIS_STYLE} interval="preserveStartEnd" />
                     <YAxis tick={AXIS_STYLE} width={35} allowDecimals={false} />
                     <Tooltip
-                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: 12 }}
+                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
                     <Area type="monotone" dataKey="httpReqs" name="Requests" stroke="#3b82f6" fill="rgba(59,130,246,0.15)" />
                     <Area type="monotone" dataKey="httpErrors" name="Errors" stroke="#ef4444" fill="rgba(239,68,68,0.15)" />
@@ -145,8 +151,8 @@ export function MetricsChartsCard({ hours }: Props) {
             </div>
 
             {/* MCP Operations */}
-            <div className="dash-chart-cell">
-              <div className="dash-chart-label">MCP Operations (per interval)</div>
+            <div className={dashboardChartCellClass}>
+              <div className={dashboardChartLabelClass}>MCP Operations (per interval)</div>
               {hasData ? (
                 <ResponsiveContainer width="100%" height={160}>
                   <AreaChart data={chartData} margin={CHART_MARGIN}>
@@ -154,7 +160,7 @@ export function MetricsChartsCard({ hours }: Props) {
                     <XAxis dataKey="time" tick={AXIS_STYLE} interval="preserveStartEnd" />
                     <YAxis tick={AXIS_STYLE} width={35} allowDecimals={false} />
                     <Tooltip
-                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: 12 }}
+                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
                     <Area type="monotone" dataKey="mcpCalls" name="Calls" stroke="#8b5cf6" fill="rgba(139,92,246,0.15)" />
                     <Area type="monotone" dataKey="mcpErrors" name="Errors" stroke="#ef4444" fill="rgba(239,68,68,0.15)" />
@@ -165,8 +171,8 @@ export function MetricsChartsCard({ hours }: Props) {
             </div>
 
             {/* System Resources */}
-            <div className="dash-chart-cell">
-              <div className="dash-chart-label">System Resources</div>
+            <div className={dashboardChartCellClass}>
+              <div className={dashboardChartLabelClass}>System Resources</div>
               {hasData ? (
                 <ResponsiveContainer width="100%" height={160}>
                   <LineChart data={chartData} margin={CHART_MARGIN}>
@@ -175,7 +181,7 @@ export function MetricsChartsCard({ hours }: Props) {
                     <YAxis yAxisId="mem" tick={AXIS_STYLE} width={35} />
                     <YAxis yAxisId="cpu" orientation="right" tick={AXIS_STYLE} width={35} unit="%" />
                     <Tooltip
-                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: 12 }}
+                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
                     <Line yAxisId="mem" type="monotone" dataKey="memoryMb" name="Memory (MB)" stroke="#22c55e" dot={false} />
                     <Line yAxisId="cpu" type="monotone" dataKey="cpuPercent" name="CPU (%)" stroke="#f59e0b" dot={false} />
@@ -186,8 +192,8 @@ export function MetricsChartsCard({ hours }: Props) {
             </div>
 
             {/* Operation Latency */}
-            <div className="dash-chart-cell">
-              <div className="dash-chart-label">Avg Latency (ms)</div>
+            <div className={dashboardChartCellClass}>
+              <div className={dashboardChartLabelClass}>Avg Latency (ms)</div>
               {hasData ? (
                 <ResponsiveContainer width="100%" height={160}>
                   <LineChart data={chartData} margin={CHART_MARGIN}>
@@ -195,7 +201,7 @@ export function MetricsChartsCard({ hours }: Props) {
                     <XAxis dataKey="time" tick={AXIS_STYLE} interval="preserveStartEnd" />
                     <YAxis tick={AXIS_STYLE} width={35} />
                     <Tooltip
-                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: 12 }}
+                      contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 }}
                     />
                     <Line type="monotone" dataKey="httpLatencyMs" name="HTTP" stroke="#3b82f6" dot={false} />
                     <Line type="monotone" dataKey="mcpLatencyMs" name="MCP" stroke="#8b5cf6" dot={false} />
@@ -206,7 +212,6 @@ export function MetricsChartsCard({ hours }: Props) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </DashboardCard>
   )
 }

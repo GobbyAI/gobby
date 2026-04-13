@@ -1,16 +1,21 @@
-"""Claude CLI path management.
+"""Claude CLI path management and multi-turn session launcher.
 
-Functions for finding and verifying the Claude CLI binary.
-Extracted from ClaudeLLMProvider as part of the Strangler Fig
-decomposition.
+Functions for finding and verifying the Claude CLI binary, plus
+ClaudeCLI/CLISession classes for subprocess-based multi-turn web chat.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
+import signal
+from collections.abc import AsyncIterator, Awaitable, Callable
+from urllib.parse import urlparse
+
+from gobby.llm.stream_json_parser import ResultEvent, StreamEvent, parse_stream
 
 logger = logging.getLogger(__name__)
 
@@ -81,3 +86,138 @@ async def verify_cli_path(cached_path: str | None) -> str | None:
                 cli_path = None
 
     return cli_path
+
+
+# ---------------------------------------------------------------------------
+# Multi-turn CLI session classes
+# ---------------------------------------------------------------------------
+
+
+class ClaudeCLI:
+    """Claude CLI subprocess manager for multi-turn web chat sessions."""
+
+    # Security: only these env vars may be overridden
+    ALLOWED_ENV_OVERRIDES = {"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "CLAUDE_MODEL"}
+
+    def __init__(self, cli_path: str | None = None) -> None:
+        self._cli_path = cli_path
+
+    async def _resolve_path(self) -> str:
+        """Find and verify CLI path."""
+        path = self._cli_path or find_cli_path()
+        if not path:
+            raise FileNotFoundError("Claude CLI not found")
+        return path
+
+    def session(
+        self,
+        session_id: str | None = None,
+        model: str | None = None,
+        env_overrides: dict[str, str] | None = None,
+    ) -> CLISession:
+        """Create a new multi-turn CLI session."""
+        if env_overrides:
+            disallowed = set(env_overrides) - self.ALLOWED_ENV_OVERRIDES
+            if disallowed:
+                raise ValueError(f"Disallowed env overrides: {disallowed}")
+            # Validate ANTHROPIC_BASE_URL: must be localhost to prevent SSRF
+            base_url = env_overrides.get("ANTHROPIC_BASE_URL", "")
+            if base_url:
+                parsed = urlparse(base_url)
+                if parsed.hostname not in ("localhost", "127.0.0.1"):
+                    raise ValueError(
+                        f"ANTHROPIC_BASE_URL must be localhost, got: {parsed.hostname}"
+                    )
+        return CLISession(
+            cli_path_resolver=self._resolve_path,
+            session_id=session_id,
+            model=model,
+            env_overrides=env_overrides,
+        )
+
+
+class CLISession:
+    """Multi-turn Claude CLI session via stream-json I/O."""
+
+    def __init__(
+        self,
+        cli_path_resolver: Callable[[], Awaitable[str]],
+        session_id: str | None,
+        model: str | None,
+        env_overrides: dict[str, str] | None,
+    ) -> None:
+        self._resolve_path = cli_path_resolver
+        self._session_id = session_id
+        self._model = model
+        self._env_overrides = env_overrides or {}
+        self._process: asyncio.subprocess.Process | None = None
+        self._stop_timeout = 5.0
+
+    async def start(self) -> None:
+        """Spawn CLI subprocess with stream-json I/O."""
+        path = await self._resolve_path()
+        cmd = [
+            path,
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--input-format",
+            "stream-json",
+        ]
+        if self._session_id:
+            cmd.extend(["--session-id", self._session_id])
+        if self._model:
+            cmd.extend(["--model", self._model])
+
+        env = {**os.environ, **self._env_overrides}
+        self._process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+    async def send(self, message: str) -> AsyncIterator[StreamEvent]:
+        """Send a message and stream responses."""
+        if not self._process or not self._process.stdin or not self._process.stdout:
+            raise RuntimeError("CLISession not started — call start() first")
+        if self._process.returncode is not None:
+            raise RuntimeError(
+                f"Claude CLI process exited before send (code={self._process.returncode})"
+            )
+        payload = json.dumps({"type": "user", "content": message}) + "\n"
+        self._process.stdin.write(payload.encode())
+        await self._process.stdin.drain()
+        saw_result = False
+        async for event in parse_stream(self._process.stdout):
+            if isinstance(event, ResultEvent):
+                saw_result = True
+            yield event
+        if self._process.returncode is not None and not saw_result:
+            raise RuntimeError(
+                f"Claude CLI process exited while streaming response (code={self._process.returncode})"
+            )
+
+    async def interrupt(self) -> None:
+        """Send interrupt signal to CLI process."""
+        if self._process:
+            self._process.send_signal(signal.SIGINT)
+
+    async def stop(self) -> None:
+        """Terminate CLI process."""
+        if self._process:
+            try:
+                self._process.terminate()
+            except ProcessLookupError:
+                return
+            try:
+                await asyncio.wait_for(self._process.wait(), timeout=self._stop_timeout)
+            except TimeoutError:
+                try:
+                    self._process.kill()
+                except ProcessLookupError:
+                    return
+                await self._process.wait()
+            except OSError:
+                logger.debug("Claude CLI process was already gone during stop()", exc_info=True)

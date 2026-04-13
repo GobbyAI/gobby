@@ -9,7 +9,7 @@ import type { StepProps } from "../types.js";
 
 type Phase = "prompt" | "password" | "installing" | "done";
 
-export function Services({ state, setState, onNext }: StepProps): React.ReactElement {
+export function Services({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<Phase>("prompt");
   const [customPassword, setCustomPassword] = useState("");
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);

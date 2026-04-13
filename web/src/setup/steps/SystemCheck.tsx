@@ -21,7 +21,7 @@ const INSTALL_HINTS: Record<string, string> = {
   clawhub: "npm install -g clawhub",
 };
 
-export function SystemCheck({ state, setState, onNext }: StepProps): React.ReactElement {
+export function SystemCheck({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [scanning, setScanning] = useState(true);
   const [tools, setTools] = useState<ToolRow[]>([]);
   const [missingRequired, setMissingRequired] = useState<string[]>([]);
@@ -57,7 +57,7 @@ export function SystemCheck({ state, setState, onNext }: StepProps): React.React
     }));
 
     setScanning(false);
-  }, []);
+  }, [setState]);
 
   if (scanning) {
     return (

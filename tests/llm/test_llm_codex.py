@@ -18,7 +18,9 @@ def codex_config() -> DaemonConfig:
     """Create a DaemonConfig with Codex provider configured."""
     return DaemonConfig(
         llm_providers=LLMProvidersConfig(
-            codex=LLMProviderConfig(models="gpt-4o", auth_mode="subscription"),
+            codex=LLMProviderConfig(
+                models="gpt-4o", default_model="gpt-4o", auth_mode="subscription"
+            ),
         ),
         session_summary=SessionSummaryConfig(model="gpt-4o"),
     )

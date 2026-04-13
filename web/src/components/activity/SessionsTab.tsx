@@ -5,7 +5,7 @@ import type { GobbySession } from "../../hooks/useSessions";
 import { useSessionDetail } from "../../hooks/useSessionDetail";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { MessageItem } from "../chat/MessageItem";
-import type { ChatMessage } from "../../types/chat";
+import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import {
   SessionInteractionModal,
@@ -27,6 +27,11 @@ interface SessionsTabProps {
   onExpireSession?: (sessionId: string) => void;
   chatSessionId?: string;
   isMobile?: boolean;
+  focusSessionId?: string | null;
+  onFocusHandled?: () => void;
+  watchingSessionIds?: Set<string>;
+  onUnwatch?: (sessionId: string) => void;
+  onSwapSession?: (target: SwappedSessionTarget) => void;
 }
 
 interface SessionEntry {
@@ -35,6 +40,9 @@ interface SessionEntry {
   label: string;
   provider: string;
   status: "active" | "paused";
+  sessionType?: string;
+  externalId?: string;
+  agentRunId?: string | null;
   runId?: string;
   startedAt?: string;
   seqNum?: number | null;
@@ -51,15 +59,55 @@ function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
+function getSessionTypeBadge(sessionType: string | undefined): {
+  label: string;
+  className: string;
+} {
+  if (sessionType === "web_chat") {
+    return { label: "web", className: "session-kind-badge--web" };
+  }
+  return { label: "tmux", className: "session-kind-badge--tmux" };
+}
+
+function getAgentBadge(agentRunId: string | null | undefined): {
+  label: string;
+  className: string;
+} | null {
+  if (!agentRunId) return null;
+  return { label: "auto", className: "session-kind-badge--auto" };
+}
+
+function renderBadges(entry: SessionEntry) {
+  const typeBadge = getSessionTypeBadge(entry.sessionType);
+  const agentBadge = getAgentBadge(entry.agentRunId);
+  return (
+    <>
+      <span className={`session-kind-badge ${typeBadge.className}`}>
+        {typeBadge.label}
+      </span>
+      {agentBadge && (
+        <span className={`session-kind-badge ${agentBadge.className}`}>
+          {agentBadge.label}
+        </span>
+      )}
+    </>
+  );
+}
+
 export const SessionsTab = memo(function SessionsTab({
   projectId,
   onKillAgent,
   onExpireSession,
   chatSessionId,
   isMobile = false,
+  focusSessionId,
+  onFocusHandled,
+  watchingSessionIds,
+  onUnwatch,
+  onSwapSession,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
-  const [cliSessions, setCliSessions] = useState<GobbySession[]>([]);
+  const [activitySessions, setActivitySessions] = useState<GobbySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
@@ -101,13 +149,13 @@ export const SessionsTab = memo(function SessionsTab({
         ).then((r) => (r.ok ? r.json() : { sessions: [] })),
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
-      const active = (activeRes.sessions ?? activeRes ?? []).filter(
-        (s: any) => s.source !== "pipeline" && s.source !== "cron",
-      );
-      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(
-        (s: any) => s.source !== "pipeline" && s.source !== "cron",
-      );
-      setCliSessions([...active, ...paused]);
+      const isWatchable = (s: GobbySession) =>
+        s.source !== "pipeline" &&
+        s.source !== "cron" &&
+        s.id !== chatSessionId;
+      const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
+      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
+      setActivitySessions([...active, ...paused]);
       setExpiringIds(new Set());
       setFetchError(null);
     } catch (err) {
@@ -116,7 +164,7 @@ export const SessionsTab = memo(function SessionsTab({
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, chatSessionId]);
 
   // Initial fetch + poll every 5s
   useEffect(() => {
@@ -135,7 +183,7 @@ export const SessionsTab = memo(function SessionsTab({
     const agentEntries: SessionEntry[] = agents.map((a) => {
       // Find matching session for richer metadata
       const matchedSession = a.session_id
-        ? cliSessions.find((s) => s.id === a.session_id)
+        ? activitySessions.find((s) => s.id === a.session_id)
         : undefined;
 
       return {
@@ -148,6 +196,9 @@ export const SessionsTab = memo(function SessionsTab({
             : `Session ${a.run_id.slice(0, 8)}`),
         provider: a.provider,
         status: "active" as const,
+        sessionType: matchedSession?.session_type,
+        externalId: matchedSession?.external_id,
+        agentRunId: matchedSession?.agent_run_id ?? a.run_id,
         runId: a.run_id,
         startedAt: a.started_at,
         seqNum: matchedSession?.seq_num,
@@ -155,26 +206,31 @@ export const SessionsTab = memo(function SessionsTab({
       };
     });
 
-    const sessionEntries: SessionEntry[] = cliSessions
+    const sessionEntries: SessionEntry[] = activitySessions
       .filter((s) => !agentSessionIds.has(s.id))
-      .map((s) => ({
-        id: s.id,
-        type: "cli" as const,
-        label: s.title ?? `CLI ${s.ref}`,
-        provider: s.source ?? "unknown",
-        status: (s.status === "paused" ? "paused" : "active") as
-          | "active"
-          | "paused",
-        startedAt: s.updated_at,
-        seqNum: s.seq_num,
-        hasTmux: !!s.terminal_context,
-      }));
+      .map((s) => {
+        return {
+          id: s.id,
+          type: "cli" as const,
+          label: s.title ?? `CLI ${s.ref}`,
+          provider: s.source ?? "unknown",
+          status: (s.status === "paused" ? "paused" : "active") as
+            | "active"
+            | "paused",
+          sessionType: s.session_type,
+          externalId: s.external_id,
+          agentRunId: s.agent_run_id,
+          startedAt: s.updated_at,
+          seqNum: s.seq_num,
+          hasTmux: !!s.terminal_context,
+        };
+      });
 
     // Filter out entries being expired
     return [...agentEntries, ...sessionEntries].filter(
       (e) => !expiringIds.has(e.id),
     );
-  }, [agents, cliSessions, expiringIds]);
+  }, [agents, activitySessions, expiringIds]);
 
   // Auto-close watching view when the selected session disappears from the list
   useEffect(() => {
@@ -185,6 +241,14 @@ export const SessionsTab = memo(function SessionsTab({
       }
     }
   }, [entries, selectedSessionId, loading]);
+
+  // Programmatic focus: select a session when requested from outside
+  useEffect(() => {
+    if (focusSessionId && !loading) {
+      setSelectedSessionId(focusSessionId);
+      onFocusHandled?.();
+    }
+  }, [focusSessionId, loading, onFocusHandled]);
 
   // Fetch selected session messages
   const { messages, isLoading } = useSessionDetail(selectedSessionId);
@@ -230,6 +294,11 @@ export const SessionsTab = memo(function SessionsTab({
   const handleSelect = useCallback((id: string) => {
     setSelectedSessionId((prev) => (prev === id ? null : id));
   }, []);
+
+  const selectedEntry = useMemo(
+    () => entries.find((entry) => entry.id === selectedSessionId) ?? null,
+    [entries, selectedSessionId],
+  );
 
   const handleExpire = useCallback(
     async (entry: SessionEntry) => {
@@ -319,7 +388,7 @@ export const SessionsTab = memo(function SessionsTab({
       <div className="activity-tab-empty">
         <p>No active sessions</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Agent and CLI sessions will appear here when active
+          Agent, terminal, and web chat sessions will appear here when active
         </p>
       </div>
     );
@@ -354,9 +423,7 @@ export const SessionsTab = memo(function SessionsTab({
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                {entry.hasTmux && (
-                  <span className="session-tmux-badge">tmux</span>
-                )}
+                {renderBadges(entry)}
                 {isMobile ? (
                   <button
                     className="session-more-btn"
@@ -420,25 +487,49 @@ export const SessionsTab = memo(function SessionsTab({
         <div className="flex-1 flex flex-col min-h-0">
           {/* Session header */}
           <div
-            className="flex items-center gap-2 px-3 border-b border-border"
+            className="flex items-center gap-3 px-3 border-b border-border"
             style={{ height: 40, background: "var(--bg-secondary)" }}
           >
-            <span className="text-xs text-muted-foreground">
-              Watching{" "}
-              {(() => {
-                const entry = entries.find((e) => e.id === selectedSessionId);
-                if (!entry) return "session";
-                return entry.seqNum
-                  ? `#${entry.seqNum}: ${entry.label}`
-                  : entry.label;
-              })()}
-            </span>
-            <button
-              className="text-xs text-muted-foreground hover:text-foreground ml-auto"
-              onClick={() => setSelectedSessionId(null)}
-            >
-              Close
-            </button>
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-xs text-muted-foreground">
+                Watching{" "}
+                {selectedEntry
+                  ? selectedEntry.seqNum
+                    ? `#${selectedEntry.seqNum}: ${selectedEntry.label}`
+                    : selectedEntry.label
+                  : "session"}
+              </span>
+            </div>
+            <div className="flex flex-none items-center gap-3">
+              {selectedEntry && onSwapSession && (
+                <button
+                  className="text-xs text-accent hover:text-foreground"
+                  onClick={() => {
+                    if (selectedSessionId) {
+                      onSwapSession({
+                        sessionId: selectedSessionId,
+                        sessionType: selectedEntry.sessionType ?? null,
+                        agentRunId: selectedEntry.agentRunId ?? null,
+                      });
+                      setSelectedSessionId(null);
+                    }
+                  }}
+                >
+                  Swap
+                </button>
+              )}
+              <button
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  if (selectedSessionId && watchingSessionIds?.has(selectedSessionId)) {
+                    onUnwatch?.(selectedSessionId);
+                  }
+                  setSelectedSessionId(null);
+                }}
+              >
+                Close
+              </button>
+            </div>
           </div>
 
           {/* Messages */}

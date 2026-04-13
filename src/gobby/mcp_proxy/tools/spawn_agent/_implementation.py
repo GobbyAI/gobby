@@ -20,6 +20,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
+from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -238,6 +239,7 @@ async def spawn_agent_impl(
     resolved_task_id: str | None = None
     task_title: str | None = None
     task_seq_num: int | None = None
+    claimed_session_id: str | None = None
 
     if task_id and task_manager:
         try:
@@ -246,6 +248,7 @@ async def spawn_agent_impl(
             if task:
                 task_title = task.title
                 task_seq_num = task.seq_num
+                claimed_session_id = get_claimed_session_id(task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
 
@@ -431,7 +434,9 @@ async def spawn_agent_impl(
         clone_id=isolation_ctx.clone_id,
         branch_name=isolation_ctx.branch_name,
         task_id=resolved_task_id,
+        claimed_session_id=claimed_session_id,
         title=spawn_title,
+        agent_name=agent_display_name,
         session_manager=runner.child_session_manager,
         machine_id=get_machine_id() or "unknown",
         model=effective_model,
@@ -491,22 +496,27 @@ async def spawn_agent_impl(
         if resolved_task_id and task_manager:
             try:
                 task_obj = task_manager.get_task(resolved_task_id)
-                if task_obj and task_obj.status == "open":
-                    task_manager.update_task(
+                if not task_obj or not is_active_claim_status(task_obj.status):
+                    logger.info(
+                        "Skipping auto-claim for task %s; status=%s is not active work",
+                        f"#{task_seq_num}" if task_seq_num else resolved_task_id,
+                        getattr(task_obj, "status", None),
+                    )
+                elif (
+                    current_owner := get_claimed_session_id(task_obj)
+                ) and current_owner != spawn_result.child_session_id:
+                    logger.info(
+                        "Skipping auto-claim for task %s; already assigned to %s",
+                        f"#{task_seq_num}" if task_seq_num else resolved_task_id,
+                        current_owner,
+                    )
+                else:
+                    task_manager.claim_task(
                         resolved_task_id,
-                        status="in_progress",
-                        assignee=spawn_result.child_session_id,
+                        session_id=spawn_result.child_session_id,
                     )
                     logger.info(
                         f"Auto-claimed task {(f'#{task_seq_num}' if task_seq_num else resolved_task_id)} for agent {run_id} (session {spawn_result.child_session_id})",
-                    )
-                elif task_obj:
-                    task_manager.update_task(
-                        resolved_task_id,
-                        assignee=spawn_result.child_session_id,
-                    )
-                    logger.info(
-                        f"Assigned task {(f'#{task_seq_num}' if task_seq_num else resolved_task_id)} to agent {run_id} (session {spawn_result.child_session_id}) without status change (status={task_obj.status})",
                     )
             except Exception as e:
                 logger.warning(f"Failed to auto-claim task {resolved_task_id}: {e}")

@@ -13,6 +13,7 @@ rules:
       - type: block
         mcp_tools:
           - "gobby-tasks:close_task"
+          - "gobby-tasks:de_escalate_task"
           - "gobby-tasks:mark_task_needs_review"
           - "gobby-tasks:mark_task_review_approved"
         reason: |

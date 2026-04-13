@@ -10,6 +10,7 @@ Extracted from codex.py as part of Phase 3 Strangler Fig decomposition.
 
 from __future__ import annotations
 
+import json
 import logging
 import platform
 import uuid
@@ -95,6 +96,7 @@ class CodexAdapter(BaseAdapter):
         # Approval requests map to BEFORE_TOOL
         "item/commandExecution/requestApproval": HookEventType.BEFORE_TOOL,
         "item/fileChange/requestApproval": HookEventType.BEFORE_TOOL,
+        "item/mcpToolCall/requestApproval": HookEventType.BEFORE_TOOL,
         # Completed items map to AFTER_TOOL
         "item/completed": HookEventType.AFTER_TOOL,
     }
@@ -143,6 +145,102 @@ class CodexAdapter(BaseAdapter):
         self._codex_client: CodexAppServerClient | None = None
         self._attached = False
         self._machine_id: str | None = None
+
+    @staticmethod
+    def _extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
+        """Return the best-effort tool item payload from an item/completed event."""
+        item = params.get("item")
+        if isinstance(item, dict):
+            return item
+
+        toolish_fields = {
+            "type",
+            "itemType",
+            "name",
+            "toolName",
+            "tool_name",
+            "arguments",
+            "toolArgs",
+            "tool_input",
+            "input",
+            "output",
+            "result",
+            "toolResult",
+        }
+        if any(field in params for field in toolish_fields):
+            return params
+
+        return {}
+
+    @classmethod
+    def _looks_like_tool_item(cls, item: dict[str, Any]) -> bool:
+        """Identify completed Codex items that represent tool execution."""
+        item_type = item.get("type") or item.get("itemType")
+        if item_type in cls.TOOL_ITEM_TYPES:
+            return True
+
+        if any(isinstance(item.get(tool_type), dict) for tool_type in cls.TOOL_ITEM_TYPES):
+            return True
+
+        toolish_fields = (
+            "name",
+            "toolName",
+            "tool_name",
+            "arguments",
+            "toolArgs",
+            "tool_input",
+            "input",
+            "output",
+            "result",
+            "toolResult",
+            "callId",
+            "call_id",
+            "toolUseId",
+            "tool_use_id",
+        )
+        return any(field in item for field in toolish_fields)
+
+    def _build_completed_tool_data(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a completed Codex tool item into hook event data."""
+        item_type = item.get("type") or item.get("itemType") or ""
+        nested_payload = item.get(item_type)
+
+        item_data: dict[str, Any] = {}
+        if isinstance(nested_payload, dict):
+            item_data.update(nested_payload)
+        item_data.update(item)
+
+        item_id = item_data.get("id") or item_data.get("itemId") or ""
+        raw_tool_name = (
+            item_data.get("tool_name") or item_data.get("toolName") or item_data.get("name")
+        )
+        if isinstance(raw_tool_name, str) and raw_tool_name:
+            item_data.setdefault("tool_name", self.normalize_tool_name(raw_tool_name))
+        elif item_type == "commandExecution":
+            item_data.setdefault("tool_name", "Bash")
+        elif item_type == "fileChange":
+            item_data.setdefault("tool_name", "Write")
+
+        if "tool_input" not in item_data:
+            if "arguments" in item_data and "toolArgs" not in item_data:
+                item_data["toolArgs"] = item_data["arguments"]
+            elif "input" in item_data:
+                item_data["tool_input"] = item_data["input"]
+
+        if "tool_response" not in item_data and "tool_result" not in item_data:
+            if "output" in item_data:
+                item_data["tool_response"] = item_data["output"]
+            elif "result" in item_data:
+                item_data["tool_response"] = item_data["result"]
+
+        item_data.setdefault("item_id", item_id)
+        item_data.setdefault("item_type", item_type)
+        item_data.setdefault("status", item.get("status", item_data.get("status", "")))
+
+        from gobby.hooks.normalization import normalize_tool_fields
+
+        normalize_tool_fields(item_data)
+        return item_data
 
     @staticmethod
     def is_codex_available() -> bool:
@@ -274,32 +372,66 @@ class CodexAdapter(BaseAdapter):
             return None
 
         thread_id = params.get("threadId", "")
-        item_id = params.get("itemId", "")
+        item_type = method.removeprefix("item/").removesuffix("/requestApproval")
 
-        # Determine tool name from method and normalize to CC-style
-        if "commandExecution" in method:
+        approval_payload: dict[str, Any] = {}
+        nested_payload = params.get(item_type)
+        if isinstance(nested_payload, dict):
+            approval_payload.update(nested_payload)
+        approval_payload.update(params)
+
+        item_id = approval_payload.get("itemId", params.get("itemId", ""))
+
+        data = {
+            "item_id": item_id,
+            "item_type": item_type,
+            "turn_id": approval_payload.get("turnId", params.get("turnId", "")),
+            "reason": approval_payload.get("reason"),
+            "risk": approval_payload.get("risk"),
+        }
+
+        # Determine tool name and payload from the Codex item type.
+        if item_type == "commandExecution":
             original_tool = "commandExecution"
-            tool_name = self.normalize_tool_name(original_tool)  # -> "Bash"
-            tool_input = params.get("parsedCmd", params.get("command", ""))
-        elif "fileChange" in method:
+            tool_name = self.normalize_tool_name(original_tool)
+            data["tool_name"] = tool_name
+            data["tool_input"] = approval_payload.get(
+                "parsedCmd", approval_payload.get("command", "")
+            )
+        elif item_type == "fileChange":
             original_tool = "fileChange"
-            tool_name = "Write"  # File changes are writes
-            tool_input = params.get("changes", [])
+            tool_name = "Write"
+            data["tool_name"] = tool_name
+            data["tool_input"] = approval_payload.get("changes", [])
+        elif item_type == "mcpToolCall":
+            original_tool = (
+                approval_payload.get("tool_name")
+                or approval_payload.get("toolName")
+                or approval_payload.get("name")
+                or item_type
+            )
+            tool_name = self.normalize_tool_name(original_tool)
+            data["tool_name"] = tool_name
+            if "tool_input" in approval_payload:
+                data["tool_input"] = approval_payload["tool_input"]
+            elif "toolArgs" in approval_payload:
+                data["toolArgs"] = approval_payload["toolArgs"]
+            elif "arguments" in approval_payload:
+                data["toolArgs"] = approval_payload["arguments"]
+            elif "input" in approval_payload:
+                data["tool_input"] = approval_payload["input"]
+            elif "params" in approval_payload:
+                data["tool_input"] = approval_payload["params"]
+            else:
+                data["tool_input"] = {}
         else:
             original_tool = "unknown"
             tool_name = "unknown"
-            tool_input = params
+            data["tool_name"] = tool_name
+            data["tool_input"] = approval_payload
 
         from gobby.hooks.normalization import normalize_tool_fields
 
-        data = {
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "item_id": item_id,
-            "turn_id": params.get("turnId", ""),
-            "reason": params.get("reason"),
-            "risk": params.get("risk"),
-        }
         normalize_tool_fields(data)
 
         return HookEvent(
@@ -341,16 +473,30 @@ class CodexAdapter(BaseAdapter):
         # Handle different event types
         if method == "thread/started":
             thread = params.get("thread", {})
+            data = {
+                "preview": thread.get("preview", ""),
+                "model_provider": thread.get("modelProvider", ""),
+            }
+            transcript_path = thread.get("path")
+            if transcript_path:
+                data["transcript_path"] = transcript_path
+
+            cwd = params.get("cwd")
+            if isinstance(cwd, str) and cwd:
+                data["cwd"] = cwd
+
+            terminal_context = params.get("terminal_context")
+            if isinstance(terminal_context, dict) and terminal_context:
+                data["terminal_context"] = terminal_context
+
             return HookEvent(
                 event_type=HookEventType.SESSION_START,
                 session_id=thread.get("id", ""),
                 source=self.source,
                 timestamp=self._parse_timestamp(thread.get("createdAt")),
                 machine_id=self._get_machine_id(),
-                data={
-                    "preview": thread.get("preview", ""),
-                    "model_provider": thread.get("modelProvider", ""),
-                },
+                cwd=cwd if isinstance(cwd, str) else None,
+                data=data,
             )
 
         if method in ("thread/archive", "thread/closed"):
@@ -393,8 +539,8 @@ class CodexAdapter(BaseAdapter):
             )
 
         if method == "item/completed":
-            item = params.get("item", {})
-            item_type = item.get("type", "")
+            item = self._extract_completed_item_payload(params)
+            item_type = item.get("type") or item.get("itemType") or ""
 
             # contextCompaction items map to PRE_COMPACT (not AFTER_TOOL)
             if item_type == "contextCompaction":
@@ -412,15 +558,8 @@ class CodexAdapter(BaseAdapter):
                 )
 
             # Only translate tool-related items
-            if item_type in self.TOOL_ITEM_TYPES:
-                from gobby.hooks.normalization import normalize_tool_fields
-
-                item_data: dict[str, Any] = {
-                    "item_id": item.get("id", ""),
-                    "item_type": item_type,
-                    "status": item.get("status", ""),
-                }
-                normalize_tool_fields(item_data)
+            if self._looks_like_tool_item(item):
+                item_data = self._build_completed_tool_data(item)
 
                 return HookEvent(
                     event_type=HookEventType.AFTER_TOOL,
@@ -516,12 +655,7 @@ class CodexAdapter(BaseAdapter):
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
                     for key in [
-                        "terminal_iterm_session_id",
-                        "terminal_term_session_id",
-                        "terminal_kitty_window_id",
                         "terminal_tmux_pane",
-                        "terminal_vscode_terminal_id",
-                        "terminal_alacritty_socket",
                     ]:
                         if response.metadata.get(key):
                             friendly_name = key.replace("terminal_", "").replace("_", " ")
@@ -649,8 +783,9 @@ class CodexHooksAdapter(BaseAdapter):
         "Stop": HookEventType.STOP,
     }
 
-    # Hook events that only accept systemMessage (not additionalContext)
-    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {"PreToolUse"}
+    # Hook events that only accept systemMessage (not additionalContext).
+    # Codex rejects/ignores additionalContext for these event types.
+    SYSTEM_MESSAGE_ONLY_EVENTS: set[str] = {"PreToolUse", "Stop"}
 
     def __init__(self, hook_manager: HookManager | None = None):
         self._hook_manager = hook_manager
@@ -684,10 +819,20 @@ class CodexHooksAdapter(BaseAdapter):
         from gobby.hooks.normalization import normalize_tool_fields
 
         normalized_data = normalize_tool_fields(dict(input_data))
+        raw_tool_name = normalized_data.get("tool_name")
+        if isinstance(raw_tool_name, str):
+            normalized_tool_name = CodexAdapter.TOOL_MAP.get(raw_tool_name, raw_tool_name)
+            if normalized_tool_name != raw_tool_name:
+                normalized_data.setdefault("_original_tool_name", raw_tool_name)
+                normalized_data["tool_name"] = normalized_tool_name
 
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata = {"is_failure": is_failure} if is_failure else {}
+        original_tool_name = normalized_data.pop("_original_tool_name", None)
+        if original_tool_name:
+            metadata["original_tool_name"] = original_tool_name
+            metadata["normalized_tool_name"] = normalized_data.get("tool_name")
 
         return HookEvent(
             event_type=event_type,
@@ -705,34 +850,76 @@ class CodexHooksAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         """Convert HookResponse to Codex hooks.json expected format.
 
-        Codex uses the same hook output schema as Claude Code:
-        - ``continue``: bool (whether to continue execution)
-        - ``decision``: ``"block"`` with ``reason`` to block
-        - ``hookSpecificOutput``: ``{hookEventName, additionalContext}``
-        - ``systemMessage``: system-level message injection
+        Codex hooks share some top-level fields with Claude Code, but PreToolUse
+        requires a Codex-specific ``hookSpecificOutput.permissionDecision``
+        contract for block semantics.
         """
-        from gobby.llm.sdk_utils import truncate_additional_context
+        from gobby.llm.sdk_utils import compress_and_truncate
 
-        should_continue = response.decision not in ("deny", "block")
-
-        result: dict[str, Any] = {
-            "continue": should_continue,
-        }
-
-        if not should_continue:
-            result["decision"] = "block"
-            if response.reason:
-                result["reason"] = response.reason
-            return result
-
-        # Stop: no context injection needed — session ID already known
         hook_event_name = hook_type or "Unknown"
-        if hook_event_name == "Stop":
-            return result
 
-        # System message
-        if response.system_message:
-            result["systemMessage"] = response.system_message
+        # Codex CLI 0.120.0 rejects ``updatedInput`` and ``permissionDecision=allow``
+        # for PreToolUse hooks. When Gobby wants to rewrite a tool call, block the
+        # current execution and tell the model exactly how to retry instead.
+        has_retry_signal = bool(
+            response.auto_approve or response.reason or response.context or response.system_message
+        )
+        if response.modified_input and hook_event_name == "PreToolUse" and has_retry_signal:
+            retry_reason = (
+                response.reason
+                or "Retry the tool call with the corrected input from the hook message."
+            )
+            retry_parts: list[str] = []
+            if response.system_message:
+                retry_parts.append(response.system_message)
+            if response.context:
+                retry_parts.append(response.context)
+            retry_parts.append(
+                "Retry this tool call with the corrected input below:\n"
+                f"{json.dumps(response.modified_input, indent=2, sort_keys=True)}"
+            )
+            retry_result: dict[str, Any] = {
+                "decision": "block",
+                "reason": retry_reason,
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": retry_reason,
+                },
+            }
+            retry_result["systemMessage"] = compress_and_truncate("\n\n".join(retry_parts))[0]
+            return retry_result
+
+        if response.decision in ("deny", "block"):
+            if hook_event_name == "PreToolUse":
+                deny_result: dict[str, Any] = {
+                    "decision": "block",
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                    },
+                }
+                if response.reason:
+                    deny_result["reason"] = response.reason
+                    deny_result["hookSpecificOutput"]["permissionDecisionReason"] = response.reason
+
+                system_parts: list[str] = []
+                if response.system_message:
+                    system_parts.append(response.system_message)
+                if response.context:
+                    system_parts.append(response.context)
+                if system_parts:
+                    deny_result["systemMessage"] = compress_and_truncate("\n\n".join(system_parts))[
+                        0
+                    ]
+                return deny_result
+
+            block_result: dict[str, Any] = {"continue": False, "decision": "block"}
+            if response.reason:
+                block_result["reason"] = response.reason
+            return block_result
+
+        result: dict[str, Any] = {"continue": True}
 
         # Build additionalContext from all context sources
         context_parts: list[str] = []
@@ -740,6 +927,20 @@ class CodexHooksAdapter(BaseAdapter):
         # Workflow-injected context (inject_context action)
         if response.context:
             context_parts.append(response.context)
+
+        # Route system_message by event type:
+        # - systemMessage-only events (PreToolUse, Stop): visible systemMessage
+        # - SessionStart: BOTH systemMessage (visible banner) AND additionalContext (model-facing)
+        # - UserPromptSubmit, PostToolUse: additionalContext only (hidden from user)
+        if response.system_message:
+            if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
+                result["systemMessage"] = response.system_message
+            else:
+                # Always feed to model via additionalContext
+                context_parts.insert(0, response.system_message)
+                # SessionStart banner should also be visible to the user
+                if hook_event_name == "SessionStart":
+                    result["systemMessage"] = response.system_message
 
         # Session metadata (Gobby session ID, terminal context, etc.)
         if response.metadata:
@@ -784,26 +985,24 @@ class CodexHooksAdapter(BaseAdapter):
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
                     for key in [
-                        "terminal_iterm_session_id",
-                        "terminal_term_session_id",
-                        "terminal_kitty_window_id",
                         "terminal_tmux_pane",
-                        "terminal_vscode_terminal_id",
-                        "terminal_alacritty_socket",
                     ]:
                         if response.metadata.get(key):
                             friendly_name = key.replace("terminal_", "").replace("_", " ")
                             context_lines.append(f"{friendly_name}: {response.metadata[key]}")
                     context_parts.append("\n".join(context_lines))
 
-        # Build hookSpecificOutput with required hookEventName
-        # PreToolUse only accepts systemMessage — not additionalContext
-        # (Stop returns early above before reaching this code)
-        hook_event_name = hook_type or "Unknown"
+        # Build hookSpecificOutput or systemMessage based on event type.
+        # PreToolUse/Stop only accept systemMessage — additionalContext is rejected.
         if context_parts:
-            combined_context = truncate_additional_context("\n\n".join(context_parts))
+            combined_context = compress_and_truncate("\n\n".join(context_parts))[0]
             if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
-                result["systemMessage"] = combined_context
+                # Append to existing systemMessage (from system_message routing above)
+                # instead of overwriting it.
+                if "systemMessage" in result:
+                    result["systemMessage"] += "\n\n" + combined_context
+                else:
+                    result["systemMessage"] = combined_context
             else:
                 result["hookSpecificOutput"] = {
                     "hookEventName": hook_event_name,

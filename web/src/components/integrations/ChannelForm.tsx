@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { Channel, ChannelType } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
-import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './ChannelCard'
+import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
 import './IntegrationsPage.css'
 
 interface FieldDef {

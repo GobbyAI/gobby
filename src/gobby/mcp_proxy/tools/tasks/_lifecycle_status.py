@@ -1,11 +1,10 @@
 """Status transition handlers for task lifecycle.
 
-Handles reopen, escalate, mark_task_review_approved, and mark_task_needs_review
-tool registrations.
+Handles reopen, escalate, de_escalate, mark_task_review_approved, and
+mark_task_needs_review tool registrations.
 """
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -13,6 +12,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
 
         # Capture assignee before reopen clears it (needed for session variable cleanup)
         task = ctx.task_manager.get_task(resolved_id)
-        prior_assignee = task.assignee if task else None
+        prior_assignee = get_claimed_session_id(task) if task else None
 
         try:
             ctx.task_manager.reopen_task(resolved_id, reason=reason)
@@ -136,12 +136,10 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         if task.status in ("escalated", "closed"):
             return {"error": f"Cannot escalate task with status '{task.status}'."}
 
-        ctx.task_manager.update_task(
-            resolved_id,
-            status="escalated",
-            escalated_at=datetime.now(UTC).isoformat(),
-            escalation_reason=reason,
-        )
+        try:
+            ctx.task_manager.escalate_task(resolved_id, reason=reason)
+        except ValueError as e:
+            return {"error": str(e)}
 
         notify_parent_on_status_change(
             ctx.task_manager.db,
@@ -254,17 +252,13 @@ def register_mark_task_review_approved(
         except Exception:
             pass  # nosec B110 # best-effort, SESSION_END is the backstop
 
-        # Build update kwargs
-        update_kwargs: dict[str, Any] = {"status": "review_approved"}
-
-        # Append approval notes to description if provided
-        if approval_notes:
-            current_desc = task.description or ""
-            approval_section = f"\n\n[Approval Notes]\n{approval_notes}"
-            update_kwargs["description"] = current_desc + approval_section
-
-        # Update task status to review_approved
-        updated = ctx.task_manager.update_task(resolved_id, **update_kwargs)
+        try:
+            updated = ctx.task_manager.mark_task_review_approved(
+                resolved_id,
+                approval_notes=approval_notes,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
         if not updated:
             return {"error": f"Failed to approve task {task_id}"}
 
@@ -367,17 +361,13 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
         except Exception:
             pass  # nosec B110 # best-effort, SESSION_END is the backstop
 
-        # Build update kwargs
-        update_kwargs: dict[str, Any] = {"status": "needs_review"}
-
-        # Append review notes to description if provided
-        if review_notes:
-            current_desc = task.description or ""
-            review_section = f"\n\n[Review Notes]\n{review_notes}"
-            update_kwargs["description"] = current_desc + review_section
-
-        # Update task status to needs_review
-        updated = ctx.task_manager.update_task(resolved_id, **update_kwargs)
+        try:
+            updated = ctx.task_manager.mark_task_needs_review(
+                resolved_id,
+                review_notes=review_notes,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
         if not updated:
             return {"error": f"Failed to mark task {task_id} for review"}
 
@@ -415,4 +405,112 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
             "required": ["task_id"],
         },
         func=mark_task_needs_review,
+    )
+
+
+def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
+    """Register the de_escalate_task tool on the given registry."""
+
+    def de_escalate_task(
+        task_id: str,
+        reason: str,
+        target_status: str | None = None,
+        reset_validation: bool = False,
+    ) -> dict[str, Any]:
+        """De-escalate a task to an explicit next status.
+
+        Returns an escalated task to the requested next state after human intervention resolves
+        the issue. Optionally resets the validation failure count.
+
+        Args:
+            task_id: Task reference (#N, path, or UUID)
+            reason: Reason for de-escalation (required)
+            target_status: Where the task should return (default: open)
+            reset_validation: Also reset validation fail count (default: False)
+
+        Returns:
+            Empty dict on success, or error dict with details.
+        """
+        from gobby.utils.session_context import get_current_session_id
+
+        session_id = get_current_session_id()
+
+        try:
+            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+        except (TaskNotFoundError, ValueError) as e:
+            return {"error": f"Invalid task_id: {e}"}
+
+        task = ctx.task_manager.get_task(resolved_id)
+        if not task:
+            return {"error": f"Task {task_id} not found"}
+
+        if task.status != "escalated":
+            return {
+                "error": f"Task {task_id} is not escalated (current status: {task.status})",
+            }
+
+        try:
+            updated = ctx.task_manager.de_escalate_task(
+                resolved_id,
+                reason=reason,
+                target_status=target_status,
+                reset_validation=reset_validation,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
+
+        if not updated:
+            return {"error": f"Failed to de-escalate task {task_id}"}
+        logger.info("Task %s de-escalated: %s", resolved_id, reason)
+
+        notify_parent_on_status_change(
+            ctx.task_manager.db,
+            resolved_id,
+            updated.status,
+            task_ref=f"#{task.seq_num}" if task.seq_num else None,
+        )
+
+        # Link task to session (best-effort)
+        if session_id:
+            resolved_session_id = session_id
+            try:
+                resolved_session_id = ctx.resolve_session_id(session_id)
+            except ValueError:
+                pass
+            try:
+                ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "de_escalated")
+            except Exception as e:
+                logger.debug(f"Best-effort de-escalation linking failed: {e}")
+
+        return {}
+
+    registry.register(
+        name="de_escalate_task",
+        description="Return an escalated task to an explicit next status after human intervention resolves the issue. Optionally resets validation failure count.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task reference: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why the task is being de-escalated (e.g., 'dependency resolved', 'workaround applied')",
+                },
+                "target_status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "needs_review", "review_approved"],
+                    "description": "Status to return the task to after de-escalation (default: open)",
+                    "default": "open",
+                },
+                "reset_validation": {
+                    "type": "boolean",
+                    "description": "Also reset the validation failure count (default: false)",
+                    "default": False,
+                },
+            },
+            "required": ["task_id", "reason"],
+        },
+        func=de_escalate_task,
     )

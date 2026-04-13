@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.task_validation import create_validation_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
@@ -24,14 +25,13 @@ def mock_task_validator():
 
 @pytest.fixture
 def registry_with_patches(mock_task_manager, mock_task_validator):
-    """Create a task registry with TaskDependencyManager and SessionTaskManager patched."""
-    with (
-        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+    """Create a validation registry directly (validation tools are internal-only, not on gobby-tasks)."""
+    with patch(
+        "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
+        side_effect=lambda tm, tid, *a, **kw: tid,
     ):
-        registry = create_task_registry(
+        registry = create_validation_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
         yield registry
@@ -606,15 +606,16 @@ async def test_validate_task_without_changes_summary_uses_smart_context(
     mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
 
     with (
-        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch(
+            "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
+            side_effect=lambda tm, tid, *a, **kw: tid,
+        ),
         patch("gobby.tasks.validation.get_validation_context_smart") as mock_smart_context,
     ):
         mock_smart_context.return_value = "Smart context from git diff"
 
-        registry = create_task_registry(
+        registry = create_validation_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -651,16 +652,17 @@ async def test_validate_task_no_context_available_raises_error(
     mock_task_manager.list_tasks.return_value = []
 
     with (
-        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch(
+            "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
+            side_effect=lambda tm, tid, *a, **kw: tid,
+        ),
         patch("gobby.tasks.validation.get_validation_context_smart") as mock_smart_context,
     ):
         # No context available
         mock_smart_context.return_value = None
 
-        registry = create_task_registry(
+        registry = create_validation_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 

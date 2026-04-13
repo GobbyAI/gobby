@@ -3,7 +3,7 @@ import './task-detail.css'
 import './task-execution.css'
 import './task-advanced.css'
 import type { GobbyTask, GobbyTaskDetail, DependencyTree } from '../../hooks/useTasks'
-import { StatusBadge, PriorityBadge, TypeBadge, StatusDot } from './TaskBadges'
+import { PriorityBadge, TypeBadge, StatusDot, TaskStateBadges } from './TaskBadges'
 import { ReasoningTimeline } from './ReasoningTimeline'
 import { ActionFeed } from './ActionFeed'
 import { SessionViewer } from './SessionViewer'
@@ -12,18 +12,29 @@ import { RawTraceView } from './RawTraceView'
 import { OversightSelector } from './OversightSelector'
 import { EscalationCard } from './EscalationCard'
 import { TaskResults } from './TaskResults'
-import { CostTracker } from './CostTracker'
+import { TokenTracker } from './TokenTracker'
 import { TaskMemories } from './TaskMemories'
 import { AssigneePicker } from './AssigneePicker'
 import { TaskComments } from './TaskComments'
 import { PermissionOverrides } from './PermissionOverrides'
 import { TaskHandoff } from './TaskHandoff'
 import { LaunchAgentDialog } from './LaunchAgentDialog'
+import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
 
 interface TaskActions {
-  updateTask: (id: string, params: { status?: string; assignee?: string }) => Promise<GobbyTaskDetail | null>
+  claimTask: (id: string, sessionId: string, force?: boolean) => Promise<GobbyTaskDetail | null>
+  releaseTaskClaim: (id: string, status?: string) => Promise<GobbyTaskDetail | null>
+  markTaskNeedsReview: (id: string, notes?: string) => Promise<GobbyTaskDetail | null>
+  markTaskReviewApproved: (id: string, notes?: string) => Promise<GobbyTaskDetail | null>
+  escalateTask: (id: string, reason: string) => Promise<GobbyTaskDetail | null>
+  deEscalateTask: (
+    id: string,
+    decisionContext: string,
+    targetStatus?: string,
+    resetValidation?: boolean
+  ) => Promise<GobbyTaskDetail | null>
   closeTask: (id: string, reason?: string) => Promise<GobbyTaskDetail | null>
-  reopenTask: (id: string) => Promise<GobbyTaskDetail | null>
+  reopenTask: (id: string, reason?: string) => Promise<GobbyTaskDetail | null>
 }
 
 interface TaskDetailProps {
@@ -50,6 +61,30 @@ function formatDate(iso: string | null): string {
   const d = new Date(iso)
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
     + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+function promptForSessionId(ownerSessionId?: string | null): string | null {
+  if (ownerSessionId?.trim()) return ownerSessionId
+  const value = window.prompt('Enter the session ID that should own this task')
+  return value?.trim() || null
+}
+
+function promptForEscalationReason(existingReason?: string | null): string | null {
+  const value = window.prompt('Why is this task blocked?', existingReason ?? '')
+  return value?.trim() || null
+}
+
+function getPreservedLifecycleStatus(task: GobbyTaskDetail): string {
+  const state = getCanonicalTaskState(task)
+  if (state.is_escalated) return 'escalated'
+  if (state.is_merge_ready) return 'review_approved'
+  if (state.lifecycle_stage === 'needs_review') return 'needs_review'
+  if (state.lifecycle_stage === 'in_progress') return 'in_progress'
+  return 'open'
+}
+
+function getDeEscalationTargetStatus(task: GobbyTaskDetail): string {
+  return task.pre_escalation_status ?? 'open'
 }
 
 export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, actions, onSelectTask, onClose, onClone }: TaskDetailProps) {
@@ -100,6 +135,9 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
     }
   }, [])
 
+  const taskState = task ? getCanonicalTaskState(task) : null
+  const taskBucket = task ? getTaskBucket(task) : null
+
   const isOpen = taskId !== null
 
   // Collect flat blocker/blocking IDs from tree
@@ -107,7 +145,10 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
   const blockingIds = deps?.blocking?.map(b => b.id) || []
 
   // Subtask progress
-  const closedCount = subtasks.filter(t => t.status === 'closed' || t.status === 'review_approved').length
+  const closedCount = subtasks.filter(t => {
+    const bucket = getTaskBucket(t)
+    return bucket === 'closed' || bucket === 'merge_ready'
+  }).length
   const progressPct = subtasks.length > 0 ? Math.round((closedCount / subtasks.length) * 100) : 0
 
   return (
@@ -138,7 +179,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
               )}
               <h3 className="task-detail-title">{task.title}</h3>
               <div className="task-detail-badges">
-                <StatusBadge status={task.status} />
+                <TaskStateBadges task={task} />
                 <PriorityBadge priority={task.priority} />
                 <TypeBadge type={task.task_type} />
               </div>
@@ -153,7 +194,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             />
 
             {/* Launch Agent */}
-            {(task.status === 'open' || task.status === 'in_progress') && (
+            {(taskBucket === 'ready' || taskBucket === 'in_progress') && (
               <div className="task-detail-section">
                 <button
                   className="task-detail-action-btn task-detail-action-btn--primary launch-agent-trigger"
@@ -189,24 +230,29 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             )}
 
             {/* Handoff */}
-            {task.status !== 'closed' && (
+            {taskBucket !== 'closed' && (
               <div className="task-detail-section">
                 <TaskHandoff
                   taskId={task.id}
-                  currentAssignee={task.assignee}
+                  currentAssignee={taskState?.owner_session_id ?? null}
                   onHandoff={async (assignee) => {
-                    await handleAction(() => actions.updateTask(task.id, { assignee }))
+                    await handleAction(() => (
+                      assignee
+                        ? actions.claimTask(task.id, assignee, true)
+                        : actions.releaseTaskClaim(task.id, getPreservedLifecycleStatus(task))
+                    ))
                   }}
                 />
               </div>
             )}
 
             {/* Escalation card (shown prominently when task is escalated) */}
-            {task.status === 'escalated' && (
+            {taskState?.is_escalated && (
               <EscalationCard
                 task={task}
+                targetStatus={getDeEscalationTargetStatus(task)}
                 onResolve={() => {
-                  handleAction(() => actions.reopenTask(task.id))
+                  void fetchDetail(task.id)
                 }}
               />
             )}
@@ -214,15 +260,19 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             {/* Metadata */}
             <div className="task-detail-meta">
               <div className="task-detail-meta-row">
-                <span className="task-detail-meta-label">Assignee</span>
+                <span className="task-detail-meta-label">Owner</span>
                 <AssigneePicker
-                  currentAssignee={task.assignee}
+                  currentAssignee={taskState?.owner_session_id ?? null}
                   currentAgentName={task.agent_name}
                   onAssign={(assignee) => {
-                    handleAction(() => actions.updateTask(task.id, { assignee: assignee || '' }))
+                    handleAction(() => {
+                      if (assignee) return actions.claimTask(task.id, assignee, true)
+                      return actions.releaseTaskClaim(task.id, getPreservedLifecycleStatus(task))
+                    })
                   }}
                 />
               </div>
+              <MetaRow label="State" value={taskBucket ? taskBucket.replace(/_/g, ' ') : 'unknown'} />
               <MetaRow label="Created" value={formatDate(task.created_at)} />
               <MetaRow label="Updated" value={formatDate(task.updated_at)} />
               {task.closed_at && <MetaRow label="Closed" value={formatDate(task.closed_at)} />}
@@ -261,11 +311,12 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
                     // Roll back / retry: reopen the task so work can restart
                     handleAction(() => actions.reopenTask(task.id))
                   } else if (action === 'mark_resolved') {
-                    // Mark resolved: advance toward close
-                    if (task.status === 'escalated') {
-                      handleAction(() => actions.reopenTask(task.id))
+                    if (getCanonicalTaskState(task).is_escalated) {
+                      handleAction(() =>
+                        actions.deEscalateTask(task.id, 'Resolved from reasoning timeline', 'open')
+                      )
                     } else {
-                      handleAction(() => actions.updateTask(task.id, { status: 'needs_review' }))
+                      handleAction(() => actions.markTaskNeedsReview(task.id))
                     }
                   } else if (action === 'edit_and_run') {
                     handleAction(() => actions.reopenTask(task.id))
@@ -346,7 +397,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
                 <div className="task-detail-subtask-list">
                   {subtasks.map(st => (
                     <button key={st.id} className="task-detail-subtask-item" onClick={() => onSelectTask(st.id)}>
-                      <StatusDot status={st.status} />
+                      <StatusDot task={st} />
                       <span className="task-detail-subtask-ref">{st.ref}</span>
                       <span className="task-detail-subtask-title">{st.title}</span>
                     </button>
@@ -380,11 +431,11 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
               <TaskResults task={task} />
             </div>
 
-            {/* Cost & Token Usage */}
+            {/* Token Usage */}
             {task.created_in_session_id && (
               <div className="task-detail-section">
                 <h4 className="task-detail-section-title">Usage</h4>
-                <CostTracker sessionId={task.created_in_session_id} />
+                <TokenTracker sessionId={task.created_in_session_id} />
               </div>
             )}
 
@@ -490,7 +541,7 @@ function DebugTraceSection({ sessionId }: { sessionId: string }) {
 }
 
 // =============================================================================
-// Status action buttons - contextual by current status
+// Canonical action buttons
 // =============================================================================
 
 interface StatusAction {
@@ -499,46 +550,100 @@ interface StatusAction {
   onClick: () => Promise<GobbyTaskDetail | null>
 }
 
-function getActionsForStatus(
-  task: GobbyTaskDetail,
-  actions: TaskActions
-): StatusAction[] {
-  const { status, id } = task
+interface StatusActionGroup {
+  key: string
+  title: string
+  actions: StatusAction[]
+}
 
-  switch (status) {
-    case 'open':
-      return [
-        { label: 'Start Work', variant: 'primary', onClick: () => actions.updateTask(id, { status: 'in_progress' }) },
-        { label: 'Close', variant: 'danger', onClick: () => actions.closeTask(id) },
-      ]
-    case 'in_progress':
-      return [
-        { label: 'Submit for Review', variant: 'primary', onClick: () => actions.updateTask(id, { status: 'needs_review' }) },
-        { label: 'Close', variant: 'danger', onClick: () => actions.closeTask(id) },
-      ]
-    case 'needs_review':
-      return [
-        { label: 'Approve', variant: 'primary', onClick: () => actions.updateTask(id, { status: 'review_approved' }) },
-        { label: 'Reopen', variant: 'default', onClick: () => actions.reopenTask(id) },
-      ]
-    case 'review_approved':
-      return [
-        { label: 'Close', variant: 'primary', onClick: () => actions.closeTask(id) },
-        { label: 'Reopen', variant: 'default', onClick: () => actions.reopenTask(id) },
-      ]
-    case 'closed':
-      return [
-        { label: 'Reopen', variant: 'default', onClick: () => actions.reopenTask(id) },
-      ]
-    case 'escalated':
-      return [
-        { label: 'Reopen', variant: 'primary', onClick: () => actions.reopenTask(id) },
-      ]
-    default:
-      return [
-        { label: 'Close', variant: 'danger', onClick: () => actions.closeTask(id) },
-      ]
+function getActionGroups(task: GobbyTaskDetail, actions: TaskActions): StatusActionGroup[] {
+  const { id } = task
+  const state = getCanonicalTaskState(task)
+  const groups: StatusActionGroup[] = []
+
+  const ownershipActions: StatusAction[] = []
+  if (!state.is_closed) {
+    if (state.is_claimed) {
+      ownershipActions.push({
+        label: 'Release Claim',
+        variant: 'default',
+        onClick: () => actions.releaseTaskClaim(id, getPreservedLifecycleStatus(task)),
+      })
+    } else {
+      ownershipActions.push({
+        label: 'Claim Task',
+        variant: 'primary',
+        onClick: () => {
+          const sessionId = promptForSessionId(state.owner_session_id)
+          if (!sessionId) return Promise.resolve(null)
+          return actions.claimTask(id, sessionId, true)
+        },
+      })
+    }
   }
+  if (ownershipActions.length > 0) {
+    groups.push({ key: 'ownership', title: 'Ownership', actions: ownershipActions })
+  }
+
+  const lifecycleActions: StatusAction[] = []
+  if (!state.is_closed && !state.is_escalated) {
+    if (state.lifecycle_stage !== 'needs_review' && !state.is_merge_ready) {
+      lifecycleActions.push({
+        label: 'Send To Review',
+        variant: 'primary',
+        onClick: () => actions.markTaskNeedsReview(id),
+      })
+    }
+    if (state.lifecycle_stage === 'needs_review') {
+      lifecycleActions.push({
+        label: 'Approve Review',
+        variant: 'primary',
+        onClick: () => actions.markTaskReviewApproved(id),
+      })
+    }
+  }
+  if (lifecycleActions.length > 0) {
+    groups.push({ key: 'lifecycle', title: 'Lifecycle', actions: lifecycleActions })
+  }
+
+  const blockingActions: StatusAction[] = []
+  if (!state.is_closed) {
+    if (state.is_escalated) {
+      blockingActions.push({
+        label: 'Resume',
+        variant: 'default',
+        onClick: () =>
+          actions.deEscalateTask(
+            id,
+            'Resumed from task detail',
+            getDeEscalationTargetStatus(task),
+          ),
+      })
+    } else {
+      blockingActions.push({
+        label: 'Mark Blocked',
+        variant: 'default',
+        onClick: () => {
+          const reason = promptForEscalationReason(state.escalation_reason)
+          if (!reason) return Promise.resolve(null)
+          return actions.escalateTask(id, reason)
+        },
+      })
+    }
+  }
+  if (blockingActions.length > 0) {
+    groups.push({ key: 'blocking', title: 'Blocking', actions: blockingActions })
+  }
+
+  groups.push({
+    key: 'closure',
+    title: 'Closure',
+    actions: state.is_closed
+      ? [{ label: 'Reopen', variant: 'default', onClick: () => actions.reopenTask(id) }]
+      : [{ label: 'Close', variant: 'danger', onClick: () => actions.closeTask(id) }],
+  })
+
+  return groups
 }
 
 function StatusActions({
@@ -552,21 +657,28 @@ function StatusActions({
   loading: boolean
   onAction: (action: () => Promise<GobbyTaskDetail | null>) => void
 }) {
-  const statusActions = getActionsForStatus(task, actions)
+  const actionGroups = getActionGroups(task, actions)
 
-  if (statusActions.length === 0) return null
+  if (actionGroups.length === 0) return null
 
   return (
     <div className="task-detail-actions">
-      {statusActions.map(a => (
-        <button
-          key={a.label}
-          className={`task-detail-action-btn task-detail-action-btn--${a.variant}`}
-          onClick={() => onAction(a.onClick)}
-          disabled={loading}
-        >
-          {a.label}
-        </button>
+      {actionGroups.map(group => (
+        <div key={group.key} className="task-detail-action-group">
+          <span className="task-detail-section-title">{group.title}</span>
+          <div className="task-detail-action-group-buttons">
+            {group.actions.map(action => (
+              <button
+                key={`${group.key}-${action.label}`}
+                className={`task-detail-action-btn task-detail-action-btn--${action.variant}`}
+                onClick={() => onAction(action.onClick)}
+                disabled={loading}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   )

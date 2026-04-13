@@ -9,7 +9,7 @@ import re
 import sqlite3
 import threading
 import weakref
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -306,12 +306,29 @@ class LocalDatabase:
                 conn.execute("UPDATE ...")
         """
         conn = self.connection
+        if conn.in_transaction:
+            savepoint = self._next_savepoint_name()
+            self._push_after_commit_scope()
+            conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield conn
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                self._pop_after_commit_scope(committed=True)
+            except Exception:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                self._pop_after_commit_scope(committed=False)
+                raise
+            return
+        self._push_after_commit_scope()
         conn.execute("BEGIN")
         try:
             yield conn
             conn.execute("COMMIT")
+            self._run_after_commit_callbacks()
         except Exception:
             conn.execute("ROLLBACK")
+            self._pop_after_commit_scope(committed=False)
             raise
 
     @contextmanager
@@ -322,13 +339,85 @@ class LocalDatabase:
         Use for atomic read-then-update patterns where deferred locking is insufficient.
         """
         conn = self.connection
+        if conn.in_transaction:
+            savepoint = self._next_savepoint_name()
+            self._push_after_commit_scope()
+            conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield conn
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                self._pop_after_commit_scope(committed=True)
+            except Exception:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                self._pop_after_commit_scope(committed=False)
+                raise
+            return
+        self._push_after_commit_scope()
         conn.execute("BEGIN IMMEDIATE")
         try:
             yield conn
             conn.execute("COMMIT")
+            self._run_after_commit_callbacks()
         except Exception:
             conn.execute("ROLLBACK")
+            self._pop_after_commit_scope(committed=False)
             raise
+
+    def _next_savepoint_name(self) -> str:
+        """Generate a per-thread savepoint name for nested transactions."""
+        counter = getattr(self._local, "savepoint_counter", 0) + 1
+        self._local.savepoint_counter = counter
+        return f"gobby_sp_{counter}"
+
+    def after_commit(self, callback: Callable[[], Any]) -> None:
+        """Run a callback after the current transaction commits.
+
+        When called outside a managed transaction, the callback runs immediately.
+        Nested transactions defer callbacks until the outermost commit succeeds.
+        """
+        stack = getattr(self._local, "after_commit_stack", None)
+        if not stack:
+            callback()
+            return
+        stack[-1].append(callback)
+
+    def _push_after_commit_scope(self) -> None:
+        """Track callbacks registered within the current transaction scope."""
+        stack = cast(
+            list[list[Callable[[], Any]]] | None,
+            getattr(self._local, "after_commit_stack", None),
+        )
+        if stack is None:
+            stack = []
+            self._local.after_commit_stack = stack
+        stack.append([])
+
+    def _pop_after_commit_scope(self, *, committed: bool) -> list[Callable[[], Any]]:
+        """Resolve callbacks for a transaction scope.
+
+        On nested commit, callbacks bubble up to the parent scope. On rollback,
+        the scope's callbacks are discarded.
+        """
+        stack = cast(
+            list[list[Callable[[], Any]]] | None,
+            getattr(self._local, "after_commit_stack", None),
+        )
+        if not stack:
+            return []
+
+        callbacks = stack.pop()
+        if committed and stack:
+            stack[-1].extend(callbacks)
+            callbacks = []
+        if not stack:
+            self._local.after_commit_stack = []
+        return callbacks
+
+    def _run_after_commit_callbacks(self) -> None:
+        """Run callbacks captured in the just-committed outer transaction."""
+        for callback in self._pop_after_commit_scope(committed=True):
+            callback()
 
     def close(self) -> None:
         """Close all database connections and clean up managers.

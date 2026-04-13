@@ -22,7 +22,6 @@ class TestExtractPayload:
             "session_id": "sess-123",
             "model": {"id": "claude-opus-4-6"},
             "cost": {
-                "total_cost_usd": 0.0423,
                 "input_tokens": 12345,
                 "output_tokens": 6789,
                 "cache_creation_tokens": 1000,
@@ -34,7 +33,6 @@ class TestExtractPayload:
         assert result is not None
         assert result["session_id"] == "sess-123"
         assert result["model_id"] == "claude-opus-4-6"
-        assert result["total_cost_usd"] == 0.0423
         assert result["input_tokens"] == 12345
         assert result["output_tokens"] == 6789
         assert result["cache_creation_tokens"] == 1000
@@ -42,21 +40,20 @@ class TestExtractPayload:
         assert result["context_window_size"] == 200000
 
     def test_returns_none_without_session_id(self) -> None:
-        data = {"cost": {"total_cost_usd": 0.01}}
+        data = {"cost": {"input_tokens": 10}}
         assert _extract_payload(data) is None
 
-    def test_returns_none_without_cost(self) -> None:
+    def test_extracts_defaults_without_cost(self) -> None:
         data = {"session_id": "sess-123"}
-        assert _extract_payload(data) is None
-
-    def test_returns_none_without_total_cost(self) -> None:
-        data = {"session_id": "sess-123", "cost": {"input_tokens": 100}}
-        assert _extract_payload(data) is None
+        result = _extract_payload(data)
+        assert result is not None
+        assert result["input_tokens"] == 0
+        assert result["output_tokens"] == 0
 
     def test_defaults_missing_token_fields(self) -> None:
         data = {
             "session_id": "sess-123",
-            "cost": {"total_cost_usd": 0.01},
+            "cost": {},
         }
         result = _extract_payload(data)
         assert result is not None
@@ -97,7 +94,7 @@ class TestMain:
     def test_parses_valid_json_and_posts(self, monkeypatch: pytest.MonkeyPatch) -> None:
         data = {
             "session_id": "sess-123",
-            "cost": {"total_cost_usd": 0.05, "input_tokens": 100, "output_tokens": 50},
+            "cost": {"input_tokens": 100, "output_tokens": 50},
             "model": {"id": "claude-opus-4-6"},
         }
         monkeypatch.delenv("GOBBY_STATUSLINE_DOWNSTREAM", raising=False)
@@ -118,7 +115,8 @@ class TestMain:
         assert call_args[0][0] == 60887  # port
         posted = json.loads(call_args[0][1])
         assert posted["session_id"] == "sess-123"
-        assert posted["total_cost_usd"] == 0.05
+        assert posted["input_tokens"] == 100
+        assert posted["output_tokens"] == 50
 
     def test_handles_invalid_json(self) -> None:
         with patch("sys.stdin") as mock_stdin:
@@ -135,7 +133,7 @@ class TestMain:
     def test_forwards_to_downstream(self) -> None:
         data = {
             "session_id": "sess-123",
-            "cost": {"total_cost_usd": 0.01},
+            "cost": {"input_tokens": 1},
             "model": {"id": "test"},
         }
         with (
@@ -156,7 +154,7 @@ class TestMain:
         assert mock_fwd.call_args[0][0] == "cship"
 
     def test_no_post_without_session_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        data = {"cost": {"total_cost_usd": 0.01}}
+        data = {"cost": {"input_tokens": 1}}
         monkeypatch.delenv("GOBBY_STATUSLINE_DOWNSTREAM", raising=False)
         with (
             patch("sys.stdin") as mock_stdin,

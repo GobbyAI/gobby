@@ -37,6 +37,10 @@ _DEFAULT_MAX_RETRIES = 5
 _DEFAULT_BASE_DELAY = 1.0  # seconds
 _DEFAULT_MAX_DELAY = 60.0  # seconds
 
+# Cooldown for model-reload attempts (prevents hammering lms/ollama)
+_RELOAD_COOLDOWN = 60.0  # seconds
+_last_reload_attempt: float = 0.0
+
 # ---------------------------------------------------------------------------
 # TTL cache for embedding results
 # ---------------------------------------------------------------------------
@@ -97,6 +101,25 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+def _needs_nomic_prefix(model: str) -> bool:
+    """Check if a model requires nomic-style task prefixes."""
+    return "nomic" in model.lower()
+
+
+def _apply_prefix(text: str, is_query: bool, model: str) -> str:
+    """Prepend nomic task prefix when applicable.
+
+    nomic-embed-text was trained with task-specific prefixes:
+    - 'search_query: ' for queries
+    - 'search_document: ' for documents
+    """
+    if not _needs_nomic_prefix(model):
+        return text
+    if is_query:
+        return f"search_query: {text}"
+    return f"search_document: {text}"
+
+
 async def generate_embeddings(
     texts: list[str],
     model: str = "nomic-embed-text",
@@ -122,7 +145,7 @@ async def generate_embeddings(
         api_key: Optional API key (uses env var OPENAI_API_KEY if not set)
         max_retries: Maximum retry attempts for rate limit errors (default: 5)
         base_delay: Initial backoff delay in seconds (default: 1.0)
-        is_query: Whether this is a query embedding (unused, kept for compat)
+        is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
 
     Returns:
         List of embedding vectors (one per input text). Returns an empty
@@ -134,6 +157,10 @@ async def generate_embeddings(
     if not texts:
         return []
 
+    # Apply nomic task prefix before cache lookup so prefixed/unprefixed
+    # texts cache separately.
+    prefixed_texts = [_apply_prefix(t, is_query, model) for t in texts]
+
     lock = _get_lock()
 
     # --- Phase 1: Check cache for each text ---
@@ -144,7 +171,7 @@ async def generate_embeddings(
         miss_texts: list[str] = []
         seen_in_batch: dict[str, int] = {}  # key -> first index in results
 
-        for i, text in enumerate(texts):
+        for i, text in enumerate(prefixed_texts):
             key = _cache_key(text, model, api_base)
             entry = _cache.get(key)
             if entry is not None:
@@ -186,11 +213,30 @@ async def generate_embeddings(
 
         # Fill in the None slots
         for i in miss_indices:
-            text = texts[i]
+            text = prefixed_texts[i]
             results[i] = text_to_embedding.get(text)
 
     # All slots should be filled now
     return results  # type: ignore[return-value]
+
+
+async def _try_reload_model(model: str, api_base: str) -> bool:
+    """Attempt to reload an evicted model on a local inference server.
+
+    Respects a cooldown to avoid hammering the server when multiple
+    concurrent calls all see the same eviction error.
+    """
+    global _last_reload_attempt  # noqa: PLW0603
+    now = time.monotonic()
+    if now - _last_reload_attempt < _RELOAD_COOLDOWN:
+        logger.debug("Skipping model reload — cooldown active")
+        return False
+    _last_reload_attempt = now
+
+    from gobby.cli.services import try_autoload_embedding_model
+
+    logger.info(f"Embedding model evicted — attempting reload ({model})")
+    return await try_autoload_embedding_model(model, api_base)
 
 
 async def _fetch_embeddings(
@@ -202,7 +248,13 @@ async def _fetch_embeddings(
     base_delay: float,
 ) -> list[list[float]]:
     """Raw API call to generate embeddings (no caching)."""
-    from openai import AsyncOpenAI, AuthenticationError, NotFoundError, RateLimitError
+    from openai import (
+        AsyncOpenAI,
+        AuthenticationError,
+        BadRequestError,
+        NotFoundError,
+        RateLimitError,
+    )
 
     # Use "unused" as default key for local endpoints (Ollama doesn't need a key)
     effective_key = api_key or os.environ.get("OPENAI_API_KEY") or "unused"
@@ -221,6 +273,24 @@ async def _fetch_embeddings(
         except NotFoundError as e:
             logger.error(f"Embedding model not found: {e}")
             raise RuntimeError(f"Model not found: {e}") from e
+        except BadRequestError as e:
+            if "no models loaded" not in str(e).lower() or not api_base:
+                logger.error(f"Failed to generate embeddings: {e}")
+                raise RuntimeError(f"Embedding generation failed: {e}") from e
+            # Model was evicted from local inference server — try to reload
+            reloaded = await _try_reload_model(model, api_base)
+            if not reloaded:
+                raise RuntimeError(f"Embedding generation failed: {e}") from e
+            # Retry once after successful reload
+            try:
+                response = await client.embeddings.create(model=model, input=texts)
+                embeddings = [item.embedding for item in response.data]
+                logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
+                return embeddings
+            except Exception as retry_err:
+                raise RuntimeError(
+                    f"Embedding failed after model reload: {retry_err}"
+                ) from retry_err
         except RateLimitError as e:
             last_error = e
             if attempt == max_retries:
@@ -260,7 +330,7 @@ async def generate_embedding(
         api_key: Optional API key
         max_retries: Maximum retry attempts for rate limit errors
         base_delay: Initial backoff delay in seconds
-        is_query: Whether this is a query embedding
+        is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
 
     Returns:
         Embedding vector as list of floats

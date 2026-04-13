@@ -3,6 +3,7 @@
 Tests status transitions, validation, and blocked status in update_task.
 """
 
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 import pytest
@@ -102,7 +103,8 @@ class TestMarkTaskReviewApproved:
     ) -> None:
         """Test approving a task in needs_review status."""
         mock_task_manager.get_task.return_value = sample_task_needs_review
-        mock_task_manager.update_task.return_value = sample_task_needs_review
+        approved_task = replace(sample_task_needs_review, status="review_approved")
+        mock_task_manager.mark_task_review_approved.return_value = approved_task
 
         tool_func = lifecycle_registry._tools["mark_task_review_approved"].func
         result = tool_func(
@@ -110,16 +112,17 @@ class TestMarkTaskReviewApproved:
         )
 
         assert "error" not in result
-        mock_task_manager.update_task.assert_called_once()
-        call_kwargs = mock_task_manager.update_task.call_args
-        assert call_kwargs[1]["status"] == "review_approved"
+        mock_task_manager.mark_task_review_approved.assert_called_once_with(
+            "#42",
+            approval_notes=None,
+        )
 
     def test_approve_in_progress_task(
         self, lifecycle_registry, mock_task_manager, sample_task_in_progress
     ) -> None:
         """Test approving a task in in_progress status (also valid)."""
         mock_task_manager.get_task.return_value = sample_task_in_progress
-        mock_task_manager.update_task.return_value = sample_task_in_progress
+        mock_task_manager.mark_task_review_approved.return_value = sample_task_in_progress
 
         tool_func = lifecycle_registry._tools["mark_task_review_approved"].func
         result = tool_func(
@@ -141,7 +144,7 @@ class TestMarkTaskReviewApproved:
 
         assert "error" in result
         assert "Cannot approve" in result["error"]
-        mock_task_manager.update_task.assert_not_called()
+        mock_task_manager.mark_task_review_approved.assert_not_called()
 
     def test_approve_rejects_closed_task(self, lifecycle_registry, mock_task_manager) -> None:
         """Test that approving a closed task is rejected."""
@@ -170,7 +173,8 @@ class TestMarkTaskReviewApproved:
     ) -> None:
         """Test approving with approval notes appends to description."""
         mock_task_manager.get_task.return_value = sample_task_needs_review
-        mock_task_manager.update_task.return_value = sample_task_needs_review
+        approved_task = replace(sample_task_needs_review, status="review_approved")
+        mock_task_manager.mark_task_review_approved.return_value = approved_task
 
         tool_func = lifecycle_registry._tools["mark_task_review_approved"].func
         result = tool_func(
@@ -179,9 +183,10 @@ class TestMarkTaskReviewApproved:
         )
 
         assert "error" not in result
-        call_kwargs = mock_task_manager.update_task.call_args
-        assert "[Approval Notes]" in call_kwargs[1]["description"]
-        assert "Looks good, all tests pass." in call_kwargs[1]["description"]
+        mock_task_manager.mark_task_review_approved.assert_called_once_with(
+            "#42",
+            approval_notes="Looks good, all tests pass.",
+        )
 
     def test_approve_task_not_found(self, lifecycle_registry, mock_task_manager) -> None:
         """Test approving a task that doesn't exist."""

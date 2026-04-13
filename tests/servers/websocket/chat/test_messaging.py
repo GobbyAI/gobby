@@ -163,7 +163,9 @@ class TestStreamChatResponse:
         mixin.clients[ws] = {"conversation_id": "c1"}
         session = AsyncMock()
         session.model = "opus"
+        session.db_session_id = "db-id"
         mixin._chat_sessions["c1"] = session
+        mixin.session_manager = MagicMock()
 
         async def dummy_generator(text):
             yield DoneEvent(
@@ -176,6 +178,7 @@ class TestStreamChatResponse:
         await mixin._stream_chat_response(ws, "c1", "hi", "sonnet")
 
         session.switch_model.assert_awaited_once_with("sonnet")
+        mixin.session_manager.update_model.assert_called_once_with("db-id", "sonnet")
         # Validate model switch message sent
         messages = [call[0][0] for call in ws.send.call_args_list]
         assert any("model_switched" in msg and "sonnet" in msg for msg in messages)
@@ -211,9 +214,10 @@ class TestStreamChatResponse:
         assert "chat_stream" in types
         assert "tool_status" in types
 
-        # Verify done event handling rekeys the session dict
-        assert "c1" not in mixin._chat_sessions
-        assert "sdk" in mixin._chat_sessions
+        # Web-chat sessions stay keyed by DB/UI session identity; sdk_session_id
+        # is metadata only and must not mutate the in-memory/frontend key.
+        assert "c1" in mixin._chat_sessions
+        assert "sdk" not in mixin._chat_sessions
 
     @pytest.mark.asyncio
     async def test_stream_cancellation_safely(self, mixin: DummyMessagingMixin, ws: AsyncMock):

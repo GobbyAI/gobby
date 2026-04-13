@@ -55,6 +55,7 @@ variables:
   listed_servers:
     value:
       - gobby-tasks
+      - gobby-tasks-ops
       - gobby-sessions
       - gobby-memory
       - gobby-workflows
@@ -76,9 +77,24 @@ variables:
   is_subagent:
     value: false
     description: "True while a native Claude Code subagent is active (toggled by SUBAGENT_START/STOP hooks)"
+  injected_skills:
+    value: []
+    description: "Set of skill names fully injected into context this session (dedup for JIT skill loading)"
+  memory_nudge_fired:
+    value: false
+    description: "True after memory-capture-nudge has fired once this session"
+  _agent_context_injected:
+    value: false
+    description: "True after agent instructions/skills/code-index have been injected on first before_agent"
   edit_write_pending:
     value: false
     description: "True when an Edit/Write tool call is pending (pre-tool fired, post-tool not yet succeeded)"
   edit_write_stop_blocks:
     value: 0
     description: "Circuit breaker counter for edit-write stop gate"
+  context7_available:
+    value: true
+    description: "True when context7 MCP server is configured and available"
+  context7_loaded:
+    value: false
+    description: "True after context7 skill has been injected this session"

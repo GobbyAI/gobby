@@ -3,7 +3,7 @@ tags: [auto-task, task, autonomous, lifecycle, gobby, default]
 rules:
   guide-task-continuation:
     description: "Block stop when task tree has incomplete subtasks"
-    event: stop
+    event: turn_end
     enabled: true
     priority: 45
     when: "variables.get('auto_task_ref') and not task_tree_complete(variables.get('auto_task_ref')) and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 8)"

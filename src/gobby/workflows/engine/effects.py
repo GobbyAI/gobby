@@ -1,7 +1,7 @@
 """Effect handling for the rule engine.
 
 Handles applying rule effects: set_variable, inject_context, observe,
-mcp_call, rewrite_input, compress_output, load_skill, and block matching.
+mcp_call, rewrite_input, load_skill, and block matching.
 """
 
 import json
@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.normalization import is_shell_tool
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
@@ -22,6 +23,7 @@ class EffectsMixin:
     """Mixin providing effect handling methods for RuleEngine."""
 
     _skill_manager: Any
+    _mcp_dispatcher: Any
 
     if TYPE_CHECKING:
         # Provided by TemplatingMixin at runtime via RuleEngine MRO
@@ -34,7 +36,7 @@ class EffectsMixin:
 
         def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]: ...
 
-    def _apply_effect(
+    async def _apply_effect(
         self,
         effect: Any,
         row: WorkflowDefinitionRow,
@@ -43,8 +45,13 @@ class EffectsMixin:
         allowed_funcs: dict[str, Callable[..., Any]],
         context_parts: list[str],
         mcp_calls: list[dict[str, Any]],
-    ) -> None:
-        """Apply a single non-block effect."""
+    ) -> bool:
+        """Apply a single non-block effect.
+
+        Returns:
+            True to continue processing sibling effects, False to abort
+            remaining effects for this rule (e.g. inline mcp_call failed).
+        """
         if effect.type == "set_variable":
             self._apply_set_variable(effect, variables, ctx)
 
@@ -78,6 +85,42 @@ class EffectsMixin:
                 k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
                 for k, v in raw_args.items()
             }
+
+            # Inline dispatch for inject_result calls — ensures atomicity with
+            # sibling effects (e.g. set_variable that tracks injection state).
+            # Background calls are always deferred regardless of inject_result.
+            if effect.inject_result and not effect.background and self._mcp_dispatcher:
+                event = ctx.get("event")
+                try:  # Broad catch intentional — external MCP dispatcher is an opaque async callable
+                    dr = await self._mcp_dispatcher(
+                        effect.server, effect.tool, rendered_args, event
+                    )
+                    success = isinstance(dr, dict) and dr.get("success", False)
+                    if success and dr.get("result"):
+                        from gobby.hooks.dispatchers.mcp import format_discovery_result
+
+                        formatted = format_discovery_result(
+                            {"tool": effect.tool, "result": dr["result"]}
+                        )
+                        if formatted:
+                            context_parts.append(formatted)
+                    elif not success:
+                        error = dr.get("result", {}).get("error", "unknown") if dr else "no result"
+                        logger.warning(
+                            f"Inline mcp_call {effect.server}/{effect.tool} failed "
+                            f"(rule {row.name}): {error} — aborting remaining effects",
+                        )
+                        return False
+                except Exception:
+                    logger.warning(
+                        f"Inline mcp_call {effect.server}/{effect.tool} raised "
+                        f"(rule {row.name}) — aborting remaining effects",
+                        exc_info=True,
+                    )
+                    return False
+                return True
+
+            # Deferred dispatch (background, non-inject, or no dispatcher)
             mcp_calls.append(
                 {
                     "server": effect.server,
@@ -122,12 +165,6 @@ class EffectsMixin:
                 rewrite_meta["input_updates"] = rendered_updates
                 rewrite_meta["auto_approve"] = effect.auto_approve
 
-        elif effect.type == "compress_output":
-            variables["_compress_output"] = {
-                "strategy": effect.strategy,
-                "max_lines": effect.max_lines,
-            }
-
         elif effect.type == "load_skill":
             if effect.skill and self._skill_manager:
                 try:
@@ -150,8 +187,10 @@ class EffectsMixin:
                     f"load_skill effect: no skill_manager available (rule {row.name})",
                 )
 
-    def _should_block(self, effect: Any, event: HookEvent) -> bool:
-        """Check if a block effect matches the current tool/event."""
+        return True
+
+    def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool:
+        """Check whether an effect's tool and command selectors match this event."""
         tool_name = event.data.get("tool_name")
         mcp_tool = event.data.get("mcp_tool")
         mcp_server = event.data.get("mcp_server") or event.data.get("server_name")
@@ -176,9 +215,11 @@ class EffectsMixin:
 
         # Check native tool match
         if effect.tools and tool_name:
-            if tool_name in effect.tools:
-                # Check command patterns for Bash tool
-                if tool_name == "Bash" and effect.command_pattern and command:
+            matches_tool = tool_name in effect.tools or (
+                is_shell_tool(tool_name) and any(is_shell_tool(name) for name in effect.tools)
+            )
+            if matches_tool:
+                if is_shell_tool(tool_name) and effect.command_pattern and command:
                     if not re.search(effect.command_pattern, command):
                         return False
                     if effect.command_not_pattern and re.search(
@@ -200,6 +241,10 @@ class EffectsMixin:
                         return True
 
         return False
+
+    def _should_block(self, effect: Any, event: HookEvent) -> bool:
+        """Check if a block effect matches the current tool/event."""
+        return self._effect_matches_event(effect, event)
 
     def _apply_set_variable(
         self,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Channel, ChannelType, ChannelStatus } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
-import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './ChannelCard'
+import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
 import './IntegrationsPage.css'
 
 const WEBHOOK_TYPES: ChannelType[] = ['slack', 'telegram', 'discord', 'teams', 'sms']

@@ -1,0 +1,131 @@
+import { useState, useEffect } from 'react'
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface SessionUsage {
+  sessionId: string
+  inputTokens: number
+  outputTokens: number
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+function getBaseUrl(): string {
+  return import.meta.env.VITE_API_BASE_URL || ''
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
+// =============================================================================
+// TokenTracker
+// =============================================================================
+
+interface TokenTrackerProps {
+  sessionId: string | null
+}
+
+export function TokenTracker({ sessionId }: TokenTrackerProps) {
+  const [usage, setUsage] = useState<SessionUsage | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!sessionId) return
+    const sid = sessionId
+    const controller = new AbortController()
+    let cancelled = false
+
+    async function fetchUsage() {
+      setIsLoading(true)
+      try {
+        const baseUrl = getBaseUrl()
+        const response = await fetch(
+          `${baseUrl}/api/sessions/${encodeURIComponent(sid)}`,
+          { signal: controller.signal }
+        )
+        if (!response.ok) {
+          console.warn(`Session usage fetch returned ${response.status}`)
+          // Reset usage so we don't show stale tokens for an unrelated session
+          if (!cancelled) setUsage(null)
+        } else {
+          const data = await response.json()
+          const session = data.session
+          if (session && !cancelled) {
+            setUsage({
+              sessionId: session.id || sid,
+              inputTokens: session.usage_input_tokens || 0,
+              outputTokens: session.usage_output_tokens || 0,
+            })
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.error('Failed to fetch session usage:', e)
+          setUsage(null)
+        }
+      }
+      if (!cancelled) setIsLoading(false)
+    }
+
+    fetchUsage()
+    return () => { cancelled = true; controller.abort() }
+  }, [sessionId])
+
+  if (!sessionId) return null
+  if (isLoading) return <div className="token-tracker-loading">Loading usage...</div>
+  if (!usage) return <div className="token-tracker-empty">No usage data</div>
+
+  const totalTokens = usage.inputTokens + usage.outputTokens
+  const inputPct = totalTokens > 0 ? (usage.inputTokens / totalTokens) * 100 : 50
+
+  return (
+    <div className="token-tracker">
+      {/* Total tokens */}
+      <div className="token-tracker-total">
+        <span className="token-tracker-total-value">{formatTokens(totalTokens)}</span>
+        <span className="token-tracker-total-label">tokens used</span>
+      </div>
+
+      {/* Token breakdown bar */}
+      <div className="token-tracker-bar-container">
+        <div className="token-tracker-bar">
+          <div
+            className="token-tracker-bar-input"
+            style={{ width: `${inputPct}%` }}
+            title={`Input: ${formatTokens(usage.inputTokens)}`}
+          />
+          <div
+            className="token-tracker-bar-output"
+            style={{ width: `${100 - inputPct}%` }}
+            title={`Output: ${formatTokens(usage.outputTokens)}`}
+          />
+        </div>
+      </div>
+
+      {/* Token stats */}
+      <div className="token-tracker-stats">
+        <div className="token-tracker-stat">
+          <span className="token-tracker-stat-dot token-tracker-stat-dot--input" />
+          <span className="token-tracker-stat-label">Input</span>
+          <span className="token-tracker-stat-value">{formatTokens(usage.inputTokens)}</span>
+        </div>
+        <div className="token-tracker-stat">
+          <span className="token-tracker-stat-dot token-tracker-stat-dot--output" />
+          <span className="token-tracker-stat-label">Output</span>
+          <span className="token-tracker-stat-value">{formatTokens(usage.outputTokens)}</span>
+        </div>
+        <div className="token-tracker-stat">
+          <span className="token-tracker-stat-label">Total</span>
+          <span className="token-tracker-stat-value">{formatTokens(totalTokens)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}

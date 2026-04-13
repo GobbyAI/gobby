@@ -29,7 +29,7 @@ class MockMemory:
         created_at: str = "2024-01-01T00:00:00",
         updated_at: str | None = None,
         project_id: str | None = None,
-        source_type: str = "mcp_tool",
+        source_type: str = "agent",
         access_count: int = 0,
         tags: list[str] | None = None,
     ) -> None:

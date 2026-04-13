@@ -74,9 +74,6 @@ async def handle_clear_chat(
                 await asyncio.to_thread(
                     session_manager.update, session.db_session_id, status="completed"
                 )
-                await asyncio.to_thread(
-                    session_manager.update_pending_plan, session.db_session_id, None
-                )
             except Exception as e:
                 logger.warning(f"Failed to update session status on clear: {e}", exc_info=True)
 
@@ -101,6 +98,10 @@ async def handle_clear_chat(
     mixin._chat_sessions.pop(conversation_id, None)
     if hasattr(mixin, "_session_create_locks"):
         mixin._session_create_locks.pop(conversation_id, None)
+
+    # Unload voice models if no sessions remain
+    if hasattr(mixin, "_check_voice_idle"):
+        mixin._check_voice_idle()
 
     # Notify frontend
     await websocket.send(json.dumps({"type": "chat_cleared", "conversation_id": conversation_id}))
@@ -138,6 +139,10 @@ async def handle_delete_chat(
         if hasattr(mixin, "_session_create_locks"):
             mixin._session_create_locks.pop(conversation_id, None)
 
+    # Unload voice models if no sessions remain
+    if hasattr(mixin, "_check_voice_idle"):
+        mixin._check_voice_idle()
+
     # Soft-delete: mark as expired (preserves messages;
     # hard delete fails due to FK constraints from agent_runs, tasks, etc.)
     # Use 'expired' not 'handoff_ready' — no child session will pick these up.
@@ -146,7 +151,6 @@ async def handle_delete_chat(
         try:
             if session_manager:
                 await asyncio.to_thread(session_manager.update, db_session_id, status="expired")
-                await asyncio.to_thread(session_manager.update_pending_plan, db_session_id, None)
         except Exception as e:
             logger.warning(f"Failed to soft-delete session from DB: {e}")
 
@@ -175,7 +179,7 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                     mixin._session_create_locks.pop(conv_id, None)
                 if session is None:
                     continue
-                # Mark as paused in database and clear pending plan before stopping
+                # Mark as paused in database before stopping
                 if session.db_session_id:
                     session_manager = getattr(mixin, "session_manager", None)
                     if session_manager:
@@ -183,17 +187,15 @@ async def cleanup_idle_sessions(mixin: SessionControlMixin) -> None:
                             await asyncio.to_thread(
                                 session_manager.update, session.db_session_id, status="paused"
                             )
-                            await asyncio.to_thread(
-                                session_manager.update_pending_plan,
-                                session.db_session_id,
-                                None,
-                            )
                         except Exception as e:
                             logger.warning(f"Failed to update session status: {e}")
                 await session.stop()
                 logger.debug(f"Cleaned up idle chat session {conv_id}")
             if stale_ids:
                 logger.info(f"Cleaned up {len(stale_ids)} idle chat session(s)")
+                # Unload voice models if no sessions remain
+                if hasattr(mixin, "_check_voice_idle"):
+                    mixin._check_voice_idle()
         except asyncio.CancelledError:
             break
         except Exception:

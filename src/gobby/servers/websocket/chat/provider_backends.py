@@ -1,0 +1,877 @@
+"""Daemon-owned provider backends and managed web-chat session wrappers."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import shutil
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.adapters.gemini import GeminiAdapter
+from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
+from gobby.llm.claude_models import (
+    ChatEvent,
+    DoneEvent,
+    TextChunk,
+    ThinkingEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
+from gobby.servers.chat_session import ChatSession
+from gobby.servers.chat_session_helpers import PendingApproval, build_compaction_context
+from gobby.servers.gemini_permissions import GeminiWebChatPermissionsMixin
+from gobby.sessions.transcripts.codex import CodexTranscriptParser
+
+logger = logging.getLogger(__name__)
+
+_BACKEND_START_TIMEOUT_SECONDS = 15.0
+_CODEX_TRANSCRIPT_RETRY_ATTEMPTS = 5
+_CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS = 0.1
+
+# GeminiAdapter is stateless w.r.t. tool-name normalization; share one instance
+# instead of constructing a new adapter on every tool call.
+_GEMINI_TOOL_NAME_ADAPTER = GeminiAdapter()
+
+
+def _error_message(exc: BaseException) -> str:
+    """Return a compact non-empty error string for startup health."""
+    message = str(exc).strip()
+    return message or exc.__class__.__name__
+
+
+def _extract_text(content: str | list[dict[str, Any]]) -> str:
+    """Extract a plain-text prompt from text blocks."""
+    if isinstance(content, str):
+        return content
+
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text", "")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts)
+
+
+def _extract_codex_delta(params: dict[str, Any]) -> str:
+    """Extract a text delta from Codex notification params."""
+    delta = params.get("delta")
+    if isinstance(delta, str) and delta:
+        return delta
+
+    item = params.get("item")
+    if isinstance(item, dict):
+        content = item.get("content")
+        if isinstance(content, str) and content:
+            return content
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for block in content:
+                if isinstance(block, dict):
+                    text = block.get("text") or block.get("delta") or ""
+                    if isinstance(text, str) and text:
+                        chunks.append(text)
+            if chunks:
+                return "".join(chunks)
+
+    return ""
+
+
+@dataclass(slots=True)
+class ProviderBackendHealth:
+    """Availability state for a provider backend."""
+
+    provider: str
+    available: bool
+    startup_error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "available": self.available,
+            "startup_error": self.startup_error,
+        }
+
+
+@dataclass
+class ManagedChatSessionBase:
+    """Common protocol fields for backend-managed web-chat sessions."""
+
+    conversation_id: str
+    provider: str
+    chat_mode: str
+    _backend: Any = field(default=None, repr=False)
+    db_session_id: str | None = None
+    seq_num: int | None = None
+    project_id: str | None = None
+    project_path: str | None = None
+    message_index: int = 0
+    system_prompt_override: str | None = None
+    resume_session_id: str | None = None
+    sdk_session_id: str | None = field(default=None, repr=False)
+    last_activity: datetime = field(default_factory=lambda: datetime.now(UTC))
+    _connected: bool = field(default=False, repr=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _model: str | None = field(default=None, repr=False)
+    _tool_approval_config: Any | None = field(default=None, repr=False)
+    _tool_approval_callback: Any | None = field(default=None, repr=False)
+    _session_manager_ref: Any | None = field(default=None, repr=False)
+    _on_mode_persist: Callable[[str], None] | None = field(default=None, repr=False)
+    _on_approved_tools_persist: Callable[[set[str]], None] | None = field(default=None, repr=False)
+    _approved_tools: set[str] = field(default_factory=set, repr=False)
+    _plan_file_path: str | None = field(default=None, repr=False)
+    _pending_agent_name: str | None = field(default=None, repr=False)
+    _plan_approval_completed: bool = field(default=False, repr=False)
+    _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
+    _accumulated_output_tokens: int = field(default=0, repr=False)
+    _message_manager_source_session_id: str | None = field(default=None, repr=False)
+    _needs_history_injection: bool = field(default=False, repr=False)
+    _message_manager: Any | None = field(default=None, repr=False)
+    _config: Any | None = field(default=None, repr=False)
+    _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
+        default=None, repr=False
+    )
+    _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
+        default=None, repr=False
+    )
+    _on_post_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
+        default=None, repr=False
+    )
+    _on_pre_compact: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
+        default=None, repr=False
+    )
+    _on_stop: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
+        default=None, repr=False
+    )
+    _on_mode_changed: Callable[[str, str], Awaitable[None]] | None = field(default=None, repr=False)
+    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None = field(
+        default=None, repr=False
+    )
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    @property
+    def model(self) -> str | None:
+        return self._model
+
+    async def start(self, model: str | None = None) -> None:
+        await self._backend.attach_session(self, model=model)
+
+    async def drain_pending_response(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        await self._backend.detach_session(self)
+
+    async def switch_model(self, new_model: str) -> None:
+        await self._backend.switch_model(self, new_model)
+
+    def set_chat_mode(self, mode: str) -> None:
+        self.chat_mode = mode
+        if self._on_mode_persist:
+            try:
+                self._on_mode_persist(mode)
+            except Exception:
+                logger.debug("Failed to persist chat mode", exc_info=True)
+
+    async def sync_sdk_permission_mode(self) -> None:
+        return None
+
+    @property
+    def has_pending_plan(self) -> bool:
+        return False
+
+    def provide_plan_decision(self, decision: str) -> None:
+        return None
+
+    def approve_plan(self) -> None:
+        return None
+
+    def set_plan_feedback(self, feedback: str) -> None:
+        return None
+
+    @property
+    def has_pending_question(self) -> bool:
+        return False
+
+    def provide_answer(self, answers: dict[str, Any]) -> None:
+        return None
+
+    @property
+    def has_pending_approval(self) -> bool:
+        return False
+
+    def provide_approval(self, decision: str) -> None:
+        return None
+
+
+@dataclass
+class GeminiManagedChatSession(
+    GeminiWebChatPermissionsMixin,
+    ManagedChatSessionBase,
+):
+    """Web-chat session backed by the shared Gemini ACP backend."""
+
+    provider: str = field(default="gemini", init=False)
+    chat_mode: str = field(default="plan")
+    _pending_question: dict[str, Any] | None = field(default=None, repr=False)
+    _pending_answer_event: asyncio.Event | None = field(default=None, repr=False)
+    _pending_answers: dict[str, str] | None = field(default=None, repr=False)
+    _pending_approval: PendingApproval | None = field(default=None, repr=False)
+    _pending_approval_event: asyncio.Event | None = field(default=None, repr=False)
+    _pending_approval_decision: str | None = field(default=None, repr=False)
+    _plan_approved: bool = field(default=False, repr=False)
+    _plan_feedback: str | None = field(default=None, repr=False)
+    _is_first_turn: bool = field(default=True, repr=False)
+
+    async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
+        if not self._connected:
+            await self.start(model=self._model)
+
+        async with self._lock:
+            self.last_activity = datetime.now(UTC)
+
+            prompt = _extract_text(content) if isinstance(content, list) else content
+            context_parts: list[str] = []
+
+            if self._is_first_turn and self.system_prompt_override:
+                context_parts.append(self.system_prompt_override)
+
+            session_ref = (
+                f"#{self.seq_num}" if self.seq_num else (self.db_session_id or self.conversation_id)
+            )
+            context_parts.append(
+                build_compaction_context(
+                    session_ref=session_ref,
+                    project_id=self.project_id,
+                    cwd=self.project_path,
+                    source="gemini_web_chat",
+                )
+            )
+
+            plan_ctx = self._pop_plan_mode_context()
+            if plan_ctx:
+                context_parts.append(plan_ctx)
+
+            if self._on_before_agent:
+                resp = await self._on_before_agent(
+                    {
+                        "prompt": prompt,
+                        "source": "gemini_web_chat",
+                    }
+                )
+                if resp and resp.get("context"):
+                    context_parts.append(str(resp["context"]))
+
+            full_prompt = prompt
+            if context_parts:
+                full_prompt = f"{'\n\n'.join(context_parts)}\n\n{prompt}"
+
+            self._is_first_turn = False
+            saw_content_delta = False
+
+            try:
+                async for stream_event in self._backend.send_message(self, full_prompt):
+                    if stream_event.event_type == "init":
+                        self.sdk_session_id = (
+                            stream_event.data.get("session_id")
+                            or stream_event.data.get("sessionId")
+                            or self.sdk_session_id
+                        )
+                        model_name = stream_event.data.get("model")
+                        if isinstance(model_name, str) and model_name:
+                            self._model = model_name
+                    elif stream_event.event_type == "content_delta":
+                        saw_content_delta = True
+
+                    chat_event = self._translate_event(
+                        stream_event,
+                        allow_message_fallback=not saw_content_delta,
+                    )
+                    if chat_event is not None:
+                        yield chat_event
+
+                yield DoneEvent(tool_calls_count=0, sdk_session_id=self.sdk_session_id)
+            except Exception as exc:
+                logger.error(
+                    "Gemini managed session %s error: %s",
+                    self.conversation_id,
+                    exc,
+                    exc_info=True,
+                )
+                yield TextChunk(content=f"Generation failed: {exc}")
+                yield DoneEvent(tool_calls_count=0)
+
+    @staticmethod
+    def _translate_event(
+        event: StreamEvent,
+        *,
+        allow_message_fallback: bool = True,
+    ) -> ChatEvent | None:
+        if event.event_type == "content_delta":
+            content = event.data.get("content", "")
+            if content:
+                return TextChunk(content=content)
+            return None
+
+        if event.event_type == "message" and allow_message_fallback:
+            role = event.data.get("role", "")
+            content = event.data.get("content", "")
+            if role == "assistant" and content:
+                return TextChunk(content=content)
+            return None
+
+        if event.event_type == "thinking_delta":
+            content = event.data.get("content", "")
+            if content:
+                return ThinkingEvent(content=content)
+            return None
+
+        if event.event_type == "tool_call" or event.event_type == "call_tool":
+            tool_name = event.data.get("tool_name") or event.data.get("name")
+            if not tool_name:
+                return None
+
+            # Normalize tool name for rule enforcement
+            normalized_name = _GEMINI_TOOL_NAME_ADAPTER.normalize_tool_name(tool_name)
+
+            tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
+            mcp_server = event.data.get("mcp_server") or event.data.get("server_name")
+            call_id = event.data.get("call_id") or event.data.get("id") or "unknown"
+
+            return ToolCallEvent(
+                tool_call_id=call_id,
+                tool_name=normalized_name,
+                server_name=mcp_server or "gemini",
+                arguments=tool_input,
+            )
+
+        if event.event_type == "tool_result":
+            call_id = event.data.get("call_id") or event.data.get("id") or "unknown"
+            success = event.data.get("success", True)
+            result = event.data.get("result") or event.data.get("output")
+            error = event.data.get("error")
+
+            return ToolResultEvent(
+                tool_call_id=call_id,
+                success=success,
+                result=result,
+                error=error,
+            )
+
+        if event.event_type == "error":
+            message = event.data.get("message", "Unknown error")
+            return TextChunk(content=f"Error: {message}")
+
+        return None
+
+    async def interrupt(self) -> None:
+        logger.debug("Gemini interrupt requested for %s (no-op)", self.conversation_id)
+
+
+@dataclass
+class CodexManagedChatSession(ManagedChatSessionBase):
+    """Web-chat session backed by the shared Codex app-server backend."""
+
+    provider: str = field(default="codex", init=False)
+    chat_mode: str = field(default="code")
+    _thread_id: str | None = field(default=None, repr=False)
+    _turn_id: str | None = field(default=None, repr=False)
+    _transcript_path: str | None = field(default=None, repr=False)
+    _transcript_retry_attempts: int = field(
+        default=_CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
+        repr=False,
+    )
+    _transcript_retry_delay_seconds: float = field(
+        default=_CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
+        repr=False,
+    )
+
+    async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
+        if not self._connected:
+            await self.start(model=self._model)
+
+        prompt = _extract_text(content)
+        context_parts: list[str] = []
+        if self.system_prompt_override:
+            context_parts.append(self.system_prompt_override)
+
+        session_ref = (
+            f"#{self.seq_num}" if self.seq_num else (self.db_session_id or self.conversation_id)
+        )
+        context_parts.append(
+            build_compaction_context(
+                session_ref=session_ref,
+                project_id=self.project_id,
+                cwd=self.project_path,
+                source="codex_web_chat",
+            )
+        )
+
+        if self._on_before_agent:
+            resp = await self._on_before_agent({"prompt": prompt, "source": "codex_web_chat"})
+            if resp and resp.get("context"):
+                context_parts.append(str(resp["context"]))
+
+        context_prefix = "\n\n".join(part for part in context_parts if part)
+
+        async with self._lock:
+            self.last_activity = datetime.now(UTC)
+            self.message_index += 1
+            async for event in self._backend.send_message(
+                self,
+                prompt,
+                context_prefix=context_prefix or None,
+            ):
+                yield event
+
+    async def interrupt(self) -> None:
+        await self._backend.interrupt(self)
+
+    async def _get_transcript_offset(self) -> int:
+        if not self._transcript_path:
+            return 0
+
+        def _stat_size() -> int:
+            try:
+                return os.path.getsize(self._transcript_path or "")
+            except OSError:
+                return 0
+
+        return await asyncio.to_thread(_stat_size)
+
+    async def _get_transcript_assistant_text_since(self, offset: int) -> str:
+        if not self._transcript_path:
+            return ""
+
+        def _read_assistant_text() -> str:
+            try:
+                with open(self._transcript_path or "", encoding="utf-8") as handle:
+                    handle.seek(offset)
+                    parser = CodexTranscriptParser(session_id=self._thread_id)
+                    parsed = parser.parse_lines(handle.readlines())
+            except OSError:
+                return ""
+
+            assistant_chunks = [
+                message.content.strip()
+                for message in parsed
+                if message.role == "assistant" and message.content.strip()
+            ]
+            return "\n\n".join(assistant_chunks)
+
+        for _ in range(self._transcript_retry_attempts):
+            assistant_text = await asyncio.to_thread(_read_assistant_text)
+            if assistant_text:
+                return assistant_text
+            await asyncio.sleep(self._transcript_retry_delay_seconds)
+        return ""
+
+
+class ClaudeWebChatBackend:
+    """Trivial backend wrapper for Claude's existing ChatSession transport."""
+
+    provider = "claude"
+
+    @staticmethod
+    def create_session(conversation_id: str) -> ChatSession:
+        return ChatSession(conversation_id=conversation_id)
+
+    @staticmethod
+    def health() -> ProviderBackendHealth:
+        return ProviderBackendHealth(
+            provider="claude",
+            available=shutil.which("claude") is not None,
+            startup_error=None if shutil.which("claude") else "claude CLI not found in PATH",
+        )
+
+
+class GeminiWebChatBackend:
+    """Shared daemon-owned Gemini ACP backend."""
+
+    provider = "gemini"
+
+    def __init__(
+        self,
+        *,
+        client: GeminiACPClient | None = None,
+        default_model: str | None = None,
+    ) -> None:
+        self._client = client or GeminiACPClient()
+        self._health = ProviderBackendHealth(provider=self.provider, available=False)
+        self._default_model = default_model
+        self._startup_task: asyncio.Task[None] | None = None
+
+    async def _start_inner(self) -> None:
+        if self._client.is_started:
+            self._health = ProviderBackendHealth(provider=self.provider, available=True)
+            return
+
+        try:
+            await asyncio.wait_for(
+                self._client.start(
+                    auto_session=False,
+                    model=self._default_model,
+                ),
+                timeout=_BACKEND_START_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            try:
+                await self._client.stop()
+            except Exception:
+                logger.debug("Gemini backend cleanup after failed startup", exc_info=True)
+            self._health = ProviderBackendHealth(
+                provider=self.provider,
+                available=False,
+                startup_error=_error_message(exc),
+            )
+            logger.warning("Gemini ACP backend startup failed: %s", exc)
+            return
+
+        self._health = ProviderBackendHealth(provider=self.provider, available=True)
+
+    async def start(self, *, background: bool = False) -> None:
+        if self._health.available:
+            return
+        if self._startup_task and not self._startup_task.done():
+            if not background:
+                await self._startup_task
+            return
+
+        self._startup_task = asyncio.create_task(self._start_inner())
+        if not background:
+            await self._startup_task
+
+    async def stop(self) -> None:
+        if self._startup_task and not self._startup_task.done():
+            self._startup_task.cancel()
+            try:
+                await self._startup_task
+            except asyncio.CancelledError:
+                pass
+        self._startup_task = None
+        if self._client.is_started:
+            await self._client.stop()
+        self._health = ProviderBackendHealth(provider=self.provider, available=False)
+
+    def health(self) -> ProviderBackendHealth:
+        return self._health
+
+    async def attach_session(
+        self,
+        session: GeminiManagedChatSession,
+        *,
+        model: str | None = None,
+    ) -> None:
+        if model:
+            session._model = model
+        elif not session._model:
+            session._model = self._default_model
+
+        await self.start()
+        if not self._health.available:
+            raise RuntimeError(self._health.startup_error or "Gemini backend unavailable")
+
+        session_id = session.sdk_session_id or session.resume_session_id
+        cwd = session.project_path or "."
+        if session_id:
+            session_info = await self._client.load_session(
+                session_id,
+                model=session._model,
+                cwd=cwd,
+            )
+        else:
+            session_info = await self._client.create_session(
+                model=session._model,
+                cwd=cwd,
+            )
+
+        resolved_session_id = (
+            session_info.get("sessionId")
+            or session_info.get("session_id")
+            or self._client.session_id
+            or session_id
+        )
+        if isinstance(resolved_session_id, str) and resolved_session_id:
+            session.sdk_session_id = resolved_session_id
+        session._connected = True
+        session.last_activity = datetime.now(UTC)
+
+    async def detach_session(self, session: GeminiManagedChatSession) -> None:
+        session._connected = False
+
+    async def send_message(
+        self,
+        session: GeminiManagedChatSession,
+        prompt: str,
+    ) -> AsyncIterator[StreamEvent]:
+        if not self._health.available:
+            raise RuntimeError(self._health.startup_error or "Gemini backend unavailable")
+        if not session.sdk_session_id:
+            raise RuntimeError("Gemini session missing sessionId")
+
+        async for event in self._client.send(
+            prompt,
+            session_id=session.sdk_session_id,
+            model=session._model,
+        ):
+            yield event
+
+    async def switch_model(self, session: GeminiManagedChatSession, new_model: str) -> None:
+        session._model = new_model
+        session._connected = False
+
+
+class CodexWebChatBackend:
+    """Shared daemon-owned Codex app-server backend."""
+
+    provider = "codex"
+
+    def __init__(
+        self,
+        *,
+        client: CodexAppServerClient | None = None,
+        transcript_retry_attempts: int = _CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
+        transcript_retry_delay_seconds: float = _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
+    ) -> None:
+        self._client = client
+        self._health = ProviderBackendHealth(
+            provider=self.provider,
+            available=False,
+            startup_error="Codex app-server client not configured",
+        )
+        self._startup_task: asyncio.Task[None] | None = None
+        self.transcript_retry_attempts = transcript_retry_attempts
+        self.transcript_retry_delay_seconds = transcript_retry_delay_seconds
+
+    @property
+    def client(self) -> CodexAppServerClient | None:
+        """Expose the shared Codex app-server client for callers."""
+        return self._client
+
+    async def _start_inner(self) -> None:
+        if self._client is None:
+            self._health = ProviderBackendHealth(
+                provider=self.provider,
+                available=False,
+                startup_error="codex CLI not found in PATH",
+            )
+            return
+
+        if self._client.is_connected:
+            self._health = ProviderBackendHealth(provider=self.provider, available=True)
+            return
+
+        try:
+            await asyncio.wait_for(
+                self._client.start(),
+                timeout=_BACKEND_START_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            try:
+                await self._client.stop()
+            except Exception:
+                logger.debug("Codex backend cleanup after failed startup", exc_info=True)
+            self._health = ProviderBackendHealth(
+                provider=self.provider,
+                available=False,
+                startup_error=_error_message(exc),
+            )
+            logger.warning("Codex backend startup failed: %s", exc)
+            return
+
+        self._health = ProviderBackendHealth(provider=self.provider, available=True)
+
+    async def start(self, *, background: bool = False) -> None:
+        if self._health.available:
+            return
+        if self._startup_task and not self._startup_task.done():
+            if not background:
+                await self._startup_task
+            return
+
+        self._startup_task = asyncio.create_task(self._start_inner())
+        if not background:
+            await self._startup_task
+
+    async def stop(self) -> None:
+        if self._startup_task and not self._startup_task.done():
+            self._startup_task.cancel()
+            try:
+                await self._startup_task
+            except asyncio.CancelledError:
+                pass
+        self._startup_task = None
+        if self._client and self._client.is_connected:
+            await self._client.stop()
+        self._health = ProviderBackendHealth(provider=self.provider, available=False)
+
+    def health(self) -> ProviderBackendHealth:
+        return self._health
+
+    async def attach_session(
+        self,
+        session: CodexManagedChatSession,
+        *,
+        model: str | None = None,
+    ) -> None:
+        if model:
+            session._model = model
+
+        await self.start()
+        if not self._health.available or self._client is None:
+            raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
+
+        if session._thread_id:
+            thread = await self._client.resume_thread(session._thread_id)
+        elif session.resume_session_id:
+            thread = await self._client.resume_thread(session.resume_session_id)
+        else:
+            thread = await self._client.start_thread(
+                cwd=session.project_path or ".",
+                model=session._model,
+            )
+
+        session._thread_id = thread.id
+        session.sdk_session_id = thread.id
+        session._transcript_path = getattr(thread, "path", None)
+        session._connected = True
+        session.last_activity = datetime.now(UTC)
+
+    async def detach_session(self, session: CodexManagedChatSession) -> None:
+        session._connected = False
+        session._turn_id = None
+
+    async def send_message(
+        self,
+        session: CodexManagedChatSession,
+        prompt: str,
+        *,
+        context_prefix: str | None = None,
+    ) -> AsyncIterator[ChatEvent]:
+        if not self._health.available or self._client is None:
+            raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
+        if not session._thread_id:
+            raise RuntimeError("Codex session missing threadId")
+
+        event_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+        turn_completed = asyncio.Event()
+        saw_text_output = False
+        transcript_offset = await session._get_transcript_offset()
+
+        def _matches(params: dict[str, Any]) -> bool:
+            thread_id = params.get("threadId")
+            if (
+                isinstance(thread_id, str)
+                and session._thread_id
+                and thread_id != session._thread_id
+            ):
+                return False
+            turn_id = params.get("turnId")
+            if isinstance(turn_id, str) and session._turn_id and turn_id != session._turn_id:
+                return False
+            turn = params.get("turn")
+            if isinstance(turn, dict):
+                turn_identifier = turn.get("id")
+                if (
+                    isinstance(turn_identifier, str)
+                    and session._turn_id
+                    and turn_identifier != session._turn_id
+                ):
+                    return False
+            return True
+
+        def _enqueue(method: str, params: dict[str, Any]) -> None:
+            if _matches(params):
+                event_queue.put_nowait((method, params))
+
+        event_methods = [
+            "turn/started",
+            "turn/completed",
+            "thread/closed",
+            "agent/messageDelta",
+            "item/agentMessage/delta",
+        ]
+        for method in event_methods:
+            self._client.add_notification_handler(method, _enqueue)
+
+        try:
+            turn = await self._client.start_turn(
+                session._thread_id,
+                prompt,
+                context_prefix=context_prefix,
+                model=session._model,
+            )
+            session._turn_id = turn.id or session._turn_id
+
+            while not turn_completed.is_set():
+                try:
+                    method, params = await asyncio.wait_for(event_queue.get(), timeout=0.1)
+                except TimeoutError:
+                    continue
+
+                if method in {"agent/messageDelta", "item/agentMessage/delta"}:
+                    delta = _extract_codex_delta(params)
+                    if delta:
+                        saw_text_output = True
+                        yield TextChunk(content=delta)
+                    continue
+
+                if method == "turn/started":
+                    turn_id = params.get("turnId")
+                    if not turn_id:
+                        turn_data = params.get("turn")
+                        if isinstance(turn_data, dict):
+                            turn_id = turn_data.get("id")
+                    if isinstance(turn_id, str) and turn_id:
+                        session._turn_id = turn_id
+                    continue
+
+                if method == "thread/closed":
+                    session._turn_id = None
+                    yield DoneEvent(tool_calls_count=0)
+                    turn_completed.set()
+                    continue
+
+                if method == "turn/completed":
+                    usage = params.get("usage", {})
+                    if not isinstance(usage, dict):
+                        usage = {}
+                    session._turn_id = None
+                    if not saw_text_output:
+                        fallback_text = await session._get_transcript_assistant_text_since(
+                            transcript_offset
+                        )
+                        if fallback_text:
+                            yield TextChunk(content=fallback_text)
+
+                    yield DoneEvent(
+                        tool_calls_count=0,
+                        input_tokens=int(usage.get("input_tokens", 0)),
+                        output_tokens=int(usage.get("output_tokens", 0)),
+                        sdk_session_id=session.sdk_session_id,
+                    )
+                    turn_completed.set()
+        except Exception as exc:
+            logger.error("Codex managed session %s error: %s", session.conversation_id, exc)
+            yield TextChunk(content=f"Error: {exc}")
+            yield DoneEvent(tool_calls_count=0, sdk_session_id=session.sdk_session_id)
+        finally:
+            for method in event_methods:
+                self._client.remove_notification_handler(method, _enqueue)
+
+    async def interrupt(self, session: CodexManagedChatSession) -> None:
+        if not self._client or not session._thread_id or not session._turn_id:
+            return
+        await self._client.interrupt_turn(session._thread_id, session._turn_id)
+        session._turn_id = None
+
+    async def switch_model(self, session: CodexManagedChatSession, new_model: str) -> None:
+        session._model = new_model

@@ -226,6 +226,32 @@ class TestSuggestNextTask:
         assert result["suggestion"] is None
         assert "No ready tasks" in result["reason"]
 
+    def test_suggest_next_task_skips_claimed_ready_tasks(self, mock_readiness_registry) -> None:
+        """Claimed ready tasks should not be suggested as new work."""
+        from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
+
+        task_manager = MagicMock()
+
+        claimed_task = MagicMock()
+        claimed_task.id = "claimed-1"
+        claimed_task.priority = 1
+        claimed_task.status = "in_progress"
+        claimed_task.claimed_by_session_id = "sess-claimed"
+        claimed_task.complexity_score = None
+        claimed_task.category = None
+        claimed_task.to_brief.return_value = {"id": "claimed-1", "title": "Already claimed"}
+
+        task_manager.list_ready_tasks.return_value = [claimed_task]
+        task_manager.list_tasks.return_value = [claimed_task]
+
+        registry = create_readiness_registry(task_manager=task_manager)
+        suggest = registry.get_tool("suggest_next_task")
+
+        result = suggest()
+
+        assert result["suggestion"] is None
+        assert "already claimed" in result["reason"].lower()
+
     def test_suggest_next_task_prefers_leaf_tasks(self, mock_readiness_registry) -> None:
         """Test that suggest_next_task prefers leaf tasks over parent tasks at same priority."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
@@ -603,8 +629,7 @@ class TestSuggestNextTaskWithSessionId:
 
         def list_tasks_side_effect(**kwargs):
             parent_id = kwargs.get("parent_task_id")
-            status = kwargs.get("status")
-            if status == "in_progress":
+            if kwargs.get("claimed") is True:
                 return []  # No in_progress tasks
             if parent_id == "epic-1":
                 return [child_task]
@@ -658,8 +683,7 @@ class TestSuggestNextTaskWithSessionId:
 
         def list_tasks_side_effect(**kwargs):
             parent_id = kwargs.get("parent_task_id")
-            status = kwargs.get("status")
-            if status == "in_progress":
+            if kwargs.get("claimed") is True:
                 return []
             if parent_id == "explicit-parent":
                 return [child_task]

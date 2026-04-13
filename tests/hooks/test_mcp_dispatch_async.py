@@ -20,7 +20,7 @@ def _make_event(
     return HookEvent(
         event_type=HookEventType.BEFORE_AGENT,
         session_id="ext-sess-1",
-        source=SessionSource.CLAUDE_SDK_WEB_CHAT,
+        source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"prompt": prompt},
         metadata={"_platform_session_id": platform_session_id},

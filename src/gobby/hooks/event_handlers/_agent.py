@@ -118,8 +118,89 @@ class AgentEventHandlerMixin(EventHandlersBase):
             decision="allow",
             context="\n\n".join(context_parts) if context_parts else None,
         )
+
+        # Inject agent instructions (instructions block + skills + code-index)
+        # on first before_agent. Identity (role + personality) was injected at
+        # SessionStart; this defers the heavier instructional content.
+        if session_id:
+            try:
+                self._inject_agent_instructions_if_needed(event, session_id, response)
+            except Exception as e:
+                self.logger.error(f"Failed to inject agent instructions: {e}", exc_info=True)
+
         self._apply_debug_echo(response)
         return response
+
+    def _inject_agent_instructions_if_needed(
+        self, event: HookEvent, session_id: str, response: HookResponse
+    ) -> None:
+        """Format and inject agent instructions on first before_agent.
+
+        Everything needed is already in DB from SessionStart activation:
+        - Agent name: _agent_type session variable
+        - Active skills: _active_skill_names session variable
+        - Agent definition: workflow_definitions table
+        """
+        if not self._session_storage:
+            return
+
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        sv_mgr = SessionVariableManager(self._session_storage.db)
+        variables = sv_mgr.get_variables(session_id)
+
+        if variables.get("_agent_context_injected"):
+            return
+
+        agent_name = variables.get("_agent_type", "default")
+        active_skills_raw = variables.get("_active_skill_names")
+        active_skills = set(active_skills_raw) if active_skills_raw is not None else None
+        cli_source = event.source.value
+
+        # Get project_id for project-specific agent resolution
+        project_id = None
+        try:
+            session_row = self._session_storage.get(session_id)
+            if session_row:
+                project_id = session_row.project_id
+        except Exception as e:
+            self.logger.debug(
+                "Failed to resolve session %s while injecting agent context: %s",
+                session_id,
+                e,
+                exc_info=True,
+            )
+
+        from gobby.workflows.agent_resolver import resolve_agent
+
+        agent_body = resolve_agent(agent_name, self._session_storage.db, project_id=project_id)
+        if not agent_body:
+            return
+
+        parts: list[str] = []
+
+        if agent_body.instructions:
+            parts.append(f"## Instructions\n{agent_body.instructions}")
+
+        # Format skills list
+        from gobby.hooks.event_handlers._session_start import select_and_format_agent_skills
+        from gobby.skills.manager import SkillManager
+
+        all_skills = SkillManager(self._session_storage.db).list_skills()
+        formatted, _, _ = select_and_format_agent_skills(
+            agent_body, all_skills, active_skills, cli_source
+        )
+        if formatted:
+            parts.append(formatted)
+
+        if parts:
+            instructions_context = "\n\n".join(parts)
+            if response.context:
+                response.context = f"{instructions_context}\n\n{response.context}"
+            else:
+                response.context = instructions_context
+
+        sv_mgr.set_variable(session_id, "_agent_context_injected", True)
 
     def _intercept_skill_command(self, prompt: str, session_id: str | None = None) -> str | None:
         """Intercept /gobby and /gobby skillname commands.

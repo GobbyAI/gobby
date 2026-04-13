@@ -558,6 +558,7 @@ class TaskValidator:
                 prompt=prompt,
                 system_prompt=self.config.system_prompt,
                 model=self.config.model,
+                caller="tasks.validation",
             )
 
             if not response_content or not response_content.strip():

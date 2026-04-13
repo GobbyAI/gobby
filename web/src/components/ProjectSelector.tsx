@@ -1,6 +1,10 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import type { ProjectOption } from "../types/chat";
 import { cn } from "../lib/utils";
+
+/** Width of the project dropdown in pixels (matches Tailwind w-48). */
+const DROPDOWN_WIDTH = 192;
 
 interface ProjectSelectorProps {
   projects: ProjectOption[];
@@ -38,25 +42,59 @@ export function ProjectSelector({
         : nonPersonalProjects,
     [nonPersonalProjects, projectSearch],
   );
-  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number } | null>(null);
+
+  const updatePosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const margin = 8;
+    const desiredLeft = rect.right - DROPDOWN_WIDTH;
+    // Clamp horizontally so the dropdown can't escape the viewport when the
+    // trigger sits near the right edge or on a narrow screen.
+    const left = Math.max(
+      margin,
+      Math.min(desiredLeft, window.innerWidth - DROPDOWN_WIDTH - margin),
+    );
+    const desiredTop = dropDirection === "up" ? rect.top : rect.bottom + 4;
+    // Vertical clamp uses an estimated max height — the dropdown content is
+    // capped via max-h-32 inside the search results plus the input row, so
+    // 200px is a safe upper bound.
+    const estimatedHeight = 200;
+    const top = Math.max(
+      margin,
+      Math.min(desiredTop, window.innerHeight - estimatedHeight - margin),
+    );
+    setDropdownPos({ top, left });
+  }, [dropDirection]);
 
   useEffect(() => {
     if (!showProjectSearch) return;
+    updatePosition();
     const handleClick = (e: MouseEvent) => {
+      const target = e.target as Node;
       if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      ) {
-        setShowProjectSearch(false);
-        setProjectSearch("");
-      }
+        triggerRef.current?.contains(target) ||
+        dropdownRef.current?.contains(target)
+      )
+        return;
+      setShowProjectSearch(false);
+      setProjectSearch("");
     };
+    const handleScrollOrResize = () => updatePosition();
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [showProjectSearch]);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    window.addEventListener("resize", handleScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+      window.removeEventListener("resize", handleScrollOrResize);
+    };
+  }, [showProjectSearch, updatePosition]);
 
   return (
-    <div className="relative" ref={containerRef}>
+    <div className="relative" ref={triggerRef}>
       <div className="flex rounded-md border border-border text-xs">
         <button
           className={cn(
@@ -92,64 +130,73 @@ export function ProjectSelector({
           {selectedName ?? "Project"}
         </button>
       </div>
-      {showProjectSearch && (
-        <div
-          className={cn(
-            "absolute right-0 w-48 rounded-md border border-border bg-background shadow-lg z-50",
-            dropDirection === "up" ? "bottom-full mb-1" : "top-full mt-1",
-          )}
-          role="listbox"
-          aria-label="Project search results"
-        >
-          <input
-            className="w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground focus:outline-none"
-            placeholder="Search projects..."
-            value={projectSearch}
-            onChange={(e) => setProjectSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                setShowProjectSearch(false);
-                setProjectSearch("");
-              }
-              if (e.key === "Enter" && filtered.length > 0) {
-                onProjectChange(filtered[0].id);
-                setShowProjectSearch(false);
-                setProjectSearch("");
-              }
+      {showProjectSearch &&
+        dropdownPos &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            className="fixed w-48 rounded-md border border-border bg-background shadow-lg z-[1000]"
+            style={{
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+              ...(dropDirection === "up" ? { transform: "translateY(-100%) translateY(-4px)" } : {}),
             }}
-            role="combobox"
-            aria-expanded={true}
-            aria-controls="project-search-results"
-            aria-autocomplete="list"
-            autoFocus
-          />
-          <div id="project-search-results" className="max-h-32 overflow-y-auto">
-            {filtered.map((p) => (
-              <button
-                key={p.id}
-                role="option"
-                aria-selected={p.id === selectedProjectId}
-                className={cn(
-                  "w-full text-left px-2 py-1 text-xs hover:bg-muted",
-                  p.id === selectedProjectId && "bg-accent/20 text-accent",
-                )}
-                onClick={() => {
-                  onProjectChange(p.id);
+            role="listbox"
+            aria-label="Project search results"
+          >
+            <input
+              className="w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground focus:outline-none"
+              placeholder="Search projects..."
+              value={projectSearch}
+              onChange={(e) => setProjectSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
                   setShowProjectSearch(false);
                   setProjectSearch("");
-                }}
-              >
-                {p.name}
-              </button>
-            ))}
-            {filtered.length === 0 && (
-              <div className="px-2 py-1 text-xs text-muted-foreground">
-                No projects found
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+                }
+                if (e.key === "Enter" && filtered.length > 0) {
+                  onProjectChange(filtered[0].id);
+                  setShowProjectSearch(false);
+                  setProjectSearch("");
+                }
+              }}
+              role="combobox"
+              aria-expanded={true}
+              aria-controls="project-search-results"
+              aria-autocomplete="list"
+              autoFocus
+            />
+            <div
+              id="project-search-results"
+              className="max-h-32 overflow-y-auto"
+            >
+              {filtered.map((p) => (
+                <button
+                  key={p.id}
+                  role="option"
+                  aria-selected={p.id === selectedProjectId}
+                  className={cn(
+                    "w-full text-left px-2 py-1 text-xs hover:bg-muted",
+                    p.id === selectedProjectId && "bg-accent/20 text-accent",
+                  )}
+                  onClick={() => {
+                    onProjectChange(p.id);
+                    setShowProjectSearch(false);
+                    setProjectSearch("");
+                  }}
+                >
+                  {p.name}
+                </button>
+              ))}
+              {filtered.length === 0 && (
+                <div className="px-2 py-1 text-xs text-muted-foreground">
+                  No projects found
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

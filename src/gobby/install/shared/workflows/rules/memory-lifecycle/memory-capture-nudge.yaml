@@ -2,11 +2,11 @@ tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 
 rules:
   memory-capture-nudge:
-    description: "Nudge agent to save user preferences or facts as memories"
+    description: "Nudge agent to save user preferences or facts as memories (once per session)"
     event: before_agent
     enabled: true
     priority: 50
-    when: "len((event.data.get('prompt') or '').strip()) >= 10 and not (event.data.get('prompt') or '').strip().startswith('/')"
+    when: "not variables.get('memory_nudge_fired') and len((event.data.get('prompt') or '').strip()) >= 10 and not (event.data.get('prompt') or '').strip().startswith('/')"
     effects:
       - type: inject_context
         template: |
@@ -20,3 +20,6 @@ rules:
 
           Do NOT create memories for bugs, errors, or issues you encounter.
           Create tasks instead so they get fixed.
+      - type: set_variable
+        variable: memory_nudge_fired
+        value: true

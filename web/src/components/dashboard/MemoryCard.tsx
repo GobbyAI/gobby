@@ -1,4 +1,15 @@
 import { useTimeStats } from '../../hooks/useTimeStats'
+import { cn } from '../../lib/utils'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardCardBodyRowClass,
+  dashboardDotClass,
+  dashboardStatusListClass,
+  dashboardStatusRowClass,
+  dashboardStatusRowDimmedClass,
+  dashboardStatusRowLabelClass,
+  dashboardStatusRowValueClass,
+} from './dashboardStyles'
 
 const TYPE_COLORS: Record<string, { label: string; color: string }> = {
   fact: { label: 'Facts', color: '#3b82f6' },
@@ -25,19 +36,17 @@ export function MemoryCard({ hours, projectId }: Props) {
 
   if (isLoading) {
     return (
-      <div className="dash-card">
-        <div className="dash-card-header"><h3 className="dash-card-title">Memory</h3></div>
-        <div className="dash-card-body"><p className="text-xs text-muted-foreground">Loading...</p></div>
-      </div>
+      <DashboardCard title="Memory">
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      </DashboardCard>
     )
   }
 
   if (error) {
     return (
-      <div className="dash-card">
-        <div className="dash-card-header"><h3 className="dash-card-title">Memory</h3></div>
-        <div className="dash-card-body"><p className="text-xs text-muted-foreground">Failed to load memory data</p></div>
-      </div>
+      <DashboardCard title="Memory">
+        <p className="text-xs text-muted-foreground">Failed to load memory data</p>
+      </DashboardCard>
     )
   }
 
@@ -71,15 +80,11 @@ export function MemoryCard({ hours, projectId }: Props) {
   })
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Memory</h3>
-      </div>
-      <div className="dash-card-body dash-card-body--row">
-        <svg width={SIZE} height={SIZE} style={{ flexShrink: 0 }}>
+    <DashboardCard title="Memory" bodyClassName={dashboardCardBodyRowClass}>
+      <svg width={SIZE} height={SIZE} className="shrink-0">
           {total === 0 ? (
             <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
-              fill="none" stroke="#333" strokeWidth={STROKE} />
+              fill="none" stroke="var(--border)" strokeWidth={STROKE} />
           ) : (
             arcs.map(a => (
               <circle key={a.key} cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
@@ -90,21 +95,26 @@ export function MemoryCard({ hours, projectId }: Props) {
               />
             ))
           )}
-          <text x={SIZE / 2} y={SIZE / 2 - 6} textAnchor="middle" fill="#e5e5e5"
+          <text x={SIZE / 2} y={SIZE / 2 - 6} textAnchor="middle" fill="var(--text-primary)"
             fontSize="22" fontWeight="bold">{memory.count}</text>
-          <text x={SIZE / 2} y={SIZE / 2 + 12} textAnchor="middle" fill="#a3a3a3"
+          <text x={SIZE / 2} y={SIZE / 2 + 12} textAnchor="middle" fill="var(--text-secondary)"
             fontSize="10">total</text>
-        </svg>
-        <div className="dash-status-list" style={{ flex: 1, minWidth: 0 }}>
-          {segments.map(({ key, label, color, value }) => (
-            <div key={key} className={`dash-status-row${key === '_other' ? ' dash-status-row--dimmed' : ''}`}>
-              <span className="dash-legend-dot" style={{ background: color }} />
-              <span className="dash-status-row-label">{label}</span>
-              <span className="dash-status-row-value">{value}</span>
-            </div>
-          ))}
-        </div>
+      </svg>
+      <div className={dashboardStatusListClass}>
+        {segments.map(({ key, label, color, value }) => (
+          <div
+            key={key}
+            className={cn(
+              dashboardStatusRowClass,
+              key === '_other' && dashboardStatusRowDimmedClass,
+            )}
+          >
+            <span className={dashboardDotClass} style={{ background: color }} />
+            <span className={dashboardStatusRowLabelClass}>{label}</span>
+            <span className={dashboardStatusRowValueClass}>{value}</span>
+          </div>
+        ))}
       </div>
-    </div>
+    </DashboardCard>
   )
 }

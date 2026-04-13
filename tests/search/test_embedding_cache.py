@@ -142,9 +142,7 @@ async def test_batch_dedup_within_request() -> None:
     mock_client.embeddings.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        results = await generate_embeddings(
-            ["alpha", "alpha", "beta"], model="test-model"
-        )
+        results = await generate_embeddings(["alpha", "alpha", "beta"], model="test-model")
 
     # API should receive only unique texts
     assert len(captured_inputs) == 1
@@ -218,12 +216,8 @@ async def test_different_api_base_is_cache_miss() -> None:
     mock_client.embeddings.create = tracking_create
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
-        await generate_embedding(
-            "hello", model="test-model", api_base="http://localhost:1234/v1"
-        )
-        await generate_embedding(
-            "hello", model="test-model", api_base="http://localhost:5678/v1"
-        )
+        await generate_embedding("hello", model="test-model", api_base="http://localhost:1234/v1")
+        await generate_embedding("hello", model="test-model", api_base="http://localhost:5678/v1")
 
     assert call_count == 2
 

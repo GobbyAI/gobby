@@ -8,6 +8,7 @@ for context injection.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from typing import Any
@@ -126,7 +127,16 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         for m in memories:
             content = m.get("content", "").strip()
             if content:
-                lines.append(f"- {content}")
+                score = m.get("similarity")
+                via = m.get("search_via")
+                if score is not None:
+                    suffix = f" (score: {score:.4f}"
+                    if via:
+                        suffix += f", via: {via}"
+                    suffix += ")"
+                else:
+                    suffix = ""
+                lines.append(f"- {content}{suffix}")
         lines.append("</project-memory>")
         return "\n".join(lines)
 
@@ -151,6 +161,14 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
         )
         lines.append("</available-skills>")
         return "\n".join(lines)
+
+    elif tool == "get_skill":
+        skill = result.get("skill") or result.get("result", {}).get("skill") or {}
+        name = skill.get("name", "unknown")
+        content = skill.get("content", "")
+        if content:
+            return f'<skill name="{name}">\n{content}\n</skill>'
+        return ""
 
     else:
         return f"**{tool} result:**\n```json\n{json.dumps(result, indent=2, default=str)}\n```"
@@ -290,7 +308,13 @@ def dispatch_mcp_calls(
                 if s == "_proxy":
                     result = await proxy_self_call(proxy, t, args)
                 else:
-                    result = await proxy.call_tool(s, t, args, strip_unknown=True)
+                    result = await proxy.call_tool(
+                        s,
+                        t,
+                        args,
+                        strip_unknown=True,
+                        enforce_workflow=False,
+                    )
 
                 if isinstance(result, dict) and result.get("success") is False:
                     logger.warning(
@@ -342,6 +366,16 @@ def dispatch_mcp_calls(
                         f"dispatch_mcp_calls: background {s}/{tl} failed: {t.exception()}"
                     )
 
+            def _log_bg_future_error(
+                f: concurrent.futures.Future[Any],
+                s: str = _bg_server,
+                tl: str = _bg_tool,
+            ) -> None:
+                if not f.cancelled():
+                    exc: BaseException | None = f.exception()
+                    if exc is not None:
+                        logger.warning(f"dispatch_mcp_calls: background {s}/{tl} failed: {exc}")
+
             try:
                 running_loop = asyncio.get_running_loop()
                 task = running_loop.create_task(coro)
@@ -349,7 +383,8 @@ def dispatch_mcp_calls(
             except RuntimeError:
                 if loop and loop.is_running():
                     try:
-                        asyncio.run_coroutine_threadsafe(coro, loop)
+                        future = asyncio.run_coroutine_threadsafe(coro, loop)
+                        future.add_done_callback(_log_bg_future_error)
                     except Exception as e:
                         logger.warning(
                             f"dispatch_mcp_calls: failed to schedule {server}/{tool}: {e}",

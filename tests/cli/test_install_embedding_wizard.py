@@ -71,7 +71,7 @@ class TestRunEmbeddingInstallNoInteractive:
             return_value={
                 "success": True,
                 "provider": "lmstudio",
-                "model": "nomic-embed-text",
+                "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
                 "dim": 768,
                 "api_base": "http://localhost:1234/v1",
                 "health_check": True,
@@ -125,7 +125,7 @@ class TestRunEmbeddingInstallInteractive:
             return_value={
                 "success": True,
                 "provider": "lmstudio",
-                "model": "nomic-embed-text",
+                "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
                 "dim": 768,
                 "api_base": "http://localhost:1234/v1",
                 "health_check": True,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Text, Box } from "ink";
 import SelectInput from "ink-select-input";
 import Spinner from "ink-spinner";
@@ -10,7 +10,7 @@ import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
-export function ProjectDiscovery({ state, setState, onNext }: StepProps): React.ReactElement {
+export function ProjectDiscovery({ state: _state, setState, onNext }: StepProps): React.ReactElement {
   const [scanning, setScanning] = useState(true);
   const [repos, setRepos] = useState<string[]>([]);
   const [phase, setPhase] = useState<"scan" | "select" | "init" | "done">("scan");
@@ -28,7 +28,7 @@ export function ProjectDiscovery({ state, setState, onNext }: StepProps): React.
     return () => { cancelled = true; };
   }, []);
 
-  const finish = (projects: string[]): void => {
+  const finish = useCallback((projects: string[]): void => {
     setState((prev) => {
       const next = {
         ...prev,
@@ -39,7 +39,7 @@ export function ProjectDiscovery({ state, setState, onNext }: StepProps): React.
       return next;
     });
     setTimeout(onNext, 300);
-  };
+  }, [onNext, setState]);
 
   // Run init after render so the spinner is visible
   useEffect(() => {
@@ -56,7 +56,7 @@ export function ProjectDiscovery({ state, setState, onNext }: StepProps): React.
     setInitResults(results);
     setPhase("done");
     finish(selected);
-  }, [phase]);
+  }, [finish, phase, selected]);
 
   if (scanning) {
     return (

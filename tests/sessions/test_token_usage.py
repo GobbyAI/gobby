@@ -94,11 +94,10 @@ async def test_token_usage_aggregation(db, session_manager, lifecycle_manager, t
     assert updated_session is not None
 
     # Expected:
-    # 1: 10 in, 20 out, 0.001
+    # 1: 10 in, 20 out
     # 2: 5 in, 0 out
-    # 3: 15 in, 25 out, 0.002
-    # Total: 30 in, 45 out, 0.003
+    # 3: 15 in, 25 out
+    # Total: 30 in, 45 out
 
     assert updated_session.usage_input_tokens == 30
     assert updated_session.usage_output_tokens == 45
-    assert updated_session.usage_total_cost_usd == pytest.approx(0.003)

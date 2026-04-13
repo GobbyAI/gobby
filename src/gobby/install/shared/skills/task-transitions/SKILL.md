@@ -20,7 +20,7 @@ Before closing or changing task status, complete ALL gates below. They fire in o
 | # | Gate | Variable | Skipped by |
 |---|------|----------|------------|
 | 1 | Clean working tree | — | Non-work closes |
-| 2 | Commit linked to task | — | Non-work closes |
+| 2 | Commit SHA passed to close_task | — | Non-work closes |
 | 3 | Lint + tests pass, all issues fixed | `errors_resolved` | — |
 | 4 | Memory review completed | `memory_review_completed` | — |
 
@@ -41,26 +41,39 @@ git commit -m "[project-#N] type: description"
 
 Prefer staging specific files over `git add -A`. Include the task reference in the commit message.
 
-## Gate 2: Commit Linked to Task
+## Gate 2: Close with Commit SHA
 
-Pass `commit_sha` to `close_task` to link and close in one call:
+Pass `commit_sha` to `close_task` — this links the commit and closes in one call:
 
 ```python
 call_tool("gobby-tasks", "close_task", {
     "task_id": "#N",
     "commit_sha": "abc1234",
     "changes_summary": "What changed and why"
-})
+}, session_id="#2333")
 ```
+
+`session_id` is a parameter of `call_tool`, not the inner tool — pass your Gobby session ref.
+
+Do NOT call `link_commit` separately — `close_task` handles linking internally when you pass `commit_sha`. The `link_commit` tool exists only for associating commits to tasks still in progress (multi-commit work).
 
 ## Gate 3: Errors, Warnings, and Failures Resolved
 
-Run lint and tests on files you touched:
+Run the verification commands defined in `.gobby/project.json` on the files you touched. The `verification` key contains named commands — run the ones relevant to your changes:
 
 ```bash
-uv run ruff check <files>
-uv run pytest <relevant-test-files> -v --tb=short
+# Read the project's verification config
+cat .gobby/project.json | jq '.verification'
+
+# Run relevant checks (examples — use the actual commands from project.json)
+# verification.lint → linting
+# verification.format → format checking
+# verification.type_check → type checking
+# verification.unit_tests → tests (scope to relevant files, not the full suite)
+# verification.custom.* → project-specific checks (frontend, etc.)
 ```
+
+Scope test runs to relevant files — do NOT run the full test suite unless explicitly asked.
 
 Fix ALL errors, warnings, and failures — including pre-existing ones.
 
@@ -68,8 +81,10 @@ Fix ALL errors, warnings, and failures — including pre-existing ones.
 
 Once resolved:
 
+`set_variable` and `get_variable` are top-level MCP tools — call them directly, not through `call_tool`:
+
 ```python
-set_variable(name="errors_resolved", value=true, session_id="#session")
+set_variable(name="errors_resolved", value=true, session_id="#2333")
 ```
 
 ## Gate 4: Memory Review
@@ -81,7 +96,7 @@ Review your session for memories worth preserving:
 If nothing new was learned and no stale memories remain, clear the gate:
 
 ```python
-set_variable(name="memory_review_completed", value=true, session_id="#session")
+set_variable(name="memory_review_completed", value=true, session_id="#2333")
 ```
 
 Do NOT create memories for bugs or errors — create tasks instead.
@@ -92,11 +107,11 @@ Do NOT create memories for bugs or errors — create tasks instead.
 
 ```
 1. git add + git commit (with [project-#N] in message)
-2. Run lint + tests on touched files → fix everything
+2. Run verification commands from .gobby/project.json on touched files → fix everything
 3. set_variable(errors_resolved=true)
 4. Review memories → save/delete/clear gate
 5. set_variable(memory_review_completed=true)
-6. close_task(task_id, commit_sha, changes_summary)
+6. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes
 ```
 
 ## Review Flow (autonomous/pipeline agents)
@@ -109,7 +124,7 @@ Autonomous agents **must** use the review flow — they cannot close tasks direc
 call_tool("gobby-tasks", "mark_task_needs_review", {
     "task_id": "#N",
     "review_notes": "What was done and what to verify"
-})
+}, session_id="#2333")
 ```
 
 Commits are auto-linked from your session. All four gates still apply before this call succeeds.
@@ -120,7 +135,7 @@ Commits are auto-linked from your session. All four gates still apply before thi
 call_tool("gobby-tasks", "mark_task_review_approved", {
     "task_id": "#N",
     "approval_notes": "Verified: tests pass, changes match spec"
-})
+}, session_id="#2333")
 ```
 
 Used by QA agents after reviewing work. Same gates apply — if the reviewer made fixes and committed, those commits are auto-linked.
@@ -144,7 +159,7 @@ call_tool("gobby-tasks", "close_task", {
     "task_id": "#N",
     "reason": "duplicate",  # or obsolete, wont_fix, already_implemented, out_of_repo
     "changes_summary": "Why no changes were needed"
-})
+}, session_id="#2333")
 ```
 
 Gates 3-4 still apply. `changes_summary` is still required — explain why no changes were needed.
@@ -153,7 +168,8 @@ Gates 3-4 still apply. `changes_summary` is still required — explain why no ch
 
 | Mistake | Why it fails | Fix |
 |---------|-------------|-----|
-| Close before commit | Gate 2 blocks — no commit linked | Commit first, pass `commit_sha` |
+| Close without `commit_sha` | Gate 2 blocks — no commit to validate | Commit first, pass `commit_sha` to `close_task` |
+| Separate `link_commit` then `close_task` | Unnecessary extra call | Pass `commit_sha` directly to `close_task` |
 | `git add -A` | May stage secrets or binaries | Stage specific files |
 | File task instead of fixing error | Gate 3 blocks — `errors_resolved` not set | Investigate and fix first |
 | Skip memory review | Gate 4 blocks — `memory_review_completed` not set | Review or explicitly clear |

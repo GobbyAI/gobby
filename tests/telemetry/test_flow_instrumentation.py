@@ -145,7 +145,7 @@ async def test_hook_manager_instrumentation(tracer_provider):
             event = HookEvent(
                 event_type=HookEventType.SESSION_START,
                 session_id="sess-123",
-                source=SessionSource.CLAUDE_SDK,
+                source=SessionSource.CLAUDE,
                 timestamp=datetime.now(UTC),
                 data={},
             )
@@ -176,7 +176,7 @@ async def test_rule_engine_instrumentation(tracer_provider):
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id="sess-123",
-            source=SessionSource.CLAUDE_SDK,
+            source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
             data={"tool_name": "test-tool"},
         )

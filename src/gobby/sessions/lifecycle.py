@@ -401,7 +401,7 @@ class SessionLifecycleManager:
         Process a full transcript for a session.
 
         Reads the entire transcript and stores messages.
-        Aggregates token usage and costs.
+        Aggregates token usage.
         Uses idempotent upsert so re-processing is safe.
 
         Args:
@@ -460,7 +460,6 @@ class SessionLifecycleManager:
         output_tokens = 0
         cache_creation_tokens = 0
         cache_read_tokens = 0
-        total_cost_usd = 0.0
         last_model: str | None = None
 
         for msg in messages:
@@ -471,8 +470,6 @@ class SessionLifecycleManager:
                 output_tokens += msg.usage.output_tokens
                 cache_creation_tokens += msg.usage.cache_creation_tokens
                 cache_read_tokens += msg.usage.cache_read_tokens
-                if msg.usage.total_cost_usd:
-                    total_cost_usd += msg.usage.total_cost_usd
 
         # Don't overwrite existing non-zero token counts with zeros.
         # Hook handlers (AFTER_MODEL) capture tokens during the live session;
@@ -487,25 +484,6 @@ class SessionLifecycleManager:
                 )
                 return
 
-        # Calculate cost from tokens when transcript provides no cost
-        if total_cost_usd == 0.0 and input_tokens > 0 and last_model:
-            try:
-                from gobby.sessions.cost_calculator import CostCalculator
-                from gobby.storage.model_costs import ModelCostStore
-
-                calculator = CostCalculator(ModelCostStore(self.db))
-                calculated = calculator.calculate(
-                    model=last_model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                )
-                if calculated is not None:
-                    total_cost_usd = calculated
-            except Exception as e:
-                logger.warning(f"Failed to calculate cost for session {session_id}: {e}")
-
         # Update session with aggregated usage
         self.session_manager.update_usage(
             session_id=session_id,
@@ -513,7 +491,6 @@ class SessionLifecycleManager:
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cache_read_tokens,
-            total_cost_usd=total_cost_usd,
             model=last_model,
         )
 

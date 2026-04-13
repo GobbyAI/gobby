@@ -31,12 +31,10 @@ export interface AdminStatus {
   pipelines: { running: number; waiting_approval: number; completed: number; failed: number; total: number }
   savings: {
     today_tokens_saved: number
-    today_cost_saved_usd: number
     today_events: number
-    cumulative_cost_saved_usd: number
+    cumulative_tokens_saved?: number
     categories: Record<string, {
       tokens_saved: number
-      cost_saved_usd: number
       event_count: number
     }>
   }

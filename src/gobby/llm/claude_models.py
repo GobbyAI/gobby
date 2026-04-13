@@ -47,8 +47,8 @@ def resolve_context_window(
         if substr in model_lower:
             return window
 
-    # 2. Registry lookup (OpenRouter data cached in cost_table)
-    from gobby.llm.cost_table import lookup_context_window
+    # 2. Registry lookup (OpenRouter data cached in model_costs table)
+    from gobby.llm.model_registry import lookup_context_window
 
     registry_val = lookup_context_window(model)
     if registry_val is not None:
@@ -109,9 +109,6 @@ class DoneEvent:
 
     tool_calls_count: int
     """Total number of tool calls made."""
-
-    cost_usd: float | None = None
-    """Cost in USD if available."""
 
     duration_ms: float | None = None
     """Duration in milliseconds if available."""

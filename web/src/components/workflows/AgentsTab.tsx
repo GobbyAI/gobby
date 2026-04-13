@@ -6,6 +6,7 @@ import { YamlEditorModal } from './WorkflowsPage'
 import { AgentEditForm } from '../agents/AgentEditForm'
 import type { AgentFormData } from '../agents/AgentEditForm'
 import type { WorkflowStep } from '../agents/AgentStepsEditor'
+import { PROVIDER_COLORS } from '../shared/sourceTheme'
 
 // =============================================================================
 // Types
@@ -63,17 +64,6 @@ const SOURCE_LABELS: Record<string, string> = {
   'installed': 'Installed',
   'project': 'Project',
 }
-
-const PROVIDER_COLORS: Record<string, string> = {
-  inherit: '#9ca3af',
-  claude: '#6366f1',
-  gemini: '#a855f7',
-  codex: '#22c55e',
-  cursor: '#3b82f6',
-  windsurf: '#14b8a6',
-  copilot: '#f97316',
-}
-
 
 const ISOLATION_COLORS: Record<string, string> = {
   clone: '#ef4444',
@@ -758,7 +748,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     } catch (e) {
       console.error('Failed to move agent to project:', e)
     }
-  }, [projectId, fetchDefinitions])
+  }, [confirm, projectId, fetchDefinitions])
 
   const handleMoveToGlobal = useCallback(async (item: AgentDefInfo) => {
     if (!item.db_id) return
@@ -771,7 +761,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     } catch (e) {
       console.error('Failed to move agent to global:', e)
     }
-  }, [fetchDefinitions])
+  }, [confirm, fetchDefinitions])
 
   const handleRestoreFromTemplate = useCallback(async (item: AgentDefInfo) => {
     if (!item.db_id) return
@@ -784,7 +774,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     } catch (e) {
       console.error('Failed to restore agent from template:', e)
     }
-  }, [fetchDefinitions])
+  }, [confirm, fetchDefinitions])
 
   const handleImport = async (name: string) => {
     setImportingName(name)

@@ -49,21 +49,36 @@ class RuleDefinition(BaseModel):
             command_not_pattern=self.command_not_pattern,
         )
         return RuleDefinitionBody(
-            event=RuleEvent.BEFORE_TOOL,
+            event=RuleTriggerEvent.BEFORE_TOOL,
             effect=effect,
         )
 
 
-class RuleEvent(str, Enum):
-    """Events that rules can respond to."""
+class RuleTriggerEvent(str, Enum):
+    """Events that workflow rules can respond to."""
 
-    BEFORE_TOOL = "before_tool"
-    AFTER_TOOL = "after_tool"
-    BEFORE_AGENT = "before_agent"
+    TURN_END = "turn_end"
+
     SESSION_START = "session_start"
     SESSION_END = "session_end"
+    BEFORE_AGENT = "before_agent"
+    AFTER_AGENT = "after_agent"
     STOP = "stop"
+    BEFORE_TOOL = "before_tool"
+    AFTER_TOOL = "after_tool"
+    BEFORE_TOOL_SELECTION = "before_tool_selection"
+    BEFORE_MODEL = "before_model"
+    AFTER_MODEL = "after_model"
     PRE_COMPACT = "pre_compact"
+    SUBAGENT_START = "subagent_start"
+    SUBAGENT_STOP = "subagent_stop"
+    PERMISSION_REQUEST = "permission_request"
+    NOTIFICATION = "notification"
+
+
+# Backward-compatible alias for older imports. This still resolves to the
+# unified rule trigger enum; there is no longer a separate filtered rule enum.
+RuleEvent = RuleTriggerEvent
 
 
 class RuleEffect(BaseModel):
@@ -76,7 +91,6 @@ class RuleEffect(BaseModel):
         "mcp_call",
         "observe",
         "rewrite_input",
-        "compress_output",
         "load_skill",
     ]
 
@@ -114,10 +128,6 @@ class RuleEffect(BaseModel):
     input_updates: dict[str, Any] | None = None
     auto_approve: bool = False
 
-    # compress_output — compress tool output after execution (PostToolUse)
-    strategy: str | None = None
-    max_lines: int | None = None
-
     # load_skill — resolve and inject a skill's content into agent context
     skill: str | None = None
 
@@ -125,10 +135,11 @@ class RuleEffect(BaseModel):
         """Warn when fields irrelevant to the effect type are set."""
         import warnings
 
+        selector_fields = {"tools", "mcp_tools", "command_pattern", "command_not_pattern"}
         _fields_by_type: dict[str, set[str]] = {
-            "block": {"reason", "tools", "mcp_tools", "command_pattern", "command_not_pattern"},
+            "block": {"reason", *selector_fields},
             "set_variable": {"variable", "value"},
-            "inject_context": {"template"},
+            "inject_context": {"template", *selector_fields},
             "mcp_call": {
                 "server",
                 "tool",
@@ -137,11 +148,11 @@ class RuleEffect(BaseModel):
                 "inject_result",
                 "block_on_failure",
                 "block_on_success",
+                *selector_fields,
             },
-            "observe": {"category", "message"},
-            "rewrite_input": {"input_updates", "auto_approve"},
-            "compress_output": {"strategy", "max_lines"},
-            "load_skill": {"skill"},
+            "observe": {"category", "message", *selector_fields},
+            "rewrite_input": {"input_updates", "auto_approve", *selector_fields},
+            "load_skill": {"skill", *selector_fields},
         }
         # Fields with non-None defaults that shouldn't trigger warnings
         _default_skip = {
@@ -171,7 +182,7 @@ class RuleEffect(BaseModel):
 class RuleDefinitionBody(BaseModel):
     """Stored as definition_json in workflow_definitions for workflow_type='rule'."""
 
-    event: RuleEvent
+    event: RuleTriggerEvent
     when: str | None = None
     match: dict[str, Any] | None = None
     tools: list[str] | None = None  # Pre-filter: skip rule if tool doesn't match

@@ -86,6 +86,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     """
 
     conversation_id: str
+    provider: str = field(default="claude")
     db_session_id: str | None = field(default=None)
     seq_num: int | None = field(default=None)
     project_id: str | None = field(default=None)
@@ -113,6 +114,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None = field(
         default=None, repr=False
     )
+    _config: Any | None = field(default=None, repr=False)
     _tool_approval_config: Any | None = field(default=None, repr=False)
     _tool_approval_callback: Any | None = field(default=None, repr=False)
     _on_approved_tools_persist: Callable[[set[str]], None] | None = field(default=None, repr=False)
@@ -123,7 +125,6 @@ class ChatSession(ChatSessionPermissionsMixin):
     _max_history_total_chars: int = field(default=30_000, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
     _accumulated_output_tokens: int = field(default=0, repr=False)
-    _accumulated_cost_usd: float = field(default=0.0, repr=False)
     _message_manager_source_session_id: str | None = field(default=None, repr=False)
     _message_manager: Any | None = field(default=None, repr=False)
     sdk_session_id: str | None = field(default=None, repr=False)
@@ -156,6 +157,44 @@ class ChatSession(ChatSessionPermissionsMixin):
     )
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None = field(default=None, repr=False)
     _on_mode_persist: Callable[[str], None] | None = field(default=None, repr=False)
+
+    @property
+    def _default_model(self) -> str | None:
+        """Resolve default model from config."""
+        if self._config and hasattr(self._config, "llm_providers"):
+            model: str | None = self._config.llm_providers.default_model
+            return model
+        return None
+
+    async def _resolve_requested_model(
+        self, requested_model: str | None, env: dict[str, str]
+    ) -> str | None:
+        """Resolve special model aliases and mutate env for endpoint overrides."""
+        if requested_model != "local":
+            return requested_model or self._default_model
+
+        local_cfg = getattr(self._config, "local", None) if self._config else None
+        if not local_cfg:
+            raise RuntimeError(
+                "Model 'local' requires a configured local endpoint (local.url, local.model)."
+            )
+
+        env["ANTHROPIC_BASE_URL"] = local_cfg.url
+        if local_cfg.api_key:
+            env["ANTHROPIC_AUTH_TOKEN"] = local_cfg.api_key
+
+        resolved_model = local_cfg.model
+        try:
+            from gobby.agents.local_model import ensure_local_model
+
+            resolved_model = await ensure_local_model(local_cfg, registry=None)
+        except Exception as e:
+            raise RuntimeError(f"Local model pre-flight failed: {e}") from e
+
+        logger.info(
+            f"ChatSession {self.conversation_id} using configured local model: {resolved_model}"
+        )
+        return resolved_model
 
     async def start(self, model: str | None = None) -> None:
         """Connect the ClaudeSDKClient with configured options."""
@@ -203,14 +242,32 @@ class ChatSession(ChatSessionPermissionsMixin):
         env: dict[str, str] = {}
         if self.db_session_id:
             env["GOBBY_SESSION_ID"] = self.db_session_id
-            env["GOBBY_SOURCE"] = "claude_sdk_web_chat"
+            env["GOBBY_SOURCE"] = "claude"
         if self.project_id:
             env["GOBBY_PROJECT_ID"] = self.project_id
+
+        resolved_model = await self._resolve_requested_model(model, env)
+
+        # Route through local LLM endpoint when configured. A model='local'
+        # selection above takes precedence and has already injected env.
+        if (
+            "ANTHROPIC_BASE_URL" not in env
+            and self._config
+            and hasattr(self._config, "local_llm")
+            and self._config.local_llm.enabled
+        ):
+            local_llm = self._config.local_llm
+            if local_llm.endpoint and "claude" in local_llm.providers:
+                env["ANTHROPIC_BASE_URL"] = local_llm.endpoint
+                logger.info(
+                    f"ChatSession {self.conversation_id} using local LLM endpoint: "
+                    f"{local_llm.endpoint}"
+                )
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=None,
-            model=model or "opus",
+            model=resolved_model,
             permission_mode=self._to_sdk_permission_mode(self.chat_mode),
             allowed_tools=["mcp__gobby__*"],
             can_use_tool=self._can_use_tool,
@@ -270,7 +327,7 @@ class ChatSession(ChatSessionPermissionsMixin):
                         except Exception as e:
                             logger.warning(f"Failed to capture transcript_path: {e}")
 
-                data = {"prompt": inp.get("prompt", ""), "source": "claude_sdk_web_chat"}
+                data = {"prompt": inp.get("prompt", ""), "source": "claude"}
                 resp = await cb(data)
                 output = _response_to_prompt_output(resp)
 
@@ -418,7 +475,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             ) -> SyncHookJSONOutput:
                 data = {
                     "session_id": inp.get("session_id", ""),
-                    "source": "claude_sdk_web_chat",
+                    "source": "claude",
                 }
                 resp = await cb_sub_start(data)
                 return _response_to_subagent_output(resp, "SubagentStart")
@@ -435,7 +492,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             ) -> SyncHookJSONOutput:
                 data = {
                     "session_id": inp.get("session_id", ""),
-                    "source": "claude_sdk_web_chat",
+                    "source": "claude",
                 }
                 resp = await cb_sub_stop(data)
                 return _response_to_subagent_output(resp, "SubagentStop")
@@ -580,7 +637,6 @@ class ChatSession(ChatSessionPermissionsMixin):
                         # response), emit the ResultMessage.result as a TextChunk
                         if message.result and not has_text:
                             yield TextChunk(content=message.result)
-                        cost_usd = getattr(message, "total_cost_usd", None)
                         duration_ms = getattr(message, "duration_ms", None)
                         # Extract token usage from ResultMessage.usage dict
                         # (AssistantMessage does NOT carry usage in the SDK)
@@ -611,7 +667,7 @@ class ChatSession(ChatSessionPermissionsMixin):
                         total_input = uncached_input + cache_read + cache_creation
 
                         # Output tokens: use accumulated from ResultMessage
-                        # (correct for cost tracking; not part of context %)
+                        # (not part of context %)
                         output_tokens = usage.get("output_tokens", 0) or 0
 
                         context_window = resolve_context_window(
@@ -625,7 +681,6 @@ class ChatSession(ChatSessionPermissionsMixin):
                         )
                         yield DoneEvent(
                             tool_calls_count=tool_calls_count,
-                            cost_usd=cost_usd,
                             duration_ms=duration_ms,
                             input_tokens=uncached_input if has_usage else None,
                             output_tokens=output_tokens if has_usage else None,
@@ -779,7 +834,15 @@ class ChatSession(ChatSessionPermissionsMixin):
         """Switch to a different Claude model mid-conversation."""
         if not self._client or not self._connected:
             raise RuntimeError("ChatSession not connected")
-        await self._client.set_model(new_model)
+        resolved_model = new_model
+        if new_model == "local":
+            local_cfg = getattr(self._config, "local", None) if self._config else None
+            if not local_cfg:
+                raise RuntimeError(
+                    "Model 'local' requires a configured local endpoint (local.url, local.model)."
+                )
+            resolved_model = local_cfg.model
+        await self._client.set_model(resolved_model)
         self._model = new_model
 
     # Map Gobby chat_mode values to SDK PermissionMode values

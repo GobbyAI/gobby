@@ -21,7 +21,7 @@ def _inject_agent_skills(
     agent_body: AgentDefinitionBody,
     db: DatabaseProtocol,
     project_id: str,
-    cli_source: str = "claude_sdk_web_chat",
+    cli_source: str = "claude",
 ) -> str | None:
     """Run audience-aware skill injection for an agent definition."""
     from gobby.hooks.event_handlers._session import select_and_format_agent_skills
@@ -45,6 +45,7 @@ class ChatLifecycleMixin:
     _pending_modes: dict[str, str]
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
+    _pending_projects: dict[str, str]
 
     if TYPE_CHECKING:
 
@@ -107,13 +108,16 @@ class ChatLifecycleMixin:
 
             data = normalize_tool_fields(data)
 
-        # Detect session type for source
-        from gobby.servers.codex_chat_session import CodexChatSession
-
-        if isinstance(session, CodexChatSession):
-            source = SessionSource.CODEX_WEB_CHAT
-        else:
-            source = SessionSource.CLAUDE_SDK_WEB_CHAT
+        # Source is determined by session's provider (default claude)
+        provider_value = getattr(session, "provider", "claude")
+        try:
+            source = SessionSource(provider_value)
+        except ValueError:
+            logger.warning(
+                "Invalid session provider %r; defaulting lifecycle source to 'claude'",
+                provider_value,
+            )
+            source = SessionSource("claude")
 
         event = HookEvent(
             event_type=event_type,
@@ -183,42 +187,6 @@ class ChatLifecycleMixin:
                 "system_message": response.system_message,
             }
 
-            # --- Output compression (parity with hook_manager.py:392-416) ---
-            compression_cfg = (response.metadata or {}).get("compression")
-            if compression_cfg and event_type == HookEventType.AFTER_TOOL:
-                try:
-                    tool_output = (data or {}).get("tool_output", "")
-                    if isinstance(tool_output, str) and tool_output:
-                        strategy = compression_cfg.get("strategy")
-
-                        if strategy == "code_index":
-                            import subprocess
-
-                            tool_input = (data or {}).get("tool_input") or {}
-                            file_path = tool_input.get("file_path") or tool_input.get("path", "")
-                            if file_path:
-                                proc = subprocess.run(
-                                    ["gcode", "outline", file_path],
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=10,
-                                )
-                                if proc.returncode == 0 and proc.stdout:
-                                    outline = proc.stdout
-                                    if len(outline) < len(tool_output):
-                                        savings_pct = (1 - len(outline) / len(tool_output)) * 100
-                                        result["modified_output"] = (
-                                            f"[Output compressed by Gobby — code_index outline, "
-                                            f"{savings_pct:.0f}% reduction]\n{outline}"
-                                        )
-                                        logger.info(
-                                            f"code_index outline: saved {savings_pct:.0f}%"
-                                            f" ({len(tool_output)}->{len(outline)} chars)"
-                                        )
-                                        # gcode self-reports savings to HTTP API (gsqz pattern)
-                except Exception as exc:
-                    logger.warning(f"Output compression failed: {exc}")
-
             # --- Input rewriting (parity with hook_manager.py:387-390) ---
             if response.modified_input:
                 result["modified_input"] = response.modified_input
@@ -236,7 +204,7 @@ class ChatLifecycleMixin:
                         session_ref=session_ref,
                         project_id=getattr(session, "project_id", None),
                         cwd=project_path,
-                        source="claude_sdk_web_chat",
+                        source="claude",
                     )
                 else:
                     enrichment = f"Gobby Session ID: {session_ref}"

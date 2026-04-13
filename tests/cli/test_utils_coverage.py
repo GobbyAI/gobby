@@ -1158,8 +1158,9 @@ def test_stop_daemon_no_pid_file_not_quiet(tmp_path: Path) -> None:
     ):
         result = stop_daemon(quiet=False)
     assert result is True
-    mock_echo.assert_called_once()
-    assert "not running" in mock_echo.call_args[0][0]
+    echo_msgs = [call[0][0] for call in mock_echo.call_args_list]
+    assert any("Stopping Gobby daemon" in m for m in echo_msgs)
+    assert any("not running" in m for m in echo_msgs)
 
 
 def test_stop_daemon_stale_pid_with_orphans(tmp_path: Path) -> None:
@@ -1409,9 +1410,9 @@ def test_stop_daemon_uses_service_stop_under_launchctl(tmp_path: Path) -> None:
     mock_service_stop.assert_called_once()
     # SIGTERM should NOT have been sent — bootout handled it
     mock_kill.assert_not_called()
-    # Should mention service manager in output
+    # Should mention the service platform in output (e.g. "Stopped via macos service (…)")
     echo_calls = [str(c) for c in mock_echo.call_args_list]
-    assert any("service manager" in c for c in echo_calls)
+    assert any("Stopped via" in c and "service" in c for c in echo_calls)
 
 
 def test_stop_daemon_falls_back_to_sigterm_on_service_stop_failure(tmp_path: Path) -> None:

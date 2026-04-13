@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +169,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "Explain why validation should be skipped.",
                 }
             # Check if task was claimed by the calling session
-            if resolved_session_id and task.assignee == resolved_session_id:
+            if resolved_session_id and get_claimed_session_id(task) == resolved_session_id:
                 return {
                     "success": False,
                     "error": "skip_validation_own_task",
@@ -247,7 +248,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                         return response
 
         # Determine close outcome
-        route_to_review, store_override = determine_close_outcome(
+        route_to_escalation, store_override = determine_close_outcome(
             task, skip_validation, override_justification
         )
 
@@ -256,20 +257,23 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         current_commit_sha = run_git_command(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
 
-        if route_to_review:
-            # Route to needs_review status instead of closing
-            # Task stays in needs_review until user explicitly closes
-            ctx.task_manager.update_task(
+        if route_to_escalation:
+            escalation_reason = (
+                "Validation override requested; human review required"
+                if not override_justification
+                else f"Validation override requested: {override_justification}"
+            )
+            ctx.task_manager.escalate_task(
                 resolved_id,
-                status="needs_review",
-                validation_override_reason=override_justification if store_override else None,
+                reason=escalation_reason,
+                validation_override_reason=(override_justification if store_override else None),
             )
 
             # Auto-link session if provided
             if resolved_session_id:
                 try:
                     ctx.session_task_manager.link_task(
-                        resolved_session_id, resolved_id, "needs_review"
+                        resolved_session_id, resolved_id, "escalated"
                     )
                 except Exception as e:
                     logger.debug(f"Best-effort session linking failed: {e}")
@@ -277,13 +281,13 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             notify_parent_on_status_change(
                 ctx.task_manager.db,
                 resolved_id,
-                "needs_review",
+                "escalated",
                 task_ref=f"#{task.seq_num}" if task.seq_num else None,
             )
 
             return {
-                "routed_to_review": True,
-                "message": "Task routed to review status. Reason: validation was overridden, human review recommended.",
+                "routed_to_escalation": True,
+                "message": "Task escalated. Reason: validation was overridden and requires human review.",
                 "task_id": resolved_id,
             }
 

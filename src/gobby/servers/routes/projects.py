@@ -48,7 +48,7 @@ def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
     )
 
     open_task_count = db.fetchone(
-        "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = ? AND status IN ('open', 'in_progress', 'needs_review', 'escalated')",
+        "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = ? AND closed_at IS NULL",
         (project_id,),
     )
 

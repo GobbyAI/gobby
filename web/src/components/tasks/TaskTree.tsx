@@ -3,6 +3,7 @@ import { Tree, TreeApi, NodeRendererProps } from 'react-arborist'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
+import { getTaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // Tree data type
@@ -18,14 +19,12 @@ interface TreeNode {
 // Closed statuses to filter
 // =============================================================================
 
-const CLOSED_STATUSES = new Set(['closed', 'review_approved'])
-
 // =============================================================================
 // Build tree from flat task list
 // =============================================================================
 
 function buildTree(tasks: GobbyTask[], hideClosed: boolean): TreeNode[] {
-  const filtered = hideClosed ? tasks.filter(t => !CLOSED_STATUSES.has(t.status)) : tasks
+  const filtered = hideClosed ? tasks.filter(t => getTaskBucket(t) !== 'closed') : tasks
   const nodeMap = new Map<string, TreeNode>()
   const roots: TreeNode[] = []
 
@@ -96,7 +95,7 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
         ) : (
           <span className="tree-node-toggle tree-node-toggle--leaf" />
         )}
-        <StatusDot status={task.status} />
+        <StatusDot task={task} />
         <span className="tree-node-ref">{task.ref}</span>
         <span className="tree-node-title">
           <HighlightText text={task.title} search={searchTerm} />

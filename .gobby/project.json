@@ -4,7 +4,7 @@
   "created_at": "2026-01-10T07:31:35.890720",
   "verification": {
     "unit_tests": "uv run pytest tests/ -v",
-    "type_check": "uv run mypy src/",
+    "type_check": "uv run mypy src/ --no-incremental --strict",
     "lint": "uv run ruff check src/",
     "format": "uv run ruff format --check src/",
     "custom": {
@@ -15,15 +15,14 @@
   },
   "hooks": {
     "pre-commit": {
-      "run": [
-        "lint",
-        "format"
-      ],
+      "run": [],
       "fail_fast": true,
       "timeout": 120
     },
     "pre-push": {
       "run": [
+        "lint",
+        "format",
         "type_check",
         "ts_check",
         "frontend_tests"

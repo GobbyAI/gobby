@@ -2,7 +2,7 @@
 
 from contextlib import contextmanager
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -134,6 +134,24 @@ async def test_generate_text(claude_config):
         provider = ClaudeLLMProvider(claude_config)
         text = await provider.generate_text("prompt")
         assert text == "Generated text"
+
+
+@pytest.mark.asyncio
+async def test_generate_text_threads_caller_into_operation_name(claude_config):
+    async def mock_query(prompt, options):
+        yield MockAssistantMessage([MockTextBlock("Generated text")])
+
+    with mock_claude_sdk(mock_query):
+        provider = ClaudeLLMProvider(claude_config)
+        with patch.object(
+            provider,
+            "_execute_sdk_query",
+            AsyncMock(return_value="Generated text"),
+        ) as mock_execute:
+            text = await provider.generate_text("prompt", caller="code_index.symbol_summary")
+
+        assert text == "Generated text"
+        assert mock_execute.await_args.args[0] == "generate_text[code_index.symbol_summary]"
 
 
 def test_auth_mode_default_is_subscription(claude_config):

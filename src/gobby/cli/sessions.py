@@ -92,13 +92,19 @@ def list_sessions(
         if len(title) > 50:
             title = title[:47] + "..."
 
-        cost_str = ""
-        if session.usage_total_cost_usd > 0:
-            cost_str = f"${session.usage_total_cost_usd:.2f}"
+        total_tokens = session.usage_input_tokens + session.usage_output_tokens
+        tokens_str = ""
+        if total_tokens > 0:
+            if total_tokens >= 1_000_000:
+                tokens_str = f"{total_tokens / 1_000_000:.1f}M"
+            elif total_tokens >= 1_000:
+                tokens_str = f"{total_tokens / 1_000:.1f}K"
+            else:
+                tokens_str = str(total_tokens)
 
         seq_str = f"#{session.seq_num}" if session.seq_num else ""
         click.echo(
-            f"{status_icon} {seq_str:<5} {session.id[:8]}  {session.source:<12} {title:<40} {cost_str}"
+            f"{status_icon} {seq_str:<5} {session.id[:8]}  {session.source:<12} {title:<40} {tokens_str}"
         )
 
 
@@ -141,7 +147,6 @@ def show_session(session_id: str, json_format: bool) -> None:
         click.echo(f"  Output Tokens: {session.usage_output_tokens}")
         click.echo(f"  Cache Write: {session.usage_cache_creation_tokens}")
         click.echo(f"  Cache Read: {session.usage_cache_read_tokens}")
-        click.echo(f"  Total Cost: ${session.usage_total_cost_usd:.4f}")
 
     if session.summary_markdown:
         click.echo(f"\nSummary:\n{session.summary_markdown[:500]}")

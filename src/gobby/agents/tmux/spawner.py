@@ -208,7 +208,7 @@ class TmuxSpawner(TerminalSpawnerBase):
             sandbox_args, sandbox_env = resolver.resolve(sandbox_config, resolved_paths)
 
         # Build command with prompt as CLI argument
-        command = build_cli_command(
+        command, cmd_env = build_cli_command(
             cli,
             prompt=prompt,
             session_id=session_id,
@@ -240,7 +240,8 @@ class TmuxSpawner(TerminalSpawnerBase):
             prompt_file=prompt_file,
         )
 
-        # Merge sandbox environment variables if present
+        # Merge command builder env and sandbox env
+        env.update(cmd_env)
         if sandbox_env:
             env.update(sandbox_env)
 

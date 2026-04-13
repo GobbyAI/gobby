@@ -138,10 +138,11 @@ function ConfidenceBar({ value }: { value: number }) {
 
 interface EscalationCardProps {
   task: GobbyTaskDetail
+  targetStatus?: string | null
   onResolve: (decision: string) => void
 }
 
-export function EscalationCard({ task, onResolve }: EscalationCardProps) {
+export function EscalationCard({ task, targetStatus, onResolve }: EscalationCardProps) {
   const [selectedOption, setSelectedOption] = useState<number | null>(null)
   const [customInput, setCustomInput] = useState('')
   const [showCustom, setShowCustom] = useState(false)
@@ -170,7 +171,10 @@ export function EscalationCard({ task, onResolve }: EscalationCardProps) {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision_context: decision }),
+          body: JSON.stringify({
+            decision_context: decision,
+            ...(targetStatus ? { target_status: targetStatus } : {}),
+          }),
         }
       )
       if (response.ok) {
@@ -183,7 +187,7 @@ export function EscalationCard({ task, onResolve }: EscalationCardProps) {
     } finally {
       setIsSubmitting(false)
     }
-  }, [selectedOption, customInput, showCustom, escalation.options, onResolve, task.id])
+  }, [selectedOption, customInput, showCustom, escalation.options, onResolve, targetStatus, task.id])
 
   const canSubmit = (showCustom ? customInput.trim().length > 0 : selectedOption !== null) && !isSubmitting
 

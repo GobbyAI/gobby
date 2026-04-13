@@ -300,6 +300,7 @@ class TestCodexAppServerClientStart:
             mock_popen.assert_called_once()
             args = mock_popen.call_args
             assert args[0][0] == ["codex", "app-server"]
+            assert args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
 
         await client.stop()
 
@@ -592,6 +593,37 @@ class TestCodexAppServerClientThreadManagement:
 
         assert "thr-delete" not in client._threads
 
+    @pytest.mark.asyncio
+    async def test_list_models_follows_pagination(self) -> None:
+        """list_models requests model/list until nextCursor is exhausted."""
+        client = CodexAppServerClient()
+
+        with patch.object(
+            client,
+            "_send_request",
+            new_callable=AsyncMock,
+            side_effect=[
+                {
+                    "data": [{"model": "gpt-5.4"}],
+                    "nextCursor": "cursor-1",
+                },
+                {
+                    "data": [{"model": "gpt-5.4-mini"}],
+                },
+            ],
+        ) as mock_send:
+            models = await client.list_models(limit=10, include_hidden=True)
+
+        assert models == [{"model": "gpt-5.4"}, {"model": "gpt-5.4-mini"}]
+        assert mock_send.call_args_list[0].args == (
+            "model/list",
+            {"limit": 10, "includeHidden": True},
+        )
+        assert mock_send.call_args_list[1].args == (
+            "model/list",
+            {"limit": 10, "includeHidden": True, "cursor": "cursor-1"},
+        )
+
 
 class TestCodexAppServerClientTurnManagement:
     """Tests for turn management methods."""
@@ -858,12 +890,15 @@ class TestCodexAdapterTranslateToHookEvent:
         native_event = {
             "method": "thread/started",
             "params": {
+                "cwd": "/tmp/project",
+                "terminal_context": {"tmux_pane": "%2"},
                 "thread": {
                     "id": "thr-123",
                     "preview": "Help me with code",
                     "modelProvider": "openai",
                     "createdAt": 1704067200,
-                }
+                    "path": "/tmp/codex-session.jsonl",
+                },
             },
         }
 
@@ -873,8 +908,11 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.event_type == HookEventType.SESSION_START
         assert hook_event.session_id == "thr-123"
         assert hook_event.source == SessionSource.CODEX
+        assert hook_event.cwd == "/tmp/project"
         assert hook_event.data["preview"] == "Help me with code"
         assert hook_event.data["model_provider"] == "openai"
+        assert hook_event.data["transcript_path"] == "/tmp/codex-session.jsonl"
+        assert hook_event.data["terminal_context"]["tmux_pane"] == "%2"
 
     def test_thread_archive(self) -> None:
         """Translate thread/archive to SESSION_END."""
@@ -974,6 +1012,39 @@ class TestCodexAdapterTranslateToHookEvent:
             assert hook_event is not None
             assert hook_event.event_type == HookEventType.AFTER_TOOL
             assert hook_event.data["item_type"] == item_type
+
+    def test_item_completed_mcp_tool_uses_raw_completed_fields(self) -> None:
+        """Tool-shaped item/completed payloads should preserve MCP tool identity."""
+        adapter = CodexAdapter()
+
+        native_event = {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-mcp-1",
+                    "status": "completed",
+                    "name": "mcp__gobby__get_tool_schema",
+                    "arguments": json.dumps(
+                        {"server_name": "gobby-tasks", "tool_name": "claim_task"}
+                    ),
+                    "output": {"success": True},
+                },
+            },
+        }
+
+        hook_event = adapter.translate_to_hook_event(native_event)
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.AFTER_TOOL
+        assert hook_event.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert hook_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert hook_event.data["mcp_server"] == "gobby"
+        assert hook_event.data["mcp_tool"] == "get_tool_schema"
+        assert hook_event.data["tool_output"] == {"success": True}
 
     def test_item_completed_non_tool(self) -> None:
         """item/completed for non-tool items returns None."""
@@ -1076,7 +1147,45 @@ class TestCodexAdapterTranslateApprovalEvent:
 
         assert hook_event is not None
         assert hook_event.data["tool_name"] == "Write"
-        assert hook_event.data["tool_input"] == changes
+        assert hook_event.data["tool_input"] == {
+            "changes": changes,
+            "file_path": "/file.txt",
+        }
+
+    def test_mcp_tool_call_approval(self) -> None:
+        """Translate MCP approval requests to BEFORE_TOOL with raw tool identity."""
+        adapter = CodexAdapter()
+
+        hook_event = adapter._translate_approval_event(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thr-mcp",
+                "itemId": "item-mcp",
+                "turnId": "turn-1",
+                "reason": "task lookup",
+                "risk": "low",
+                "mcpToolCall": {
+                    "name": "mcp__gobby__get_tool_schema",
+                    "arguments": json.dumps(
+                        {"server_name": "gobby-tasks", "tool_name": "claim_task"}
+                    ),
+                },
+            },
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.session_id == "thr-mcp"
+        assert hook_event.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert hook_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert hook_event.data["mcp_server"] == "gobby"
+        assert hook_event.data["mcp_tool"] == "get_tool_schema"
+        assert hook_event.metadata["approval_method"] == "item/mcpToolCall/requestApproval"
+        assert hook_event.metadata["original_tool_name"] == "mcp__gobby__get_tool_schema"
+        assert hook_event.metadata["normalized_tool_name"] == "mcp__gobby__get_tool_schema"
 
     def test_unknown_approval_method(self) -> None:
         """Unknown approval method returns None."""
@@ -1387,6 +1496,76 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event.event_type == HookEventType.BEFORE_TOOL
         assert hook_event.session_id == "codex-session-123"
 
+    def test_translate_pre_tool_use_apply_patch_as_write(self) -> None:
+        """Translate apply_patch to canonical Write with touched file paths."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+
+        native_event = {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "session_id": "codex-session-123",
+                "cwd": "/project",
+                "tool_name": "apply_patch",
+                "tool_input": (
+                    "*** Begin Patch\n"
+                    "*** Update File: src/main.py\n"
+                    "@@\n"
+                    "-print('old')\n"
+                    "+print('new')\n"
+                    "*** End Patch\n"
+                ),
+            },
+            "source": "codex",
+        }
+
+        hook_event = adapter.translate_to_hook_event(native_event)
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.data["tool_name"] == "Write"
+        assert hook_event.data["tool_input"]["file_path"] == "src/main.py"
+        assert hook_event.metadata["original_tool_name"] == "apply_patch"
+        assert hook_event.metadata["normalized_tool_name"] == "Write"
+
+    @pytest.mark.parametrize(
+        ("tool_name", "expected_tool_name"),
+        [
+            ("read_file", "Read"),
+            ("write_file", "Write"),
+            ("edit_file", "Edit"),
+            ("run_shell_command", "Bash"),
+        ],
+    )
+    def test_translate_pre_tool_use_normalizes_raw_codex_tool_names(
+        self, tool_name: str, expected_tool_name: str
+    ) -> None:
+        """Translate raw Codex terminal tool names to canonical rule names."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+
+        hook_event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "PreToolUse",
+                "input_data": {
+                    "session_id": "codex-session-123",
+                    "cwd": "/project",
+                    "tool_name": tool_name,
+                    "tool_input": {"path": "src/app.py"},
+                },
+                "source": "codex",
+            }
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.data["tool_name"] == expected_tool_name
+        if tool_name in {"read_file", "write_file", "edit_file"}:
+            assert hook_event.metadata["original_tool_name"] == tool_name
+            assert hook_event.metadata["normalized_tool_name"] == expected_tool_name
+
     def test_translate_post_tool_use(self) -> None:
         """Translate PostToolUse to AFTER_TOOL."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
@@ -1464,6 +1643,22 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
         assert hook_event is None
 
+    def test_translate_pre_compact_unsupported_returns_none(self) -> None:
+        """Codex terminal compact hooks remain unsupported and no-op."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+
+        hook_event = adapter.translate_to_hook_event(
+            {
+                "hook_type": "PreCompact",
+                "input_data": {"session_id": "thread-123"},
+                "source": "codex",
+            }
+        )
+
+        assert hook_event is None
+
     def test_all_event_types_mapped(self) -> None:
         """All 5 Codex hook types are in EVENT_MAP."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
@@ -1511,6 +1706,71 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["decision"] == "block"
         assert result["reason"] == "Not allowed"
 
+    def test_pre_tool_use_block_uses_permission_decision(self) -> None:
+        """PreToolUse blocks must use Codex permissionDecision, not continue=false."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="block",
+            reason="Tool not allowed",
+            system_message="Use MCP instead",
+            context="Run create_task first",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert "continue" not in result
+        assert result["decision"] == "block"
+        assert result["reason"] == "Tool not allowed"
+        assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Tool not allowed"
+        assert "Use MCP instead" in result["systemMessage"]
+        assert "Run create_task first" in result["systemMessage"]
+
+    def test_pre_tool_use_rewrite_blocks_and_surfaces_retry_input(self) -> None:
+        """PreToolUse rewrites block and tell Codex how to retry safely."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            context="Bare python is not allowed",
+            modified_input={"command": "uv run python hello.py"},
+            auto_approve=True,
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert result["decision"] == "block"
+        assert (
+            result["reason"]
+            == "Retry the tool call with the corrected input from the hook message."
+        )
+        assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert (
+            result["hookSpecificOutput"]["permissionDecisionReason"]
+            == "Retry the tool call with the corrected input from the hook message."
+        )
+        assert "updatedInput" not in result["hookSpecificOutput"]
+        assert "Bare python is not allowed" in result["systemMessage"]
+        assert "uv run python hello.py" in result["systemMessage"]
+
+    def test_pre_tool_use_ignores_modified_input_without_rewrite_signal(self) -> None:
+        """modified_input alone should not block ordinary Codex commands."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            modified_input={"command": "sed -n '1,20p' file.txt"},
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "hookSpecificOutput" not in result
+
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
@@ -1535,25 +1795,76 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "hookSpecificOutput" not in result
         assert "Rule injected context" in result["systemMessage"]
 
-    def test_stop_returns_bare_continue(self) -> None:
-        """Stop returns bare {continue: true} with no context injection."""
+    def test_stop_routes_context_to_system_message(self) -> None:
+        """Stop routes context to systemMessage (only accepted field for Stop)."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", context="Stop context")
         result = adapter.translate_from_hook_response(response, hook_type="Stop")
 
-        assert result == {"continue": True}
+        assert result["continue"] is True
+        assert "hookSpecificOutput" not in result
+        assert "Stop context" in result["systemMessage"]
 
-    def test_system_message_in_result(self) -> None:
-        """System message appears as systemMessage field."""
+    def test_stop_combines_system_message_and_context(self) -> None:
+        """Stop combines system_message and context in systemMessage without overwrite."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
-        response = HookResponse(decision="allow", system_message="System note")
-        result = adapter.translate_from_hook_response(response)
+        response = HookResponse(
+            decision="allow",
+            system_message="System note",
+            context="Rule context",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="Stop")
 
-        assert result["systemMessage"] == "System note"
+        assert "System note" in result["systemMessage"]
+        assert "Rule context" in result["systemMessage"]
+
+    def test_system_message_routes_to_additional_context_for_user_prompt(self) -> None:
+        """UserPromptSubmit routes system_message to additionalContext, not systemMessage."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", system_message="Session info")
+        result = adapter.translate_from_hook_response(response, hook_type="UserPromptSubmit")
+
+        assert "systemMessage" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "UserPromptSubmit"
+        assert "Session info" in hso["additionalContext"]
+
+    def test_system_message_both_visible_and_model_facing_for_session_start(self) -> None:
+        """SessionStart puts system_message in both systemMessage and additionalContext."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="allow", system_message="Session banner")
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        # Visible to user
+        assert result["systemMessage"] == "Session banner"
+        # Also fed to model
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "SessionStart"
+        assert "Session banner" in hso["additionalContext"]
+
+    def test_pre_tool_use_combines_system_message_and_context(self) -> None:
+        """PreToolUse combines system_message and context_parts in systemMessage."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            system_message="Gate note",
+            context="Rule constraint",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert "hookSpecificOutput" not in result
+        assert "Gate note" in result["systemMessage"]
+        assert "Rule constraint" in result["systemMessage"]
 
     def test_session_metadata_first_hook(self) -> None:
         """First hook includes full session metadata in additionalContext."""
@@ -1658,6 +1969,7 @@ class TestCodexAdapterEventMapping:
             "turn/completed",
             "item/commandExecution/requestApproval",
             "item/fileChange/requestApproval",
+            "item/mcpToolCall/requestApproval",
             "item/completed",
         ]
 
@@ -1839,6 +2151,58 @@ class TestCodexClientApprovalRequestDetection:
 
         assert received["method"] == "item/fileChange/requestApproval"
         assert received["params"]["changes"][0]["path"] == "/test.txt"
+
+    @pytest.mark.asyncio
+    async def test_detects_mcp_tool_call_approval(self) -> None:
+        """Reader detects mcpToolCall approval requests."""
+        client = CodexAppServerClient()
+        received: dict = {}
+
+        async def handler(method: str, params: dict) -> dict:
+            received["method"] = method
+            received["params"] = params
+            return {"decision": "accept"}
+
+        client.register_approval_handler(handler)
+
+        approval_msg = {
+            "jsonrpc": "2.0",
+            "id": 100,
+            "method": "item/mcpToolCall/requestApproval",
+            "params": {
+                "threadId": "thr-mcp",
+                "itemId": "item-1",
+                "name": "mcp__gobby__get_tool_schema",
+                "arguments": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+            },
+        }
+
+        mock_process = MagicMock()
+        lines = [json.dumps(approval_msg) + "\n"]
+        read_idx = 0
+
+        def mock_readline():
+            nonlocal read_idx
+            if read_idx < len(lines):
+                line = lines[read_idx]
+                read_idx += 1
+                return line
+            return ""
+
+        mock_process.stdout.readline = mock_readline
+        mock_process.poll.return_value = 0
+        mock_process.stdin.write = MagicMock()
+        mock_process.stdin.flush = MagicMock()
+
+        client._process = mock_process
+        client._state = CodexConnectionState.CONNECTED
+
+        reader_task = asyncio.create_task(client._read_loop())
+        await asyncio.wait_for(reader_task, timeout=2.0)
+
+        assert received["method"] == "item/mcpToolCall/requestApproval"
+        assert received["params"]["name"] == "mcp__gobby__get_tool_schema"
+        assert received["params"]["arguments"]["tool_name"] == "claim_task"
 
     @pytest.mark.asyncio
     async def test_distinguishes_approval_from_response(self) -> None:
@@ -2636,6 +3000,21 @@ class TestCodexToolNameNormalization:
         assert event is not None
         assert event.data["tool_name"] == "Write"
 
+        # mcpToolCall should preserve the raw MCP tool identity
+        event = adapter._translate_approval_event(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thr-1",
+                "itemId": "item-3",
+                "name": "mcp__gobby__get_tool_schema",
+                "arguments": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+            },
+        )
+        assert event is not None
+        assert event.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert event.data["mcp_server"] == "gobby"
+        assert event.data["mcp_tool"] == "get_tool_schema"
+
 
 class TestCodexApprovalDeclineFormat:
     """Tests for approval decline response format from Codex adapter.
@@ -2770,6 +3149,39 @@ class TestCodexWorkflowEnforcementIntegration:
 
         hook_event = mock_hm.handle.call_args[0][0]
         assert hook_event.data["tool_name"] == "Write"
-        assert hook_event.data["tool_input"] == changes
+        assert hook_event.data["tool_input"] == {
+            "changes": changes,
+            "file_path": "/src/app.py",
+        }
+
+        assert result == {"decision": "accept"}
+
+    @pytest.mark.asyncio
+    async def test_full_chain_allowed_mcp_call(self) -> None:
+        """Full chain: Codex MCP approval → HookEvent → allow → accept."""
+        mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(decision="allow")
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thr-mcp",
+                "itemId": "item-mcp",
+                "name": "mcp__gobby__get_tool_schema",
+                "arguments": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+            },
+        )
+
+        hook_event = mock_hm.handle.call_args[0][0]
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert hook_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert hook_event.data["mcp_server"] == "gobby"
+        assert hook_event.data["mcp_tool"] == "get_tool_schema"
+        assert hook_event.source == SessionSource.CODEX
 
         assert result == {"decision": "accept"}

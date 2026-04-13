@@ -1,7 +1,9 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useIntegrations } from '../../hooks/useIntegrations'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import type { Channel, ChannelType } from '../../hooks/useIntegrations'
-import { ChannelCard, CHANNEL_DISPLAY_NAMES } from './ChannelCard'
+import { ChannelCard } from './ChannelCard'
+import { CHANNEL_DISPLAY_NAMES } from './channelMetadata'
 import { ChannelDetail } from './ChannelDetail'
 import { ChannelForm } from './ChannelForm'
 import { MessageList } from './MessageList'
@@ -34,6 +36,8 @@ export function IntegrationsPage() {
   const [presetType, setPresetType] = useState<ChannelType | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
+
   const showError = useCallback((msg: string) => {
     setErrorMessage(msg)
     setTimeout(() => setErrorMessage(null), 4000)
@@ -57,10 +61,11 @@ export function IntegrationsPage() {
   }, [updateChannel, showError])
 
   const handleRemove = useCallback(async (channel: Channel) => {
-    if (!window.confirm(`Remove channel "${channel.name}"? This cannot be undone.`)) return
+    const ok = await confirm({ title: 'Remove channel', description: `Remove channel "${channel.name}"? This cannot be undone.`, confirmLabel: 'Remove', destructive: true })
+    if (!ok) return
     const success = await removeChannel(channel.id)
     if (!success) showError('Failed to remove channel')
-  }, [removeChannel, showError])
+  }, [confirm, removeChannel, showError])
 
   const handleEmptyCardClick = useCallback((type: ChannelType) => {
     setPresetType(type)
@@ -234,6 +239,7 @@ export function IntegrationsPage() {
         onRemove={(ch) => { handleRemove(ch); setSelectedChannel(null) }}
         fetchStatus={fetchChannelStatus}
       />
+      {ConfirmDialogElement}
     </div>
   )
 }

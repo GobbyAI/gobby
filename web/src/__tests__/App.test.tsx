@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act, waitFor } from '@testing-library/react'
 import App from '../App'
+import { useChat } from '../hooks/useChat'
+import { useSessions } from '../hooks/useSessions'
 
 // Mock all hooks used by App.tsx
 vi.mock('../hooks/useAuth', () => ({
@@ -16,8 +18,8 @@ vi.mock('../hooks/useAuth', () => ({
 const mockSendProjectChange = vi.fn()
 const mockSetProjectIdRef = vi.fn()
 
-vi.mock('../hooks/useChat', () => ({
-  useChat: vi.fn(() => ({
+function makeChatHookState() {
+  return {
     messages: [],
     conversationId: 'conv-123',
     conversationSwitchKey: 0,
@@ -66,21 +68,51 @@ vi.mock('../hooks/useChat', () => ({
     setOnChatDeleted: vi.fn(),
     activeAgent: 'default-web-chat',
     sendAgentChange: vi.fn(),
-  })),
+  }
+}
+
+function makeSessionsHookState() {
+  return {
+    projects: [{ id: 'p1', name: 'Personal' }],
+    sessions: [],
+    isLoading: false,
+    refresh: vi.fn(),
+    setFilters: vi.fn(),
+    filteredSessions: [],
+  }
+}
+
+vi.mock('../hooks/useChat', () => ({
+  useChat: vi.fn(() => makeChatHookState()),
 }))
 
 vi.mock('../hooks/useVoice', () => ({
-  useVoice: vi.fn(() => ({})),
+  useVoice: vi.fn(() => ({
+    handleVoiceMessage: vi.fn(),
+    handleBinaryMessage: vi.fn(),
+  })),
 }))
 
 vi.mock('../hooks/useSettings', () => ({
   useSettings: vi.fn(() => ({
-    settings: { model: 'gpt-4', chatMode: 'plan' },
+    settings: {
+      fontSize: 16,
+      model: 'gpt-4',
+      chatMode: 'plan',
+      theme: 'dark',
+      defaultChatMode: 'plan',
+      sttEnabled: false,
+      ttsEnabled: false,
+      voiceInputMode: 'ptt',
+    },
     updateFontSize: vi.fn(),
     updateModel: vi.fn(),
     updateChatMode: vi.fn(),
     updateTheme: vi.fn(),
     updateDefaultChatMode: vi.fn(),
+    updateSttEnabled: vi.fn(),
+    updateTtsEnabled: vi.fn(),
+    updateVoiceInputMode: vi.fn(),
     resetSettings: vi.fn(),
   })),
 }))
@@ -111,14 +143,7 @@ vi.mock('../hooks/useColonAutocomplete', () => ({
 }))
 
 vi.mock('../hooks/useSessions', () => ({
-  useSessions: vi.fn(() => ({
-    projects: [{ id: 'p1', name: 'Personal' }],
-    sessions: [],
-    isLoading: false,
-    refresh: vi.fn(),
-    setFilters: vi.fn(),
-    filteredSessions: [],
-  })),
+  useSessions: vi.fn(() => makeSessionsHookState()),
 }))
 
 vi.mock('../hooks/useAgentDefinitions', () => ({
@@ -151,6 +176,23 @@ Object.defineProperty(window, 'matchMedia', {
 describe('App wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    const storage = new Map<string, string>()
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: vi.fn((key: string) => storage.get(key) ?? null),
+        setItem: vi.fn((key: string, value: string) => {
+          storage.set(key, value)
+        }),
+        removeItem: vi.fn((key: string) => {
+          storage.delete(key)
+        }),
+        clear: vi.fn(() => {
+          storage.clear()
+        }),
+      },
+      configurable: true,
+      writable: true,
+    })
     // Mock fetch for UI settings
     globalThis.fetch = vi.fn(() => Promise.resolve({
       ok: true,
@@ -167,5 +209,41 @@ describe('App wiring', () => {
       expect(mockSetProjectIdRef).toHaveBeenCalled()
       expect(mockSendProjectChange).toHaveBeenCalled()
     })
+  })
+
+  it('preserves an explicit fresh local conversation instead of restoring the most recent session', async () => {
+    const switchConversation = vi.fn()
+    const startNewChat = vi.fn()
+
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      conversationId: 'local-new-chat',
+      switchConversation,
+      startNewChat,
+    } as any)
+    vi.mocked(useSessions).mockReturnValue({
+      ...makeSessionsHookState(),
+      filteredSessions: [
+        {
+          id: 'db-session-1',
+          external_id: 'server-session-1',
+          project_id: 'p1',
+          session_type: 'web_chat',
+        },
+      ],
+    } as any)
+
+    localStorage.setItem('gobby-conversation-id', 'local-new-chat')
+
+    await act(async () => {
+      render(<App />)
+    })
+
+    await waitFor(() => {
+      expect(mockSetProjectIdRef).toHaveBeenCalled()
+    })
+
+    expect(switchConversation).not.toHaveBeenCalled()
+    expect(startNewChat).not.toHaveBeenCalled()
   })
 })

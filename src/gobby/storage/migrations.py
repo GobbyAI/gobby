@@ -3,13 +3,13 @@
 This module handles schema migrations for the Gobby database.
 
 For new databases (version == 0):
-    BASELINE_SCHEMA is applied, jumping directly to BASELINE_VERSION (171).
+    BASELINE_SCHEMA is applied, jumping directly to BASELINE_VERSION.
 
-For existing databases at v171+:
-    Any migrations in MIGRATIONS (v172+) are applied incrementally.
+For existing databases at or above the minimum supported version:
+    Any migrations in MIGRATIONS beyond BASELINE_VERSION are applied incrementally.
 
 To add a new migration:
-    1. Add it to the MIGRATIONS list below with version = 172, 173, etc.
+    1. Add it to the MIGRATIONS list below with the next version number.
     2. Use SQL strings for schema changes, callables for data migrations.
     3. Also add the migration to BASELINE_SCHEMA for future fresh installs.
 """
@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 199
+BASELINE_VERSION = 211
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -201,6 +201,62 @@ def _setup_skills_fts(db: LocalDatabase) -> None:
     """)
 
 
+def _setup_memories_fts(db: LocalDatabase) -> None:
+    """Create FTS5 virtual table and triggers for memory search.
+
+    Content-synced with the memories table — triggers keep FTS5 in sync
+    automatically on INSERT/UPDATE/DELETE.  Tags are stripped of JSON
+    formatting so FTS5 indexes clean tokens (e.g. ``codex hooks`` instead
+    of ``["codex","hooks"]``).
+    """
+    conn = db.connection
+    conn.executescript("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+            content, tags, memory_type, source_type,
+            content='memories', content_rowid='rowid'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
+            INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+            VALUES (
+                new.rowid, new.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(new.tags, ''), '"', ''), '[', ''), ']', ''),
+                new.memory_type, COALESCE(new.source_type, '')
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, tags, memory_type, source_type)
+            VALUES (
+                'delete', old.rowid, old.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(old.tags, ''), '"', ''), '[', ''), ']', ''),
+                old.memory_type, COALESCE(old.source_type, '')
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE OF content, tags, memory_type, source_type ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, tags, memory_type, source_type)
+            VALUES (
+                'delete', old.rowid, old.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(old.tags, ''), '"', ''), '[', ''), ']', ''),
+                old.memory_type, COALESCE(old.source_type, '')
+            );
+            INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+            VALUES (
+                new.rowid, new.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(new.tags, ''), '"', ''), '[', ''), ']', ''),
+                new.memory_type, COALESCE(new.source_type, '')
+            );
+        END;
+
+        INSERT OR IGNORE INTO memories_fts(rowid, content, tags, memory_type, source_type)
+        SELECT rowid, content,
+               REPLACE(REPLACE(REPLACE(COALESCE(tags, ''), '"', ''), '[', ''), ']', ''),
+               memory_type, COALESCE(source_type, '')
+        FROM memories;
+    """)
+
+
 def _setup_fts_tables(db: LocalDatabase) -> None:
     """Set up FTS5 tables for both tasks and skills."""
     _setup_tasks_fts(db)
@@ -232,6 +288,276 @@ def _add_summary_column(db: LocalDatabase) -> None:
     db.connection.execute("ALTER TABLE code_symbols ADD COLUMN summary TEXT")
     # Rebuild FTS with summary (drops and recreates table + triggers)
     _setup_code_symbols_fts(db, include_summary=True)
+
+
+def _drop_column_if_exists(db: LocalDatabase, table: str, column: str) -> None:
+    """Drop a column if it exists (no-op on fresh databases where baseline omits it)."""
+    row = db.fetchone(
+        f"SELECT COUNT(*) as cnt FROM pragma_table_info('{table}') WHERE name = ?", (column,)
+    )
+    if row and row["cnt"] > 0:
+        db.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+
+def _column_exists(db: LocalDatabase, table: str, column: str) -> bool:
+    """Return True when the given table already has the target column."""
+    row = db.fetchone(
+        f"SELECT COUNT(*) as cnt FROM pragma_table_info('{table}') WHERE name = ?", (column,)
+    )
+    return bool(row and row["cnt"] > 0)
+
+
+def _migrate_claimed_by_session_id(db: LocalDatabase) -> None:
+    """Add canonical task ownership column and heal partial application.
+
+    Migration 208 may be retried on databases where the column was added but the
+    schema version was never recorded. Make the migration idempotent so reruns
+    can backfill the new field and create the missing index without failing.
+    """
+    conn = db.connection
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        with db.transaction() as tx:
+            if not _column_exists(db, "tasks", "claimed_by_session_id"):
+                tx.execute(
+                    "ALTER TABLE tasks ADD COLUMN claimed_by_session_id TEXT REFERENCES sessions(id)"
+                )
+
+            tx.execute("""
+                UPDATE tasks
+                SET claimed_by_session_id = assignee
+                WHERE claimed_by_session_id IS NULL
+                  AND assignee IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM sessions WHERE sessions.id = tasks.assignee)
+            """)
+            tx.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_claimed_session ON tasks(claimed_by_session_id)"
+            )
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_agent_run_claimed_session_id(db: LocalDatabase) -> None:
+    """Add persisted agent-run claim ownership and tolerate partial application."""
+    if _column_exists(db, "agent_runs", "claimed_session_id"):
+        return
+    db.execute("ALTER TABLE agent_runs ADD COLUMN claimed_session_id TEXT REFERENCES sessions(id)")
+
+
+def _tasks_claimed_session_fk_is_set_null(db: LocalDatabase) -> bool:
+    """Return True when tasks.claimed_by_session_id already uses ON DELETE SET NULL."""
+    rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
+    for row in rows:
+        if (
+            row["from"] == "claimed_by_session_id"
+            and row["table"] == "sessions"
+            and row["on_delete"] == "SET NULL"
+        ):
+            return True
+    return False
+
+
+def _migrate_tasks_claimed_session_fk_set_null(db: LocalDatabase) -> None:
+    """Rebuild tasks so deleting a session clears canonical task ownership."""
+    if _tasks_claimed_session_fk_is_set_null(db):
+        return
+
+    conn = db.connection
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.executescript("""
+            DROP TABLE IF EXISTS tasks_new;
+            CREATE TABLE tasks_new (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                parent_task_id TEXT REFERENCES tasks(id),
+                created_in_session_id TEXT REFERENCES sessions(id),
+                claimed_by_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                lifecycle_stage TEXT CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved')),
+                closed_in_session_id TEXT REFERENCES sessions(id),
+                closed_commit_sha TEXT,
+                closed_at TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'open',
+                priority INTEGER DEFAULT 2,
+                task_type TEXT DEFAULT 'task',
+                assignee TEXT,
+                labels TEXT,
+                closed_reason TEXT,
+                compacted_at TEXT,
+                validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid')),
+                validation_feedback TEXT,
+                validation_override_reason TEXT,
+                category TEXT,
+                validation_criteria TEXT,
+                validation_fail_count INTEGER DEFAULT 0,
+                dispatch_failure_count INTEGER DEFAULT 0,
+                commits TEXT,
+                escalated_at TEXT,
+                escalation_reason TEXT,
+                github_issue_number INTEGER,
+                github_pr_number INTEGER,
+                github_repo TEXT,
+                linear_issue_id TEXT,
+                linear_team_id TEXT,
+                seq_num INTEGER,
+                path_cache TEXT,
+                start_date TEXT,
+                due_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO tasks_new (
+                id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
+                lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
+                description, status, priority, task_type, assignee, labels, closed_reason,
+                compacted_at, validation_status, validation_feedback, validation_override_reason,
+                category, validation_criteria, validation_fail_count, dispatch_failure_count,
+                commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
+                github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
+                start_date, due_date, created_at, updated_at
+            )
+            SELECT
+                id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
+                lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
+                description, status, priority, task_type, assignee, labels, closed_reason,
+                compacted_at, validation_status, validation_feedback, validation_override_reason,
+                category, validation_criteria, validation_fail_count, dispatch_failure_count,
+                commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
+                github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
+                start_date, due_date, created_at, updated_at
+            FROM tasks;
+            DROP TABLE tasks;
+            ALTER TABLE tasks_new RENAME TO tasks;
+            CREATE INDEX idx_tasks_project ON tasks(project_id);
+            CREATE INDEX idx_tasks_status ON tasks(status);
+            CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
+            CREATE INDEX idx_tasks_created_session ON tasks(created_in_session_id);
+            CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id);
+            CREATE INDEX idx_tasks_lifecycle_stage ON tasks(lifecycle_stage);
+            CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id);
+            CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
+            CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
+            DROP TRIGGER IF EXISTS tasks_fts_ai;
+            DROP TRIGGER IF EXISTS tasks_fts_ad;
+            DROP TRIGGER IF EXISTS tasks_fts_au;
+            DROP TABLE IF EXISTS tasks_fts;
+        """)
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+    _setup_tasks_fts(db)
+
+
+def _migrate_task_lifecycle_stage(db: LocalDatabase) -> None:
+    """Add canonical lifecycle stage storage and backfill projected status."""
+    with db.transaction() as tx:
+        if not _column_exists(db, "tasks", "lifecycle_stage"):
+            tx.execute(
+                """
+                ALTER TABLE tasks
+                ADD COLUMN lifecycle_stage TEXT
+                CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved'))
+                """
+            )
+
+        tx.execute("""
+            UPDATE tasks
+            SET lifecycle_stage = CASE status
+                WHEN 'in_progress' THEN 'in_progress'
+                WHEN 'needs_review' THEN 'needs_review'
+                WHEN 'review_approved' THEN 'review_approved'
+                ELSE NULL
+            END
+            WHERE lifecycle_stage IS NULL
+        """)
+
+        tx.execute("""
+            UPDATE tasks
+            SET closed_at = COALESCE(closed_at, updated_at, created_at)
+            WHERE status = 'closed' AND closed_at IS NULL
+        """)
+
+        tx.execute("""
+            UPDATE tasks
+            SET escalated_at = COALESCE(escalated_at, updated_at, created_at)
+            WHERE status = 'escalated' AND escalated_at IS NULL
+        """)
+
+        tx.execute("""
+            UPDATE tasks
+            SET status = CASE
+                WHEN closed_at IS NOT NULL THEN 'closed'
+                WHEN escalated_at IS NOT NULL THEN 'escalated'
+                WHEN lifecycle_stage IS NOT NULL THEN lifecycle_stage
+                ELSE 'open'
+            END
+        """)
+        tx.execute("CREATE INDEX IF NOT EXISTS idx_tasks_lifecycle_stage ON tasks(lifecycle_stage)")
+
+
+def _migrate_expansion_runs(db: LocalDatabase) -> None:
+    """Create expansion_runs and remove legacy task-attached expansion fields.
+
+    Audit notes:
+    - ``tasks.expansion_context`` shipped in ``v0.2.5`` via the deleted legacy
+      ``expand_task`` flow, but it stored enrichment/context JSON rather than a
+      persisted expansion-run record.
+    - ``tasks.expansion_status`` was introduced later for the replacement
+      skill-based flow, but no tagged release contained that field without the
+      same-day removal of the legacy expansion system.
+
+    Neither field has a lossless one-to-one mapping into ``expansion_runs``, so
+    this migration intentionally creates the new table and drops the task-level
+    legacy columns without synthesizing backfilled run rows.
+    """
+    with db.transaction() as tx:
+        tx.execute("""
+            CREATE TABLE IF NOT EXISTS expansion_runs (
+                id TEXT PRIMARY KEY,
+                parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                triggering_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN (
+                        'pending', 'running', 'compiled', 'applying',
+                        'completed', 'failed', 'cancelled'
+                    )),
+                input_source TEXT NOT NULL
+                    CHECK(input_source IN ('task', 'plan')),
+                plan_file TEXT,
+                provider TEXT,
+                model TEXT,
+                options_json TEXT,
+                compiled_spec_json TEXT,
+                qa_result_json TEXT,
+                task_id_map_json TEXT,
+                created_task_ids_json TEXT,
+                error TEXT,
+                logs_json TEXT,
+                checkpoints_json TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        tx.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_expansion_runs_parent_task
+            ON expansion_runs(parent_task_id, created_at DESC)
+            """
+        )
+        tx.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_expansion_runs_status
+            ON expansion_runs(status, created_at DESC)
+            """
+        )
+
+    _drop_column_if_exists(db, "tasks", "expansion_context")
+    _drop_column_if_exists(db, "tasks", "expansion_status")
 
 
 def _drop_agent_runs_mode(db: LocalDatabase) -> None:
@@ -696,7 +1022,162 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         ALTER TABLE completion_subscribers DROP COLUMN subscribed_at;
         """,
     ),
+    (
+        200,
+        "Add session_type column and update unique index",
+        """
+        ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'terminal';
+
+        UPDATE sessions SET session_type = 'web_chat' WHERE source LIKE '%web_chat%';
+        UPDATE sessions SET source = 'claude' WHERE source IN ('claude_sdk', 'claude_sdk_web_chat');
+        UPDATE sessions SET source = 'codex' WHERE source = 'codex_web_chat';
+
+        DROP INDEX IF EXISTS idx_sessions_unique;
+        CREATE UNIQUE INDEX idx_sessions_unique
+            ON sessions(external_id, machine_id, source, project_id, session_type);
+        """,
+    ),
+    (
+        201,
+        "Add FTS5 search table for memories",
+        _setup_memories_fts,
+    ),
+    (
+        202,
+        "Add pending_interactions table for durable approval state",
+        """
+        CREATE TABLE IF NOT EXISTS pending_interactions (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            tool_name TEXT,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            decision TEXT,
+            response_json TEXT,
+            timeout_seconds INTEGER NOT NULL DEFAULT 300,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            resolved_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pending_interactions_session
+            ON pending_interactions(session_id, status);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_interactions_active
+            ON pending_interactions(session_id, kind)
+            WHERE status = 'pending';
+        """,
+    ),
+    (
+        203,
+        "Remove pending_plan_path from sessions table",
+        lambda db: _drop_column_if_exists(db, "sessions", "pending_plan_path"),
+    ),
+    (
+        204,
+        "Remove USD cost tracking columns — tokens are the only unit now",
+        lambda db: _remove_usd_columns(db),
+    ),
+    (
+        205,
+        "Update LM Studio embedding model to fully qualified identifier",
+        """
+        UPDATE config_store
+        SET value = '"text-embedding-nomic-embed-text-v1.5@q8_0"'
+        WHERE key = 'embeddings.model'
+          AND value = '"nomic-embed-text"'
+          AND EXISTS (
+              SELECT 1 FROM config_store
+              WHERE key = 'embeddings.api_base'
+                AND value LIKE '%1234%'
+          );
+        """,
+    ),
+    (
+        206,
+        "Narrow memories FTS update trigger to indexed columns only",
+        lambda db: _narrow_memories_fts_update_trigger(db),
+    ),
+    (
+        207,
+        "Persist agent definition name on agent runs",
+        """
+        ALTER TABLE agent_runs ADD COLUMN agent_name TEXT;
+        """,
+    ),
+    (
+        208,
+        "Add claimed_by_session_id canonical task ownership field",
+        _migrate_claimed_by_session_id,
+    ),
+    (
+        209,
+        "Add canonical task lifecycle_stage and backfill projected status",
+        _migrate_task_lifecycle_stage,
+    ),
+    (
+        210,
+        "Replace task-attached expansion state with expansion_runs table",
+        _migrate_expansion_runs,
+    ),
+    (
+        211,
+        "Persist agent run claimed session ownership for task recovery",
+        _migrate_agent_run_claimed_session_id,
+    ),
+    (
+        212,
+        "Update tasks.claimed_by_session_id to ON DELETE SET NULL",
+        _migrate_tasks_claimed_session_fk_set_null,
+    ),
 ]
+
+
+def _narrow_memories_fts_update_trigger(db: LocalDatabase) -> None:
+    """Recreate memories_fts_au trigger scoped to indexed columns only.
+
+    Previously the trigger fired on every UPDATE to the memories table,
+    meaning access_count, last_accessed_at, graph_processed, and other
+    bookkeeping columns would invoke FTS maintenance.  If the FTS index
+    was corrupted, those updates would fail, breaking unrelated writes.
+
+    The new trigger only fires on UPDATE OF content, tags, memory_type,
+    source_type — the columns actually indexed by FTS5.
+    """
+    conn = db.connection
+    conn.executescript("""
+        DROP TRIGGER IF EXISTS memories_fts_au;
+
+        CREATE TRIGGER memories_fts_au
+        AFTER UPDATE OF content, tags, memory_type, source_type ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, content, tags, memory_type, source_type)
+            VALUES (
+                'delete', old.rowid, old.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(old.tags, ''), '"', ''), '[', ''), ']', ''),
+                old.memory_type, COALESCE(old.source_type, '')
+            );
+            INSERT INTO memories_fts(rowid, content, tags, memory_type, source_type)
+            VALUES (
+                new.rowid, new.content,
+                REPLACE(REPLACE(REPLACE(COALESCE(new.tags, ''), '"', ''), '[', ''), ']', ''),
+                new.memory_type, COALESCE(new.source_type, '')
+            );
+        END;
+    """)
+
+
+def _remove_usd_columns(db: LocalDatabase) -> None:
+    """Drop all USD-related columns from sessions, savings_ledger, and model_costs."""
+    for table, column in [
+        ("sessions", "usage_total_cost_usd"),
+        ("savings_ledger", "cost_saved_usd"),
+        ("model_costs", "input_cost_per_token"),
+        ("model_costs", "output_cost_per_token"),
+        ("model_costs", "cache_read_cost_per_token"),
+        ("model_costs", "cache_creation_cost_per_token"),
+    ]:
+        _drop_column_if_exists(db, table, column)
 
 
 def get_current_version(db: LocalDatabase) -> int:
@@ -730,6 +1211,7 @@ def _apply_baseline(db: LocalDatabase) -> None:
     _setup_code_content_fts(db)
     _setup_tasks_fts(db)
     _setup_skills_fts(db)
+    _setup_memories_fts(db)
 
     logger.info(f"Baseline schema applied, now at version {BASELINE_VERSION}")
 
@@ -789,10 +1271,10 @@ def run_migrations(db: LocalDatabase) -> int:
     Run pending migrations.
 
     For new databases (version == 0):
-        - Applies baseline schema (v171) directly.
+        - Applies the current baseline schema directly.
 
     For existing databases:
-        - Runs any new migrations from v172 onwards.
+        - Runs any new migrations after the recorded schema version.
 
     Args:
         db: LocalDatabase instance

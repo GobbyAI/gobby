@@ -1,4 +1,5 @@
 import { memo, useState, useEffect, useCallback, useRef } from 'react'
+import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import ReactMarkdown from 'react-markdown'
@@ -100,6 +101,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: Files
   const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null)
   const [gitStatus, setGitStatus] = useState<Record<string, string>>({})
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const { confirm, ConfirmDialogElement } = useConfirmDialog()
 
   // Fetch git status
   useEffect(() => {
@@ -178,7 +180,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: Files
   const handleDelete = useCallback(async (entry: FileEntry) => {
     closeCtxMenu()
     if (!projectId) return
-    const ok = window.confirm(`Delete "${entry.name}"?`)
+    const ok = await confirm({ title: 'Delete file', description: `Delete "${entry.name}"?`, confirmLabel: 'Delete', destructive: true })
     if (!ok) return
     const baseUrl = getBaseUrl()
     const response = await fetch(`${baseUrl}/api/files/delete`, {
@@ -195,7 +197,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: Files
     setChildrenMap((prev) => { const next = new Map(prev); next.delete(parentPath); return next })
     loadChildren(parentPath)
     if (selectedFile === entry.path) { setSelectedFile(null); setFileContent(null) }
-  }, [projectId, closeCtxMenu, loadChildren, selectedFile])
+  }, [projectId, confirm, closeCtxMenu, loadChildren, selectedFile])
 
   const handleRename = useCallback((entry: FileEntry) => {
     closeCtxMenu()
@@ -486,6 +488,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: Files
           </div>
         </>
       )}
+      {ConfirmDialogElement}
     </div>
   )
 })

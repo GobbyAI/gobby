@@ -133,6 +133,48 @@ def get_project_context(cwd: Path | None = None) -> dict[str, Any] | None:
         return None
 
 
+def _build_and_set_project_context(
+    project: Any,
+) -> contextvars.Token[dict[str, Any] | None]:
+    """Build enriched context dict from a Project and set the ContextVar.
+
+    Normalizes repo_path, builds base context, and enriches from
+    .gobby/project.json on disk when available.
+
+    Args:
+        project: A Project dataclass instance (from storage.projects).
+
+    Returns:
+        Context var token for reset (via reset_project_context).
+    """
+    # Normalize empty/whitespace repo_path to None — system projects
+    # (_global, _personal, _orphaned, _migrated) store "" in the DB.
+    repo_path = project.repo_path
+    if repo_path is not None and not repo_path.strip():
+        repo_path = None
+    ctx: dict[str, Any] = {
+        "id": project.id,
+        "name": project.name,
+        "project_path": repo_path,
+    }
+    if repo_path:
+        project_file = Path(repo_path) / ".gobby" / "project.json"
+        if project_file.exists():
+            try:
+                data = json.loads(project_file.read_text())
+                fs_id = data.get("id")
+                if fs_id and fs_id != project.id:
+                    logger.warning(
+                        f"Project ID mismatch: db='{project.id}', "
+                        f"filesystem='{fs_id}' at {project.repo_path}. Using filesystem.",
+                    )
+                data["project_path"] = repo_path
+                return set_project_context(data)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.debug(f"Failed to read project.json at {project_file}: {e}")
+    return set_project_context(ctx)
+
+
 def set_project_context_from_session(
     session_id: str,
     session_manager: Any,
@@ -162,36 +204,37 @@ def set_project_context_from_session(
         pm = LocalProjectManager(db)
         project = pm.get(session.project_id)
         if project:
-            # Normalize empty/whitespace repo_path to None — system projects
-            # (_global, _personal, _orphaned, _migrated) store "" in the DB.
-            repo_path = project.repo_path
-            if repo_path is not None and not repo_path.strip():
-                repo_path = None
-            ctx: dict[str, Any] = {
-                "id": project.id,
-                "name": project.name,
-                "project_path": repo_path,
-            }
-            if repo_path:
-                project_file = Path(repo_path) / ".gobby" / "project.json"
-                if project_file.exists():
-                    try:
-                        data = json.loads(project_file.read_text())
-                        fs_id = data.get("id")
-                        if fs_id and fs_id != project.id:
-                            logger.warning(
-                                f"Project ID mismatch: session='{project.id}', "
-                                f"filesystem='{fs_id}' at {project.repo_path}. Using filesystem.",
-                            )
-                        data["project_path"] = project.repo_path
-                        return set_project_context(data)
-                    except (json.JSONDecodeError, OSError) as e:
-                        logger.debug(f"Failed to read project.json at {project_file}: {e}")
-            return set_project_context(ctx)
+            return _build_and_set_project_context(project)
     except (ImportError, OSError) as e:
         logger.debug(f"Failed to enrich project context for session {session_id}: {e}")
 
     return set_project_context({"id": session.project_id})
+
+
+def set_project_context_from_ref(
+    ref: str,
+    db: Any,
+) -> contextvars.Token[dict[str, Any] | None] | None:
+    """Resolve a project by UUID or name and set project context var.
+
+    Used by call_tool's project_id parameter to override session-derived
+    project context for cross-project operations.
+
+    Args:
+        ref: Project UUID or name (resolved via LocalProjectManager.resolve_ref).
+        db: Database connection for project lookup.
+
+    Returns:
+        Context var token for reset (via reset_project_context), or None
+        if the project was not found.
+    """
+    from gobby.storage.projects import LocalProjectManager
+
+    pm = LocalProjectManager(db)
+    project = pm.resolve_ref(ref)
+    if not project:
+        return None
+    return _build_and_set_project_context(project)
 
 
 def get_workflow_project_path(cwd: Path | None = None) -> Path | None:

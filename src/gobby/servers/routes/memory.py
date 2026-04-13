@@ -4,16 +4,38 @@ Memory routes for Gobby HTTP server.
 Provides CRUD, search, and stats endpoints for the memory system.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from gobby.storage.memories import Memory
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+_BATCH_SIZE = 500
+
+
+def _fetch_all_memories(server: "HTTPServer", project_id: str | None = None) -> list[Memory]:
+    """Fetch all memories using pagination (no hardcoded limit)."""
+    all_memories: list[Memory] = []
+    offset = 0
+    while True:
+        batch = server.memory_manager.list_memories(
+            project_id=project_id, limit=_BATCH_SIZE, offset=offset
+        )
+        if not batch:
+            break
+        all_memories.extend(batch)
+        if len(batch) < _BATCH_SIZE:
+            break
+        offset += _BATCH_SIZE
+    return all_memories
 
 
 # =============================================================================
@@ -29,7 +51,10 @@ class MemoryCreateRequest(BaseModel):
         default="fact", description="Memory type (fact, preference, pattern, context)"
     )
     project_id: str | None = Field(default=None, description="Project ID to associate with")
-    source_type: str = Field(default="user", description="Source type (user, session, inferred)")
+    source_type: str = Field(
+        default="user",
+        description="Source type: 'user' (human-requested) or 'agent' (agent-captured)",
+    )
     source_session_id: str | None = Field(default=None, description="Source session ID")
     tags: list[str] | None = Field(default=None, description="Tags for categorization")
 
@@ -198,7 +223,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Rebuild crossrefs for all existing memories."""
         try:
-            memories = server.memory_manager.list_memories(project_id=project_id, limit=500)
+            memories = _fetch_all_memories(server, project_id)
             total_created = 0
             for memory in memories:
                 try:
@@ -226,7 +251,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                     status_code=400,
                     detail="KnowledgeGraphService not initialized (requires Neo4j + LLM)",
                 )
-            memories = server.memory_manager.list_memories(project_id=project_id, limit=500)
+            memories = _fetch_all_memories(server, project_id)
             successful_count = 0
             errors = 0
             for memory in memories:
@@ -261,14 +286,51 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/embeddings/reindex")
-    async def reindex_embeddings() -> dict[str, Any]:
-        """Regenerate embedding vectors for all stored memories."""
+    async def reindex_embeddings(
+        project_id: str | None = Query(
+            None, description="Project ID (optional, scopes to project)"
+        ),
+    ) -> dict[str, Any]:
+        """Regenerate embedding vectors for stored memories."""
         try:
-            result = await server.memory_manager.reindex_embeddings()
+            result = await server.memory_manager.reindex_embeddings(project_id=project_id)
             return cast(dict[str, Any], result)
         except Exception as e:
             logger.error(f"Failed to reindex embeddings: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/invalidate")
+    async def invalidate_memories(
+        project_id: str | None = Query(None, description="Project ID (optional, omit for global)"),
+    ) -> dict[str, Any]:
+        """Clear all secondary memory indices and start background rebuild.
+
+        Clears Qdrant vectors, Neo4j graph, crossrefs, and FTS5 immediately.
+        Rebuild runs in the background — the response returns as soon as
+        indices are cleared.
+        """
+        try:
+            report: dict[str, Any] = await server.memory_manager.clear_indices(
+                project_id=project_id
+            )
+        except Exception as e:
+            logger.error(f"Failed to clear memory indices: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+        # Fire off rebuild as a background task
+        async def _background_rebuild() -> None:
+            try:
+                result = await server.memory_manager.rebuild_indices(project_id=project_id)
+                logger.info(f"Background rebuild complete: {result}")
+            except Exception as e:
+                logger.error(f"Background rebuild failed: {e}", exc_info=True)
+
+        task = asyncio.create_task(_background_rebuild())
+        server._background_tasks.add(task)
+        task.add_done_callback(server._background_tasks.discard)
+
+        report["rebuild_status"] = "started"
+        return report
 
     @router.get("/{memory_id}")
     def get_memory(

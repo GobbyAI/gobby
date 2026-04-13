@@ -93,6 +93,7 @@ def prepare_terminal_spawn(
     source: str = "claude",
     agent_id: str | None = None,
     workflow_name: str | None = None,
+    agent_name: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     title: str | None = None,
     git_branch: str | None = None,
@@ -100,6 +101,7 @@ def prepare_terminal_spawn(
     max_agent_depth: int = 5,
     agent_run_id: str | None = None,
     task_id: str | None = None,
+    claimed_session_id: str | None = None,
     timeout_seconds: float | None = None,
 ) -> PreparedSpawn:
     """
@@ -118,11 +120,13 @@ def prepare_terminal_spawn(
         source: CLI source (claude, gemini, codex)
         agent_id: Optional agent ID
         workflow_name: Optional workflow to activate
+        agent_name: Agent definition name used for the spawned session/run
         title: Optional session title
         git_branch: Optional git branch
         prompt: Optional initial prompt
         max_agent_depth: Maximum agent depth
         task_id: Optional task ID to link to the agent
+        claimed_session_id: Session that owned the task when the run was created.
         timeout_seconds: Optional timeout for the agent run in seconds.
 
     Returns:
@@ -175,7 +179,9 @@ def prepare_terminal_spawn(
         provider=source,
         prompt=prompt or "",
         workflow_name=workflow_name,
+        agent_name=agent_name,
         child_session_id=child_session.id,
+        claimed_session_id=claimed_session_id,
         run_id=agent_run_id,
         task_id=task_id,
         timeout_seconds=timeout_seconds,
@@ -357,6 +363,7 @@ async def prepare_codex_spawn_with_preflight(
     machine_id: str,
     agent_id: str | None = None,
     workflow_name: str | None = None,
+    agent_name: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     title: str | None = None,
     git_branch: str | None = None,
@@ -380,6 +387,7 @@ async def prepare_codex_spawn_with_preflight(
         machine_id: Machine ID
         agent_id: Optional agent ID
         workflow_name: Optional workflow to activate
+        agent_name: Agent definition name used for the spawned session/run
         title: Optional session title
         git_branch: Optional git branch
         prompt: Optional initial prompt

@@ -377,7 +377,7 @@ def test_create_memory_with_all_fields(memory_manager, db) -> None:
         content="Full memory",
         memory_type="context",
         project_id="proj-full",
-        source_type="session",
+        source_type="agent",
         source_session_id="sess-123",
         tags=["tag1", "tag2", "tag3"],
     )
@@ -385,7 +385,7 @@ def test_create_memory_with_all_fields(memory_manager, db) -> None:
     assert memory.content == "Full memory"
     assert memory.memory_type == "context"
     assert memory.project_id == "proj-full"
-    assert memory.source_type == "session"
+    assert memory.source_type == "agent"
     assert memory.source_session_id == "sess-123"
     assert memory.tags == ["tag1", "tag2", "tag3"]
 

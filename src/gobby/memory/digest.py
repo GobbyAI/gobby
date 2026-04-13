@@ -1,12 +1,13 @@
-"""Session digest pipeline — turn recording, boundary summaries, and memory extraction.
+"""Session digest pipeline — turn recording and boundary summaries.
 
 Relocated from workflows/memory_actions.py as part of dead-code cleanup.
 These functions handle the per-turn digest pipeline (build_turn_and_digest),
-session boundary summaries, memory extraction from sessions, and sync operations.
+session boundary summaries, and sync operations.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -74,7 +75,6 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
         from gobby.sessions.transcripts import get_parser
 
         parser = get_parser(source)
-        import asyncio
 
         def _read_lines() -> list[str]:
             with open(transcript_file, encoding="utf-8") as f:
@@ -253,95 +253,6 @@ def _build_title_synthesis_prompt(digest_markdown: str) -> str:
     )
 
 
-async def _extract_memories_from_turn(
-    turn_text: str,
-    session_id: str,
-    memory_manager: Any,
-    provider: Any,
-    model: str | None = None,
-    session_manager: Any | None = None,
-) -> list[str]:
-    """Extract reusable facts/patterns from a turn record.
-
-    Uses LLM to identify high-value memories from a single turn's record,
-    then stores them via memory_manager.
-
-    Args:
-        turn_text: The last_turn_markdown content
-        session_id: Session ID for memory attribution
-        memory_manager: Memory manager for storage
-        provider: LLM provider for extraction
-        model: Model override (e.g., "haiku")
-
-    Returns:
-        List of memory IDs created
-    """
-    if not turn_text or len(turn_text) < 50:
-        return []
-
-    extraction_prompt = (
-        "Analyze this turn record from a coding session. Extract ONLY memories that would\n"
-        "save a future session more than 5 minutes of investigation.\n\n"
-        "## Turn Record\n"
-        f"{turn_text}\n\n"
-        "## Rules\n"
-        "- Extract 0-3 memories (0 is fine if nothing is worth saving)\n"
-        "- Each memory must be a specific, verifiable fact or recurring pattern\n"
-        "- NO generic programming knowledge\n"
-        "- NO information already in project docs or README\n"
-        "- Include file paths, function names, and specifics\n\n"
-        "## Output Format\n"
-        "Output each memory as a JSON object on its own line, no other text:\n"
-        '{"content": "...", "memory_type": "fact|pattern", "tags": ["tag1", "tag2"]}\n\n'
-        "If nothing is worth saving, output exactly: NONE"
-    )
-
-    response = await provider.generate_text(extraction_prompt, model=model)
-    response = response.strip()
-
-    if response.upper() == "NONE" or not response:
-        return []
-
-    memory_ids: list[str] = []
-    # Resolve project_id from session
-    session = session_manager.get(session_id) if session_manager else None
-    project_id = getattr(session, "project_id", None) if session else None
-
-    for line in response.splitlines():
-        line = line.strip()
-        if not line or line.upper() == "NONE":
-            continue
-        try:
-            candidate = json.loads(line)
-            if not isinstance(candidate, dict) or "content" not in candidate:
-                continue
-
-            content = candidate["content"]
-            if not content or len(content) < 10:
-                continue
-
-            # Deduplicate against existing memories
-            if memory_manager.content_exists(content, project_id=project_id):
-                logger.debug(f"Skipping duplicate memory: {content[:50]}...")
-                continue
-
-            memory = await memory_manager.create_memory(
-                content=content,
-                memory_type=candidate.get("memory_type", "fact"),
-                project_id=project_id,
-                source_type="auto_extract",
-                source_session_id=session_id,
-                tags=candidate.get("tags"),
-            )
-            memory_ids.append(memory.id)
-            logger.info(f"Extracted memory from turn: {content[:80]}")
-        except Exception as e:
-            logger.debug(f"Failed to parse memory candidate: {e}")
-            continue
-
-    return memory_ids
-
-
 async def _resolve_undigested_pairs(
     session: Any,
     prompt_text: str | None,
@@ -423,7 +334,11 @@ async def _build_turn_record(
     except Exception:
         turn_prompt = _build_turn_record_prompt(truncated_prompt, truncated_response)
 
-    last_turn = await provider.generate_text(turn_prompt, model=model)
+    last_turn = await provider.generate_text(
+        turn_prompt,
+        model=model,
+        caller="memory.turn_record",
+    )
     return str(last_turn).strip()
 
 
@@ -435,8 +350,15 @@ async def _synthesize_title(
     session_manager: Any,
     session: Any,
     db: Any | None = None,
+    llm_service: Any | None = None,
+    digest_config: Any | None = None,
 ) -> str | None:
-    """Synthesize session title from digest via LLM and update tmux window."""
+    """Synthesize session title from digest via LLM and update tmux window.
+
+    When *llm_service* and *digest_config* are supplied, uses
+    ``call_feature`` for tier-based fallback.  Otherwise falls back to
+    the legacy ``provider.generate_text`` path.
+    """
     try:
         from gobby.prompts.loader import PromptLoader
 
@@ -448,14 +370,42 @@ async def _synthesize_title(
     except Exception:
         title_prompt = _build_title_synthesis_prompt(updated_digest)
 
-    title = await provider.generate_text(title_prompt, model=model)
+    # Prefer call_feature for tier-based fallback when available.
+    llm_timeout = getattr(digest_config, "timeout", 30) if digest_config is not None else 30
+    if (
+        llm_service is not None
+        and digest_config is not None
+        and hasattr(llm_service, "call_feature")
+    ):
+        title = await asyncio.wait_for(
+            llm_service.call_feature(
+                digest_config,
+                title_prompt,
+                caller="memory.title_synthesis",
+            ),
+            llm_timeout,
+        )
+    else:
+        title = await asyncio.wait_for(
+            provider.generate_text(
+                title_prompt,
+                model=model,
+                caller="memory.title_synthesis",
+            ),
+            llm_timeout,
+        )
+
     title_str = str(title).strip().strip('"').strip("'")
     if title_str and len(title_str) < 80:
-        session_manager.update_title(session_id, title_str)
+        if getattr(session, "title", None) == title_str:
+            return None
+        updated_session = session_manager.update_title(session_id, title_str)
+        if updated_session is None:
+            return None
 
         from gobby.workflows.summary_actions import _rename_tmux_window
 
-        await _rename_tmux_window(session, title_str)
+        await _rename_tmux_window(updated_session, title_str)
         return title_str
     return None
 
@@ -469,12 +419,11 @@ async def build_turn_and_digest(
     db: Any | None = None,
     config: Any | None = None,
 ) -> dict[str, Any] | None:
-    """Build a detailed turn record, append to digest, synthesize title, and extract memories.
+    """Build a detailed turn record, append to digest, and synthesize title.
 
     This is the core per-turn pipeline, fired after each agent response (stop event).
     It reads the last user/assistant exchange from the transcript, generates a structured
-    turn record via LLM, appends it to the session's rolling digest, synthesizes a title,
-    and extracts reusable memories.
+    turn record via LLM, appends it to the session's rolling digest, and synthesizes a title.
 
     Args:
         memory_manager: The memory manager instance
@@ -489,14 +438,22 @@ async def build_turn_and_digest(
         Dict with turn_num and pipeline results, or None if skipped
     """
     if not memory_manager or not memory_manager.config.enabled:
+        logger.debug(
+            "build_turn_and_digest: skipped — memory_manager missing or disabled "
+            f"(session_id={session_id})"
+        )
         return None
 
     if not llm_service:
+        logger.debug(f"build_turn_and_digest: skipped — no llm_service (session_id={session_id})")
         return None
 
     # Check DigestConfig.enabled
     digest_config = getattr(config, "digest", None) if config else None
     if digest_config and not digest_config.enabled:
+        logger.debug(
+            f"build_turn_and_digest: skipped — digest config disabled (session_id={session_id})"
+        )
         return None
 
     try:
@@ -556,27 +513,20 @@ async def build_turn_and_digest(
         # 7. Synthesize title from updated digest
         try:
             title = await _synthesize_title(
-                provider, model, updated_digest, session_id, session_manager, session, db
+                provider,
+                model,
+                updated_digest,
+                session_id,
+                session_manager,
+                session,
+                db,
+                llm_service=llm_service,
+                digest_config=digest_config,
             )
             if title:
                 result["title"] = title
         except Exception as e:
             logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
-
-        # 8. Extract memories from turn record
-        try:
-            extracted = await _extract_memories_from_turn(
-                last_turn,
-                session_id,
-                memory_manager,
-                provider,
-                model=model,
-                session_manager=session_manager,
-            )
-            if extracted:
-                result["memories_extracted"] = len(extracted)
-        except Exception as e:
-            logger.warning(f"build_turn_and_digest: Memory extraction failed: {e}")
 
         return result
 

@@ -19,6 +19,8 @@ from gobby.workflows.state_manager import SessionVariableManager
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.config.tasks import TaskValidationConfig
+    from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.llm.service import LLMService
     from gobby.storage.database import DatabaseProtocol
     from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
@@ -38,6 +40,8 @@ class RegistryContext:
     # Optional managers
     task_validator: "TaskValidator | None" = None
     config: "DaemonConfig | None" = None
+    llm_service: "LLMService | None" = None
+    completion_registry: "CompletionEventRegistry | None" = None
 
     # Derived managers (initialized in __post_init__)
     dep_manager: TaskDependencyManager = field(init=False)

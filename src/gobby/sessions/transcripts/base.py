@@ -59,7 +59,6 @@ class TokenUsage:
     output_tokens: int = 0
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
-    total_cost_usd: float | None = None
 
 
 @dataclass

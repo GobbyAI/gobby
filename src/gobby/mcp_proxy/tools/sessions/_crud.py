@@ -255,21 +255,21 @@ This tool is for browsing/listing sessions, not for self-identification.""",
 
     @registry.tool(
         name="get_usage_breakdown",
-        description="Get token usage and cost breakdown by source (CLI adapter) and model over a time period.",
+        description="Get token usage breakdown by source (CLI adapter) and model over a time period.",
     )
     def get_usage_breakdown(
         days: int = 1,
         project_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        Get token usage and cost aggregated by source and model.
+        Get token usage aggregated by source and model.
 
         Args:
             days: Number of days to look back (default: 1 = today, max 365)
             project_id: Filter by project ID (optional)
 
         Returns:
-            Usage summary with total cost/tokens, usage_by_model, and usage_by_source
+            Usage summary with token totals, usage_by_model, and usage_by_source
         """
         from gobby.sessions.token_tracker import SessionTokenTracker
 

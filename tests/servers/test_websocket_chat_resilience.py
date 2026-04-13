@@ -55,7 +55,6 @@ class _FakeSession:
         self._plan_approval_completed = False
         self._tool_approval_callback: Any = None
         self._accumulated_output_tokens = 0
-        self._accumulated_cost_usd = 0.0
         self._last_model = None
 
     async def send_message(self, content: Any) -> Any:  # noqa: ANN401

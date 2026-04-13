@@ -6,7 +6,6 @@ import {
   DURATION_INVALID,
   typeLabel,
   formatTokens,
-  formatCost,
 } from '../formatTime'
 
 // Helper: produce an ISO string N milliseconds in the past
@@ -162,25 +161,5 @@ describe('formatTokens', () => {
   it('formats millions with M suffix', () => {
     expect(formatTokens(1_000_000)).toBe('1.0M')
     expect(formatTokens(2_500_000)).toBe('2.5M')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// formatCost
-// ---------------------------------------------------------------------------
-describe('formatCost', () => {
-  it('returns "$0" for zero', () => {
-    expect(formatCost(0)).toBe('$0')
-  })
-
-  it('returns "<$0.01" for tiny values', () => {
-    expect(formatCost(0.001)).toBe('<$0.01')
-    expect(formatCost(0.009)).toBe('<$0.01')
-  })
-
-  it('formats normal values with 2 decimal places', () => {
-    expect(formatCost(0.01)).toBe('$0.01')
-    expect(formatCost(1.5)).toBe('$1.50')
-    expect(formatCost(99.99)).toBe('$99.99')
   })
 })

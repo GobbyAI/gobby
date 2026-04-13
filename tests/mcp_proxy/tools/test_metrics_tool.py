@@ -131,7 +131,7 @@ class TestMetricsTools:
 
 
 class TestTokenMetricsTools:
-    """Tests for token/cost tracking tools."""
+    """Tests for token tracking tools."""
 
     @pytest.fixture
     def mock_session_storage(self):
@@ -149,8 +149,8 @@ class TestTokenMetricsTools:
                 usage_output_tokens=500,
                 usage_cache_creation_tokens=100,
                 usage_cache_read_tokens=200,
-                usage_total_cost_usd=0.05,
                 model="claude-3-5-sonnet-20241022",
+                source="claude",
                 created_at=(now - timedelta(hours=1)).isoformat(),
             ),
             MagicMock(
@@ -159,8 +159,8 @@ class TestTokenMetricsTools:
                 usage_output_tokens=1000,
                 usage_cache_creation_tokens=200,
                 usage_cache_read_tokens=400,
-                usage_total_cost_usd=0.10,
                 model="claude-3-5-sonnet-20241022",
+                source="claude",
                 created_at=(now - timedelta(hours=2)).isoformat(),
             ),
         ]
@@ -173,7 +173,7 @@ class TestTokenMetricsTools:
         return create_metrics_registry(
             metrics_manager=mock_metrics_manager,
             session_storage=mock_session_storage,
-            daily_budget_usd=10.0,
+            daily_budget_tokens=10_000_000,
         )
 
     def test_get_usage_report(self, token_metrics_tools, mock_session_storage) -> None:
@@ -184,7 +184,6 @@ class TestTokenMetricsTools:
 
         assert result["success"] is True
         assert "usage" in result
-        assert result["usage"]["total_cost_usd"] == pytest.approx(0.15)
         assert result["usage"]["total_input_tokens"] == 3000
         assert result["usage"]["total_output_tokens"] == 1500
         assert result["usage"]["session_count"] == 2
@@ -218,9 +217,9 @@ class TestTokenMetricsTools:
 
         assert result["success"] is True
         assert "budget" in result
-        assert result["budget"]["daily_budget_usd"] == 10.0
-        assert result["budget"]["used_today_usd"] == pytest.approx(0.15)
-        assert result["budget"]["remaining_usd"] == pytest.approx(9.85)
+        assert result["budget"]["daily_budget_tokens"] == 10_000_000
+        assert result["budget"]["used_today_tokens"] == 4500  # 3000 input + 1500 output
+        assert result["budget"]["remaining_tokens"] == 10_000_000 - 4500
         assert result["budget"]["over_budget"] is False
         mock_session_storage.get_sessions_since.assert_called_once()
 
@@ -234,12 +233,12 @@ class TestTokenMetricsTools:
         now = datetime.now(UTC)
         expensive_session = MagicMock(
             id="sess-expensive",
-            usage_input_tokens=100000,
-            usage_output_tokens=50000,
+            usage_input_tokens=6_000_000,
+            usage_output_tokens=5_000_000,
             usage_cache_creation_tokens=0,
             usage_cache_read_tokens=0,
-            usage_total_cost_usd=5.0,  # $5 used
             model="claude-3-5-sonnet-20241022",
+            source="claude",
             created_at=(now - timedelta(hours=1)).isoformat(),
         )
         storage.get_sessions_since.return_value = [expensive_session]
@@ -247,7 +246,7 @@ class TestTokenMetricsTools:
         registry = create_metrics_registry(
             metrics_manager=mock_metrics_manager,
             session_storage=storage,
-            daily_budget_usd=1.0,  # Only $1 budget
+            daily_budget_tokens=1_000_000,  # Only 1M token budget
         )
         tool = registry._tools["get_budget_status"]
 
@@ -255,8 +254,8 @@ class TestTokenMetricsTools:
 
         assert result["success"] is True
         assert result["budget"]["over_budget"] is True
-        assert result["budget"]["used_today_usd"] == pytest.approx(5.0)
-        assert result["budget"]["remaining_usd"] == pytest.approx(-4.0)
+        assert result["budget"]["used_today_tokens"] == 11_000_000
+        assert result["budget"]["remaining_tokens"] == -10_000_000
 
     def test_get_budget_status_error(self, token_metrics_tools, mock_session_storage) -> None:
         """get_budget_status handles errors gracefully."""

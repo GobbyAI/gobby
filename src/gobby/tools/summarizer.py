@@ -85,6 +85,7 @@ async def _summarize_description_with_claude(description: str) -> str:
             prompt=prompt,
             system_prompt=system_prompt,
             model=config.model,
+            caller="tools.tool_summary",
         )
 
     except Exception as e:
@@ -177,6 +178,7 @@ async def generate_server_description(
             prompt=prompt,
             system_prompt=system_prompt,
             model=config.model,
+            caller="tools.server_description",
         )
 
     except Exception as e:

@@ -14,6 +14,7 @@ from typing import Any
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
+from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
     _PLAN_FILE_PATTERN,
@@ -100,6 +101,8 @@ class ChatSessionPermissionsMixin:
         until the user provides answers via provide_answer()) and tools
         matched by tool_approval policies (which block until approved).
         """
+        tool_name = str(canonicalize_shell_tool_name(tool_name))
+
         # Agent-initiated plan mode transitions
         if tool_name == "EnterPlanMode":
             self.set_chat_mode("plan")
@@ -172,10 +175,10 @@ class ChatSessionPermissionsMixin:
                         "Present your plan to the user for approval before making changes."
                     )
                 )
-            if tool_name == "Bash" and self._is_write_bash(input_data):
+            if is_shell_tool(tool_name) and self._is_write_bash(input_data):
                 return PermissionResultDeny(
                     message=(
-                        "Plan mode is active — write/destructive Bash commands are blocked. "
+                        "Plan mode is active — write/destructive shell commands are blocked. "
                         "Present your plan to the user for approval before making changes."
                     )
                 )
@@ -196,7 +199,7 @@ class ChatSessionPermissionsMixin:
             if self._needs_tool_approval(tool_name):
                 return await self._wait_for_tool_approval(tool_name, input_data)
             # In accept_edits mode, auto-approved Bash still needs danger check
-            if self.chat_mode == "accept_edits" and tool_name == "Bash":
+            if self.chat_mode == "accept_edits" and is_shell_tool(tool_name):
                 if self._is_dangerous_bash(input_data):
                     return await self._wait_for_tool_approval(tool_name, input_data)
             # In accept_edits mode, call_tool needs inner-tool inspection
@@ -252,6 +255,7 @@ class ChatSessionPermissionsMixin:
         - plan: Fall through to ToolApprovalConfig policy checks
           (plan mode blocking is handled by the workflow engine, not here)
         """
+        tool_name = str(canonicalize_shell_tool_name(tool_name))
         mode = self.chat_mode
 
         # Bypass mode: no approvals ever
@@ -267,7 +271,7 @@ class ChatSessionPermissionsMixin:
             if tool_name in ("Edit", "Write", "NotebookEdit"):
                 return False
             # Bash: auto-approve unless dangerous patterns detected
-            if tool_name == "Bash":
+            if is_shell_tool(tool_name):
                 return False  # Handled by _is_dangerous_bash in _can_use_tool
             # MCP proxy discovery tools — always safe
             if tool_name in self._SAFE_MCP_PROXY_TOOLS:

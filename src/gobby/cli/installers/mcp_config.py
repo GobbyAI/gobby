@@ -398,6 +398,81 @@ args = ["run", "gobby", "mcp-server"]
     return result
 
 
+def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby") -> dict[str, Any]:
+    """Remove per-tool approval overrides from an MCP server entry in a TOML config.
+
+    Strips the [mcp_servers.<server_name>.tools] sub-table if present,
+    so that tool approval inherits the session's approval mode instead of
+    being forced to a specific value (e.g. "approve").
+
+    Uses tomllib (stdlib) for reading and tomli_w for writing to properly
+    handle TOML syntax.
+
+    Args:
+        config_path: Path to the config.toml file (e.g., ~/.codex/config.toml)
+        server_name: Name of the MCP server entry (default: "gobby")
+
+    Returns:
+        Dict with 'success', 'stripped', 'backup_path', and 'error' keys
+    """
+    import tomllib
+
+    import tomli_w
+
+    result: dict[str, Any] = {
+        "success": False,
+        "stripped": False,
+        "backup_path": None,
+        "error": None,
+    }
+
+    if not config_path.exists():
+        result["success"] = True
+        return result
+
+    # Read and parse TOML (single read; reuse buffer for backup + parse)
+    try:
+        existing_text = config_path.read_text(encoding="utf-8")
+        config = tomllib.loads(existing_text)
+    except tomllib.TOMLDecodeError as e:
+        result["error"] = f"Failed to parse TOML {config_path}: {e}"
+        return result
+    except OSError as e:
+        result["error"] = f"Failed to read {config_path}: {e}"
+        return result
+
+    # Check if server exists and has tools sub-table
+    server_config = config.get("mcp_servers", {}).get(server_name, {})
+    if "tools" not in server_config:
+        result["success"] = True
+        return result
+
+    # Create backup
+    timestamp = int(time.time())
+    backup_path = config_path.with_suffix(f".toml.{timestamp}.backup")
+    try:
+        backup_path.write_text(existing_text, encoding="utf-8")
+        result["backup_path"] = str(backup_path)
+    except OSError as e:
+        result["error"] = f"Failed to create backup: {e}"
+        return result
+
+    # Remove the tools sub-table
+    del config["mcp_servers"][server_name]["tools"]
+
+    # Write updated config
+    try:
+        with open(config_path, "wb") as f:
+            tomli_w.dump(config, f, multiline_strings=True)
+    except OSError as e:
+        result["error"] = f"Failed to write {config_path}: {e}"
+        return result
+
+    result["success"] = True
+    result["stripped"] = True
+    return result
+
+
 def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dict[str, Any]:
     """Remove Gobby MCP server from a TOML config file.
 
@@ -426,11 +501,10 @@ def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dic
         result["success"] = True
         return result
 
-    # Read existing TOML file
+    # Read existing TOML file (single read; reuse buffer for backup + parse)
     try:
         existing_text = config_path.read_text(encoding="utf-8")
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
+        config = tomllib.loads(existing_text)
     except tomllib.TOMLDecodeError as e:
         result["error"] = f"Failed to parse TOML {config_path}: {e}"
         return result
@@ -495,6 +569,14 @@ DEFAULT_MCP_SERVERS: list[dict[str, Any]] = [
         "description": "Linear issue tracking integration",
     },
     {
+        "name": "brave-search",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@brave/brave-search-mcp-server"],
+        "env": {"BRAVE_API_KEY": "$secret:brave_api_key"},
+        "description": "Brave Search API for web search, local search, and news",
+    },
+    {
         "name": "context7",
         "transport": "stdio",
         "command": "npx",
@@ -508,7 +590,7 @@ DEFAULT_MCP_SERVERS: list[dict[str, Any]] = [
 def install_default_mcp_servers() -> dict[str, Any]:
     """Install default external MCP servers to ~/.gobby/.mcp.json.
 
-    Adds default MCP servers (GitHub, Linear, context7) if not
+    Adds default MCP servers (GitHub, Linear, Brave Search, context7) if not
     already configured. Also syncs to the database so the daemon proxy can
     serve them. These servers pull API keys from environment variables.
 

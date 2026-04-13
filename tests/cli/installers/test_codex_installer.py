@@ -2,6 +2,7 @@
 
 import json
 import os
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -308,6 +309,9 @@ class TestInstallCodex:
         codex_hooks_pos = config_content.index("codex_hooks = true")
         mcp_pos = config_content.index("[mcp_servers")
         assert features_pos < codex_hooks_pos < mcp_pos
+        parsed = tomllib.loads(config_content)
+        assert parsed["features"]["fast_mode"] is True
+        assert parsed["features"]["codex_hooks"] is True
 
     def test_install_replaces_flag_in_existing_features_section(
         self,
@@ -331,6 +335,9 @@ class TestInstallCodex:
         assert "codex_hooks = true" in config_content
         assert "codex_hooks = false" not in config_content
         assert config_content.count("codex_hooks") == 1
+        parsed = tomllib.loads(config_content)
+        assert parsed["features"]["codex_hooks"] is True
+        assert parsed["features"]["fast_mode"] is True
 
     def test_install_merges_into_existing_hooks_json(
         self,
@@ -484,6 +491,46 @@ class TestInstallCodex:
 
         assert result["success"] is False
         assert "global hooks" in result["error"]
+
+    def test_install_strips_tool_overrides(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        mock_shared_content,
+        mock_mcp_configure,
+    ) -> None:
+        """Test that install strips per-tool approval overrides from config.toml."""
+        from gobby.cli.installers.codex import install_codex
+
+        # Pre-seed config.toml with per-tool approval overrides
+        codex_dir = mock_home / ".codex"
+        codex_dir.mkdir(parents=True, exist_ok=True)
+        config_path = codex_dir / "config.toml"
+        config_path.write_text(
+            "features.codex_hooks = true\n\n"
+            '[mcp_servers.gobby]\ncommand = "uv"\n'
+            'args = ["run", "gobby", "mcp-server"]\n\n'
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n\n'
+            "[mcp_servers.gobby.tools.get_tool_schema]\n"
+            'approval_mode = "approve"\n'
+        )
+
+        mock_mcp_configure.return_value = {
+            "success": True,
+            "added": False,
+            "already_configured": True,
+        }
+
+        result = install_codex(mock_home)
+
+        assert result["success"] is True
+        assert result["mcp_tools_stripped"] is True
+
+        # Verify tools overrides are gone but server config preserved
+        content = config_path.read_text()
+        assert "approval_mode" not in content
+        assert "uv" in content
 
     def test_backward_compat_alias(self) -> None:
         """Test that install_codex_notify is an alias for install_codex."""

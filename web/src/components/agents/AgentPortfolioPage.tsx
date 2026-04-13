@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import type { CanonicalTaskState, TaskCompatProjection } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -16,7 +18,6 @@ interface SessionData {
   updated_at: string
   usage_input_tokens: number
   usage_output_tokens: number
-  usage_total_cost_usd: number
   had_edits: boolean
   agent_depth: number
   parent_session_id: string | null
@@ -27,6 +28,8 @@ interface TaskData {
   ref: string
   title: string
   status: string
+  state?: CanonicalTaskState | null
+  compat?: TaskCompatProjection | null
   priority: number
   type: string
   category: string | null
@@ -37,6 +40,8 @@ interface TaskData {
   closed_at: string | null
   closed_in_session_id: string | null
   created_in_session_id: string | null
+  claimed_by_session_id?: string | null
+  lifecycle_stage?: string | null
   validation_fail_count: number
   escalated_at: string | null
 }
@@ -52,7 +57,6 @@ interface AgentProfile {
   tasksEscalated: TaskData[]
   totalTokensIn: number
   totalTokensOut: number
-  totalCost: number
   avgDurationMinutes: number
   successRate: number
   categoryBreakdown: Record<string, number>
@@ -60,7 +64,7 @@ interface AgentProfile {
   lastActive: string
 }
 
-type SortField = 'name' | 'tasks' | 'success' | 'cost' | 'lastActive'
+type SortField = 'name' | 'tasks' | 'success' | 'tokens' | 'lastActive'
 
 // =============================================================================
 // Helpers
@@ -92,11 +96,6 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(n)
-}
-
-function formatCost(usd: number): string {
-  if (usd >= 0.01) return `$${usd.toFixed(2)}`
-  return `$${usd.toFixed(3)}`
 }
 
 function identifyAgent(session: SessionData): { id: string; name: string; source: string } {
@@ -197,8 +196,10 @@ function AgentCard({
             <span className="agent-stat-label">avg time</span>
           </span>
           <span className="agent-stat">
-            <span className="agent-stat-value">{formatCost(agent.totalCost)}</span>
-            <span className="agent-stat-label">cost</span>
+            <span className="agent-stat-value">
+              {formatTokens(agent.totalTokensIn + agent.totalTokensOut)}
+            </span>
+            <span className="agent-stat-label">tokens</span>
           </span>
           <span className="agent-card-time">{relativeTime(agent.lastActive)}</span>
         </div>
@@ -220,8 +221,10 @@ function AgentCard({
                 <span className="agent-detail-value">{formatTokens(agent.totalTokensOut)}</span>
               </div>
               <div className="agent-detail-row">
-                <span>Total Cost</span>
-                <span className="agent-detail-value">{formatCost(agent.totalCost)}</span>
+                <span>Total</span>
+                <span className="agent-detail-value">
+                  {formatTokens(agent.totalTokensIn + agent.totalTokensOut)}
+                </span>
               </div>
             </div>
 
@@ -354,20 +357,38 @@ export function AgentPortfolioPage() {
       const sessionIds = new Set(group.sessions.map(s => s.id))
 
       // Tasks assigned to sessions of this agent
-      const assigned = tasks.filter(t => t.assignee && sessionIds.has(t.assignee))
+      const assigned = tasks.filter(t => {
+        const ownerSessionId = getCanonicalTaskState(t).owner_session_id
+        return Boolean(ownerSessionId && sessionIds.has(ownerSessionId))
+      })
       const closed = tasks.filter(
-        t => t.closed_in_session_id && sessionIds.has(t.closed_in_session_id) && (t.status === 'closed' || t.status === 'review_approved')
+        t => {
+          const state = getCanonicalTaskState(t)
+          const bucket = getTaskBucket(t)
+
+          if (bucket === 'closed') {
+            return Boolean(state.closed_in_session_id && sessionIds.has(state.closed_in_session_id))
+          }
+
+          if (bucket === 'merge_ready') {
+            return Boolean(state.owner_session_id && sessionIds.has(state.owner_session_id))
+          }
+
+          return false
+        }
       )
       const escalated = tasks.filter(
-        t => (t.assignee && sessionIds.has(t.assignee)) && t.escalated_at !== null
+        t => {
+          const state = getCanonicalTaskState(t)
+          return Boolean(state.owner_session_id && sessionIds.has(state.owner_session_id) && state.is_escalated)
+        }
       )
 
-      // Aggregate tokens/cost
-      let totalIn = 0, totalOut = 0, totalCost = 0
+      // Aggregate token usage
+      let totalIn = 0, totalOut = 0
       for (const s of group.sessions) {
         totalIn += s.usage_input_tokens || 0
         totalOut += s.usage_output_tokens || 0
-        totalCost += s.usage_total_cost_usd || 0
       }
 
       // Average task duration (created_at → closed_at)
@@ -383,7 +404,7 @@ export function AgentPortfolioPage() {
         : 0
 
       // Success rate: closed / (assigned non-open)
-      const attempted = assigned.filter(t => t.status !== 'open')
+      const attempted = assigned.filter(t => getTaskBucket(t) !== 'ready')
       const successRate = attempted.length > 0 ? closed.length / attempted.length : 0
 
       // Category breakdown from closed tasks
@@ -396,7 +417,10 @@ export function AgentPortfolioPage() {
       // Failure modes from failed/escalated
       const modes: string[] = []
       const failedWithValidation = tasks.filter(
-        t => (t.assignee && sessionIds.has(t.assignee)) && t.validation_fail_count > 0
+        t => {
+          const ownerSessionId = getCanonicalTaskState(t).owner_session_id
+          return Boolean(ownerSessionId && sessionIds.has(ownerSessionId) && t.validation_fail_count > 0)
+        }
       )
       if (failedWithValidation.length > 0) modes.push(`Validation failures (${failedWithValidation.length})`)
       if (escalated.length > 0) modes.push(`Escalations (${escalated.length})`)
@@ -417,7 +441,6 @@ export function AgentPortfolioPage() {
         tasksEscalated: escalated,
         totalTokensIn: totalIn,
         totalTokensOut: totalOut,
-        totalCost: totalCost,
         avgDurationMinutes: avgDuration,
         successRate,
         categoryBreakdown: cats,
@@ -441,7 +464,8 @@ export function AgentPortfolioPage() {
         case 'name': return a.name.localeCompare(b.name)
         case 'tasks': return b.tasksClosed.length - a.tasksClosed.length
         case 'success': return b.successRate - a.successRate
-        case 'cost': return b.totalCost - a.totalCost
+        case 'tokens':
+          return (b.totalTokensIn + b.totalTokensOut) - (a.totalTokensIn + a.totalTokensOut)
         case 'lastActive': return new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime()
         default: return 0
       }
@@ -456,7 +480,7 @@ export function AgentPortfolioPage() {
       agents: agents.length,
       sessions: sessions.length,
       tasksClosed: agents.reduce((s, a) => s + a.tasksClosed.length, 0),
-      totalCost: agents.reduce((s, a) => s + a.totalCost, 0),
+      totalTokens: agents.reduce((s, a) => s + a.totalTokensIn + a.totalTokensOut, 0),
       avgSuccess: agents.length > 0
         ? agents.reduce((s, a) => s + a.successRate, 0) / agents.length
         : 0,
@@ -494,7 +518,7 @@ export function AgentPortfolioPage() {
           >
             <option value="tasks">Sort: Tasks Closed</option>
             <option value="success">Sort: Success Rate</option>
-            <option value="cost">Sort: Cost</option>
+            <option value="tokens">Sort: Tokens</option>
             <option value="lastActive">Sort: Last Active</option>
             <option value="name">Sort: Name</option>
           </select>
@@ -523,8 +547,8 @@ export function AgentPortfolioPage() {
           <span className="agent-summary-label">Avg Success</span>
         </div>
         <div className="agent-summary-card">
-          <span className="agent-summary-value">{formatCost(totals.totalCost)}</span>
-          <span className="agent-summary-label">Total Cost</span>
+          <span className="agent-summary-value">{formatTokens(totals.totalTokens)}</span>
+          <span className="agent-summary-label">Total Tokens</span>
         </div>
       </div>
 

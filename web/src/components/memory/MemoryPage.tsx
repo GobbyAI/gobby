@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef, lazy, Suspense, Component, type ReactNode } from 'react'
 import './MemoryPage.css'
 import { useMemory, useNeo4jStatus } from '../../hooks/useMemory'
+import { useNow } from '../../hooks/useNow'
 import type { GobbyMemory } from '../../hooks/useMemory'
 import { MemoryFilters } from './MemoryFilters'
 import { MemoryTable } from './MemoryTable'
@@ -163,13 +164,14 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
   }, [showError])
 
   const [searchText, setSearchText] = useState('')
+  const now = useNow()
 
   // Apply search and recent filters to memories
   const filteredMemories = useMemo(() => {
     let result = memories
 
     if (filters.recentOnly) {
-      const cutoff = Date.now() - 24 * 60 * 60 * 1000
+      const cutoff = now - 24 * 60 * 60 * 1000
       result = result.filter(m => new Date(m.created_at).getTime() > cutoff)
     }
 
@@ -183,7 +185,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
     }
 
     return result
-  }, [memories, filters.recentOnly, searchText])
+  }, [memories, filters.recentOnly, searchText, now])
 
   const handleCreate = useCallback(() => {
     setEditMemory(null)

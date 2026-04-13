@@ -5,7 +5,6 @@ export interface UsageTotals {
   output_tokens: number
   cache_read_tokens: number
   cache_creation_tokens: number
-  cost_usd: number
   session_count: number
 }
 

@@ -268,12 +268,12 @@ def determine_close_outcome(
         override_justification: Justification for override
 
     Returns:
-        Tuple of (route_to_review, store_override)
+        Tuple of (route_to_escalation, store_override)
     """
     # Determine if override should be stored
     store_override = skip_validation
 
-    # Route to review if override was used — skipped validation goes through human review
-    route_to_review = bool(override_justification and store_override)
+    # Route to escalation if override was used — skipped validation needs explicit human triage
+    route_to_escalation = bool(override_justification and store_override)
 
-    return route_to_review, store_override
+    return route_to_escalation, store_override

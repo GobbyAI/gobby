@@ -393,42 +393,6 @@ class HookManager:
                 response.modified_input = event.data.get("tool_input", {})
                 response.auto_approve = True
 
-        # Apply output compression from rule evaluation (PostToolUse)
-        if "_compression" in event.metadata:
-            compression_cfg = event.metadata.pop("_compression")
-            try:
-                tool_output = event.data.get("tool_output", "")
-                if isinstance(tool_output, str) and tool_output:
-                    strategy = compression_cfg.get("strategy")
-
-                    if strategy == "code_index":
-                        import subprocess
-
-                        tool_input = event.data.get("tool_input") or {}
-                        file_path = tool_input.get("file_path") or tool_input.get("path", "")
-                        if file_path:
-                            proc = subprocess.run(
-                                ["gcode", "outline", file_path],
-                                capture_output=True,
-                                text=True,
-                                timeout=10,
-                            )
-                            if proc.returncode == 0 and proc.stdout:
-                                outline = proc.stdout
-                                if len(outline) < len(tool_output):
-                                    savings_pct = (1 - len(outline) / len(tool_output)) * 100
-                                    response.modified_output = (
-                                        f"[Output compressed by Gobby — code_index outline, "
-                                        f"{savings_pct:.0f}% reduction]\n{outline}"
-                                    )
-                                    self.logger.info(
-                                        f"code_index outline: saved {savings_pct:.0f}%"
-                                        f" ({len(tool_output)}->{len(outline)} chars)"
-                                    )
-                                    # gcode self-reports savings to HTTP API (gsqz pattern)
-            except Exception as e:
-                self.logger.warning(f"Output compression failed: {e}")
-
         with create_span("hook.enrich"):
             try:
                 self._enricher.enrich(event, response, workflow_context=workflow_context)
@@ -624,14 +588,11 @@ class HookManager:
                     workflow_response.context = "\n\n".join(extra_context)
                 return None, workflow_response
 
-            # Stash rewrite_input / compress_output data on event.metadata
+            # Stash rewrite_input data on event.metadata
             # so the main handle() method can propagate them to the final response
             if workflow_response.modified_input:
                 event.metadata["_modified_input"] = workflow_response.modified_input
                 event.metadata["_auto_approve"] = workflow_response.auto_approve
-            compression = (workflow_response.metadata or {}).get("compression")
-            if compression:
-                event.metadata["_compression"] = compression
 
             # Capture context to merge later
             workflow_context = workflow_response.context if workflow_response.context else None

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Valid providers
-SUPPORTED_PROVIDERS = frozenset(["claude", "codex", "gemini"])
+SUPPORTED_PROVIDERS = frozenset(["claude", "codex", "gemini", "local"])
 
 # Default provider when nothing is specified
 DEFAULT_PROVIDER = "claude"
@@ -235,6 +235,10 @@ def _validate_provider_configured(provider: str, llm_providers: "LLMProvidersCon
     Raises:
         ProviderNotConfiguredError: If provider is not configured.
     """
+    # Local provider config lives on DaemonConfig.local, not llm_providers.
+    if provider == "local":
+        return
+
     enabled = llm_providers.get_enabled_providers()
 
     if provider not in enabled:

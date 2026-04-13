@@ -1,4 +1,8 @@
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import {
+  useState,
+  useEffect,
+  type ReactNode,
+} from "react";
 import {
   TooltipProvider,
   Tooltip,
@@ -116,11 +120,7 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
   },
 ];
 
-const noopFetchDiff = async (): Promise<string> => '';
-
-const STORAGE_KEY_PINNED = "gobby-activity-panel-pinned";
-const STORAGE_KEY_WIDTH = "gobby-activity-panel-width";
-const STORAGE_KEY_TAB = "gobby-activity-panel-tab";
+const noopFetchDiff = async (): Promise<string> => "";
 
 interface ActivityPanelProps {
   isPinned: boolean;
@@ -155,6 +155,11 @@ interface ActivityPanelProps {
   onKillAgent?: (runId: string) => void;
   onExpireSession?: (sessionId: string) => void;
   chatSessionId?: string | null;
+  focusSessionId?: string | null;
+  onFocusSessionHandled?: () => void;
+  watchingSessionIds?: Set<string>;
+  onUnwatchSession?: (sessionId: string) => void;
+  onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   isMobile?: boolean;
 }
 
@@ -184,8 +189,24 @@ export function ActivityPanel({
   onKillAgent,
   onExpireSession,
   chatSessionId,
+  focusSessionId,
+  onFocusSessionHandled,
+  watchingSessionIds,
+  onUnwatchSession,
+  onSwapSession,
   isMobile = false,
 }: ActivityPanelProps) {
+  // Use overlay mode when viewport is too narrow for side-by-side layout
+  const [narrowViewport, setNarrowViewport] = useState(
+    () => window.innerWidth < 1100,
+  );
+  useEffect(() => {
+    const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+  const useOverlay = isMobile || narrowViewport;
+
   if (!isPinned) return null;
 
   // Mobile: close handler
@@ -200,6 +221,11 @@ export function ActivityPanel({
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
             chatSessionId={chatSessionId ?? undefined}
+            focusSessionId={focusSessionId}
+            onFocusHandled={onFocusSessionHandled}
+            watchingSessionIds={watchingSessionIds}
+            onUnwatch={onUnwatchSession}
+            onSwapSession={onSwapSession}
             isMobile={useOverlay}
           />
         );
@@ -231,22 +257,17 @@ export function ActivityPanel({
           />
         );
       case "canvas":
-        return <CanvasTab state={canvasState} onClose={onCloseCanvas} onClearAll={onClearCanvas} />;
+        return (
+          <CanvasTab
+            state={canvasState}
+            onClose={onCloseCanvas}
+            onClearAll={onClearCanvas}
+          />
+        );
       default:
         return null;
     }
   };
-
-  // Use overlay mode when viewport is too narrow for side-by-side layout
-  const [narrowViewport, setNarrowViewport] = useState(
-    () => window.innerWidth < 1100,
-  );
-  useEffect(() => {
-    const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-  const useOverlay = isMobile || narrowViewport;
 
   if (useOverlay) {
     return (
@@ -343,119 +364,6 @@ export function ActivityPanel({
       </div>
     </>
   );
-}
-
-// Hooks for persisting panel state
-export function useActivityPanel() {
-  const [isPinned, setIsPinned] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_PINNED);
-      if (stored !== null) return stored === "true";
-    } catch {
-      /* ignore */
-    }
-    // Default: pinned on desktop
-    return window.innerWidth >= 1100;
-  });
-
-  const [panelWidth, setPanelWidth] = useState(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_WIDTH);
-      if (stored) {
-        const w = parseInt(stored, 10);
-        if (w >= 280 && w <= 1200) return w;
-      }
-    } catch {
-      /* ignore */
-    }
-    return 360;
-  });
-
-  const [activeTab, setActiveTab] = useState<ActivityTab>(() => {
-    try {
-      const stored = localStorage.getItem(
-        STORAGE_KEY_TAB,
-      ) as ActivityTab | null;
-      if (stored && TABS.some((t) => t.id === stored)) return stored;
-    } catch {
-      /* ignore */
-    }
-    return "tasks";
-  });
-
-  // Persist
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_PINNED, String(isPinned));
-    } catch {
-      /* ignore */
-    }
-  }, [isPinned]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_WIDTH, String(panelWidth));
-    } catch {
-      /* ignore */
-    }
-  }, [panelWidth]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_TAB, activeTab);
-    } catch {
-      /* ignore */
-    }
-  }, [activeTab]);
-
-  // No auto-collapse on narrow viewport — the panel switches to overlay
-  // mode when the viewport is too narrow for side-by-side layout.
-
-  // Track whether the panel was opened programmatically (via showTab)
-  // vs manually by the user, so we can auto-close it when the artifact
-  // or canvas that triggered the open is dismissed.
-  const autoOpenedRef = useRef(false);
-
-  const showTab = useCallback(
-    (tab: ActivityTab) => {
-      setActiveTab(tab);
-      if (!isPinned) {
-        setIsPinned(true);
-        autoOpenedRef.current = true;
-      }
-    },
-    [isPinned],
-  );
-
-  const closeIfAutoOpened = useCallback(() => {
-    if (autoOpenedRef.current) {
-      setIsPinned(false);
-      autoOpenedRef.current = false;
-    }
-  }, []);
-
-  const togglePanel = useCallback(() => {
-    autoOpenedRef.current = false;
-    setIsPinned((prev) => !prev);
-  }, []);
-
-  // Clear auto-opened flag when user manually changes tab
-  const handleTabChange = useCallback((tab: ActivityTab) => {
-    autoOpenedRef.current = false;
-    setActiveTab(tab);
-  }, []);
-
-  return {
-    isPinned,
-    setIsPinned,
-    panelWidth,
-    setPanelWidth,
-    activeTab,
-    setActiveTab: handleTabChange,
-    showTab,
-    closeIfAutoOpened,
-    togglePanel,
-  };
 }
 
 function PinIcon({ pinned }: { pinned: boolean }) {

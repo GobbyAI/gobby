@@ -159,7 +159,10 @@ async def execute_prompt_step(
 
     try:
         provider = llm_service.get_default_provider()
-        response = await provider.generate_text(prompt)
+        response = await provider.generate_text(
+            prompt,
+            caller="workflows.pipeline.prompt_step",
+        )
         return {"response": response}
     except (OSError, RuntimeError, ValueError) as e:
         logger.error(f"LLM prompt execution failed: {e}", exc_info=True)

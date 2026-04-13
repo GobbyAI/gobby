@@ -16,4 +16,5 @@ rules:
           Interactive sessions should use close_task directly — the user is already present.
           Review status transitions (needs_review, review_approved) are for spawned/pipeline
           agents where a separate QA step reviews. Interactive agents can: open, claim,
-          escalate, close, and delete tasks.
+          escalate, de_escalate, reopen, close, and delete tasks when the user explicitly
+          wants that lifecycle transition.

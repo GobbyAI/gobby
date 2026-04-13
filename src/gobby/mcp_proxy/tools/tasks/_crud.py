@@ -139,12 +139,23 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             logger.warning(f"Failed to link task {task.id} to session {resolved_session_id}: {e}")
 
         # Auto-claim if requested: set assignee and status to in_progress
+        claim_skipped_cross_project = False
         if claim:
-            updated_task = ctx.task_manager.update_task(
-                task.id,
-                assignee=resolved_session_id,
-                status="in_progress",
-            )
+            # Block cross-project claiming
+            try:
+                claim_session = ctx.session_manager.get(resolved_session_id)
+            except Exception:
+                claim_session = None
+            if claim_session and project_id != claim_session.project_id:
+                logger.info(
+                    f"Skipping auto-claim for task {task.id}: "
+                    f"task project {project_id} != session project {claim_session.project_id}"
+                )
+                claim = False
+                claim_skipped_cross_project = True
+
+        if claim:
+            updated_task = ctx.task_manager.claim_task(task.id, resolved_session_id)
             if updated_task is None:
                 logger.warning(f"Failed to auto-claim task {task.id}: update_task returned None")
             else:
@@ -211,10 +222,18 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "ref": f"#{task.seq_num}",
             }
 
+        # Include cross-project claim warning
+        if claim_skipped_cross_project:
+            result["warning"] = "claim=true ignored: cannot claim a task in a different project"
+
         # Include dependency errors if any
         if dependency_errors:
             result["dependency_errors"] = dependency_errors
-            result["warning"] = f"Task created but {len(dependency_errors)} dependency(s) failed"
+            existing_warning = result.get("warning", "")
+            dep_warning = f"Task created but {len(dependency_errors)} dependency(s) failed"
+            result["warning"] = (
+                f"{existing_warning}; {dep_warning}" if existing_warning else dep_warning
+            )
 
         return result
 

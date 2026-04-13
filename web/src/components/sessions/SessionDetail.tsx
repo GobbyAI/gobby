@@ -7,7 +7,7 @@ import { MemoizedMarkdown } from '../shared/MemoizedMarkdown'
 import { SessionTranscript } from './SessionTranscript'
 import { SessionLineage } from './SessionLineage'
 import { ConfirmDialog } from '../chat/ui/ConfirmDialog'
-import { DURATION_INVALID, formatDuration, formatTokens, formatCost } from '../../utils/formatTime'
+import { DURATION_INVALID, formatDuration, formatTokens } from '../../utils/formatTime'
 
 interface SessionDetailProps {
   session: GobbySession
@@ -39,7 +39,6 @@ function formatCompactStats(session: GobbySession): string {
   if (session.message_count != null) parts.push(`${session.message_count} msgs`)
   if (session.usage_input_tokens > 0) parts.push(`${formatTokens(session.usage_input_tokens)} in`)
   if (session.usage_output_tokens > 0) parts.push(`${formatTokens(session.usage_output_tokens)} out`)
-  if (session.usage_total_cost_usd > 0) parts.push(formatCost(session.usage_total_cost_usd))
   const dur = formatDuration(session.created_at, session.updated_at)
   if (dur !== DURATION_INVALID) parts.push(dur)
   if ((session.commit_count ?? 0) > 0) parts.push(`${session.commit_count} commits`)
@@ -234,7 +233,7 @@ function SessionActions({
   }, [dropdownOpen])
 
   const hasMessages = (session.message_count ?? 0) > 0
-  const isActiveTerminal = session.status === 'active' && session.source !== 'claude_sdk_web_chat'
+  const isActiveTerminal = session.status === 'active' && session.session_type === 'terminal'
 
   return (
     <div className="session-detail-actions" ref={dropdownRef}>
@@ -247,7 +246,7 @@ function SessionActions({
       </button>
       {dropdownOpen && (
         <div className="session-detail-dropdown">
-          {onWatchInChat && session.source !== 'claude_sdk_web_chat' && (
+          {onWatchInChat && session.session_type === 'terminal' && (
             <button
               className="session-detail-dropdown-item"
               disabled={!hasMessages}

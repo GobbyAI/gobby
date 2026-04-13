@@ -64,18 +64,26 @@ class OTelTraceFormatter(logging.Formatter):
         # Inject OTel trace ID if active
         span = trace.get_current_span()
         if span and span.get_span_context().is_valid:
-            record.trace_id = format_trace_id(span.get_span_context().trace_id)
+            trace_id = format_trace_id(span.get_span_context().trace_id)
         else:
-            record.trace_id = "-"
+            trace_id = "-"
 
         # Short name for gobby loggers
         if record.name.startswith("gobby."):
-            record.short_name = record.name[6:]
+            short_name = record.name[6:]
         else:
-            record.short_name = record.name
+            short_name = record.name
+
+        # Store on record for format string interpolation
+        record.__dict__["trace_id"] = trace_id
+        record.__dict__["short_name"] = short_name
 
         # Standard formatting
         base_msg = super().format(record)
+
+        # Append trace ID only when a real span is active
+        if trace_id != "-":
+            base_msg = f"{base_msg} [{trace_id}]"
 
         # Append extra fields (from record.__dict__ that are not standard)
         extra_fields = {}
@@ -150,10 +158,7 @@ def setup_otel_logging(config: TelemetrySettings, verbose: bool = False) -> None
     if config.log_format == "json":
         formatter = JsonOTelFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
     else:
-        log_format = (
-            "%(asctime)s - %(levelname)-8s - [%(trace_id)s] - "
-            "%(short_name)s.%(funcName)s - %(message)s"
-        )
+        log_format = "%(asctime)s - %(levelname)-8s - %(short_name)s.%(funcName)s - %(message)s"
         formatter = OTelTraceFormatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
     # 3. Create file handlers for all 6 paths

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 
 interface RuleInfo {
   name: string
@@ -112,7 +112,10 @@ export function AgentRulesEditor({
   }, [definitionId, rules, onRulesChange])
 
   // --- Selector handlers ---
-  const selectors = ruleSelectors || { include: [], exclude: [] }
+  const selectors = useMemo<RuleSelectors>(
+    () => ruleSelectors || { include: [], exclude: [] },
+    [ruleSelectors],
+  )
 
   const handleAddSelector = useCallback(async (type: 'include' | 'exclude', selector: string) => {
     const updated: RuleSelectors = {

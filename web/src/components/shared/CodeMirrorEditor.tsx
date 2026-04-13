@@ -65,10 +65,24 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const onSaveRef = useRef(onSave)
+  const contentRef = useRef(content)
+  const editorViewRefRef = useRef(editorViewRef)
 
-  // Keep refs current
-  onChangeRef.current = onChange
-  onSaveRef.current = onSave
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
+
+  useEffect(() => {
+    onSaveRef.current = onSave
+  }, [onSave])
+
+  useEffect(() => {
+    contentRef.current = content
+  }, [content])
+
+  useEffect(() => {
+    editorViewRefRef.current = editorViewRef
+  }, [editorViewRef])
 
   const handleSave = useCallback(() => {
     onSaveRef.current?.()
@@ -136,7 +150,7 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
     }
 
     const state = EditorState.create({
-      doc: content,
+      doc: contentRef.current,
       extensions,
     })
 
@@ -146,12 +160,12 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
     })
 
     viewRef.current = view
-    if (editorViewRef) editorViewRef.current = view
+    if (editorViewRefRef.current) editorViewRefRef.current.current = view
 
     return () => {
       view.destroy()
       viewRef.current = null
-      if (editorViewRef) editorViewRef.current = null
+      if (editorViewRefRef.current) editorViewRefRef.current.current = null
     }
   }, [language, readOnly, handleSave]) // Recreate on language/readOnly change
 

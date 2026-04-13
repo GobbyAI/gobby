@@ -57,14 +57,50 @@ class TaskUpdateRequest(BaseModel):
 
     title: str | None = Field(default=None, description="New title")
     description: str | None = Field(default=None, description="New description")
-    status: str | None = Field(default=None, description="New status")
+    status: str | None = Field(
+        default=None,
+        description="Compatibility field only. Use claim/review/escalate/close/reopen endpoints instead.",
+    )
     priority: int | None = Field(default=None, description="New priority")
     task_type: str | None = Field(default=None, description="New task type")
-    assignee: str | None = Field(default=None, description="New assignee")
+    assignee: str | None = Field(
+        default=None,
+        description="Compatibility field only. Use /claim or /release-claim endpoints instead.",
+    )
     labels: list[str] | None = Field(default=None, description="New labels")
     parent_task_id: str | None = Field(default=None, description="New parent task ID")
     category: str | None = Field(default=None, description="New category")
     validation_criteria: str | None = Field(default=None, description="New validation criteria")
+
+
+class TaskClaimRequest(BaseModel):
+    """Request body for claiming a task."""
+
+    session_id: str = Field(..., description="Owning session ID")
+    force: bool = Field(default=False, description="Override an existing claim")
+
+
+class TaskReleaseClaimRequest(BaseModel):
+    """Request body for releasing task ownership."""
+
+    status: (
+        Literal["open", "in_progress", "needs_review", "review_approved", "escalated"] | None
+    ) = Field(
+        default=None,
+        description="Optional projected legacy status to preserve during ownership release.",
+    )
+
+
+class TaskReviewRequest(BaseModel):
+    """Request body for review-stage transitions."""
+
+    notes: str | None = Field(default=None, description="Review notes or approval notes")
+
+
+class TaskEscalateRequest(BaseModel):
+    """Request body for escalation."""
+
+    reason: str = Field(..., description="Why this task needs escalation")
 
 
 class TaskCloseRequest(BaseModel):
@@ -85,6 +121,10 @@ class TaskDeEscalateRequest(BaseModel):
     """Request body for de-escalating a task."""
 
     decision_context: str = Field(..., description="User's decision or instructions for the agent")
+    target_status: Literal["open", "in_progress", "needs_review", "review_approved"] = Field(
+        default="open",
+        description="Status to return the task to after de-escalation",
+    )
     reset_validation: bool = Field(default=False, description="Also reset validation fail count")
 
 
@@ -142,6 +182,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def list_tasks(
         project_id: str | None = Query(None, description="Filter by project ID"),
         status: str | None = Query(None, description="Filter by status"),
+        lifecycle_stage: str | None = Query(
+            None,
+            description="Filter by canonical lifecycle stage (open, in_progress, needs_review, review_approved)",
+        ),
+        claimed: bool | None = Query(None, description="Filter by whether the task is claimed"),
+        closed: bool | None = Query(None, description="Filter by canonical closed state"),
         priority: int | None = Query(None, description="Filter by priority"),
         task_type: str | None = Query(None, description="Filter by task type"),
         assignee: str | None = Query(None, description="Filter by assignee"),
@@ -165,9 +211,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             tasks = server.task_manager.list_tasks(
                 project_id=resolved_project,
                 status=status_filter,
+                lifecycle_stage=lifecycle_stage,
                 priority=priority,
                 task_type=task_type,
                 assignee=assignee,
+                claimed=claimed,
+                closed=closed,
                 label=label,
                 parent_task_id=parent_task_id,
                 title_like=search,
@@ -233,6 +282,17 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             task = server.task_manager.get_task(task_id)
             resolved_id = task.id
 
+            blocked_fields = request_data.model_fields_set & {"status", "assignee"}
+            if blocked_fields:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Use lifecycle-specific task endpoints instead of PATCH for status/ownership "
+                        "changes: /claim, /release-claim, /needs-review, /review-approved, "
+                        "/escalate, /de-escalate, /close, or /reopen."
+                    ),
+                )
+
             # Build kwargs only for fields that were explicitly set
             kwargs: dict[str, Any] = {}
             for field_name in request_data.model_fields_set:
@@ -247,6 +307,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             return result
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to update task {task_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -275,6 +337,100 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     # -----------------------------------------------------------------
     # Lifecycle
     # -----------------------------------------------------------------
+
+    @router.post("/{task_id}/claim")
+    async def claim_task(task_id: str, request_data: TaskClaimRequest) -> Any:
+        """Claim a task for a session."""
+        try:
+            task = server.task_manager.get_task(task_id)
+            resolved_id = task.id
+            claimed_task = server.task_manager.claim_task(
+                resolved_id,
+                session_id=request_data.session_id,
+                force=request_data.force,
+            )
+            result = claimed_task.to_dict()
+            await _broadcast_task("task_claimed", result)
+            return result
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/{task_id}/release-claim")
+    async def release_task_claim(
+        task_id: str, request_data: TaskReleaseClaimRequest | None = None
+    ) -> Any:
+        """Release canonical task ownership without using generic PATCH."""
+        try:
+            task = server.task_manager.get_task(task_id)
+            resolved_id = task.id
+            body = request_data or TaskReleaseClaimRequest()
+            released = server.task_manager.release_task_claim(resolved_id, status=body.status)
+            result = released.to_dict()
+            await _broadcast_task("task_claim_released", result)
+            return result
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/{task_id}/needs-review")
+    async def mark_task_needs_review(
+        task_id: str, request_data: TaskReviewRequest | None = None
+    ) -> Any:
+        """Move a task into the canonical review lifecycle stage."""
+        try:
+            task = server.task_manager.get_task(task_id)
+            resolved_id = task.id
+            body = request_data or TaskReviewRequest()
+            updated = server.task_manager.mark_task_needs_review(
+                resolved_id,
+                review_notes=body.notes,
+            )
+            result = updated.to_dict()
+            await _broadcast_task("task_needs_review", result)
+            return result
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/{task_id}/review-approved")
+    async def mark_task_review_approved(
+        task_id: str, request_data: TaskReviewRequest | None = None
+    ) -> Any:
+        """Mark a task as review-approved."""
+        try:
+            task = server.task_manager.get_task(task_id)
+            resolved_id = task.id
+            body = request_data or TaskReviewRequest()
+            updated = server.task_manager.mark_task_review_approved(
+                resolved_id,
+                approval_notes=body.notes,
+            )
+            result = updated.to_dict()
+            await _broadcast_task("task_review_approved", result)
+            return result
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/{task_id}/escalate")
+    async def escalate_task(task_id: str, request_data: TaskEscalateRequest) -> Any:
+        """Escalate a task without using generic status mutation."""
+        try:
+            task = server.task_manager.get_task(task_id)
+            resolved_id = task.id
+            updated = server.task_manager.escalate_task(resolved_id, reason=request_data.reason)
+            result = updated.to_dict()
+            await _broadcast_task("task_escalated", result)
+            return result
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.post("/{task_id}/close")
     async def close_task(task_id: str, request_data: TaskCloseRequest | None = None) -> Any:
@@ -319,29 +475,16 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/{task_id}/de-escalate")
     async def de_escalate_task(task_id: str, request_data: TaskDeEscalateRequest) -> Any:
-        """De-escalate a task and return it to open status with user decision context."""
+        """De-escalate a task to an explicit next status with user decision context."""
         try:
             task = server.task_manager.get_task(task_id)
             resolved_id = task.id
-
-            if task.status != "escalated":
-                raise ValueError(f"Task is not escalated (status: {task.status})")
-
-            update_kwargs: dict[str, Any] = {
-                "status": "in_progress",
-                "escalated_at": None,
-                "escalation_reason": None,
-            }
-
-            if request_data.reset_validation:
-                update_kwargs["validation_fail_count"] = 0
-
-            # Append user decision context to description
-            decision_note = f"\n\n---\n**User decision:** {request_data.decision_context}"
-            current_desc = task.description or ""
-            update_kwargs["description"] = current_desc + decision_note
-
-            updated = server.task_manager.update_task(resolved_id, **update_kwargs)
+            updated = server.task_manager.de_escalate_task(
+                resolved_id,
+                reason=request_data.decision_context,
+                target_status=request_data.target_status,
+                reset_validation=request_data.reset_validation,
+            )
             result = updated.to_dict()
             await _broadcast_task("task_de_escalated", result)
             return result

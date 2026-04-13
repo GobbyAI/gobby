@@ -24,6 +24,9 @@ from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.tasks.state_semantics import (
+    is_task_actively_claimed,
+)
 
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -100,7 +103,7 @@ class AgentLifecycleMonitor:
         self._master_fds[run_id] = fd
 
     async def _recover_task_from_failed_agent(self, run_id: str) -> None:
-        """Reset a failed agent's task back to 'open' so the orchestrator can re-dispatch it.
+        """Recover task ownership after a failed agent run.
 
         If the failure is provider-side, logs which provider failed so the
         orchestrator can rotate to an alternative on the next dispatch.
@@ -118,8 +121,8 @@ class AgentLifecycleMonitor:
             if not task_id and db_run.child_session_id:
                 tasks = await asyncio.to_thread(
                     self._task_manager.list_tasks,
-                    status="in_progress",
-                    assignee=db_run.child_session_id,
+                    claimed_by_session_id=db_run.child_session_id,
+                    closed=False,
                 )
                 if tasks:
                     task_id = tasks[0].id
@@ -135,10 +138,29 @@ class AgentLifecycleMonitor:
                 )
 
             task = await asyncio.to_thread(self._task_manager.get_task, task_id)
-            if not task or task.status != "in_progress":
+            expected_owner = db_run.child_session_id or db_run.claimed_session_id
+            if not task or not is_task_actively_claimed(task, expected_owner):
                 return
 
             task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
+            raw_stage = getattr(task, "lifecycle_stage", None)
+            raw_status = getattr(task, "status", None)
+            lifecycle_stage = raw_stage if isinstance(raw_stage, str) and raw_stage else None
+            if lifecycle_stage is None and isinstance(raw_status, str) and raw_status:
+                lifecycle_stage = raw_status
+
+            if lifecycle_stage != "in_progress":
+                await asyncio.to_thread(
+                    self._task_manager.release_task_claim,
+                    task_id,
+                )
+                logger.info(
+                    "Released stale ownership on task %s after agent %s failed (status=%s)",
+                    task_ref,
+                    run_id,
+                    task.status,
+                )
+                return
 
             # Track dispatch failures (exclude provider errors — rotation handles those)
             failure_count = task.dispatch_failure_count or 0
@@ -148,10 +170,9 @@ class AgentLifecycleMonitor:
             if not is_provider and failure_count >= 3:
                 # Escalate after too many non-provider failures; reset counter
                 await asyncio.to_thread(
-                    self._task_manager.update_task,
+                    self._task_manager.release_task_claim,
                     task_id,
                     status="escalated",
-                    assignee=None,
                     dispatch_failure_count=0,
                     escalation_reason=f"Failed {failure_count} times across different agents",
                 )
@@ -160,10 +181,9 @@ class AgentLifecycleMonitor:
                 )
             else:
                 await asyncio.to_thread(
-                    self._task_manager.update_task,
+                    self._task_manager.release_task_claim,
                     task_id,
                     status="open",
-                    assignee=None,
                     dispatch_failure_count=failure_count,
                 )
                 logger.info(f"Recovered task {task_ref} to open after agent {run_id} failed")

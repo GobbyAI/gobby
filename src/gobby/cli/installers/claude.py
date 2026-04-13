@@ -287,7 +287,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         result["error"] = f"Failed to write settings.json: {e}"
         return result
 
-    # Configure statusLine for cost tracking middleware
+    # Configure statusLine for token tracking middleware
     _configure_statusline(existing_settings, hooks_dir)
 
     # Configure MCP server in global settings (~/.claude.json)

@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
-import { groupToolCalls, extractBase64Image } from '../ToolCallCard'
-import type { ToolCallGroup, ToolCallSingle } from '../ToolCallCard'
+import {
+  extractBase64Image,
+  groupToolCalls,
+  type ToolCallGroup,
+  type ToolCallSingle,
+} from '../ToolCallCard.helpers'
 
 function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string }): ToolCall {
   return {

@@ -1,48 +1,49 @@
 ---
 name: expansion-user
-description: User prompt template for task expansion with context injection
-version: "1.0"
+description: User prompt template for compiled task expansion
+version: "2.0"
 variables:
   task_id:
     type: str
     required: true
-    description: The parent task ID
   title:
     type: str
     required: true
-    description: The parent task title
   description:
     type: str
     default: ""
-    description: The parent task description
   context_str:
     type: str
-    default: "No additional context available."
-    description: Formatted context information (files, tests, patterns)
+    default: ""
   research_str:
     type: str
-    default: "No research performed."
-    description: Agent research findings
+    default: ""
+  plan_file:
+    type: str
+    default: ""
 ---
-Analyze and expand this task into subtasks.
+Compile this task into a deterministic expansion spec.
 
 ## Parent Task
-- **ID**: {{ task_id }}
-- **Title**: {{ title }}
-- **Description**: {{ description }}
+- ID: {{ task_id }}
+- Title: {{ title }}
+- Description:
+{{ description }}
 
-## Context
+## Repository Context
 {{ context_str }}
 
-## Research Findings
+## Additional Research
 {{ research_str }}
 
-## Instructions
+## Plan File
+{{ plan_file if plan_file else "No plan file provided." }}
 
-Return a JSON object with a "subtasks" array. Remember to:
-1. Use `depends_on` with 0-based indices to specify dependencies
-2. Include a category for each coding subtask
-3. Order subtasks logically - dependencies before dependents
-4. Output ONLY valid JSON - no markdown, no explanation
+## Requirements
 
-Return the JSON now.
+- Produce a phase-aware compiled spec.
+- Prefer multiple phases only when the work is genuinely phased.
+- Make dependencies explicit with stable task IDs.
+- Include explicit `test_intent` for every phase.
+- Use `affected_files` and `execution_group` only when the repo context supports them.
+- Keep the task graph complete but minimal.

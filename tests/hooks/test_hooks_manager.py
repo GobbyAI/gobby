@@ -258,10 +258,11 @@ class TestHookManagerSessionStart:
         response = hook_manager_with_mocks.handle(sample_session_start_event)
 
         assert response.decision == "allow"
-        # Response should include system message indicating session enhancement
+        # Response should include session ID banner in system_message
         assert response.system_message is not None
         assert "Gobby Session ID:" in response.system_message
-        assert "External ID:" in response.system_message
+        # External ID now in metadata (injected by enricher), not system_message
+        assert response.metadata.get("external_id") is not None
 
     def test_session_resume_no_handoff_message(
         self,
@@ -292,11 +293,10 @@ class TestHookManagerSessionStart:
         # Should be allowed
         assert response.decision == "allow"
 
-        # Should have basic session info but NOT "Context restored" message
+        # Should have session ID banner but NOT "Context restored" message
         # Parent finding only runs on source='clear'
         assert response.system_message is not None
         assert "Gobby Session ID:" in response.system_message
-        assert "External ID:" in response.system_message
         assert "Context restored" not in (response.system_message or "")
 
 
@@ -936,6 +936,56 @@ class TestHookManagerSessionLookup:
         # Should have called register_session
         assert mock_register.called
         assert response.decision == "allow"
+
+    def test_handle_backfills_terminal_context_for_known_session(
+        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+    ) -> None:
+        """Later Codex hooks should repair a session that missed SessionStart terminal metadata."""
+        manager = hook_manager_with_mocks
+
+        start_event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id="codex-missing-terminal-context",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir)},
+            machine_id="test-machine-id",
+        )
+        manager.handle(start_event)
+
+        session_id = manager._session_manager.get_session_id(
+            "codex-missing-terminal-context",
+            "codex",
+        )
+        assert session_id is not None
+
+        manager._session_storage.db.execute(
+            "UPDATE sessions SET title = ?, digest_markdown = ? WHERE id = ?",
+            ("Recovered Codex Title", "## digest", session_id),
+        )
+
+        repair_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="codex-missing-terminal-context",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Bash",
+                "cwd": str(temp_dir),
+                "terminal_context": {"tmux_pane": "%5", "parent_pid": 999},
+            },
+            machine_id="test-machine-id",
+        )
+
+        with patch("gobby.hooks.session_lookup.schedule_tmux_window_rename") as mock_schedule:
+            response = manager.handle(repair_event)
+
+        assert response.decision == "allow"
+        updated = manager._session_storage.get(session_id)
+        assert updated is not None
+        assert updated.terminal_context is not None
+        assert updated.terminal_context["tmux_pane"] == "%5"
+        mock_schedule.assert_called_once()
 
     def test_handle_resolves_active_task(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path

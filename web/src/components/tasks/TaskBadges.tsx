@@ -1,12 +1,24 @@
 // Shared badge components for the task system.
 // Reusable across TasksPage, TaskDetail, Kanban cards, etc.
 
+import type { TaskStateLike } from '../../lib/taskState'
+import {
+  getTaskBucket,
+  getTaskStateSummary,
+  getTaskStateTokens,
+  TASK_BUCKET_BG,
+  TASK_BUCKET_COLORS,
+  TASK_BUCKET_LABELS,
+  TASK_BUCKET_ORDER,
+  type TaskBucket,
+} from '../../lib/taskState'
+
 // =============================================================================
 // Color maps
 // =============================================================================
 
 const STATUS_COLORS: Record<string, string> = {
-  open: "#60a5fa",
+  open: TASK_BUCKET_COLORS.ready,
   in_progress: "#fb923c",
   needs_review: "#c084fc",
   review_approved: "#2dd4bf",
@@ -15,7 +27,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_BG: Record<string, string> = {
-  open: "rgba(96, 165, 250, 0.15)",
+  open: TASK_BUCKET_BG.ready,
   in_progress: "rgba(251, 146, 60, 0.15)",
   needs_review: "rgba(192, 132, 252, 0.15)",
   review_approved: "rgba(45, 212, 191, 0.15)",
@@ -64,15 +76,49 @@ export function StatusBadge({ status }: { status: string }) {
 // StatusDot (minimal dot-only variant)
 // =============================================================================
 
-export function StatusDot({ status }: { status: string }) {
+export function StatusDot({ status, task }: { status?: string; task?: TaskStateLike }) {
+  const isBucketStatus = Boolean(status && TASK_BUCKET_ORDER.includes(status as TaskBucket))
+  const bucket = task
+    ? getTaskBucket(task)
+    : isBucketStatus
+      ? status as TaskBucket
+      : getTaskBucket({ status })
+  const label = task
+    ? getTaskStateSummary(task)
+    : isBucketStatus
+      ? TASK_BUCKET_LABELS[status as TaskBucket]
+      : (status ?? 'unknown').replace(/_/g, ' ')
   return (
     <span
       className="task-badge-dot task-badge-dot--standalone"
-      style={{ backgroundColor: STATUS_COLORS[status] || "#737373" }}
-      title={status.replace(/_/g, " ")}
-      aria-label={`Status: ${status.replace(/_/g, " ")}`}
+      style={{ backgroundColor: TASK_BUCKET_COLORS[bucket] || "#737373" }}
+      title={label}
+      aria-label={`Status: ${label}`}
     />
   );
+}
+
+// =============================================================================
+// Canonical task-state badge group
+// =============================================================================
+
+export function TaskStateBadges({ task }: { task: TaskStateLike }) {
+  const tokens = getTaskStateTokens(task)
+
+  return (
+    <>
+      {tokens.map(token => (
+        <span
+          key={token.key}
+          className="task-badge task-badge--status"
+          style={{ background: token.background, color: token.color }}
+        >
+          <span className="task-badge-dot" style={{ backgroundColor: token.color }} />
+          {token.label}
+        </span>
+      ))}
+    </>
+  )
 }
 
 // =============================================================================

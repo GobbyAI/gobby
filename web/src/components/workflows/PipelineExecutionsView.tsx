@@ -7,10 +7,8 @@ import {
   AlertIcon,
   PipelineIcon,
   TraceIcon,
-  formatTime,
-  formatDuration,
-  formatJson,
 } from './execution-utils'
+import { formatTime, formatDuration, formatJson } from './executionFormatters'
 import './PipelinesPage.css'
 
 interface PipelineExecutionsViewProps {

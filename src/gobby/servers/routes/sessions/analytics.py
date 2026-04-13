@@ -1,11 +1,9 @@
 """Analytics and summary routes for sessions.
 
-Handles summary updates, title synthesis, summary generation, and stop signals.
+Handles summary updates, summary generation, and stop signals.
 """
 
-import asyncio
 import logging
-import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -17,24 +15,6 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
-
-
-def _sanitize_title(raw: str) -> str:
-    """Strip markdown, emoji, normalize whitespace from LLM title."""
-    title = raw.strip().strip('"').strip("'").split("\n")[0]
-    title = re.sub(r"[#*_~`\[\]()]", "", title)
-    title = re.sub(
-        "[\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff"
-        "\U0001f1e0-\U0001f1ff\U00002702-\U000027b0\U0000fe00-\U0000fe0f"
-        "\U0000200d\U000024c2-\U0001f251\U0001f900-\U0001f9ff"
-        "\U0001fa00-\U0001fa6f\U0001fa70-\U0001faff]+",
-        "",
-        title,
-    )
-    title = re.sub(r"\s+", " ", title).strip()
-    if len(title) > 100:
-        title = title[:97] + "..."
-    return title or "Untitled Session"
 
 
 def register_analytics_routes(
@@ -77,114 +57,6 @@ def register_analytics_routes(
         except Exception as e:
             logger.error(f"Update session summary error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
-
-    @router.post("/{session_id}/synthesize-title")
-    async def synthesize_session_title(session_id: str) -> dict[str, Any]:
-        """
-        Synthesize a title for a session from its recent messages.
-
-        Uses LLM to generate a short 3-5 word title based on conversation content.
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            Synthesized title
-        """
-        start_time = time.perf_counter()
-
-        try:
-            if server.session_manager is None:
-                raise HTTPException(status_code=503, detail="Session manager not available")
-            if server.llm_service is None:
-                raise HTTPException(status_code=503, detail="LLM service not available")
-            if server.transcript_reader is None:
-                raise HTTPException(status_code=503, detail="Transcript reader not available")
-
-            session = server.session_manager.get(session_id)
-            if session is None:
-                raise HTTPException(status_code=404, detail="Session not found")
-
-            # Read recent messages from transcript (JSONL / archive)
-            messages = await server.transcript_reader.get_messages(
-                session_id=session_id, limit=20, offset=0
-            )
-            if not messages:
-                raise HTTPException(status_code=422, detail="No messages to synthesize title from")
-
-            # Build a concise transcript for the LLM
-            transcript_lines = []
-            for msg in messages:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                if content and role in ("user", "assistant"):
-                    # Truncate long messages
-                    if len(content) > 300:
-                        content = content[:300] + "..."
-                    transcript_lines.append(f"{role}: {content}")
-
-            if not transcript_lines:
-                raise HTTPException(status_code=422, detail="No user/assistant messages found")
-
-            transcript = "\n".join(transcript_lines)
-            llm_prompt = (
-                "Create a short title (3-5 words) for this chat session based on "
-                "the conversation. Output ONLY the title, no quotes or explanation.\n\n"
-                f"Conversation:\n{transcript}"
-            )
-
-            # Load system prompt from prompts system
-            system_prompt: str | None = None
-            try:
-                from gobby.prompts.loader import PromptLoader
-
-                loader = PromptLoader(db=getattr(server, "db", None))
-                system_prompt = loader.load("sessions/synthesize_title").content
-            except Exception:
-                system_prompt = (
-                    "You generate short titles for chat sessions. "
-                    "Output ONLY 3-5 words. No quotes, no explanation, no punctuation."
-                )
-
-            title_config = server.config.session_title if server.config else None
-            if title_config:
-                try:
-                    provider, model, _ = server.llm_service.get_provider_for_feature(title_config)
-                except Exception:
-                    provider = server.llm_service.get_default_provider()
-                    model = "haiku"
-            else:
-                provider = server.llm_service.get_default_provider()
-                model = "haiku"
-            title = await asyncio.wait_for(
-                provider.generate_text(
-                    llm_prompt,
-                    system_prompt=system_prompt,
-                    model=model,
-                    max_tokens=30,
-                ),
-                timeout=10,
-            )
-            title = _sanitize_title(title)
-
-            result = server.session_manager.update_title(session_id, title)
-            if result is None:
-                raise HTTPException(status_code=404, detail="Session not found")
-
-            await broadcast_session("session_updated", session_id)
-
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {
-                "status": "success",
-                "title": title,
-                "response_time_ms": response_time_ms,
-            }
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Synthesize title error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Failed to synthesize title") from e
 
     @router.post("/{session_id}/generate-summary")
     async def generate_session_summary(session_id: str) -> dict[str, Any]:

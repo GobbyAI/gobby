@@ -335,11 +335,13 @@ class TestLLMProvidersConfig:
         config = LLMProvidersConfig(
             claude=LLMProviderConfig(models="claude-haiku-4-5"),
             codex=LLMProviderConfig(models="gpt-4o-mini"),
+            gemini=LLMProviderConfig(models="gemini-3.1-pro"),
         )
         providers = config.get_enabled_providers()
         assert "claude" in providers
         assert "codex" in providers
-        assert len(providers) == 2
+        assert "gemini" in providers
+        assert len(providers) == 3
 
 
 class TestDaemonConfig:
@@ -571,6 +573,51 @@ class TestLoadConfig:
         # Bootstrap swallows the int() conversion error and returns defaults
         assert config.daemon_port == 60887
 
+    def test_load_config_migrates_legacy_session_title_db_keys(self, temp_dir: Path) -> None:
+        """Legacy session_title DB config is migrated into digest before validation."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "session_title.provider": "local",
+                    "session_title.model": "gemma-3",
+                    "session_title.timeout": 45,
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.digest.provider == "local"
+        assert config.digest.model == "gemma-3"
+        assert config.digest.timeout == 45
+
+    def test_load_config_prefers_explicit_digest_over_legacy_session_title(
+        self, temp_dir: Path
+    ) -> None:
+        """Explicit digest config should win when both old and new keys exist."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "session_title.provider": "local",
+                    "session_title.model": "gemma-3",
+                    "session_title.timeout": 45,
+                    "digest.provider": "claude",
+                    "digest.model": "haiku",
+                    "digest.timeout": 15,
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.digest.provider == "claude"
+        assert config.digest.model == "haiku"
+        assert config.digest.timeout == 15
+
 
 class TestBootstrapConfig:
     """Tests for bootstrap configuration loading."""
@@ -767,6 +814,17 @@ class TestDigestConfig:
         assert config.enabled is True
         assert config.provider == "claude"
         assert config.model == "haiku"
+        assert config.timeout == 30
+
+    def test_timeout_validation(self) -> None:
+        """Test digest timeout must be positive."""
+        with pytest.raises(ValidationError):
+            DigestConfig(timeout=0)
+
+    def test_rejects_removed_session_title_section(self) -> None:
+        """Legacy session_title config is a hard validation failure."""
+        with pytest.raises(ValidationError, match="session_title config has been removed"):
+            DaemonConfig(session_title={"provider": "local"})
 
 
 class TestWebSocketBroadcastConfig:

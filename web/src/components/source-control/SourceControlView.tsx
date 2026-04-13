@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
 import type { GitBranch, GitCommit, DiffResult, WorktreeInfo, CloneInfo } from '../../hooks/useSourceControl'
 import { BranchDetail } from './BranchDetail'
-import { ResourceCard, worktreeToFields, cloneToFields } from './ResourceCard'
+import { ResourceCard } from './ResourceCard'
+import { worktreeToFields, cloneToFields } from './resourceCardUtils'
 
 type Filter = 'all' | 'has_worktree' | 'has_clone' | 'local' | 'remote'
 

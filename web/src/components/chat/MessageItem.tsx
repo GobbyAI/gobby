@@ -87,7 +87,11 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                 const isLastText = !message.contentBlocks!.slice(i + 1).some(b => b.type === 'text')
                 const textContent = renderImagePlaceholders(block.content)
                 return (
-                  <div key={`${message.id}-b${i}`} className="message-content leading-relaxed text-foreground">
+                  <div
+                    key={`${message.id}-b${i}`}
+                    className="message-content leading-relaxed text-foreground"
+                    data-testid="chat-message-content"
+                  >
                     <Markdown content={textContent} id={`${message.id}-${i}`} />
                     {isStreaming && isLastText && <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />}
                   </div>
@@ -158,7 +162,10 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
               <ToolCallCards toolCalls={message.toolCalls} onRespond={onRespondToQuestion} onRespondToApproval={onRespondToApproval} canvasSurfaces={canvasSurfaces} onCanvasInteraction={onCanvasInteraction} />
             )}
             {message.content && (
-              <div className="message-content leading-relaxed text-foreground">
+              <div
+                className="message-content leading-relaxed text-foreground"
+                data-testid="chat-message-content"
+              >
                 <Markdown content={renderImagePlaceholders(message.content)} id={message.id} />
                 {isStreaming && <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />}
               </div>

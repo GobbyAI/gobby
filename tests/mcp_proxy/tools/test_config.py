@@ -172,7 +172,7 @@ class TestListConfigKeys:
     def test_list_config_keys_after_set(self, config_registry, config_store: ConfigStore) -> None:
         """Test list_config_keys returns keys after setting values."""
         config_store.set("daemon_port", 60887)
-        config_store.set("conductor.daily_budget_usd", 50.0)
+        config_store.set("conductor.daily_budget_tokens", 50_000_000)
 
         tool = config_registry.get_tool("list_config_keys")
         result = tool()
@@ -180,11 +180,11 @@ class TestListConfigKeys:
         assert result["success"] is True
         assert result["count"] == 2
         assert "daemon_port" in result["keys"]
-        assert "conductor.daily_budget_usd" in result["keys"]
+        assert "conductor.daily_budget_tokens" in result["keys"]
 
     def test_list_config_keys_with_prefix(self, config_registry, config_store: ConfigStore) -> None:
         """Test list_config_keys filters by prefix."""
-        config_store.set("conductor.daily_budget_usd", 50.0)
+        config_store.set("conductor.daily_budget_tokens", 50_000_000)
         config_store.set("conductor.warning_threshold", 0.8)
         config_store.set("daemon_port", 60887)
 
@@ -409,3 +409,156 @@ class TestSetConfigSecret:
         assert result["success"] is True
         assert result["value"] == 61000
         assert config_store.get("daemon_port") == 61000
+
+
+# ===========================================================================
+# set_config_batch
+# ===========================================================================
+
+
+class TestSetConfigBatch:
+    """Tests for set_config_batch tool."""
+
+    def test_batch_set_multiple_keys(
+        self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Test setting multiple keys atomically."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local.url", "value": "http://localhost:1234/v1"},
+                {"key": "local.model", "value": "qwen2.5-coder-7b"},
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert "local.url" in result["keys_set"]
+        assert "local.model" in result["keys_set"]
+
+        # Verify in DB
+        assert config_store.get("local.url") == "http://localhost:1234/v1"
+        assert config_store.get("local.model") == "qwen2.5-coder-7b"
+
+        # Verify in-memory config
+        assert config_state["config"].local is not None
+        assert config_state["config"].local.url == "http://localhost:1234/v1"
+        assert config_state["config"].local.model == "qwen2.5-coder-7b"
+
+    def test_batch_set_local_single_key_fails(self, config_registry) -> None:
+        """Setting only local.url without local.model fails validation."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local.url", "value": "http://localhost:1234/v1"},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "error" in result
+
+    def test_batch_set_digest_provider(
+        self, config_registry, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Test setting digest.provider to 'local'."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "digest.provider", "value": "local"},
+            ]
+        )
+
+        assert result["success"] is True
+        assert config_state["config"].digest.provider == "local"
+
+    def test_batch_set_local_config_and_digest_settings(
+        self, config_registry, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Test setting local endpoint and digest routing together."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local.url", "value": "http://localhost:1234/v1"},
+                {"key": "local.model", "value": "qwen2.5-coder-7b"},
+                {"key": "digest.provider", "value": "local"},
+                {"key": "digest.timeout", "value": 45},
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["count"] == 4
+        assert config_state["config"].local is not None
+        assert config_state["config"].local.model == "qwen2.5-coder-7b"
+        assert config_state["config"].digest.provider == "local"
+        assert config_state["config"].digest.timeout == 45
+
+    def test_batch_set_removed_session_title_provider_fails(self, config_registry) -> None:
+        """Removed session_title.* keys are rejected."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "session_title.provider", "value": "local"},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "session_title config has been removed" in result["error"]
+
+    def test_batch_set_empty_entries(self, config_registry) -> None:
+        """Empty entries list returns error."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(entries=[])
+
+        assert result["success"] is False
+        assert "empty" in result["error"]
+
+    def test_batch_set_rejects_dict_values(self, config_registry) -> None:
+        """Dict values are rejected (use dotted keys instead)."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "local", "value": {"url": "http://localhost:1234"}},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "dict" in result["error"].lower()
+
+    def test_batch_set_rejects_list_values(self, config_registry) -> None:
+        """List values are rejected (the validation check covers list and dict)."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "digest.providers", "value": ["claude", "local"]},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "list" in result["error"].lower()
+
+    def test_batch_set_rejects_missing_key(self, config_registry) -> None:
+        """Entries without 'key' are rejected."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"value": "something"},
+            ]
+        )
+
+        assert result["success"] is False
+        assert "key" in result["error"].lower()
+
+    def test_batch_set_validation_failure_does_not_persist(
+        self, config_registry, config_store: ConfigStore
+    ) -> None:
+        """If validation fails, nothing is persisted to DB."""
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "daemon_port", "value": 80},  # Invalid: port < 1024
+            ]
+        )
+
+        assert result["success"] is False
+        # Should not have persisted the invalid value
+        assert config_store.get("daemon_port") is None

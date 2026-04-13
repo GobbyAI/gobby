@@ -155,8 +155,7 @@ class TestEpicWithIndependentSubtasks:
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
-        session_id = session_result["id"]
-
+        mcp_client.session_id = session_result["id"]
         # Create epic
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
@@ -167,7 +166,6 @@ class TestEpicWithIndependentSubtasks:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)
@@ -187,7 +185,6 @@ class TestEpicWithIndependentSubtasks:
                     "parent_task_id": epic_id,
                     "category": "code",
                     "validation_criteria": "Tests pass and task is functional",
-                    "session_id": session_id,
                 },
             )
             result = unwrap_result(raw_result)
@@ -348,6 +345,7 @@ class TestSpawnAgentWithCloneIsolation:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
@@ -406,6 +404,7 @@ class TestParallelTaskProcessing:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create epic with 3 independent subtasks
         raw_result = mcp_client.call_tool(
@@ -416,7 +415,6 @@ class TestParallelTaskProcessing:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         epic_result = unwrap_result(raw_result)
@@ -433,7 +431,6 @@ class TestParallelTaskProcessing:
                     "parent_task_id": epic_id,
                     "category": "code",
                     "validation_criteria": "Tests pass and task is functional",
-                    "session_id": session_id,
                 },
             )
             result = unwrap_result(raw_result)
@@ -445,7 +442,7 @@ class TestParallelTaskProcessing:
             mcp_client.call_tool(
                 server_name="gobby-tasks",
                 tool_name="claim_task",
-                arguments={"task_id": task_id, "session_id": session_id},
+                arguments={"task_id": task_id},
             )
 
         # Verify all are in_progress
@@ -538,6 +535,7 @@ class TestWorkflowActivation:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Get workflow status - should indicate no active workflow
         raw_result = mcp_client.call_tool(

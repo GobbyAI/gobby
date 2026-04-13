@@ -55,6 +55,7 @@ def mock_dependencies() -> dict[str, Any]:
     session_storage = MagicMock()
     # Default: no handoff parent found (tests that need one override this)
     session_storage.find_parent.return_value = None
+    session_storage.update.return_value = None
     return {
         "session_manager": MagicMock(),
         "workflow_handler": workflow_handler,
@@ -165,6 +166,61 @@ class TestToolHandlers:
             metadata={"_platform_session_id": "plat-123"},
         )
         response = event_handlers.handle_after_tool(event)
+        assert response.decision == "allow"
+
+    def test_before_tool_blocks_gobby_tasks_cli_dict_input(
+        self, event_handlers: EventHandlers
+    ) -> None:
+        """Native Bash access to `gobby tasks` should be blocked."""
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": "uv run gobby tasks --help"}},
+            metadata={"_platform_session_id": "plat-123"},
+        )
+        response = event_handlers.handle_before_tool(event)
+
+        assert response.decision == "block"
+        assert "gobby-tasks MCP server" in response.reason
+
+    def test_before_tool_blocks_gobby_tasks_cli_string_input(
+        self, event_handlers: EventHandlers
+    ) -> None:
+        """String shell payloads from app-server adapters are blocked too."""
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": "gobby tasks list --limit 1"},
+            metadata={"_platform_session_id": "plat-123"},
+        )
+        response = event_handlers.handle_before_tool(event)
+
+        assert response.decision == "block"
+        assert "create_task" in response.context
+
+    def test_before_tool_blocks_gobby_tasks_cli_exec_command_alias(
+        self, event_handlers: EventHandlers
+    ) -> None:
+        """Shell aliases should hit the same gobby-tasks block."""
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "exec_command", "tool_input": {"command": "gobby tasks list"}},
+            metadata={"_platform_session_id": "plat-123"},
+        )
+        response = event_handlers.handle_before_tool(event)
+
+        assert response.decision == "block"
+        assert "gobby-tasks MCP server" in response.reason
+
+    def test_before_tool_allows_other_gobby_cli_commands(
+        self, event_handlers: EventHandlers
+    ) -> None:
+        """Only `gobby tasks` is blocked by the native guard."""
+        event = make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": "uv run gobby status"}},
+            metadata={"_platform_session_id": "plat-123"},
+        )
+        response = event_handlers.handle_before_tool(event)
+
         assert response.decision == "allow"
 
 
@@ -331,6 +387,58 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("is_pre_created") is True
         assert response.metadata.get("session_id") == "sess-pre-123"
         mock_dependencies["session_storage"].update.assert_called_once()
+
+    def test_pre_created_session_backfills_terminal_context(self, mock_dependencies: dict) -> None:
+        """Pre-created sessions should persist terminal metadata from runtime hooks."""
+        mock_session = MagicMock()
+        mock_session.id = "sess-pre-123"
+        mock_session.project_id = "proj-123"
+        mock_session.parent_session_id = None
+        mock_session.agent_depth = 0
+        mock_session.agent_run_id = None
+        mock_session.title = "Useful synthesized title"
+        mock_session.digest_markdown = "## digest"
+        mock_session.terminal_context = None
+
+        updated_session = MagicMock()
+        updated_session.id = "sess-pre-123"
+        updated_session.project_id = "proj-123"
+        updated_session.parent_session_id = None
+        updated_session.agent_depth = 0
+        updated_session.agent_run_id = None
+        updated_session.title = "Useful synthesized title"
+        updated_session.digest_markdown = "## digest"
+        updated_session.terminal_context = {"tmux_pane": "%77", "parent_pid": 123}
+
+        mock_dependencies["session_storage"].get.return_value = mock_session
+        mock_dependencies["session_storage"].update.return_value = mock_session
+        mock_dependencies["session_manager"].backfill_terminal_context.return_value = (
+            updated_session,
+            True,
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="sess-pre-123",
+            data={
+                "transcript_path": "/path/to/transcript.jsonl",
+                "terminal_context": {"tmux_pane": "%77", "parent_pid": 123},
+            },
+        )
+
+        with patch(
+            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
+        ) as mock_schedule:
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
+            "sess-pre-123",
+            {"tmux_pane": "%77", "parent_pid": 123},
+        )
+        mock_schedule.assert_called_once()
+        assert response.metadata.get("terminal_tmux_pane") == "%77"
 
     def test_pre_created_session_with_parent(self, mock_dependencies: dict) -> None:
         """Test pre-created session with parent session ID includes parent context."""
@@ -1124,6 +1232,8 @@ class TestSessionStartHandoff:
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
         mock_dependencies["session_task_manager"] = MagicMock()
+        claimed_task = MagicMock(status="in_progress", assignee="parent-sess-123")
+        mock_dependencies["task_manager"].get_task.return_value = claimed_task
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -1144,8 +1254,10 @@ class TestSessionStartHandoff:
                 "session_had_task": True,
             },
         )
-        mock_dependencies["task_manager"].update_task.assert_called_once_with(
-            "uuid-123", assignee="new-sess-456"
+        mock_dependencies["task_manager"].claim_task.assert_called_once_with(
+            "uuid-123",
+            session_id="new-sess-456",
+            force=True,
         )
         mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
             "new-sess-456", "uuid-123", "claimed"
@@ -1201,7 +1313,7 @@ class TestSessionStartHandoff:
             if len(args) >= 2:
                 merged_dict = args[1]
                 assert "task_claimed" not in merged_dict
-        mock_dependencies["task_manager"].update_task.assert_not_called()
+        mock_dependencies["task_manager"].claim_task.assert_not_called()
         mock_dependencies["session_task_manager"].link_task.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -1238,6 +1350,8 @@ class TestSessionStartHandoff:
         mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-600"
         mock_dependencies["session_task_manager"] = MagicMock()
+        claimed_task = MagicMock(status="needs_review", assignee="parent-sess-500")
+        mock_dependencies["task_manager"].get_task.return_value = claimed_task
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -1257,12 +1371,67 @@ class TestSessionStartHandoff:
                 "claimed_tasks": {"uuid-789": "#99"},
             },
         )
-        mock_dependencies["task_manager"].update_task.assert_called_once_with(
-            "uuid-789", assignee="new-sess-600"
+        mock_dependencies["task_manager"].claim_task.assert_called_once_with(
+            "uuid-789",
+            session_id="new-sess-600",
+            force=True,
         )
         mock_dependencies["session_task_manager"].link_task.assert_called_once_with(
             "new-sess-600", "uuid-789", "claimed"
         )
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_task_claim_handoff_skips_reassignment_when_owned_elsewhere(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
+    ) -> None:
+        """Compact handoff should not steal a task already assigned elsewhere."""
+        parent_vars = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-321": "#321"},
+        }
+        mock_sv_mgr = MagicMock()
+        mock_sv_mgr.get_variables.side_effect = lambda sid: (
+            parent_vars if sid == "parent-sess-123" else {"auto_inject_handoff": True}
+        )
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
+
+        mock_parent_for_find = MagicMock()
+        mock_parent_for_find.id = "parent-sess-123"
+
+        mock_parent_obj = MagicMock()
+        mock_parent_obj.id = "parent-sess-123"
+        mock_parent_obj.seq_num = 42
+        mock_parent_obj.summary_markdown = "# Compact\nContinuation"
+
+        mock_new_session = MagicMock()
+        mock_new_session.seq_num = 43
+
+        mock_dependencies["session_storage"].get.side_effect = [
+            None,
+            mock_parent_obj,
+            mock_new_session,
+        ]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent_for_find
+        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
+        mock_dependencies["session_task_manager"] = MagicMock()
+        mock_dependencies["task_manager"].get_task.return_value = MagicMock(
+            status="needs_review",
+            assignee="other-session",
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={"source": "compact", "cwd": "/some/dir"},
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["task_manager"].claim_task.assert_not_called()
+        mock_dependencies["session_task_manager"].link_task.assert_not_called()
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_task_context_variable(

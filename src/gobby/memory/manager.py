@@ -25,6 +25,7 @@ from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
+    from gobby.memory.fts_search import MemoryFTS5Searcher
     from gobby.memory.services.dedup import DedupService
     from gobby.memory.vectorstore import VectorStore
 
@@ -37,6 +38,10 @@ DEFAULT_LIST_LIMIT = 50
 DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_GRAPH_LIMIT = 500
 MAX_REINDEX_LIMIT = 100_000
+
+
+class CrossrefRebuildError(RuntimeError):
+    """Raised when cross-reference rebuild fails for a specific memory."""
 
 
 class MemoryManager:
@@ -69,6 +74,9 @@ class MemoryManager:
 
         # Primary storage layer — always SQLite via LocalMemoryManager
         self.storage = LocalMemoryManager(db)
+
+        # Lazily initialized to avoid import-time surprises from the FTS helper.
+        self._fts_searcher: MemoryFTS5Searcher | None = None
 
         # Backend for async protocol operations (always StorageAdapter)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage)
@@ -167,13 +175,21 @@ class MemoryManager:
     @property
     def llm_service(self) -> LLMService | None:
         """Get the LLM service for image description."""
-        return self._ingestion_service.llm_service
+        return self._llm_service
 
     @llm_service.setter
     def llm_service(self, service: LLMService | None) -> None:
         """Set the LLM service for image description."""
         self._llm_service = service
         self._ingestion_service.llm_service = service
+
+    def _get_fts_searcher(self) -> MemoryFTS5Searcher:
+        """Lazily initialize the SQLite FTS5 searcher."""
+        if self._fts_searcher is None:
+            from gobby.memory.fts_search import MemoryFTS5Searcher
+
+            self._fts_searcher = MemoryFTS5Searcher(self.db)
+        return self._fts_searcher
 
     @staticmethod
     def _record_to_memory(record: MemoryRecord) -> Memory:
@@ -187,7 +203,7 @@ class MemoryManager:
             created_at=record.created_at.isoformat() if record.created_at else "",
             updated_at=record.updated_at.isoformat() if record.updated_at else "",
             project_id=record.project_id,
-            source_type=cast(Literal["user", "session", "inferred"] | None, record.source_type),
+            source_type=cast(Literal["user", "agent"], record.source_type or "agent"),
             source_session_id=record.source_session_id,
             access_count=record.access_count,
             last_accessed_at=(
@@ -290,7 +306,7 @@ class MemoryManager:
         content: str,
         memory_type: str = "fact",
         project_id: str | None = None,
-        source_type: str = "user",
+        source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:
@@ -475,19 +491,17 @@ class MemoryManager:
 
     @staticmethod
     def _rrf_merge(
-        qdrant_ranked: list[str],
-        graph_ranked: list[str],
+        *ranked_lists: list[str],
         k: int = 60,
     ) -> list[str]:
-        """Merge two ranked lists using Reciprocal Rank Fusion.
+        """Merge ranked lists using Reciprocal Rank Fusion.
 
         RRF score: score(d) = Σ 1/(k + rank_i) across all sources.
-        Memories appearing in both lists get scores from both, naturally
+        Memories appearing in multiple lists get scores from each, naturally
         ranking higher. k=60 is the standard constant.
 
         Args:
-            qdrant_ranked: Memory IDs ranked by Qdrant cosine similarity
-            graph_ranked: Memory IDs ranked by graph search
+            *ranked_lists: Variable number of ranked ID lists (Qdrant, graph, FTS5, etc.)
             k: RRF constant (higher = more uniform weighting)
 
         Returns:
@@ -495,11 +509,9 @@ class MemoryManager:
         """
         scores: dict[str, float] = {}
 
-        for rank, mid in enumerate(qdrant_ranked):
-            scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
-
-        for rank, mid in enumerate(graph_ranked):
-            scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
+        for ranked in ranked_lists:
+            for rank, mid in enumerate(ranked):
+                scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
 
         return sorted(scores, key=lambda mid: scores[mid], reverse=True)
 
@@ -513,6 +525,7 @@ class MemoryManager:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        min_score: float | None = None,
     ) -> list[Memory]:
         """
         Retrieve memories via VectorStore + optional Neo4j graph search.
@@ -533,8 +546,14 @@ class MemoryManager:
             tags_none: Memory must have NONE of these tags
         """
         if query and self._vector_store and self._embed_fn:
-            query_embedding = await self._embed_fn(query, is_query=True)
+            # Use YAKE keyword extraction for noisy queries to improve
+            # embedding quality. Raw query still goes to FTS5 unchanged.
+            from gobby.search.keywords import extract_keywords
+
+            embed_query = extract_keywords(query) or query
+            query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = getattr(self.config, "temporal_decay_half_life_days", 30.0)
+            effective_min_score = min_score if min_score is not None else 0.0
 
             # Build filters for VectorStore
             filters: dict[str, Any] = {}
@@ -561,9 +580,10 @@ class MemoryManager:
                     min_score=graph_min_score,
                     project_id=project_id,
                 )
+                fts_coro = self._fts5_ranked(query, limit * 2, project_id)
 
-                qdrant_result, graph_result = await asyncio.gather(
-                    qdrant_coro, graph_coro, return_exceptions=True
+                qdrant_result, graph_result, fts_result = await asyncio.gather(
+                    qdrant_coro, graph_coro, fts_coro, return_exceptions=True
                 )
 
                 # Handle Qdrant results (or fallback to empty)
@@ -580,14 +600,37 @@ class MemoryManager:
                 else:
                     graph_ranked = graph_result
 
+                # Handle FTS5 results (graceful degradation)
+                if isinstance(fts_result, BaseException):
+                    logger.debug(f"FTS5 search failed: {fts_result}")
+                    fts_ranked: list[str] = []
+                else:
+                    fts_ranked = fts_result
+
+                # Pre-filter Qdrant results by minimum score threshold
+                if effective_min_score > 0:
+                    qdrant_results = [
+                        (mid, score)
+                        for mid, score in qdrant_results
+                        if score >= effective_min_score
+                    ]
+
                 # Build Qdrant ranked list (by score)
                 qdrant_ranked = [mid for mid, _ in qdrant_results]
 
-                # Merge via RRF
-                if graph_ranked:
-                    merged_ids = self._rrf_merge(qdrant_ranked, graph_ranked, k=rrf_k)
+                # Merge all sources via RRF
+                rrf_lists = [rl for rl in (qdrant_ranked, graph_ranked, fts_ranked) if rl]
+                if len(rrf_lists) > 1:
+                    merged_ids = self._rrf_merge(*rrf_lists, k=rrf_k)
+                elif rrf_lists:
+                    merged_ids = rrf_lists[0]
                 else:
-                    merged_ids = qdrant_ranked
+                    merged_ids = []
+
+                # Lookup sets for provenance tracking
+                qdrant_set = set(qdrant_ranked)
+                graph_set = set(graph_ranked)
+                fts_set = set(fts_ranked)
 
                 # Resolve memories and apply filters
                 scored: list[tuple[Memory, float]] = []
@@ -610,23 +653,83 @@ class MemoryManager:
 
                     # Use RRF rank as primary ordering; apply user source boost to break ties
                     base_score = 1.0 / (rank + 1)
+                    in_qdrant = memory_id in qdrant_set
+                    in_graph = memory_id in graph_set
+                    in_fts = memory_id in fts_set
+                    sources = []
+                    if in_qdrant:
+                        sources.append("semantic")
+                    if in_graph:
+                        sources.append("graph")
+                    if in_fts:
+                        sources.append("fts5")
+                    via = "|".join(sources) or "unknown"
                     if mem.source_type == "user":
                         base_score *= _USER_SOURCE_BOOST
+                        via += "*user_boost"
                     base_score *= temporal_decay(mem.updated_at, half_life)
+                    via += "*temporal_decay"
+                    mem.search_via = via
                     scored.append((mem, base_score))
 
                 scored.sort(key=lambda x: x[1], reverse=True)
-                memories = [m for m, _ in scored[:limit]]
+                for mem, score in scored[:limit]:
+                    mem.similarity = score
+                memories = [mem for mem, _ in scored[:limit]]
             else:
-                # Qdrant-only path (no graph search)
-                results = await self._vector_store.search(
+                # Qdrant + FTS5 path (no graph search)
+                rrf_k = getattr(self.config, "neo4j_rrf_k", 60)
+
+                qdrant_coro = self._vector_store.search(
                     query_embedding,
                     limit=limit * 2,
                     filters=filters or None,
                 )
+                fts_coro = self._fts5_ranked(query, limit * 2, project_id)
+
+                qdrant_result, fts_result = await asyncio.gather(
+                    qdrant_coro, fts_coro, return_exceptions=True
+                )
+
+                if isinstance(qdrant_result, BaseException):
+                    logger.warning(f"Qdrant search failed: {qdrant_result}")
+                    qdrant_results = []
+                else:
+                    qdrant_results = qdrant_result
+
+                if isinstance(fts_result, BaseException):
+                    logger.debug(f"FTS5 search failed: {fts_result}")
+                    fts_ranked = []
+                else:
+                    fts_ranked = fts_result
+
+                # Pre-filter Qdrant by min score
+                if effective_min_score > 0:
+                    qdrant_results = [
+                        (mid, score)
+                        for mid, score in qdrant_results
+                        if score >= effective_min_score
+                    ]
+
+                qdrant_ranked = [mid for mid, _ in qdrant_results]
+                qdrant_score_map = dict(qdrant_results)
+                fts_set = set(fts_ranked)
+                qdrant_set = set(qdrant_ranked)
+                use_rrf = bool(qdrant_ranked and fts_ranked)
+
+                # Merge via RRF when both sources return results;
+                # otherwise use the single source directly
+                if use_rrf:
+                    merged_ids = self._rrf_merge(qdrant_ranked, fts_ranked, k=rrf_k)
+                elif qdrant_ranked:
+                    merged_ids = qdrant_ranked
+                elif fts_ranked:
+                    merged_ids = fts_ranked
+                else:
+                    merged_ids = []
 
                 scored = []
-                for memory_id, score in results:
+                for rank, memory_id in enumerate(merged_ids):
                     try:
                         mem = self.storage.get_memory(memory_id)
                     except ValueError:
@@ -640,26 +743,112 @@ class MemoryManager:
                     if tags_none and any(t in (mem.tags or []) for t in tags_none):
                         continue
 
-                    boosted = score * _USER_SOURCE_BOOST if mem.source_type == "user" else score
-                    boosted *= temporal_decay(mem.updated_at, half_life)
-                    scored.append((mem, boosted))
+                    # Use cosine similarity when Qdrant is the sole source
+                    # (preserves score-based ranking); use RRF rank otherwise
+                    if use_rrf:
+                        base_score = 1.0 / (rank + 1)
+                    else:
+                        base_score = qdrant_score_map.get(memory_id, 1.0 / (rank + 1))
+                    sources = []
+                    if memory_id in qdrant_set:
+                        sources.append("semantic")
+                    if memory_id in fts_set:
+                        sources.append("fts5")
+                    via = "|".join(sources) or "unknown"
+                    if mem.source_type == "user":
+                        base_score *= _USER_SOURCE_BOOST
+                        via += "*user_boost"
+                    base_score *= temporal_decay(mem.updated_at, half_life)
+                    via += "*temporal_decay"
+                    mem.search_via = via
+                    scored.append((mem, base_score))
 
                 scored.sort(key=lambda x: x[1], reverse=True)
-                memories = [m for m, _ in scored[:limit]]
+                for mem, s in scored[:limit]:
+                    mem.similarity = s
+                memories = [mem for mem, _ in scored[:limit]]
         else:
-            # No query or no VectorStore: list from SQLite
-            memories = self.storage.list_memories(
-                project_id=project_id,
-                memory_type=memory_type,
-                limit=limit,
-                tags_all=tags_all,
-                tags_any=tags_any,
-                tags_none=tags_none,
-            )
+            # No query or no VectorStore — try FTS5 keyword search if we
+            # have a query, otherwise fall back to recency-ordered SQLite list.
+            if query:
+                memories = await self._fts5_fallback(
+                    query,
+                    limit,
+                    project_id,
+                    memory_type,
+                    tags_all,
+                    tags_any,
+                    tags_none,
+                )
+            else:
+                memories = self.storage.list_memories(
+                    project_id=project_id,
+                    memory_type=memory_type,
+                    limit=limit,
+                    tags_all=tags_all,
+                    tags_any=tags_any,
+                    tags_none=tags_none,
+                )
 
         # Update access stats for retrieved memories
         self._update_access_stats(memories)
 
+        return memories
+
+    async def _fts5_ranked(
+        self,
+        query: str,
+        limit: int,
+        project_id: str | None,
+    ) -> list[str]:
+        """Run FTS5 keyword search and return ranked memory IDs for RRF merge."""
+        fts_results = await asyncio.to_thread(
+            self._get_fts_searcher().search,
+            query,
+            limit,
+            project_id,
+        )
+        return [mem_id for mem_id, _ in fts_results]
+
+    async def _fts5_fallback(
+        self,
+        query: str,
+        limit: int,
+        project_id: str | None,
+        memory_type: str | None,
+        tags_all: list[str] | None,
+        tags_any: list[str] | None,
+        tags_none: list[str] | None,
+    ) -> list[Memory]:
+        """FTS5 keyword search fallback when vector search returns nothing."""
+        fts_results = await asyncio.to_thread(
+            self._get_fts_searcher().search,
+            query,
+            limit * 2,
+            project_id,
+        )
+        if not fts_results:
+            return []
+
+        memories: list[Memory] = []
+        for mem_id, score in fts_results:
+            try:
+                mem = await asyncio.to_thread(self.storage.get_memory, mem_id)
+            except ValueError:
+                continue
+            if memory_type and mem.memory_type != memory_type:
+                continue
+            if tags_all and not all(t in (mem.tags or []) for t in tags_all):
+                continue
+            if tags_any and not any(t in (mem.tags or []) for t in tags_any):
+                continue
+            if tags_none and any(t in (mem.tags or []) for t in tags_none):
+                continue
+            mem.similarity = score
+            mem.search_via = "fts5"
+            memories.append(mem)
+            if len(memories) >= limit:
+                break
         return memories
 
     async def search_memories_as_context(
@@ -703,7 +892,13 @@ class MemoryManager:
             try:
                 self.storage.update_access_stats(memory.id, now.isoformat())
             except Exception as e:
-                logger.warning(f"Failed to update access stats for {memory.id}: {e}")
+                if "malformed" in str(e):
+                    logger.warning(
+                        f"Failed to update access stats for {memory.id}: {e} "
+                        "(likely FTS trigger issue — see memory FTS repair docs)"
+                    )
+                else:
+                    logger.warning(f"Failed to update access stats for {memory.id}: {e}")
 
     async def delete_memory(self, memory_id: str) -> bool:
         """Delete a memory from SQLite, VectorStore, and Neo4j."""
@@ -967,31 +1162,238 @@ class MemoryManager:
     # Reindexing
     # =========================================================================
 
-    async def reindex_embeddings(self) -> dict[str, Any]:
-        """Regenerate embeddings for all stored memories.
+    async def reindex_embeddings(self, project_id: str | None = None) -> dict[str, Any]:
+        """Regenerate embeddings for stored memories.
 
-        Uses VectorStore.rebuild() to delete and recreate the collection,
-        which handles embedding dimension changes (e.g., 1536→768) cleanly.
+        When project_id is given, deletes vectors for that project and
+        re-embeds only its memories.  When None, uses VectorStore.rebuild()
+        to recreate the entire collection (handles dimension changes).
         """
         if not self._vector_store or not self._embed_fn:
             return {"success": False, "error": "Vector store or embedding function not configured"}
 
-        memories = self.list_memories(limit=MAX_REINDEX_LIMIT)
+        memories = self.list_memories(project_id=project_id, limit=MAX_REINDEX_LIMIT)
         total = len(memories)
-
-        # Convert Memory objects to dicts for VectorStore.rebuild()
-        memory_dicts = [
+        memory_dicts: list[dict[str, Any]] = [
             {"id": mem.id, "content": mem.content, "project_id": mem.project_id} for mem in memories
         ]
 
         try:
-            await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+            if project_id is None:
+                # Global: nuke and rebuild entire collection
+                await self._vector_store.rebuild(memory_dicts, self._embed_fn)
+            else:
+                # Project-scoped: delete by filter, then re-embed
+                await self._vector_store.delete(filters={"project_id": project_id})
+                batch: list[tuple[str, list[float], dict[str, Any]]] = []
+                for mem in memory_dicts:
+                    mem_id: str = mem["id"]
+                    embedding = await self._embed_fn(mem["content"])
+                    payload = {k: v for k, v in mem.items() if k != "id"}
+                    batch.append((mem_id, embedding, payload))
+                    if len(batch) >= 500:
+                        await self._vector_store.batch_upsert(batch)
+                        logger.info(f"Reindex progress: {len(batch)}/{total} vectors")
+                        batch = []
+                if batch:
+                    await self._vector_store.batch_upsert(batch)
             generated = len(memory_dicts)
         except Exception as e:
             logger.error(f"Failed to rebuild vector store: {e}")
             return {"success": False, "total_memories": total, "error": str(e)}
 
         return {"success": True, "total_memories": total, "embeddings_generated": generated}
+
+    async def clear_indices(self, project_id: str | None = None) -> dict[str, Any]:
+        """Fast wipe of all secondary indices for a project (or all projects).
+
+        Clears Neo4j graph, Qdrant vectors, crossrefs, and FTS5.  Does NOT
+        delete memories from SQLite — that remains the source of truth.
+
+        Returns immediately; the caller is responsible for scheduling a
+        rebuild via ``rebuild_indices`` if desired.
+        """
+        report: dict[str, Any] = {}
+
+        # 1. Clear Neo4j graph
+        if self._kg_service:
+            if project_id:
+                report["graph_cleared"] = await self._kg_service.clear_project_graph(project_id)
+            else:
+                # TODO: add clear_all_graphs when needed; for now per-project only
+                report["graph_cleared"] = {
+                    "skipped": True,
+                    "reason": "global clear not implemented",
+                }
+
+        # 2. Clear Qdrant vectors
+        if self._vector_store:
+            try:
+                if project_id:
+                    await self._vector_store.delete(filters={"project_id": project_id})
+                else:
+                    await self._vector_store.delete_collection(self._vector_store._collection_name)
+                report["vectors_cleared"] = True
+            except Exception as e:
+                logger.error(f"Failed to clear vectors: {e}")
+                report["vectors_cleared"] = False
+                report["vectors_error"] = str(e)
+
+        # 3. Clear crossrefs
+        try:
+            if project_id:
+                deleted = await asyncio.to_thread(self.storage.delete_project_crossrefs, project_id)
+            else:
+                deleted = await asyncio.to_thread(
+                    lambda: self.storage.db.execute("DELETE FROM memory_crossrefs").rowcount
+                )
+            report["crossrefs_cleared"] = deleted
+        except Exception as e:
+            logger.error(f"Failed to clear crossrefs: {e}")
+            report["crossrefs_cleared"] = 0
+            report["crossrefs_error"] = str(e)
+
+        # 4. Clear FTS5 (fast — just a DELETE, no per-row work)
+        try:
+            fts = self._get_fts_searcher()
+            await asyncio.to_thread(lambda: fts._db.execute("DELETE FROM memories_fts"))
+            report["fts_cleared"] = True
+        except Exception as e:
+            logger.error(
+                f"Failed to clear memory FTS5 index: {e} "
+                "(this is an FTS-local issue, not whole-DB corruption)"
+            )
+            report["fts_cleared"] = False
+            report["fts_error"] = str(e)
+
+        scope = f"project {project_id}" if project_id else "all projects"
+        logger.info(f"Indices cleared for {scope}: {report}")
+        return report
+
+    async def rebuild_indices(self, project_id: str | None = None) -> dict[str, Any]:
+        """Rebuild all secondary indices from the SQLite source of truth.
+
+        This is the slow path — meant to run as a background task after
+        ``clear_indices``.  Rebuilds embeddings, crossrefs, KG, and FTS5.
+        """
+        report: dict[str, Any] = {}
+        scope = f"project {project_id}" if project_id else "all projects"
+        logger.info(f"Starting index rebuild for {scope}")
+
+        # 1. Rebuild embeddings
+        report["embeddings"] = await self.reindex_embeddings(project_id=project_id)
+
+        # 2. Fetch memories for crossref + KG rebuild
+        if project_id:
+            all_memories = await self._fetch_all_project_memories(project_id)
+        else:
+            all_memories = await asyncio.to_thread(
+                self.list_memories, None, None, MAX_REINDEX_LIMIT
+            )
+        total = len(all_memories)
+
+        # 3. Rebuild crossrefs (concurrent, semaphore-limited)
+        crossref_sem = asyncio.Semaphore(10)
+        crossref_done = 0
+        crossref_done_lock = asyncio.Lock()
+
+        async def _rebuild_crossref(mem: Memory) -> int:
+            nonlocal crossref_done
+            async with crossref_sem:
+                try:
+                    result = await self.rebuild_crossrefs_for_memory(mem)
+                except (CrossrefRebuildError, ValueError) as e:
+                    logger.warning(f"Crossref failed for {mem.id}: {e}")
+                    result = 0
+                async with crossref_done_lock:
+                    crossref_done += 1
+                    if crossref_done % 50 == 0 or crossref_done == total:
+                        logger.info(f"Crossref progress: {crossref_done}/{total}")
+                return result
+
+        crossref_results = await asyncio.gather(*[_rebuild_crossref(m) for m in all_memories])
+        crossrefs_created = sum(crossref_results)
+        logger.info(f"Crossref rebuild complete: {crossrefs_created} links from {total} memories")
+        report["crossrefs"] = {
+            "memories_processed": total,
+            "crossrefs_created": crossrefs_created,
+        }
+
+        # 4. Rebuild knowledge graph (concurrent, semaphore-limited)
+        if self._kg_service:
+            kg_service = self._kg_service
+            kg_sem = asyncio.Semaphore(5)
+            kg_done = 0
+            kg_done_lock = asyncio.Lock()
+
+            async def _rebuild_kg(mem: Memory) -> bool:
+                nonlocal kg_done
+                async with kg_sem:
+                    try:
+                        await kg_service.add_to_graph(
+                            mem.content,
+                            memory_id=mem.id,
+                            project_id=mem.project_id,
+                        )
+                        success = True
+                    except Exception as e:
+                        logger.warning(f"KG extraction failed for {mem.id}: {e}")
+                        success = False
+                    async with kg_done_lock:
+                        kg_done += 1
+                        if kg_done % 50 == 0 or kg_done == total:
+                            logger.info(f"KG extraction progress: {kg_done}/{total}")
+                    return success
+
+            kg_results = await asyncio.gather(*[_rebuild_kg(m) for m in all_memories])
+            extracted = sum(1 for r in kg_results if r)
+            errors = sum(1 for r in kg_results if not r)
+            logger.info(
+                f"KG rebuild complete: {extracted} extracted, {errors} errors from {total} memories"
+            )
+            report["graph_rebuilt"] = {"extracted": extracted, "errors": errors}
+
+        # 5. Reindex FTS5
+        try:
+            report["fts5"] = await asyncio.to_thread(self._get_fts_searcher().reindex)
+        except Exception as e:
+            logger.error(
+                f"Failed to rebuild memory FTS5 index: {e} "
+                "(FTS-local failure, other indices were rebuilt successfully)"
+            )
+            report["fts5"] = {"success": False, "error": str(e)}
+
+        logger.info(f"Index rebuild complete for {scope}: {report}")
+        return report
+
+    async def invalidate_all(self, project_id: str | None = None) -> dict[str, Any]:
+        """Clear all secondary indices for a project (or globally).
+
+        Returns the clear report immediately.  The caller should schedule
+        ``rebuild_indices`` as a background task if a rebuild is desired.
+        """
+        return await self.clear_indices(project_id=project_id)
+
+    async def _fetch_all_project_memories(self, project_id: str) -> list[Memory]:
+        """Fetch all memories for a project using pagination."""
+        all_memories: list[Memory] = []
+        offset = 0
+        batch_size = 500
+        while True:
+            batch = await asyncio.to_thread(
+                self.storage.list_memories,
+                project_id,
+                None,
+                batch_size,
+                offset,
+            )
+            if not batch:
+                break
+            all_memories.extend(batch)
+            if len(batch) < batch_size:
+                break
+            offset += batch_size
+        return all_memories
 
     # =========================================================================
     # Cross-references (using VectorStore for similarity search)
@@ -1004,7 +1406,10 @@ class MemoryManager:
         max_links: int | None = None,
     ) -> int:
         """Public wrapper for cross-reference creation."""
-        return await self._create_crossrefs(memory, threshold, max_links)
+        try:
+            return await self._create_crossrefs(memory, threshold, max_links)
+        except Exception as exc:
+            raise CrossrefRebuildError(str(exc)) from exc
 
     async def _create_crossrefs(
         self,

@@ -12,11 +12,13 @@ from typing import Any
 from gobby.hooks.events import HookEvent
 from gobby.storage.database import DatabaseProtocol
 from gobby.workflows.enforcement.blocking import (
+    get_touched_file_paths,
     is_discovery_tool,
     is_message_delivery_tool,
     is_plan_file,
     is_server_listed,
     is_tool_unlocked,
+    requires_task_for_any_touched_file,
 )
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.templates import TemplateEngine
@@ -109,6 +111,8 @@ class TemplatingMixin:
         funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, variables)
         funcs["is_discovery_tool"] = is_discovery_tool
         funcs["is_plan_file"] = is_plan_file
+        funcs["get_touched_file_paths"] = get_touched_file_paths
+        funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
         funcs["is_message_delivery_tool"] = is_message_delivery_tool
         funcs["has_pending_messages"] = self._has_pending_messages
         funcs["pending_message_count"] = self._pending_message_count

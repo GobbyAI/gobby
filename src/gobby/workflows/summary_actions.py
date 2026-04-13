@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import aiofiles
 
-from gobby.sessions.analyzer import HandoffContext, TranscriptAnalyzer
+if TYPE_CHECKING:
+    from gobby.sessions.analyzer import HandoffContext
 from gobby.workflows.git_utils import (
     get_file_changes,
     get_git_diff_summary,
@@ -283,6 +284,45 @@ async def _write_summary_file(
         return None
 
 
+def schedule_tmux_window_rename(
+    session: Any,
+    title: str,
+    *,
+    loop: Any | None = None,
+) -> None:
+    """Run ``_rename_tmux_window`` from sync code using the best available loop."""
+    import asyncio
+
+    coro = _rename_tmux_window(session, title)
+
+    try:
+        running_loop = asyncio.get_running_loop()
+        running_loop.create_task(coro)
+        return
+    except RuntimeError:
+        pass
+
+    if loop is not None:
+        try:
+            loop_is_usable = not loop.is_closed()
+        except Exception:
+            loop_is_usable = False
+
+        if loop_is_usable:
+            try:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+                return
+            except Exception:
+                logger.debug("Failed to schedule tmux rename on captured loop", exc_info=True)
+                coro.close()
+                return
+
+    try:
+        asyncio.run(coro)
+    except Exception:
+        logger.debug("Failed to run tmux rename synchronously", exc_info=True)
+
+
 async def _rename_tmux_window(session: Any, title: str) -> None:
     """Rename the tmux window for a session after title synthesis.
 
@@ -352,11 +392,11 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
             if proc.returncode != 0:
-                logger.debug(
+                logger.warning(
                     f"tmux rename-window failed for pane {pane}: {(stderr or b'').decode(errors='replace').strip()}",
                 )
     except Exception as e:
-        logger.debug(f"_rename_tmux_window: {e}")
+        logger.warning(f"_rename_tmux_window: {e}")
 
 
 async def generate_summary(
@@ -458,6 +498,8 @@ async def generate_summary(
             structured_context += "\n\nRecent Commits:\n" + "\n".join(commit_lines)
     else:
         # Fallback: full transcript analysis
+        from gobby.sessions.analyzer import TranscriptAnalyzer
+
         analyzer = TranscriptAnalyzer()
         handoff_ctx = analyzer.extract_handoff_context(turns, max_turns=150)
         real_commits = get_recent_git_commits()

@@ -316,6 +316,70 @@ class HookManagerFactory:
         return _sync_call_tool
 
     @staticmethod
+    def _build_inline_mcp_dispatcher(
+        tool_proxy_getter: Any | None,
+    ) -> Callable[..., Any] | None:
+        """Build an async dispatcher for inline mcp_call effects.
+
+        Used by the rule engine to dispatch inject_result mcp_calls within
+        the effect loop, ensuring atomicity with sibling set_variable effects.
+        Runs as a coroutine since evaluate() is already async.
+
+        Returns None if tool_proxy_getter is unavailable.
+        """
+        if not tool_proxy_getter:
+            return None
+
+        _logger = logging.getLogger("gobby.workflows.engine.inline_dispatch")
+
+        async def dispatcher(
+            server: str,
+            tool: str,
+            arguments: dict[str, Any],
+            event: Any,
+        ) -> dict[str, Any] | None:
+            proxy = tool_proxy_getter()
+            if not proxy:
+                _logger.warning("inline_mcp_dispatcher: tool_proxy_getter returned None")
+                return {"success": False, "error": "tool_proxy_getter returned None"}
+
+            try:
+                # Inject event context (mirrors dispatch_mcp_calls behavior)
+                args = dict(arguments)
+                if event:
+                    if "session_id" not in args:
+                        args["session_id"] = event.metadata.get("_platform_session_id", "")
+                    if "prompt_text" not in args:
+                        args["prompt_text"] = event.data.get("prompt") if event.data else None
+                    if "project_path" not in args:
+                        args["project_path"] = event.metadata.get("project_path") or None
+                    # Map prompt_text to query for tools that expect it
+                    if "query" not in args and args.get("prompt_text"):
+                        args["query"] = args["prompt_text"]
+
+                result = await proxy.call_tool(
+                    server,
+                    tool,
+                    args,
+                    strip_unknown=True,
+                    enforce_workflow=False,
+                )
+                success = isinstance(result, dict) and result.get("success", True)
+                return {
+                    "success": success,
+                    "inject_result": True,
+                    "result": result,
+                }
+            except Exception as exc:
+                _logger.warning(
+                    f"inline_mcp_dispatcher: {server}/{tool} failed: {exc}",
+                    exc_info=True,
+                )
+                return {"success": False, "error": str(exc)}
+
+        return dispatcher
+
+    @staticmethod
     def _create_database(config: Any | None) -> LocalDatabase:
         if config and config.database_path:
             db_path = Path(config.database_path).expanduser()
@@ -392,10 +456,16 @@ class HookManagerFactory:
             metrics_event_store=metrics_event_store,
             project_id=project_id,
         )
+        # Build inline mcp_call dispatcher for inject_result atomicity.
+        # Dispatches mcp_calls within the rule engine's effect loop so
+        # set_variable effects that follow only fire on success.
+        inline_dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(tool_proxy_getter)
+
         rule_engine = RuleEngine(
             db=database,
             skill_manager=skill_manager,
             metrics_event_store=metrics_event_store,
+            mcp_dispatcher=inline_dispatcher,
         )
 
         pipeline_executor = None

@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookResponse
+from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES
 
 if TYPE_CHECKING:
     from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -50,8 +51,8 @@ def get_claimed_task_info(
         # DB fallback: check for tasks still assigned to this session
         try:
             db_tasks = handler._task_manager.list_tasks(
-                assignee=session_id,
-                status="in_progress",
+                claimed_by_session_id=session_id,
+                status=list(ACTIVE_CLAIM_STATUSES),
                 project_id=project_id,
             )
             if db_tasks:
@@ -160,74 +161,14 @@ def compose_session_response(
     if session and session.seq_num:
         session_ref = f"#{session.seq_num}"
 
-    # Build system message (terminal display)
-    # Session ID: prefer #N, fallback to UUID only when no seq_num
+    # Build system message — session ID banner only (for terminal display).
+    # Agent tree, external ID, and claimed tasks removed to reduce token waste.
+    # Full metadata (external_id, machine_id, project_id, terminal) is injected
+    # by the enricher on first hook via _first_hook_for_session flag.
     if session_ref != session_id:
         system_message = f"\nGobby Session ID: {session_ref} ({session_id})"
     else:
         system_message = f"\nGobby Session ID: {session_ref}"
-
-    # Parent Session ID (before External ID, with handoff indicator)
-    if parent_session_id and handler._session_storage:
-        try:
-            parent = handler._session_storage.get(parent_session_id)
-            if parent:
-                parent_ref = f"#{parent.seq_num}" if parent.seq_num else parent_session_id
-                # Handoff indicator based on session_source
-                indicator = ""
-                if session_source in ("clear", "compact"):
-                    indicator = " (Handoff)" if parent.summary_markdown else " (No Handoff)"
-                system_message += f"\nParent Session ID: {parent_ref}{indicator}"
-            else:
-                system_message += f"\nParent Session ID: {parent_session_id}"
-        except Exception:
-            system_message += f"\nParent Session ID: {parent_session_id}"
-
-    system_message += f"\nExternal ID: {external_id} (CLI-native, rarely needed)"
-
-    # Agent info (only if agent loaded -- absence signals activation failure)
-    if agent_info:
-        # Agent name only -- description moves to tree node
-        system_message += f"\nAgent: {agent_info.agent_name}"
-
-        # Build tree nodes: description, role, goal, task, rules, variables, skills
-        tree_nodes: list[str] = []
-        if agent_info.description:
-            tree_nodes.append(f"Description: {agent_info.description.strip()}")
-        if agent_info.role:
-            tree_nodes.append(f"Role: {agent_info.role.strip()}")
-        if agent_info.goal:
-            tree_nodes.append(f"Goal: {agent_info.goal.strip()}")
-        # Current task (inside agent tree, with claimed/assigned indicator)
-        if task_id and handler._task_manager:
-            try:
-                task = handler._task_manager.get_task(task_id, project_id=project_id)
-                task_ref = f"#{task.seq_num}" if task and task.seq_num else task_id
-            except Exception:
-                task_ref = task_id
-            claim_status = "assigned" if parent_session_id else "claimed"
-            tree_nodes.append(f"Current Task: {task_ref} ({claim_status})")
-        tree_nodes.append(f"Rules: {agent_info.rules_count}")
-        tree_nodes.append(f"Variables: {agent_info.variables_count}")
-        # Skills is always last (may have sub-node)
-        skills_label = f"Skills: {agent_info.skills_count}"
-
-        for node in tree_nodes:
-            system_message += f"\n\u251c\u2500 {node}"
-        if agent_info.injected_skill_names:
-            system_message += f"\n\u2514\u2500 {skills_label}"
-            system_message += (
-                f"\n   \u2514\u2500 Injected: {', '.join(agent_info.injected_skill_names)}"
-            )
-        else:
-            system_message += f"\n\u2514\u2500 {skills_label}"
-
-    # Claimed tasks (sibling section after agent tree)
-    if claimed_tasks_info:
-        system_message += f"\nClaimed Tasks: {len(claimed_tasks_info)}"
-        for i, (ref, status, title) in enumerate(claimed_tasks_info):
-            connector = "\u2514\u2500" if i == len(claimed_tasks_info) - 1 else "\u251c\u2500"
-            system_message += f"\n{connector} {ref} [{status}] {title}"
 
     # Build metadata
     metadata: dict[str, Any] = {

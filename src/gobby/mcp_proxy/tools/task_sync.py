@@ -1,18 +1,18 @@
 """
-Task sync and commit linking MCP tools module.
+Task commit linking MCP tools module.
 
-Provides tools for task synchronization and commit linking:
-- sync_tasks: Manually trigger task import/export
-- get_sync_status: Get current sync status
+Provides tools for linking git commits to tasks:
 - link_commit: Link a git commit to a task
 - unlink_commit: Unlink a git commit from a task
 - auto_link_commits: Auto-detect and link commits mentioning task IDs
 - get_task_diff: Get combined diff for all commits linked to a task
 
+Sync tools (sync_tasks, sync_import, sync_export, get_sync_status) have been
+removed from MCP — they are CLI-only operations.
+
 Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
-import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.sync.tasks import TaskSyncManager
 
-__all__ = ["create_sync_registry"]
+__all__ = ["create_commit_registry"]
 
 
 def get_current_project_id() -> str | None:
@@ -34,7 +34,7 @@ def get_current_project_id() -> str | None:
     return context.get("id") if context else None
 
 
-def create_sync_registry(
+def create_commit_registry(
     sync_manager: "TaskSyncManager | None" = None,
     task_manager: "LocalTaskManager | None" = None,
     project_manager: "LocalProjectManager | None" = None,
@@ -43,7 +43,7 @@ def create_sync_registry(
     session_manager: Any | None = None,
 ) -> InternalToolRegistry:
     """
-    Create a registry with task sync and commit linking tools.
+    Create a registry with commit linking tools.
 
     Args:
         sync_manager: TaskSyncManager instance
@@ -51,84 +51,23 @@ def create_sync_registry(
         project_manager: LocalProjectManager instance (for repo_path lookup)
         auto_link_commits_fn: Function for auto-linking commits (injectable for testing)
         get_task_diff_fn: Function for getting task diff (injectable for testing)
+        session_manager: Session manager (unused, kept for interface compat)
 
     Returns:
-        InternalToolRegistry with sync tools registered
+        InternalToolRegistry with commit linking tools registered
     """
     # Lazy import to avoid circular dependency
     from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 
     registry = InternalToolRegistry(
-        name="gobby-tasks-sync",
-        description="Task synchronization and commit linking tools",
+        name="gobby-tasks-commits",
+        description="Task commit linking tools",
     )
 
     if sync_manager is None:
         raise ValueError("sync_manager is required")
     if task_manager is None:
         raise ValueError("task_manager is required for task ID resolution")
-
-    # --- sync_tasks ---
-
-    def sync_tasks(direction: str = "both", project: str | None = None) -> dict[str, Any]:
-        """Manually trigger task synchronization."""
-        valid_directions = ("import", "export", "both")
-        if direction not in valid_directions:
-            return {
-                "error": f"Invalid direction '{direction}'. Must be one of: {', '.join(valid_directions)}"
-            }
-
-        try:
-            from gobby.mcp_proxy.tools.tasks._context import resolve_project_filter_standalone
-
-            project_id = resolve_project_filter_standalone(project, False, task_manager.db)
-        except ValueError as e:
-            return {"error": str(e)}
-
-        result = {}
-        if direction in ["import", "both"]:
-            sync_manager.import_from_jsonl(project_id=project_id)
-            result["import"] = "completed"
-
-        if direction in ["export", "both"]:
-            sync_manager.export_to_jsonl(project_id=project_id)
-            result["export"] = "completed"
-
-        return result
-
-    registry.register(
-        name="sync_tasks",
-        description="Manually trigger task synchronization.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "direction": {
-                    "type": "string",
-                    "description": '"import", "export", or "both"',
-                    "default": "both",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Project name or UUID to scope sync",
-                },
-            },
-        },
-        func=sync_tasks,
-    )
-
-    # --- get_sync_status ---
-
-    def get_sync_status() -> dict[str, Any]:
-        """Get current synchronization status."""
-        result: dict[str, Any] = sync_manager.get_sync_status()
-        return result
-
-    registry.register(
-        name="get_sync_status",
-        description="Get current synchronization status.",
-        input_schema={"type": "object", "properties": {}},
-        func=get_sync_status,
-    )
 
     # --- link_commit ---
 
@@ -351,51 +290,5 @@ def create_sync_registry(
         },
         func=get_task_diff_tool,
     )
-
-    # ─── Async sync tools (thin wrappers around workflow actions) ───
-
-    @registry.tool(
-        name="sync_import",
-        description="Import tasks from .gobby/tasks.jsonl into the database.",
-    )
-    async def sync_import_tool() -> dict[str, Any]:
-        """Import tasks from JSONL file using session for project resolution."""
-        from gobby.utils.session_context import get_current_session_id
-
-        session_id = get_current_session_id()
-        if not session_manager:
-            return {"success": False, "error": "Session manager not available"}
-        try:
-            project_id = None
-            if session_id:
-                session = await asyncio.to_thread(session_manager.get, session_id)
-                if session:
-                    project_id = session.project_id
-            await asyncio.to_thread(sync_manager.import_from_jsonl, project_id=project_id)
-            return {"success": True, "imported": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    @registry.tool(
-        name="sync_export",
-        description="Export tasks from the database to .gobby/tasks.jsonl.",
-    )
-    async def sync_export_tool() -> dict[str, Any]:
-        """Export tasks to JSONL file using session for project resolution."""
-        from gobby.utils.session_context import get_current_session_id
-
-        session_id = get_current_session_id()
-        if not session_manager:
-            return {"success": False, "error": "Session manager not available"}
-        try:
-            project_id = None
-            if session_id:
-                session = await asyncio.to_thread(session_manager.get, session_id)
-                if session:
-                    project_id = session.project_id
-            await asyncio.to_thread(sync_manager.export_to_jsonl, project_id=project_id)
-            return {"success": True, "exported": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
 
     return registry

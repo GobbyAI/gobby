@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
-import { PipelineStatusDot, StepDisplay, formatDateTime, formatDuration, type StepData } from '../workflows/execution-utils'
+import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
+import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
 import '../workflows/PipelinesPage.css'
 
 interface PipelinesTabProps {
@@ -23,7 +24,7 @@ function getBaseUrl(): string {
 export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesTabProps) {
   const [executions, setExecutions] = useState<PipelineExecution[]>([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<'running' | 'all' | 'completed' | 'failed'>('running')
+  const [statusFilter, setStatusFilter] = useState<'running' | 'all' | 'completed' | 'failed'>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topHeight, setTopHeight] = useState(40)
   const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)

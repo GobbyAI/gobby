@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+_CODEX_SYNC_TIMEOUT_SECONDS = 10.0
 
 
 def create_app(server: "HTTPServer") -> FastAPI:
@@ -92,6 +93,19 @@ def create_app(server: "HTTPServer") -> FastAPI:
             server._hook_manager = app.state.hook_manager
         logger.debug("HookManager initialized in daemon")
 
+        # Initialize PendingInteractionManager for web chat approval flows
+        if server.services.database:
+            from gobby.servers.pending_interactions import PendingInteractionManager
+
+            app.state.pending_interaction_manager = PendingInteractionManager(
+                server.services.database
+            )
+            try:
+                await app.state.pending_interaction_manager.expire_all_pending()
+            except Exception as e:
+                logger.warning(f"Failed to expire pending interactions on startup: {e}")
+            logger.debug("PendingInteractionManager initialized")
+
         # Wire up stop_registry to WebSocket server for stop_request handling
         # Check both services container and direct attribute (runner sets both)
         ws_server = server.services.websocket_server or server.websocket_server
@@ -135,6 +149,24 @@ def create_app(server: "HTTPServer") -> FastAPI:
             ws_server.hook_broadcaster = server.broadcaster
             logger.debug("Hook event broadcaster connected to WebSocket server")
 
+        if server.session_manager is not None:
+            listener_loop = asyncio.get_running_loop()
+
+            def _broadcast_title_update(session_id: str, _title: str) -> None:
+                if not ws_server or listener_loop.is_closed():
+                    return
+
+                def _schedule() -> None:
+                    listener_loop.create_task(
+                        ws_server.broadcast_session_event("session_updated", session_id)
+                    )
+
+                listener_loop.call_soon_threadsafe(_schedule)
+
+            server.session_manager.register_title_listener(_broadcast_title_update)
+            app.state.title_update_listener = _broadcast_title_update
+            logger.debug("Title update listener connected to session manager")
+
         # Wire inter-session message manager for message piggyback delivery
         if (
             ws_server
@@ -144,6 +176,9 @@ def create_app(server: "HTTPServer") -> FastAPI:
         ):
             ws_server.inter_session_msg_manager = app.state.hook_manager._inter_session_msg_manager
             logger.debug("Inter-session message manager connected to WebSocket server")
+
+        # Voice models are loaded lazily on first mic-button click (voice_prepare)
+        # to avoid ~4GB of idle memory from Chatterbox/Whisper at startup.
 
         # Wire workflow handler to AgentRunner for embedded agent hooks
         if (
@@ -201,28 +236,43 @@ def create_app(server: "HTTPServer") -> FastAPI:
         # Store server instance for dependency injection
         app.state.server = server
 
+        runtime_manager = getattr(server.services, "web_chat_runtime_manager", None)
+        if runtime_manager is not None:
+            try:
+                await runtime_manager.start(background=True)
+                logger.debug("Web chat runtime manager startup scheduled")
+            except Exception as e:
+                logger.warning(f"Failed to start web chat runtime manager: {e}")
+
+        async def _sync_existing_codex_sessions() -> None:
+            if not getattr(app.state, "codex_adapter", None):
+                return
+            try:
+                synced = await asyncio.wait_for(
+                    app.state.codex_adapter.sync_existing_sessions(),
+                    timeout=_CODEX_SYNC_TIMEOUT_SECONDS,
+                )
+                logger.debug(f"Synced {synced} existing Codex sessions")
+            except TimeoutError:
+                logger.warning(
+                    "Timed out syncing existing Codex sessions after %.1fs",
+                    _CODEX_SYNC_TIMEOUT_SECONDS,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to sync existing Codex sessions: {e}")
+
         # Initialize CodexAdapter for session tracking
         app.state.codex_adapter = None
+        app.state.codex_sync_task = None
         if server.codex_client and CodexAdapter.is_codex_available():
-            # Start the app-server subprocess
-            try:
-                await server.codex_client.start()
-                logger.debug("CodexAppServerClient started")
-            except Exception as e:
-                logger.warning(f"Failed to start CodexAppServerClient: {e}")
-
             codex_adapter = CodexAdapter(hook_manager=app.state.hook_manager)
             codex_adapter.attach_to_client(server.codex_client)
             app.state.codex_adapter = codex_adapter
             logger.debug("CodexAdapter attached to CodexAppServerClient")
 
-            # Sync existing Codex sessions when client is connected
+            # Sync existing Codex sessions after startup without blocking HTTP
             if server.codex_client.is_connected:
-                try:
-                    synced = await codex_adapter.sync_existing_sessions()
-                    logger.debug(f"Synced {synced} existing Codex sessions")
-                except Exception as e:
-                    logger.warning(f"Failed to sync existing Codex sessions: {e}")
+                app.state.codex_sync_task = asyncio.create_task(_sync_existing_codex_sessions())
 
         # Start TmuxPaneMonitor if tmux is enabled
         if server.services.config and server.services.config.tmux.enabled:
@@ -272,16 +322,35 @@ def create_app(server: "HTTPServer") -> FastAPI:
         # Shutdown operations
         logger.debug("Shutting down Gobby HTTP server")
 
+        if hasattr(app.state, "title_update_listener") and server.session_manager is not None:
+            server.session_manager.unregister_title_listener(app.state.title_update_listener)
+            del app.state.title_update_listener
+            logger.debug("Title update listener disconnected from session manager")
+
+        if ws_server and hasattr(ws_server, "stop_voice_warmup"):
+            try:
+                await ws_server.stop_voice_warmup()
+                logger.debug("Voice model warmup stopped")
+            except Exception as e:
+                logger.warning(f"Failed to stop voice warmup task: {e}")
+
         # Cleanup CodexAdapter and stop app-server client
+        if getattr(app.state, "codex_sync_task", None):
+            app.state.codex_sync_task.cancel()
+            try:
+                await app.state.codex_sync_task
+            except asyncio.CancelledError:
+                pass
+            logger.debug("Codex session sync task stopped")
         if hasattr(app.state, "codex_adapter") and app.state.codex_adapter:
             app.state.codex_adapter.detach_from_client()
             logger.debug("CodexAdapter detached")
-        if server.codex_client:
+        if runtime_manager is not None:
             try:
-                await server.codex_client.stop()
-                logger.debug("CodexAppServerClient stopped")
+                await runtime_manager.stop()
+                logger.debug("Web chat runtime manager stopped")
             except Exception as e:
-                logger.warning(f"Failed to stop CodexAppServerClient: {e}")
+                logger.warning(f"Failed to stop web chat runtime manager: {e}")
 
         # Stop SessionLivenessMonitor
         if hasattr(app.state, "liveness_monitor") and app.state.liveness_monitor:
@@ -303,6 +372,14 @@ def create_app(server: "HTTPServer") -> FastAPI:
                 logger.debug("TmuxPaneMonitor stopped")
         except Exception as e:
             logger.warning(f"Failed to stop TmuxPaneMonitor: {e}")
+
+        # Cleanup PendingInteractionManager
+        if hasattr(app.state, "pending_interaction_manager"):
+            try:
+                await app.state.pending_interaction_manager.cleanup()
+                logger.debug("PendingInteractionManager cleanup complete")
+            except Exception as e:
+                logger.exception("PendingInteractionManager cleanup failed: %s", e)
 
         # Cleanup HookManager
         if hasattr(app.state, "hook_manager"):
@@ -422,6 +499,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_metrics_router,
         create_pipelines_router,
         create_projects_router,
+        create_providers_router,
         create_rules_router,
         create_sessions_router,
         create_skills_router,
@@ -451,6 +529,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_pipelines_router(server))
     app.include_router(create_files_router(server))
     app.include_router(create_projects_router(server))
+    app.include_router(create_providers_router(server))
     app.include_router(create_skills_router(server))
     app.include_router(create_voice_router(server))
     app.include_router(create_configuration_router(server))

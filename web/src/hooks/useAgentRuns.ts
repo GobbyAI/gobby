@@ -27,7 +27,6 @@ export interface AgentRunRecord {
   usage_output_tokens?: number;
   usage_cache_creation_tokens?: number;
   usage_cache_read_tokens?: number;
-  usage_total_cost_usd?: number;
   summary_markdown?: string | null;
   git_branch?: string | null;
 }

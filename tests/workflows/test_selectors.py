@@ -185,9 +185,9 @@ def test_match_skill_source() -> None:
     assert _match_skill("source", "installed", skill) is True
 
 
-def test_match_skill_source_none() -> None:
+def test_match_skill_source_mismatch() -> None:
     skill = MagicMock()
-    skill.source_type = None
+    skill.source_type = "agent"
     assert _match_skill("source", "installed", skill) is False
 
 
@@ -245,12 +245,12 @@ def test_resolve_skills_with_include_exclude() -> None:
     s1 = MagicMock()
     s1.name = "safe"
     s1.metadata = None
-    s1.source_type = None
+    s1.source_type = "agent"
 
     s2 = MagicMock()
     s2.name = "dangerous"
     s2.metadata = None
-    s2.source_type = None
+    s2.source_type = "agent"
 
     result = resolve_skills_for_agent(agent, [s1, s2])
     assert result is not None

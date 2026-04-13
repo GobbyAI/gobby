@@ -45,7 +45,6 @@ def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
             "output_tokens": 0,
             "cache_read_tokens": 0,
             "cache_creation_tokens": 0,
-            "cost_usd": 0.0,
             "session_count": 0,
         }
         try:
@@ -55,7 +54,6 @@ def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "  COALESCE(SUM(usage_output_tokens), 0) as output_tokens, "
                 "  COALESCE(SUM(usage_cache_read_tokens), 0) as cache_read_tokens, "
                 "  COALESCE(SUM(usage_cache_creation_tokens), 0) as cache_creation_tokens, "
-                "  COALESCE(SUM(usage_total_cost_usd), 0.0) as cost_usd, "
                 "  COUNT(*) as session_count "
                 f"FROM sessions WHERE 1=1 {where}",
                 tuple(params),
@@ -67,7 +65,6 @@ def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "output_tokens": r["output_tokens"],
                     "cache_read_tokens": r["cache_read_tokens"],
                     "cache_creation_tokens": r["cache_creation_tokens"],
-                    "cost_usd": round(float(r["cost_usd"]), 6),
                     "session_count": r["session_count"],
                 }
         except sqlite3.Error as e:
@@ -82,7 +79,6 @@ def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "  COALESCE(SUM(usage_output_tokens), 0) as output_tokens, "
                 "  COALESCE(SUM(usage_cache_read_tokens), 0) as cache_read_tokens, "
                 "  COALESCE(SUM(usage_cache_creation_tokens), 0) as cache_creation_tokens, "
-                "  COALESCE(SUM(usage_total_cost_usd), 0.0) as cost_usd, "
                 "  COUNT(*) as session_count "
                 f"FROM sessions WHERE 1=1 {where} "
                 "GROUP BY source",
@@ -95,7 +91,6 @@ def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "output_tokens": r["output_tokens"],
                     "cache_read_tokens": r["cache_read_tokens"],
                     "cache_creation_tokens": r["cache_creation_tokens"],
-                    "cost_usd": round(float(r["cost_usd"]), 6),
                     "session_count": r["session_count"],
                 }
         except sqlite3.Error as e:
@@ -110,7 +105,6 @@ def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
                 "  COALESCE(SUM(usage_output_tokens), 0) as output_tokens, "
                 "  COALESCE(SUM(usage_cache_read_tokens), 0) as cache_read_tokens, "
                 "  COALESCE(SUM(usage_cache_creation_tokens), 0) as cache_creation_tokens, "
-                "  COALESCE(SUM(usage_total_cost_usd), 0.0) as cost_usd, "
                 "  COUNT(*) as session_count "
                 f"FROM sessions WHERE 1=1 {where} "
                 "GROUP BY model "
@@ -124,7 +118,6 @@ def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "output_tokens": r["output_tokens"],
                     "cache_read_tokens": r["cache_read_tokens"],
                     "cache_creation_tokens": r["cache_creation_tokens"],
-                    "cost_usd": round(float(r["cost_usd"]), 6),
                     "session_count": r["session_count"],
                 }
         except sqlite3.Error as e:

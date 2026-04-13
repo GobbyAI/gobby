@@ -52,27 +52,6 @@
 }
 
 /* Light theme overrides: shared status badges */
-[data-theme="light"] .status.connected {
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
-}
-
-[data-theme="light"] .status.disconnected {
-  background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
-}
-
-@media (max-width: 768px) {
-  [data-theme="light"] .status.connected {
-    background: #22c55e;
-    color: #fff;
-  }
-  [data-theme="light"] .status.disconnected {
-    background: #ef4444;
-    color: #fff;
-  }
-}
-
 * {
   box-sizing: border-box;
   margin: 0;
@@ -99,118 +78,6 @@ body {
   flex-direction: column;
   height: 100%;
   height: 100dvh;
-}
-
-/* Header */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem;
-  border-bottom: 1px solid var(--border);
-  position: relative;
-  z-index: 100;
-}
-
-.header-brand {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.header-logo {
-  height: 2.25rem;
-  width: auto;
-}
-
-.header-title {
-  font-size: calc(var(--font-size-base) * 1.125);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.header h1 {
-  font-size: calc(var(--font-size-base) * 1.25);
-  font-weight: 600;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.status {
-  font-size: calc(var(--font-size-base) * 0.75);
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.status.connected {
-  background: #052e16;
-  color: #4ade80;
-}
-
-.status.disconnected {
-  background: #450a0a;
-  color: #f87171;
-}
-
-@media (max-width: 768px) {
-  .status {
-    font-size: 0;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .status::after {
-    font-size: 11px;
-    line-height: 1;
-  }
-
-  .status.connected {
-    background: #22c55e;
-  }
-  .status.connected::after {
-    content: "\2191";
-    color: #fff;
-  }
-
-  .status.disconnected {
-    background: #ef4444;
-  }
-  .status.disconnected::after {
-    content: "\2193";
-    color: #fff;
-  }
-}
-
-.settings-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.settings-button:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border-color: var(--text-muted);
 }
 
 /* Terminal Panel */
@@ -339,29 +206,6 @@ body {
 
 .xterm-screen {
   isolation: isolate;
-}
-
-/* ============================================
-   Hamburger Button
-   ============================================ */
-.hamburger-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.hamburger-button:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border-color: var(--text-muted);
 }
 
 /* ============================================

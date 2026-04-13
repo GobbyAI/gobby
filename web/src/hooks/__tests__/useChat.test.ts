@@ -25,8 +25,16 @@ beforeEach(() => {
   mockFetch = createMockFetch()
   // Mock localStorage — jsdom's localStorage doesn't delegate to Storage.prototype,
   // so vi.spyOn(Storage.prototype, ...) won't intercept calls. Replace the object directly.
+  // Seed a conversation id so useChat initializes with a bound session on mount.
+  // After the session identity unification (cb80f0462), loadConversationId() no
+  // longer auto-generates a uuid — it returns "" unless localStorage has one,
+  // and a real main session is created lazily via ensureMainSession/REST. Tests
+  // can't hit that REST endpoint, so we pre-bind here to match runtime state.
   originalLocalStorage = globalThis.localStorage
-  const store: Record<string, string> = {}
+  const store: Record<string, string> = {
+    'gobby-conversation-id': 'test-conversation-id',
+    'gobby-db-session-id': 'test-conversation-id',
+  }
   const mockStorage = {
     getItem: vi.fn((key: string) => store[key] ?? null),
     setItem: vi.fn((key: string, value: string) => { store[key] = value }),
@@ -94,6 +102,7 @@ describe('useChat', () => {
     expect(msg.type).toBe('subscribe')
     expect(msg.events).toContain('chat_stream')
     expect(msg.events).toContain('tool_status')
+    expect(msg.events).toContain('session_message')
   })
 
   it('resets state on WS close', async () => {
@@ -133,6 +142,82 @@ describe('useChat', () => {
     )
   })
 
+  it('keeps conversation and db session storage separate when resuming an external session', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    act(() => {
+      result.current.resumeSession('claude-ext-456')
+    })
+
+    expect(localStorage.getItem('gobby-conversation-id')).toBe('claude-ext-456')
+    expect(localStorage.getItem('gobby-db-session-id')).toBe('test-conversation-id')
+  })
+
+  it('resets reconnect backfill when the active chat identity changes', async () => {
+    vi.useFakeTimers()
+    try {
+      await loadModule()
+      mockFetch.mockJsonResponse('/api/chat/db-session-2/messages?limit=100&after_seq=0', {
+        messages: [],
+        max_seq: 5,
+      })
+      mockFetch.mockJsonResponse('/api/sessions/db-session-2', {
+        session: {
+          id: 'db-session-2',
+          seq_num: 202,
+          title: 'Other chat',
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          usage_cache_read_tokens: 0,
+          usage_cache_creation_tokens: 0,
+          context_window: null,
+        },
+      })
+
+      const { result } = renderHook(() => useChat())
+      const ws = mockWs.instances[0]
+      act(() => ws.simulateOpen())
+
+      await act(async () => {
+        result.current.switchConversation('db-session-2')
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      act(() => {
+        result.current.resumeSession('claude-ext-789')
+      })
+
+      act(() => {
+        ws.simulateClose()
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(mockWs.instances).toHaveLength(2)
+
+      await act(async () => {
+        mockWs.instances[1].simulateOpen()
+        await Promise.resolve()
+      })
+
+      const requestedUrls = mockFetch.fn.mock.calls.map(([input]) =>
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url,
+      )
+      expect(
+        requestedUrls.some((url) =>
+          url.includes('/api/chat/claude-ext-789/messages?after_seq=5'),
+        ),
+      ).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('sendMessage adds user message and sends WS message', async () => {
     await loadModule()
     const { result } = renderHook(() => useChat())
@@ -151,6 +236,61 @@ describe('useChat', () => {
 
     // Should be streaming
     expect(result.current.isStreaming).toBe(true)
+  })
+
+  it('sendMessage includes the selected provider after switching state', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.setSelectedProvider('gemini')
+    })
+
+    act(() => {
+      result.current.sendMessage('Hello through Gemini')
+    })
+
+    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0])
+    expect(sentMsg.type).toBe('chat_message')
+    expect(sentMsg.provider).toBe('gemini')
+  })
+
+  it('switchProvider creates a new server-owned session with the requested provider', async () => {
+    // After the session identity unification, switchProvider no longer sends
+    // set_provider/set_agent via WebSocket. It calls ensureMainSession with
+    // forceNew=true and the provider, which POSTs to /api/sessions/web-chat.
+    // The backend persists the provider on the new session.
+    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
+      session: {
+        id: 'new-codex-session',
+        source: 'codex',
+        model: null,
+        chat_mode: null,
+        seq_num: 42,
+        title: null,
+      },
+    })
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.switchProvider('codex')
+    })
+
+    // REST call should include the provider in its request body
+    const sessionCalls = mockFetch.fn.mock.calls.filter(([url]) =>
+      typeof url === 'string' && url.includes('/api/sessions/web-chat'),
+    )
+    expect(sessionCalls.length).toBeGreaterThan(0)
+    const body = JSON.parse(sessionCalls[sessionCalls.length - 1][1].body as string)
+    expect(body.provider).toBe('codex')
   })
 
   it('sendMessage queues message when WS not connected', async () => {
@@ -369,6 +509,267 @@ describe('useChat', () => {
     expect(result.current.sessionRef).toBe('#42')
     expect(result.current.currentBranch).toBe('feature/test')
     expect(result.current.activeAgent).toBe('test-agent')
+  })
+
+  it('upserts rendered session_message events while viewing a session', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse('/api/sessions/sess-1/messages?limit=100&offset=0', {
+      messages: [
+        {
+          id: 'sess-msg-1',
+          role: 'assistant',
+          content: 'Initial output',
+          timestamp: '2026-04-09T00:00:00Z',
+          content_blocks: [{ type: 'text', content: 'Initial output' }],
+        },
+      ],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-1', {
+      session: {
+        id: 'sess-1',
+        seq_num: 2310,
+        source: 'codex',
+        title: 'Observed session',
+        status: 'active',
+        model: 'gpt-5.4',
+        external_id: 'codex-ext-1',
+        chat_mode: 'bypass',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+      },
+    })
+
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await act(async () => {
+      result.current.viewSession('sess-1')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(result.current.messages).toHaveLength(1)
+    expect(result.current.messages[0].content).toBe('Initial output')
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_message',
+        session_id: 'sess-1',
+        message: {
+          id: 'sess-msg-1',
+          role: 'assistant',
+          content: 'Updated output',
+          timestamp: '2026-04-09T00:00:01Z',
+          content_blocks: [{ type: 'text', content: 'Updated output' }],
+        },
+      })
+    })
+
+    expect(result.current.messages).toHaveLength(1)
+    expect(result.current.messages[0].content).toBe('Updated output')
+  })
+
+  it('keeps autonomous session observation read-only until explicitly attached', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse('/api/sessions/sess-auto/messages?limit=100&offset=0', {
+      messages: [],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-auto', {
+      session: {
+        id: 'sess-auto',
+        seq_num: 2311,
+        source: 'claude',
+        title: 'Autonomous session',
+        status: 'active',
+        model: 'sonnet',
+        external_id: 'claude-ext-auto',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: 'terminal',
+        workflow_name: 'release-checks',
+        agent_run_id: 'run-auto-1',
+      },
+    })
+    mockFetch.mockJsonResponse('/api/agents/runs/run-auto-1', {
+      run: { agent_name: 'code-reviewer', workflow_name: 'release-checks' },
+    })
+
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await act(async () => {
+      result.current.viewSession('sess-auto')
+      result.current.observeSession?.('sess-auto', 'observe')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-auto',
+        external_id: 'claude-ext-auto',
+        source: 'claude',
+        title: 'Autonomous session',
+        status: 'active',
+        model: 'sonnet',
+        ref: '#2311',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        session_type: 'terminal',
+        workflow_name: 'release-checks',
+        agent_run_id: 'run-auto-1',
+        agent_name: 'code-reviewer',
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    expect(result.current.sessionInteractionMode).toBe('observe')
+    expect(result.current.attachedSessionId).toBeNull()
+
+    act(() => {
+      result.current.attachToViewed?.()
+    })
+
+    expect(result.current.sessionInteractionMode).toBe('proxy')
+    expect(result.current.attachedSessionId).toBe('sess-auto')
+  })
+
+  it('does not attach viewed web chat sessions into proxy mode', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse('/api/sessions/sess-web/messages?limit=100&offset=0', {
+      messages: [],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-web', {
+      session: {
+        id: 'sess-web',
+        seq_num: 2313,
+        source: 'claude',
+        title: 'Other Web Chat',
+        status: 'paused',
+        model: 'sonnet',
+        external_id: 'claude-ext-web',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: 'web_chat',
+      },
+    })
+
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await act(async () => {
+      result.current.viewSession('sess-web')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const sendCountBeforeAttach = ws.send.mock.calls.length
+    act(() => {
+      result.current.attachToViewed?.()
+    })
+
+    expect(result.current.attachedSessionId).toBeNull()
+    expect(result.current.sessionInteractionMode).toBe('none')
+    expect(ws.send.mock.calls).toHaveLength(sendCountBeforeAttach)
+  })
+
+  it('keeps chat_message routing even if a web chat attach result is received', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-web',
+        external_id: 'web-ext',
+        source: 'claude',
+        title: 'Web Chat Session',
+        status: 'paused',
+        model: 'sonnet',
+        ref: '#2314',
+        session_type: 'web_chat',
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    expect(result.current.attachedSessionId).toBeNull()
+    expect(result.current.sessionInteractionMode).toBe('none')
+
+    act(() => {
+      result.current.sendMessage('Hello after swap')
+    })
+
+    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0])
+    expect(sentMsg.type).toBe('chat_message')
+    expect(sentMsg.content).toBe('Hello after swap')
+  })
+
+  it('shows a queued proxy notice when CLI delivery falls back to hook piggyback', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-proxy',
+        external_id: 'proxy-ext',
+        source: 'claude',
+        title: 'Proxy session',
+        status: 'active',
+        model: 'sonnet',
+        ref: '#2312',
+        session_type: 'terminal',
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    act(() => {
+      result.current.attachToViewed?.()
+      result.current.sendMessage('/plan')
+    })
+
+    const sentMsg = JSON.parse(ws.send.mock.calls[ws.send.mock.calls.length - 1][0])
+    expect(sentMsg.type).toBe('send_to_cli_session')
+    expect(sentMsg.content).toBe('/plan')
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'send_to_cli_session_result',
+        session_id: 'sess-proxy',
+        delivered: false,
+        delivery_method: 'hook_piggyback',
+      })
+    })
+
+    expect(result.current.proxyDeliveryNotice).toBe(
+      'Message queued until the session yields.',
+    )
   })
 
   it('handles mode_changed messages', async () => {

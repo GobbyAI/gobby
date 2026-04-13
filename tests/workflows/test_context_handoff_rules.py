@@ -6,7 +6,6 @@ Verifies context handoff rules sync correctly and have proper structure:
 - inject-previous-session-summary: inject_context on session_start
 - inject-compact-handoff: inject_context on session_start
 - inject-task-context-on-start: inject_context on session_start
-- inject-error-triage-policy: inject_context on session_start
 - preserve-context-on-compact: set_variable on pre_compact (reset tracking vars)
 
 """
@@ -31,7 +30,6 @@ CONTEXT_HANDOFF_RULES = {
     "inject-previous-session-summary",
     "inject-compact-handoff",
     "inject-task-context-on-start",
-    "inject-error-triage-policy",
     "preserve-context-on-compact",
 }
 
@@ -214,32 +212,6 @@ class TestInjectTaskContextOnStart:
     def test_has_when_condition(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-task-context-on-start")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-        assert "resume" in body.when
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# inject-error-triage-policy
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestInjectErrorTriagePolicy:
-    """Inject pre-existing error triage policy on session_start."""
-
-    def test_event_and_effect(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("inject-error-triage-policy")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "session_start"
-        assert body.effects[0].type == "inject_context"
-        assert body.effects[0].template is not None
-        assert "Error Resolution Policy" in body.effects[0].template
-
-    def test_has_when_condition(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("inject-error-triage-policy")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "resume" in body.when

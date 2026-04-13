@@ -131,7 +131,7 @@ function getStoredNumber(key: string, defaultVal: number, min?: number, max?: nu
 
 export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // react-force-graph-3d does not export a usable instance type
-  const fgRef = useRef<any>(null) // eslint-disable-line @typescript-eslint/no-explicit-any
+  const fgRef = useRef<any>(null)  
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const [graphData, setGraphData] = useState<CodeGraphData>({ nodes: [], links: [] })

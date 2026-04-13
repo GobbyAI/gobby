@@ -44,7 +44,7 @@ class TestPromptLoader:
 
         assert template is not None
         assert template.name == "expansion/system"
-        assert "senior technical project manager" in template.content
+        assert "Task Expansion Compiler" in template.content
 
     def test_load_file_not_found(self, db) -> None:
         """Test that FileNotFoundError is raised for non-existent templates."""

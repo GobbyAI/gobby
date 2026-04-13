@@ -102,6 +102,62 @@ class TestLocalDatabase:
         row = temp_db.fetchone("SELECT value FROM test_rollback WHERE id = 1")
         assert row["value"] == "original"
 
+    def test_nested_transaction_uses_savepoint(self, temp_db: LocalDatabase) -> None:
+        """Nested transactions should commit via savepoints instead of failing BEGIN."""
+        temp_db.execute("CREATE TABLE test_nested_tx (id INTEGER PRIMARY KEY, value TEXT)")
+
+        with temp_db.transaction():
+            temp_db.execute("INSERT INTO test_nested_tx VALUES (1, 'outer')")
+            with temp_db.transaction():
+                temp_db.execute("INSERT INTO test_nested_tx VALUES (2, 'inner')")
+
+        rows = temp_db.fetchall("SELECT id, value FROM test_nested_tx ORDER BY id")
+        assert [(row["id"], row["value"]) for row in rows] == [(1, "outer"), (2, "inner")]
+
+    def test_nested_transaction_can_roll_back_inner_scope(self, temp_db: LocalDatabase) -> None:
+        """An inner savepoint rollback should not discard outer work if handled."""
+        temp_db.execute("CREATE TABLE test_nested_rollback (id INTEGER PRIMARY KEY, value TEXT)")
+
+        with temp_db.transaction():
+            temp_db.execute("INSERT INTO test_nested_rollback VALUES (1, 'outer')")
+            with pytest.raises(sqlite3.IntegrityError):
+                with temp_db.transaction():
+                    temp_db.execute("INSERT INTO test_nested_rollback VALUES (2, 'inner')")
+                    temp_db.execute("INSERT INTO test_nested_rollback VALUES (2, 'duplicate')")
+            temp_db.execute("INSERT INTO test_nested_rollback VALUES (3, 'outer-after')")
+
+        rows = temp_db.fetchall("SELECT id, value FROM test_nested_rollback ORDER BY id")
+        assert [(row["id"], row["value"]) for row in rows] == [
+            (1, "outer"),
+            (3, "outer-after"),
+        ]
+
+    def test_after_commit_runs_after_outer_commit(self, temp_db: LocalDatabase) -> None:
+        """Callbacks registered in nested scopes should run only after outer commit."""
+        events: list[str] = []
+
+        with temp_db.transaction():
+            temp_db.after_commit(lambda: events.append("outer"))
+            with temp_db.transaction():
+                temp_db.after_commit(lambda: events.append("inner"))
+                assert events == []
+            assert events == []
+
+        assert events == ["outer", "inner"]
+
+    def test_after_commit_discards_callbacks_on_rollback(self, temp_db: LocalDatabase) -> None:
+        """Callbacks in rolled-back scopes should never run."""
+        events: list[str] = []
+
+        with pytest.raises(RuntimeError, match="boom"):
+            with temp_db.transaction():
+                temp_db.after_commit(lambda: events.append("outer"))
+                with temp_db.transaction():
+                    temp_db.after_commit(lambda: events.append("inner"))
+                    raise RuntimeError("boom")
+
+        assert events == []
+
     def test_thread_local_connections(self, temp_dir: Path) -> None:
         """Test that each thread gets its own connection."""
         db_path = temp_dir / "thread_test.db"

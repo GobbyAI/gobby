@@ -211,7 +211,7 @@ class TestSemanticToolSearch:
 
     @pytest.mark.asyncio
     async def test_store_embedding_qdrant(self, temp_db: LocalDatabase) -> None:
-        """Test that store_embedding upserts to Qdrant."""
+        """Test that store_embedding upserts to Qdrant with tool metadata."""
         mock_vs = AsyncMock()
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
@@ -220,6 +220,8 @@ class TestSemanticToolSearch:
             server_name="test-server",
             project_id="proj-1",
             embedding=[0.1] * 768,
+            tool_name="my_tool",
+            description="Does useful things",
         )
 
         mock_vs.upsert.assert_called_once()
@@ -227,6 +229,8 @@ class TestSemanticToolSearch:
         assert call_kwargs["memory_id"] == "tool-1"
         assert call_kwargs["collection_name"] == "tool_embeddings"
         assert call_kwargs["payload"]["server_name"] == "test-server"
+        assert call_kwargs["payload"]["tool_name"] == "my_tool"
+        assert call_kwargs["payload"]["description"] == "Does useful things"
 
     @pytest.mark.asyncio
     async def test_store_embedding_no_vectorstore(
@@ -537,7 +541,7 @@ class TestSearchTools:
     def search_with_vs(self, temp_db: LocalDatabase) -> SemanticToolSearch:
         """Create SemanticToolSearch with a mock VectorStore."""
         mock_vs = AsyncMock()
-        mock_vs.search = AsyncMock(return_value=[])
+        mock_vs.search_with_payload = AsyncMock(return_value=[])
         return SemanticToolSearch(
             temp_db,
             openai_api_key="sk-test",
@@ -548,31 +552,31 @@ class TestSearchTools:
     async def test_search_tools_basic(
         self,
         search_with_vs: SemanticToolSearch,
-        mcp_manager: LocalMCPManager,
         sample_project: dict,
     ):
-        """Test basic tool search delegates to VectorStore."""
-        mcp_manager.upsert(
-            name="search-server",
-            transport="http",
-            url="http://localhost:8080",
-            project_id=sample_project["id"],
-        )
-        mcp_manager.cache_tools(
-            "search-server",
-            [
-                {"name": "search_tool", "description": "Search for things"},
-                {"name": "create_tool", "description": "Create new items"},
-            ],
-            project_id=sample_project["id"],
-        )
-        tools = mcp_manager.get_cached_tools("search-server", project_id=sample_project["id"])
-        tool_by_name = {t.name: t for t in tools}
-
-        # Mock VectorStore to return ranked results
-        search_with_vs._vector_store.search.return_value = [
-            (tool_by_name["search_tool"].id, 0.95),
-            (tool_by_name["create_tool"].id, 0.60),
+        """Test basic tool search delegates to VectorStore and reads payload."""
+        # Mock VectorStore to return ranked results with payload
+        search_with_vs._vector_store.search_with_payload.return_value = [
+            (
+                "tool-id-1",
+                0.95,
+                {
+                    "server_name": "search-server",
+                    "tool_name": "search_tool",
+                    "description": "Search for things",
+                    "project_id": sample_project["id"],
+                },
+            ),
+            (
+                "tool-id-2",
+                0.60,
+                {
+                    "server_name": "search-server",
+                    "tool_name": "create_tool",
+                    "description": "Create new items",
+                    "project_id": sample_project["id"],
+                },
+            ),
         ]
 
         with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
@@ -585,34 +589,37 @@ class TestSearchTools:
 
             assert len(results) == 2
             assert results[0].tool_name == "search_tool"
+            assert results[0].server_name == "search-server"
+            assert results[0].description == "Search for things"
             assert results[0].similarity > results[1].similarity
-            search_with_vs._vector_store.search.assert_called_once()
+            search_with_vs._vector_store.search_with_payload.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_search_tools_with_min_similarity(
         self,
         search_with_vs: SemanticToolSearch,
-        mcp_manager: LocalMCPManager,
         sample_project: dict,
     ):
         """Test search filters by minimum similarity."""
-        mcp_manager.upsert(
-            name="minsim-server",
-            transport="http",
-            url="http://localhost:8080",
-            project_id=sample_project["id"],
-        )
-        mcp_manager.cache_tools(
-            "minsim-server",
-            [{"name": "relevant_tool"}, {"name": "irrelevant_tool"}],
-            project_id=sample_project["id"],
-        )
-        tools = mcp_manager.get_cached_tools("minsim-server", project_id=sample_project["id"])
-        tool_by_name = {t.name: t for t in tools}
-
-        search_with_vs._vector_store.search.return_value = [
-            (tool_by_name["relevant_tool"].id, 0.90),
-            (tool_by_name["irrelevant_tool"].id, 0.30),  # Below threshold
+        search_with_vs._vector_store.search_with_payload.return_value = [
+            (
+                "tool-id-1",
+                0.90,
+                {
+                    "server_name": "minsim-server",
+                    "tool_name": "relevant_tool",
+                    "project_id": sample_project["id"],
+                },
+            ),
+            (
+                "tool-id-2",
+                0.30,
+                {
+                    "server_name": "minsim-server",
+                    "tool_name": "irrelevant_tool",
+                    "project_id": sample_project["id"],
+                },
+            ),
         ]
 
         with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
@@ -634,7 +641,7 @@ class TestSearchTools:
         sample_project: dict,
     ):
         """Test search passes server_filter to VectorStore."""
-        search_with_vs._vector_store.search.return_value = []
+        search_with_vs._vector_store.search_with_payload.return_value = []
 
         with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
             mock_embed.return_value = [0.5] * 768
@@ -645,7 +652,7 @@ class TestSearchTools:
                 server_filter="server-a",
             )
 
-            call_kwargs = search_with_vs._vector_store.search.call_args[1]
+            call_kwargs = search_with_vs._vector_store.search_with_payload.call_args[1]
             assert call_kwargs["filters"]["server_name"] == "server-a"
             assert call_kwargs["collection_name"] == SemanticToolSearch.TOOL_COLLECTION
 
@@ -665,3 +672,40 @@ class TestSearchTools:
             )
 
             assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_tools_internal_tools_resolved(
+        self,
+        search_with_vs: SemanticToolSearch,
+        sample_project: dict,
+    ):
+        """Test that internal tools (not in SQLite) resolve names from payload."""
+        import uuid
+
+        internal_tool_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "gobby-tasks/create_task"))
+
+        search_with_vs._vector_store.search_with_payload.return_value = [
+            (
+                internal_tool_id,
+                0.92,
+                {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "create_task",
+                    "description": "Create a new task",
+                    "project_id": sample_project["id"],
+                },
+            ),
+        ]
+
+        with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
+            mock_embed.return_value = [0.5] * 768
+
+            results = await search_with_vs.search_tools(
+                query="create a task",
+                project_id=sample_project["id"],
+            )
+
+            assert len(results) == 1
+            assert results[0].server_name == "gobby-tasks"
+            assert results[0].tool_name == "create_task"
+            assert results[0].description == "Create a new task"
