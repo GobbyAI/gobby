@@ -306,6 +306,17 @@ class LocalDatabase:
                 conn.execute("UPDATE ...")
         """
         conn = self.connection
+        if conn.in_transaction:
+            savepoint = self._next_savepoint_name()
+            conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield conn
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            except Exception:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                raise
+            return
         conn.execute("BEGIN")
         try:
             yield conn
@@ -322,6 +333,17 @@ class LocalDatabase:
         Use for atomic read-then-update patterns where deferred locking is insufficient.
         """
         conn = self.connection
+        if conn.in_transaction:
+            savepoint = self._next_savepoint_name()
+            conn.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield conn
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            except Exception:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                raise
+            return
         conn.execute("BEGIN IMMEDIATE")
         try:
             yield conn
@@ -329,6 +351,12 @@ class LocalDatabase:
         except Exception:
             conn.execute("ROLLBACK")
             raise
+
+    def _next_savepoint_name(self) -> str:
+        """Generate a per-thread savepoint name for nested transactions."""
+        counter = getattr(self._local, "savepoint_counter", 0) + 1
+        self._local.savepoint_counter = counter
+        return f"gobby_sp_{counter}"
 
     def close(self) -> None:
         """Close all database connections and clean up managers.

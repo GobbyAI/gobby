@@ -342,9 +342,6 @@ class ExpansionService:
             for phase in phase_list
         }
 
-        self.run_manager.mark_applying(run_id)
-        self.run_manager.append_log(run_id, level="info", message="Applying compiled expansion")
-
         epic_validation = "All expanded child tasks must be completed."
         plan_ref_block = ""
         if run.plan_file:
@@ -365,167 +362,173 @@ class ExpansionService:
             for task_item in tasks
         }
 
-        # Create phase subepics first for genuinely multi-phase expansions.
-        if multi_phase:
+        with self.db.transaction():
+            self.run_manager.mark_applying(run_id)
+            self.run_manager.append_log(run_id, level="info", message="Applying compiled expansion")
+
+            # Create phase subepics first for genuinely multi-phase expansions.
+            if multi_phase:
+                for phase in phase_list:
+                    result = self.task_manager.create_task_with_decomposition(
+                        project_id=task.project_id,
+                        title=phase["title"],
+                        task_type="epic",
+                        parent_task_id=task.id,
+                        category="planning",
+                        validation_criteria=epic_validation,
+                        created_in_session_id=session_id,
+                        description=phase.get("summary"),
+                    )
+                    phase_parent_map[phase["id"]] = result["task"]["id"]
+            else:
+                phase_parent_map = {phase["id"]: task.id for phase in phase_list}
+
+            tasks_by_phase: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for task_item in tasks:
+                tasks_by_phase[task_item["phase_id"]].append(task_item)
+
             for phase in phase_list:
-                result = self.task_manager.create_task_with_decomposition(
-                    project_id=task.project_id,
-                    title=phase["title"],
-                    task_type="epic",
-                    parent_task_id=task.id,
-                    category="planning",
-                    validation_criteria=epic_validation,
-                    created_in_session_id=session_id,
-                    description=phase.get("summary"),
-                )
-                phase_parent_map[phase["id"]] = result["task"]["id"]
-        else:
-            phase_parent_map = {phase["id"]: task.id for phase in phase_list}
+                phase_id = phase["id"]
+                parent_id = phase_parent_map[phase_id]
+                phase_number = phase_index_by_id[phase_id]
+                tdd_enabled = phase_has_tdd[phase_id]
 
-        tasks_by_phase: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for task_item in tasks:
-            tasks_by_phase[task_item["phase_id"]].append(task_item)
-
-        for phase in phase_list:
-            phase_id = phase["id"]
-            parent_id = phase_parent_map[phase_id]
-            phase_number = phase_index_by_id[phase_id]
-            tdd_enabled = phase_has_tdd[phase_id]
-
-            if tdd_enabled:
-                test_description = self._build_phase_test_description(phase, phase_number)
-                test_validation = self._build_phase_test_validation(phase)
-                test_result = self.task_manager.create_task_with_decomposition(
-                    project_id=task.project_id,
-                    title=f"[TEST] Phase {phase_number}: Write failing tests",
-                    description=f"{plan_ref_block}{test_description}"
-                    if plan_ref_block
-                    else test_description,
-                    priority=self._phase_priority(tasks_by_phase[phase_id]),
-                    task_type="task",
-                    parent_task_id=parent_id,
-                    category="test",
-                    validation_criteria=test_validation,
-                    created_in_session_id=session_id,
-                )
-                created_task_map[_stable_test_id(phase_id)] = test_result["task"]["id"]
-                phase_child_ids[phase_id].append(test_result["task"]["id"])
-                suggested_tests = phase.get("test_intent", {}).get("suggested_test_files") or []
-                if suggested_tests:
-                    self.af_manager.set_files(
-                        test_result["task"]["id"], suggested_tests, "expansion"
+                if tdd_enabled:
+                    test_description = self._build_phase_test_description(phase, phase_number)
+                    test_validation = self._build_phase_test_validation(phase)
+                    test_result = self.task_manager.create_task_with_decomposition(
+                        project_id=task.project_id,
+                        title=f"[TEST] Phase {phase_number}: Write failing tests",
+                        description=f"{plan_ref_block}{test_description}"
+                        if plan_ref_block
+                        else test_description,
+                        priority=self._phase_priority(tasks_by_phase[phase_id]),
+                        task_type="task",
+                        parent_task_id=parent_id,
+                        category="test",
+                        validation_criteria=test_validation,
+                        created_in_session_id=session_id,
                     )
-
-            for task_item in tasks_by_phase[phase_id]:
-                raw_description = task_item.get("description") or ""
-                description = (
-                    f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
-                )
-                create_result = self.task_manager.create_task_with_decomposition(
-                    project_id=task.project_id,
-                    title=task_item["title"],
-                    description=description or None,
-                    priority=task_item.get("priority", 2),
-                    task_type=task_item.get("task_type", "task"),
-                    parent_task_id=parent_id,
-                    category=task_item.get("category"),
-                    validation_criteria=task_item.get("validation"),
-                    created_in_session_id=session_id,
-                    labels=task_label_map.get(task_item["id"]),
-                )
-                created_id = create_result["task"]["id"]
-                created_task_map[task_item["id"]] = created_id
-                phase_child_ids[phase_id].append(created_id)
-                affected_files = task_item.get("affected_files") or []
-                if affected_files:
-                    self.af_manager.set_files(created_id, affected_files, "expansion")
-
-            if tdd_enabled:
-                ref_description = self._build_phase_refactor_description(phase, phase_number)
-                ref_result = self.task_manager.create_task_with_decomposition(
-                    project_id=task.project_id,
-                    title=f"[REF] Phase {phase_number}: Refactor with green tests",
-                    description=f"{plan_ref_block}{ref_description}"
-                    if plan_ref_block
-                    else ref_description,
-                    priority=self._phase_priority(tasks_by_phase[phase_id]),
-                    task_type="task",
-                    parent_task_id=parent_id,
-                    category="refactor",
-                    validation_criteria="All tests remain green after refactoring.",
-                    created_in_session_id=session_id,
-                )
-                created_task_map[_stable_ref_id(phase_id)] = ref_result["task"]["id"]
-                phase_child_ids[phase_id].append(ref_result["task"]["id"])
-
-        deps_by_task: dict[str, list[str]] = defaultdict(list)
-        external_phase_deps: dict[str, set[str]] = defaultdict(set)
-        for edge in dependency_edges:
-            deps_by_task[edge["task_id"]].append(edge["depends_on"])
-
-        for task_item in tasks:
-            phase_id = task_item["phase_id"]
-            stable_id = task_item["id"]
-            created_id = created_task_map[stable_id]
-            blockers = deps_by_task.get(stable_id, [])
-            is_tdd_task = task_item.get("category") in _TDD_CATEGORIES and phase_has_tdd[phase_id]
-            if is_tdd_task:
-                # All implementation tasks in a TDD phase depend on the phase's failing-test task.
-                self._add_dependency(created_id, created_task_map[_stable_test_id(phase_id)])
-            for blocker_id in blockers:
-                blocker_task = next((item for item in tasks if item["id"] == blocker_id), None)
-                if blocker_task is None:
-                    continue
-                blocker_phase_id = blocker_task["phase_id"]
-                if is_tdd_task and blocker_phase_id != phase_id:
-                    external_phase_deps[phase_id].add(
-                        self._external_blocker_id(blocker_task, phase_has_tdd)
+                    created_task_map[_stable_test_id(phase_id)] = test_result["task"]["id"]
+                    phase_child_ids[phase_id].append(test_result["task"]["id"])
+                    suggested_tests = (
+                        phase.get("test_intent", {}).get("suggested_test_files") or []
                     )
-                    continue
-                blocker_created = self._resolve_created_blocker(
-                    blocker_id,
-                    tasks_by_id={item["id"]: item for item in tasks},
-                    created_task_map=created_task_map,
-                    phase_has_tdd=phase_has_tdd,
-                )
-                if blocker_created:
-                    self._add_dependency(created_id, blocker_created)
+                    if suggested_tests:
+                        self.af_manager.set_files(test_result["task"]["id"], suggested_tests, "expansion")
 
-        for phase in phase_list:
-            phase_id = phase["id"]
-            if phase_has_tdd[phase_id]:
-                test_id = created_task_map[_stable_test_id(phase_id)]
-                for blocker_stable in sorted(external_phase_deps.get(phase_id, set())):
-                    blocker_created = created_task_map.get(blocker_stable)
-                    if blocker_created:
-                        self._add_dependency(test_id, blocker_created)
-                ref_id = created_task_map[_stable_ref_id(phase_id)]
                 for task_item in tasks_by_phase[phase_id]:
-                    if task_item.get("category") in _TDD_CATEGORIES:
-                        self._add_dependency(ref_id, created_task_map[task_item["id"]])
+                    raw_description = task_item.get("description") or ""
+                    description = (
+                        f"{plan_ref_block}{raw_description}" if plan_ref_block else raw_description
+                    )
+                    create_result = self.task_manager.create_task_with_decomposition(
+                        project_id=task.project_id,
+                        title=task_item["title"],
+                        description=description or None,
+                        priority=task_item.get("priority", 2),
+                        task_type=task_item.get("task_type", "task"),
+                        parent_task_id=parent_id,
+                        category=task_item.get("category"),
+                        validation_criteria=task_item.get("validation"),
+                        created_in_session_id=session_id,
+                        labels=task_label_map.get(task_item["id"]),
+                    )
+                    created_id = create_result["task"]["id"]
+                    created_task_map[task_item["id"]] = created_id
+                    phase_child_ids[phase_id].append(created_id)
+                    affected_files = task_item.get("affected_files") or []
+                    if affected_files:
+                        self.af_manager.set_files(created_id, affected_files, "expansion")
 
-        if multi_phase:
-            for phase in phase_list:
-                subepic_id = phase_parent_map[phase["id"]]
-                for child_id in phase_child_ids.get(phase["id"], []):
-                    self._add_dependency(subepic_id, child_id)
-                self._add_dependency(task.id, subepic_id)
-        else:
-            for child_id in phase_child_ids.get(phase_list[0]["id"], []):
-                self._add_dependency(task.id, child_id)
+                if tdd_enabled:
+                    ref_description = self._build_phase_refactor_description(phase, phase_number)
+                    ref_result = self.task_manager.create_task_with_decomposition(
+                        project_id=task.project_id,
+                        title=f"[REF] Phase {phase_number}: Refactor with green tests",
+                        description=f"{plan_ref_block}{ref_description}"
+                        if plan_ref_block
+                        else ref_description,
+                        priority=self._phase_priority(tasks_by_phase[phase_id]),
+                        task_type="task",
+                        parent_task_id=parent_id,
+                        category="refactor",
+                        validation_criteria="All tests remain green after refactoring.",
+                        created_in_session_id=session_id,
+                    )
+                    created_task_map[_stable_ref_id(phase_id)] = ref_result["task"]["id"]
+                    phase_child_ids[phase_id].append(ref_result["task"]["id"])
 
-        created_ids = list(dict.fromkeys(created_task_map.values()))
-        run = self.run_manager.save_apply_result(
-            run_id,
-            task_id_map=created_task_map,
-            created_task_ids=created_ids,
-            checkpoints={
-                "apply_validation": self.validate_applied_run(
-                    run_id, compiled_spec=spec, task_id_map=created_task_map
+            deps_by_task: dict[str, list[str]] = defaultdict(list)
+            external_phase_deps: dict[str, set[str]] = defaultdict(set)
+            for edge in dependency_edges:
+                deps_by_task[edge["task_id"]].append(edge["depends_on"])
+
+            for task_item in tasks:
+                phase_id = task_item["phase_id"]
+                stable_id = task_item["id"]
+                created_id = created_task_map[stable_id]
+                blockers = deps_by_task.get(stable_id, [])
+                is_tdd_task = (
+                    task_item.get("category") in _TDD_CATEGORIES and phase_has_tdd[phase_id]
                 )
-            },
-            completed=True,
-        )
+                if is_tdd_task:
+                    # All implementation tasks in a TDD phase depend on the phase's failing-test task.
+                    self._add_dependency(created_id, created_task_map[_stable_test_id(phase_id)])
+                for blocker_id in blockers:
+                    blocker_task = next((item for item in tasks if item["id"] == blocker_id), None)
+                    if blocker_task is None:
+                        continue
+                    blocker_phase_id = blocker_task["phase_id"]
+                    if is_tdd_task and blocker_phase_id != phase_id:
+                        external_phase_deps[phase_id].add(
+                            self._external_blocker_id(blocker_task, phase_has_tdd)
+                        )
+                        continue
+                    blocker_created = self._resolve_created_blocker(
+                        blocker_id,
+                        tasks_by_id={item["id"]: item for item in tasks},
+                        created_task_map=created_task_map,
+                        phase_has_tdd=phase_has_tdd,
+                    )
+                    if blocker_created:
+                        self._add_dependency(created_id, blocker_created)
+
+            for phase in phase_list:
+                phase_id = phase["id"]
+                if phase_has_tdd[phase_id]:
+                    test_id = created_task_map[_stable_test_id(phase_id)]
+                    for blocker_stable in sorted(external_phase_deps.get(phase_id, set())):
+                        blocker_created = created_task_map.get(blocker_stable)
+                        if blocker_created:
+                            self._add_dependency(test_id, blocker_created)
+                    ref_id = created_task_map[_stable_ref_id(phase_id)]
+                    for task_item in tasks_by_phase[phase_id]:
+                        if task_item.get("category") in _TDD_CATEGORIES:
+                            self._add_dependency(ref_id, created_task_map[task_item["id"]])
+
+            if multi_phase:
+                for phase in phase_list:
+                    subepic_id = phase_parent_map[phase["id"]]
+                    for child_id in phase_child_ids.get(phase["id"], []):
+                        self._add_dependency(subepic_id, child_id)
+                    self._add_dependency(task.id, subepic_id)
+            else:
+                for child_id in phase_child_ids.get(phase_list[0]["id"], []):
+                    self._add_dependency(task.id, child_id)
+
+            created_ids = list(dict.fromkeys(created_task_map.values()))
+            run = self.run_manager.save_apply_result(
+                run_id,
+                task_id_map=created_task_map,
+                created_task_ids=created_ids,
+                checkpoints={
+                    "apply_validation": self.validate_applied_run(
+                        run_id, compiled_spec=spec, task_id_map=created_task_map
+                    )
+                },
+                completed=True,
+            )
         self.run_manager.append_log(
             run_id,
             level="info",
