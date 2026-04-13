@@ -69,6 +69,7 @@ class TestSequentialReviewLoopE2E:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Step 1: Create epic task
         raw_result = mcp_client.call_tool(
@@ -80,7 +81,6 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)
@@ -100,7 +100,6 @@ class TestSequentialReviewLoopE2E:
                     "parent_task_id": epic_id,
                     "category": "code",
                     "validation_criteria": "Tests pass and task is functional",
-                    "session_id": session_id,
                 },
             )
             result = unwrap_result(raw_result)
@@ -115,10 +114,7 @@ class TestSequentialReviewLoopE2E:
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="claim_task",
-            arguments={
-                "task_id": subtask_ids[0],
-                "session_id": session_id,
-            },
+            arguments={"task_id": subtask_ids[0]},
         )
         result = unwrap_result(raw_result)
         assert result.get("success") is not False, f"Claim subtask 1 failed: {result}"
@@ -160,10 +156,7 @@ class TestSequentialReviewLoopE2E:
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="claim_task",
-            arguments={
-                "task_id": subtask_ids[1],
-                "session_id": session_id,
-            },
+            arguments={"task_id": subtask_ids[1]},
         )
         result = unwrap_result(raw_result)
         assert result.get("success") is not False, f"Claim subtask 2 failed: {result}"
@@ -252,6 +245,7 @@ class TestSequentialReviewLoopE2E:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create epic
         raw_result = mcp_client.call_tool(
@@ -262,7 +256,6 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         epic_result = unwrap_result(raw_result)
@@ -278,7 +271,6 @@ class TestSequentialReviewLoopE2E:
                 "parent_task_id": epic_id,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         subtask1_result = unwrap_result(raw_result)
@@ -295,7 +287,6 @@ class TestSequentialReviewLoopE2E:
                 "parent_task_id": epic_id,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         subtask2_result = unwrap_result(raw_result)
@@ -345,7 +336,7 @@ class TestSequentialReviewLoopE2E:
         mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="claim_task",
-            arguments={"task_id": subtask1_id, "session_id": session_id},
+            arguments={"task_id": subtask1_id},
         )
         mcp_client.call_tool(
             server_name="gobby-tasks",
@@ -404,6 +395,7 @@ class TestSequentialReviewLoopE2E:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create epic
         raw_result = mcp_client.call_tool(
@@ -414,7 +406,6 @@ class TestSequentialReviewLoopE2E:
                 "task_type": "epic",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         epic_result = unwrap_result(raw_result)
@@ -431,7 +422,6 @@ class TestSequentialReviewLoopE2E:
                 "priority": 1,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         task1_result = unwrap_result(raw_result)
@@ -448,7 +438,6 @@ class TestSequentialReviewLoopE2E:
                 "priority": 3,
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         unwrap_result(raw_result)  # task2_id not needed - we only verify task1 is suggested first
@@ -498,6 +487,7 @@ class TestReviewStepE2E:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create task
         raw_result = mcp_client.call_tool(
@@ -508,7 +498,6 @@ class TestReviewStepE2E:
                 "task_type": "task",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)
@@ -518,7 +507,7 @@ class TestReviewStepE2E:
         mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="claim_task",
-            arguments={"task_id": task_id, "session_id": session_id},
+            arguments={"task_id": task_id},
         )
 
         # Close task with skip reason - should close directly
@@ -568,6 +557,7 @@ class TestReviewStepE2E:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create task
         raw_result = mcp_client.call_tool(
@@ -578,7 +568,6 @@ class TestReviewStepE2E:
                 "task_type": "task",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)
@@ -588,7 +577,7 @@ class TestReviewStepE2E:
         mcp_client.call_tool(
             server_name="gobby-tasks",
             tool_name="mark_task_needs_review",
-            arguments={"task_id": task_id, "session_id": session_id},
+            arguments={"task_id": task_id},
         )
 
         # Verify in needs_review

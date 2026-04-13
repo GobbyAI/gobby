@@ -431,8 +431,7 @@ class TestWorktreeMergeIntegration:
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
-        session_id = session_result["id"]
-
+        mcp_client.session_id = session_result["id"]
         # Create a task to link
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
@@ -442,7 +441,6 @@ class TestWorktreeMergeIntegration:
                 "task_type": "task",
                 "category": "code",
                 "validation_criteria": "Tests pass and task is functional",
-                "session_id": session_id,
             },
         )
         result = unwrap_result(raw_result)

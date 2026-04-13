@@ -58,6 +58,23 @@ class CodexProvider(LLMProvider):
         self.logger = logger
         self._client = None
 
+        # Resolve default model from provider config → global config.
+        # Pydantic defaults guarantee llm_providers is set with a non-None
+        # default_model, but we still guard against config mutation/tests
+        # passing partial objects by walking the chain through the local
+        # `providers` variable rather than re-accessing config.llm_providers.
+        providers = getattr(config, "llm_providers", None)
+        codex_cfg = getattr(providers, "codex", None) if providers else None
+        resolved_model: str | None = getattr(codex_cfg, "default_model", None) or getattr(
+            providers, "default_model", None
+        )
+        if not resolved_model:
+            raise ValueError(
+                "CodexProvider requires a default model. Set "
+                "llm_providers.codex.default_model or llm_providers.default_model."
+            )
+        self._default_model: str = resolved_model
+
         # Determine auth mode from config or parameter
         self._auth_mode: AuthMode = "subscription"  # Default
         if auth_mode:
@@ -134,9 +151,9 @@ class CodexProvider(LLMProvider):
             Model name string
         """
         if task == "summary":
-            return self.config.session_summary.model or "gpt-4o"
+            return self.config.session_summary.model or self._default_model
         else:
-            return "gpt-4o"
+            return self._default_model
 
     async def generate_summary(
         self, context: dict[str, Any], prompt_template: str | None = None
@@ -202,6 +219,8 @@ class CodexProvider(LLMProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """
         Generate text using Codex/OpenAI.
@@ -211,7 +230,7 @@ class CodexProvider(LLMProvider):
 
         try:
             response = await self._client.chat.completions.create(
-                model=model or "gpt-4o",
+                model=model or self._default_model,
                 messages=[
                     {
                         "role": "system",
@@ -223,8 +242,9 @@ class CodexProvider(LLMProvider):
             )
             return response.choices[0].message.content or ""
         except Exception as e:
-            self.logger.error(f"Failed to generate text with Codex: {e}")
-            raise RuntimeError(f"Failed to generate text with Codex: {e}") from e
+            caller_label = f"[{caller}]" if caller else ""
+            self.logger.error(f"Failed to generate text{caller_label} with Codex: {e}")
+            raise RuntimeError(f"Failed to generate text{caller_label} with Codex: {e}") from e
 
     async def generate_json(
         self,
@@ -244,7 +264,7 @@ class CodexProvider(LLMProvider):
 
         try:
             response = await self._client.chat.completions.create(
-                model=model or "gpt-4o",
+                model=model or self._default_model,
                 messages=[
                     {
                         "role": "system",
@@ -268,11 +288,10 @@ class CodexProvider(LLMProvider):
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Generate a text description of an image using OpenAI's vision capabilities.
-
-        Uses GPT-4o for vision tasks.
 
         Args:
             image_path: Path to the image file
@@ -309,9 +328,8 @@ class CodexProvider(LLMProvider):
             if context:
                 prompt = f"{context}\n\n{prompt}"
 
-            # Use GPT-4o for vision
             response = await self._client.chat.completions.create(
-                model="gpt-4o",
+                model=model or self._default_model,
                 messages=[
                     {
                         "role": "user",

@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.memory.protocol import MediaAttachment
 from gobby.storage.database import DatabaseProtocol
@@ -57,12 +57,14 @@ class Memory:
     created_at: str
     updated_at: str
     project_id: str | None = None
-    source_type: Literal["user", "session", "inferred"] | None = None
+    source_type: Literal["user", "agent"] = "agent"
     source_session_id: str | None = None
     access_count: int = 0
     last_accessed_at: str | None = None
     tags: list[str] | None = None
     media: str | None = None  # JSON-serialized MediaAttachment data
+    similarity: float | None = None  # Set at search time, not persisted
+    search_via: str | None = None  # Set at search time, not persisted
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Memory":
@@ -71,6 +73,11 @@ class Memory:
 
         # Handle media column (may not exist in older databases)
         media = row["media"] if "media" in row.keys() else None
+        raw_source_type = row["source_type"]
+        source_type = cast(
+            Literal["user", "agent"],
+            raw_source_type if raw_source_type in ("user", "agent") else "agent",
+        )
 
         return cls(
             id=row["id"],
@@ -79,7 +86,7 @@ class Memory:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             project_id=row["project_id"],
-            source_type=row["source_type"],
+            source_type=source_type,
             source_session_id=row["source_session_id"],
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],
@@ -124,7 +131,7 @@ class LocalMemoryManager:
         content: str,
         memory_type: str = "fact",
         project_id: str | None = None,
-        source_type: str = "user",
+        source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
         media: str | None = None,
@@ -622,6 +629,26 @@ class LocalMemoryManager:
                 WHERE source_id = ? OR target_id = ?
                 """,
                 (memory_id, memory_id),
+            )
+            return cursor.rowcount
+
+    def delete_project_crossrefs(self, project_id: str) -> int:
+        """Delete all cross-references for memories belonging to a project.
+
+        Args:
+            project_id: The project ID whose crossrefs should be deleted.
+
+        Returns:
+            Number of crossrefs deleted.
+        """
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM memory_crossrefs
+                WHERE source_id IN (SELECT id FROM memories WHERE project_id = ?)
+                   OR target_id IN (SELECT id FROM memories WHERE project_id = ?)
+                """,
+                (project_id, project_id),
             )
             return cursor.rowcount
 

@@ -1,7 +1,7 @@
 """Tests for cli/pipelines.py -- targeting uncovered lines.
 
 Covers: get_workflow_loader, get_project_path, _get_project_id, get_pipeline_executor,
-        _try_daemon_run, parse_input, show_pipeline, run_pipeline (daemon/local/lobster paths),
+        _try_daemon_run, parse_input, show_pipeline, run_pipeline (daemon/local paths),
         status_pipeline, approve/reject, history, import_pipeline.
 Lines targeted: 23-99, 105, 195-221, 264-384, 422-498, 534-536, 628-691
 """
@@ -225,51 +225,8 @@ class TestRunPipeline:
         data = json.loads(result.output)
         assert data["status"] == "waiting_approval"
 
-    def test_run_no_name_no_lobster(self, runner: CliRunner) -> None:
+    def test_run_no_name(self, runner: CliRunner) -> None:
         result = runner.invoke(pipelines, ["run"])
-        assert result.exit_code == 1
-
-    @patch("gobby.cli.pipelines._get_project_id", return_value="")
-    @patch("gobby.cli.pipelines.get_pipeline_executor")
-    @patch("gobby.cli.pipelines.LobsterImporter")
-    def test_run_lobster_file(
-        self,
-        mock_importer_cls: MagicMock,
-        mock_executor_fn: MagicMock,
-        mock_proj_id: MagicMock,
-        runner: CliRunner,
-        tmp_path: Path,
-    ) -> None:
-        lobster_file = tmp_path / "test.lobster"
-        lobster_file.write_text("pipeline test")
-
-        pipeline = MagicMock()
-        pipeline.name = "test"
-        mock_importer_cls.return_value.import_file.return_value = pipeline
-
-        execution = MagicMock()
-        execution.id = "ex-1"
-        execution.status = MagicMock()
-        execution.status.value = "completed"
-        execution.pipeline_name = "test"
-        execution.outputs_json = None
-        mock_executor_fn.return_value.execute = MagicMock(return_value=execution)
-
-        # Mock asyncio.run to just call the coroutine
-        with patch("gobby.cli.pipelines.asyncio.run", return_value=execution):
-            result = runner.invoke(pipelines, ["run", "--lobster", str(lobster_file)])
-
-        assert result.exit_code == 0
-        assert "completed" in result.output
-
-    @patch("gobby.cli.pipelines.LobsterImporter")
-    def test_run_lobster_not_found(
-        self, mock_importer_cls: MagicMock, runner: CliRunner, tmp_path: Path
-    ) -> None:
-        lobster_file = tmp_path / "missing.lobster"
-        lobster_file.write_text("")  # must exist for click.Path(exists=True)
-        mock_importer_cls.return_value.import_file.side_effect = FileNotFoundError("not found")
-        result = runner.invoke(pipelines, ["run", "--lobster", str(lobster_file)])
         assert result.exit_code == 1
 
     @patch("gobby.cli.pipelines._get_project_id", return_value="")

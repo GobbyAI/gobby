@@ -626,6 +626,7 @@ class TestCreateTaskTool:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
@@ -644,7 +645,7 @@ class TestCreateTaskTool:
                 "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.update_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "proj-1"}
@@ -661,11 +662,9 @@ class TestCreateTaskTool:
                 # Task should be created
                 assert result["id"] == "550e8400-e29b-41d4-a716-446655440021"
 
-                # update_task should be called with assignee and status
-                mock_task_manager.update_task.assert_called_once_with(
+                mock_task_manager.claim_task.assert_called_once_with(
                     "550e8400-e29b-41d4-a716-446655440021",
-                    assignee="test-session",
-                    status="in_progress",
+                    "test-session",
                 )
 
                 # Session links should include both "created" and "claimed"
@@ -697,6 +696,7 @@ class TestCreateTaskTool:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -714,7 +714,7 @@ class TestCreateTaskTool:
                 "task": {"id": "550e8400-e29b-41d4-a716-446655440021"},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.update_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "proj-1"}
@@ -737,6 +737,130 @@ class TestCreateTaskTool:
                 merged_vars = call_args[0][1]
                 assert merged_vars["task_claimed"] is True
                 assert mock_task.id in merged_vars["claimed_tasks"]
+
+
+# =============================================================================
+# Cross-Project Claim Blocking Tests (create_task)
+# =============================================================================
+
+
+class TestCreateTaskCrossProjectClaimBlocking:
+    """Tests for cross-project claim blocking in create_task."""
+
+    @pytest.fixture(autouse=True)
+    def _set_session_context(self):
+        with session_context_for_test("test-session"):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_create_task_claim_skipped_when_cross_project(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """create_task(claim=True) creates the task but skips claiming when cross-project."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+        ):
+            mock_st_instance = MagicMock()
+            MockSessionTaskManager.return_value = mock_st_instance
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "test-session"
+            # Session is in proj-2, but task will be created in proj-1
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-2")
+            MockSessionManager.return_value = mock_session_manager
+
+            # Mock project resolution so explicit project="proj-1" resolves
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.resolve_ref.return_value = MagicMock(id="proj-1")
+            MockProjManager.return_value = mock_proj_instance
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task = MagicMock()
+            mock_task.id = "550e8400-e29b-41d4-a716-446655440099"
+            mock_task.seq_num = 500
+            mock_task_manager.create_task_with_decomposition.return_value = {
+                "task": {"id": mock_task.id},
+            }
+            mock_task_manager.get_task.return_value = mock_task
+
+            result = await registry.call(
+                "create_task",
+                {
+                    "title": "Cross-project task",
+                    "category": "research",
+                    "claim": True,
+                    "project": "proj-1",
+                },
+            )
+
+            # Task should be created
+            assert result["id"] == mock_task.id
+            # Warning about skipped claim
+            assert "warning" in result
+            assert "different project" in result["warning"].lower()
+            # update_task should NOT have been called (claim skipped)
+            mock_task_manager.update_task.assert_not_called()
+            # Session link for "created" should still exist, but NOT "claimed"
+            mock_st_instance.link_task.assert_called_once_with(
+                "test-session", mock_task.id, "created"
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_task_claim_allowed_when_same_project(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """create_task(claim=True) claims normally when projects match."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+        ):
+            mock_st_instance = MagicMock()
+            MockSessionTaskManager.return_value = mock_st_instance
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            MockSessionManager.return_value = mock_session_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task = MagicMock()
+            mock_task.id = "550e8400-e29b-41d4-a716-446655440099"
+            mock_task.seq_num = 500
+            mock_task.status = "in_progress"
+            mock_task.assignee = "test-session"
+            mock_task_manager.create_task_with_decomposition.return_value = {
+                "task": {"id": mock_task.id},
+            }
+            mock_task_manager.get_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
+
+            with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
+                mock_ctx.return_value = {"id": "proj-1"}
+
+                result = await registry.call(
+                    "create_task",
+                    {
+                        "title": "Same-project task",
+                        "category": "research",
+                        "claim": True,
+                    },
+                )
+
+                # Task should be created and claimed
+                assert result["id"] == mock_task.id
+                assert "warning" not in result
+                mock_task_manager.claim_task.assert_called_once_with(
+                    mock_task.id,
+                    "test-session",
+                )
 
 
 # =============================================================================
@@ -764,6 +888,9 @@ class TestGetTaskTool:
 
             assert result["id"] == sample_task.id
             assert result["title"] == "Test Task"
+            assert "state" in result
+            assert "compat" in result
+            assert result["state"]["is_blocked"] is False
             assert "dependencies" in result
             assert "blocked_by" in result["dependencies"]
             assert "blocking" in result["dependencies"]
@@ -859,6 +986,8 @@ class TestGetTaskTool:
             result = await registry.call("get_task", {"task_id": sample_task.id, "brief": False})
 
             assert result["id"] == sample_task.id
+            assert "state" in result
+            assert "compat" in result
             assert "description" in result
             assert "validation_criteria" in result
             assert "dependencies" in result
@@ -1398,8 +1527,19 @@ class TestCloseTaskTool:
                 },
             )
 
-            # When override_justification is provided, task routes to review
-            assert result.get("routed_to_review") is True
+            # When override_justification is provided, task escalates for human review.
+            # The validation_override_reason is now persisted in the same write as
+            # the escalation (no separate update_task call).
+            assert result.get("routed_to_escalation") is True
+            mock_task_manager.escalate_task.assert_called_once_with(
+                "550e8400-e29b-41d4-a716-446655440000",
+                reason="Validation override requested: Manually verified",
+                validation_override_reason="Manually verified",
+            )
+            assert not any(
+                call.kwargs.get("validation_override_reason") is not None
+                for call in mock_task_manager.update_task.call_args_list
+            )
 
     @pytest.mark.asyncio
     async def test_close_task_out_of_repo_blocked_when_session_had_edits(
@@ -2000,20 +2140,17 @@ class TestRegistryIntegration:
     def test_merged_registries_available(self, task_registry) -> None:
         """Test tools from merged registries are available."""
         merged_tools = [
-            # From task_validation
-            "validate_task",
-            # From task_expansion (skill-based)
-            "save_expansion_spec",
-            "execute_expansion",
-            "get_expansion_spec",
             # From task_dependencies
             "add_dependency",
             "remove_dependency",
             # From task_readiness
             "list_ready_tasks",
             "list_blocked_tasks",
-            # From task_sync
-            "sync_tasks",
+            # From task_sync (commit tools only)
+            "link_commit",
+            "auto_link_commits",
+            # From affected_files (core only)
+            "update_observed_files",
         ]
 
         tools_list = task_registry.list_tools()
@@ -2165,6 +2302,7 @@ class TestSessionVariableMirroring:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -2175,6 +2313,7 @@ class TestSessionVariableMirroring:
             mock_task = MagicMock()
             mock_task.id = task_uuid
             mock_task.seq_num = 200
+            mock_task.project_id = "proj-1"
             mock_task.status = "open"
             mock_task.assignee = None
             mock_task_manager.get_task.return_value = mock_task
@@ -2288,6 +2427,7 @@ class TestSessionVariableMirroring:
 
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "test-session"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
@@ -2304,7 +2444,7 @@ class TestSessionVariableMirroring:
                 "task": {"id": task_uuid},
             }
             mock_task_manager.get_task.return_value = mock_task
-            mock_task_manager.update_task.return_value = mock_task
+            mock_task_manager.claim_task.return_value = mock_task
 
             with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
                 mock_ctx.return_value = {"id": "proj-1"}

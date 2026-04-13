@@ -140,11 +140,6 @@ export function useFiles() {
   const expandedDirsRef = useRef(expandedDirs)
   expandedDirsRef.current = expandedDirs
 
-  // Fetch projects on mount
-  useEffect(() => {
-    fetchProjects()
-  }, [])
-
   const fetchProjects = useCallback(async () => {
     try {
       const res = await fetch(`${baseUrl}/api/files/projects`)
@@ -320,6 +315,11 @@ export function useFiles() {
       return prev
     })
   }, [])
+
+  // Fetch projects on mount
+  useEffect(() => {
+    fetchProjects()
+  }, [fetchProjects])
 
   const getImageUrl = useCallback((projectId: string, path: string) => {
     return `${baseUrl}/api/files/image?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`

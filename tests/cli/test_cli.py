@@ -192,7 +192,7 @@ class TestCLICommands:
         """Test status --help displays help."""
         result = runner.invoke(cli, ["status", "--help"])
         assert result.exit_code == 0
-        assert "Show Gobby daemon status" in result.output
+        assert "operational health dashboard" in result.output
 
     def test_restart_help(self, runner: CliRunner) -> None:
         """Test restart --help displays help."""

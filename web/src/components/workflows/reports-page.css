@@ -401,10 +401,6 @@
   font-family: inherit;
 }
 
-.reports-detail-stat-value--cost {
-  color: #4ade80;
-}
-
 /* Tag badges in detail */
 .reports-detail-tag {
   display: inline-flex;

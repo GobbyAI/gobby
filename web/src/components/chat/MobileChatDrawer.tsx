@@ -38,7 +38,7 @@ export function MobileChatDrawer({
   const [isOpen, setIsOpen] = useState(false)
   const [showAgentPicker, setShowAgentPicker] = useState(false)
 
-  const activeSession = sessions.find((s) => s.external_id === activeSessionId)
+  const activeSession = sessions.find((s) => s.id === activeSessionId)
 
   const handleNewChat = () => {
     if (agentDefinitions.length <= 1) {
@@ -120,7 +120,7 @@ export function MobileChatDrawer({
               const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
               const titleText = session.title || `Chat ${session.ref}`;
               const displayTitle = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
-              const isActive = session.external_id === activeSessionId
+              const isActive = session.id === activeSessionId
               return (
                 <div
                   key={session.id}

@@ -1,6 +1,6 @@
 # Rule Templates Reference
 
-This directory contains 15 bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing DB rows are never overwritten; drift is detected via hash comparison. See `../CLAUDE.md` for the template vs active enforcement distinction.
+This directory contains 16 bundled rule groups. These are **templates** — they are synced to the `workflow_definitions` DB table on daemon start with `enabled: true` by default. Existing DB rows are never overwritten; drift is detected via hash comparison. See `../CLAUDE.md` for the template vs active enforcement distinction.
 
 ## Rule Groups
 
@@ -13,13 +13,14 @@ This directory contains 15 bundled rule groups. These are **templates** — they
 | `stop-gates` | `stop-gates/` | 2 | Require task close and epic tree close before stop |
 | `plan-mode` | `plan-mode/` | 3 | Detect enter/exit plan mode, reset on session start |
 | `memory-lifecycle` | `memory-lifecycle/` | 6 | Memory recall, digest, capture, title generation, tracking reset |
-| `context-handoff` | `context-handoff/` | 8 | Session summary injection (clear/compact/resume), error triage, task context, baseline dirty files |
+| `context-handoff` | `context-handoff/` | 7 | Session summary injection (clear/compact/resume), task context, baseline dirty files |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
 | `messaging` | `messaging/` | 4 | P2P messaging: deliver pending, activate commands, tool restrictions, exit conditions |
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
-| `skill-discovery` | `skill-discovery/` | 1 | Auto-search installed skills on prompt, inject matches + hub search nudge |
+| `skill-discovery` | `skill-discovery/` | 3 | Inject language skills on first file read, reset injection tracking on context loss |
+| `context7` | `context7/` | 1 | Block first code file write/edit, inject context7 docs skill |
 | `deprecated/` | `deprecated/` | — | Old rules excluded from sync |
 
 ## File Convention

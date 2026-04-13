@@ -161,6 +161,43 @@ class VectorStore:
 
         return [(str(point.id), point.score) for point in results.points]
 
+    async def search_with_payload(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        filters: dict[str, str] | None = None,
+        collection_name: str | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for similar vectors, returning payloads.
+
+        Args:
+            query_embedding: Query vector.
+            limit: Maximum number of results.
+            filters: Optional field filters (e.g. {"project_id": "proj-A"}).
+            collection_name: Optional collection name override.
+
+        Returns:
+            List of (memory_id, score, payload) tuples sorted by relevance (desc).
+        """
+        client = self._ensure_client()
+
+        query_filter = None
+        if filters:
+            conditions = [
+                FieldCondition(key=k, match=MatchValue(value=v)) for k, v in filters.items()
+            ]
+            query_filter = Filter(must=conditions)
+
+        results = await asyncio.to_thread(
+            client.query_points,
+            collection_name=collection_name or self._collection_name,
+            query=query_embedding,
+            query_filter=query_filter,
+            limit=limit,
+        )
+
+        return [(str(point.id), point.score, point.payload or {}) for point in results.points]
+
     async def set_payload(
         self,
         memory_id: str,

@@ -58,15 +58,14 @@ def _post_to_daemon(port: int, payload: bytes) -> None:
 
 
 def _extract_payload(data: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract the fields we care about from Claude Code's statusline JSON."""
+    """Extract the token usage fields we care about from Claude Code's statusline JSON."""
     session_id = data.get("session_id")
     if not session_id:
         return None
 
     cost = data.get("cost", {})
-    total_cost = cost.get("total_cost_usd")
-    if total_cost is None:
-        return None
+    if not isinstance(cost, dict):
+        cost = {}
 
     model_info = data.get("model", {})
     context_window = data.get("context_window", {})
@@ -74,7 +73,6 @@ def _extract_payload(data: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "session_id": session_id,
         "model_id": model_info.get("id", ""),
-        "total_cost_usd": total_cost,
         "input_tokens": cost.get("input_tokens", 0),
         "output_tokens": cost.get("output_tokens", 0),
         "cache_creation_tokens": cost.get("cache_creation_tokens", 0),

@@ -291,6 +291,30 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
 
 
 @pytest.mark.asyncio
+async def test_stale_review_task_releases_claim_without_status_regression(
+    heartbeat_with_tasks: PipelineHeartbeat,
+    task_manager: LocalTaskManager,
+    temp_db: LocalDatabase,
+) -> None:
+    """needs_review task with dead assignee should only clear ownership."""
+    _seed_db(temp_db)
+    task = task_manager.create_task(
+        title="Review me",
+        task_type="task",
+        project_id=PROJECT_ID,
+    )
+    task_manager.update_task(task.id, status="needs_review", assignee="sess-does-not-exist")
+
+    recovered = await heartbeat_with_tasks.check_stale_tasks()
+    assert recovered == 1
+
+    updated = task_manager.get_task(task.id)
+    assert updated is not None
+    assert updated.status == "needs_review"
+    assert updated.assignee is None
+
+
+@pytest.mark.asyncio
 async def test_task_with_active_agent_run_not_recovered(
     heartbeat_with_tasks: PipelineHeartbeat,
     task_manager: LocalTaskManager,

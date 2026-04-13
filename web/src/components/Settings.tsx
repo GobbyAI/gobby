@@ -1,7 +1,10 @@
-import type { Settings, Theme } from '../hooks/useSettings'
+import { cn } from '../lib/utils'
+import type { Settings, Theme, VoiceInputMode } from '../hooks/useSettings'
 import { MODEL_OPTIONS } from '../hooks/useSettings'
+import { useVoiceCapabilities } from '../hooks/useVoiceCapabilities'
 import type { ChatMode } from '../types/chat'
 import { CHAT_MODES } from '../types/chat'
+import { Switch } from './ui/Switch'
 
 interface SettingsProps {
   isOpen: boolean
@@ -11,6 +14,9 @@ interface SettingsProps {
   onModelChange: (model: string) => void
   onThemeChange: (theme: Theme) => void
   onDefaultChatModeChange: (mode: ChatMode) => void
+  onSttEnabledChange: (enabled: boolean) => void
+  onTtsEnabledChange: (enabled: boolean) => void
+  onVoiceInputModeChange: (mode: VoiceInputMode) => void
   onReset: () => void
 }
 
@@ -22,9 +28,17 @@ export function Settings({
   onModelChange,
   onThemeChange,
   onDefaultChatModeChange,
+  onSttEnabledChange,
+  onTtsEnabledChange,
+  onVoiceInputModeChange,
   onReset,
 }: SettingsProps) {
+  const caps = useVoiceCapabilities()
+
   if (!isOpen) return null
+
+  const showVoiceSection = caps.sttConfigEnabled || caps.ttsConfigEnabled
+  const showModeSelector = caps.sttConfigEnabled && settings.sttEnabled
 
   return (
     <>
@@ -104,6 +118,77 @@ export function Settings({
               ))}
             </div>
           </div>
+
+          {showVoiceSection && (
+            <div className="setting-item">
+              <label>Voice</label>
+              <div className="settings-stack">
+                {caps.sttConfigEnabled && (
+                  <div className="settings-row">
+                    <div className="settings-row__content">
+                      <span className="settings-row__label">Speech to Text</span>
+                      {!caps.loading && !caps.sttAvailable && (
+                        <span className="settings-row__hint">
+                          Requires secure context and server-ready STT
+                        </span>
+                      )}
+                    </div>
+                    <Switch
+                      checked={settings.sttEnabled}
+                      onChange={onSttEnabledChange}
+                      disabled={!caps.loading && !caps.sttAvailable}
+                      aria-label="Enable speech to text"
+                    />
+                  </div>
+                )}
+
+                {caps.ttsConfigEnabled && (
+                  <div className="settings-row">
+                    <div className="settings-row__content">
+                      <span className="settings-row__label">Text to Speech</span>
+                      {!caps.loading && !caps.ttsAvailable && (
+                        <span className="settings-row__hint">
+                          Voice output is configured but currently unavailable
+                        </span>
+                      )}
+                    </div>
+                    <Switch
+                      checked={settings.ttsEnabled}
+                      onChange={onTtsEnabledChange}
+                      disabled={!caps.loading && !caps.ttsAvailable}
+                      aria-label="Enable text to speech"
+                    />
+                  </div>
+                )}
+
+                {showModeSelector && (
+                  <div className="settings-row settings-row--stacked">
+                    <div className="settings-row__content">
+                      <span className="settings-row__label">Input mode</span>
+                    </div>
+                    <div className="theme-selector">
+                      {([
+                        ['ptt', 'Push to Talk'],
+                        ['vad', 'VAD'],
+                      ] as const).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={cn(
+                            'theme-option',
+                            settings.voiceInputMode === mode && 'active',
+                          )}
+                          onClick={() => onVoiceInputModeChange(mode)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="settings-actions">
             <button className="reset-button" onClick={onReset}>

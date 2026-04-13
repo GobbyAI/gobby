@@ -58,6 +58,9 @@ async def test_summarize_one(summarizer: SymbolSummarizer) -> None:
     result = await summarizer.summarize_one(sym, "def greet(): return 'hello'")
     assert result == "Returns a greeting string."
 
+    provider = summarizer._llm.get_provider.return_value
+    assert provider.generate_text.await_args.kwargs["caller"] == "code_index.symbol_summary"
+
 
 @pytest.mark.asyncio
 async def test_summarize_one_truncates_source(

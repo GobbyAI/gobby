@@ -1,9 +1,9 @@
 """
 Protocol definition for polymorphic chat sessions.
 
-Both ChatSession (Claude SDK) and CodexChatSession implement this
-protocol, allowing the WebSocket layer to work with either type
-without isinstance checks in most code paths.
+ChatSession (Claude SDK) implements this protocol, allowing the
+WebSocket layer to work polymorphically with future session types
+(e.g. CLIChatSession) without isinstance checks.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from gobby.llm.claude_models import ChatEvent
 
 @runtime_checkable
 class ChatSessionProtocol(Protocol):
-    """Shared interface for ChatSession and CodexChatSession."""
+    """Shared interface for chat session implementations."""
 
     # Identity
     conversation_id: str
@@ -30,6 +30,7 @@ class ChatSessionProtocol(Protocol):
     system_prompt_override: str | None
     resume_session_id: str | None
     last_activity: datetime
+    provider: str
 
     # Lifecycle callbacks
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
@@ -52,25 +53,16 @@ class ChatSessionProtocol(Protocol):
     _plan_approval_completed: bool
     _context_window_overrides: dict[str, int]
     _accumulated_output_tokens: int
-    _accumulated_cost_usd: float
     _message_manager_source_session_id: str | None
     _needs_history_injection: bool
     _message_manager: Any
+    _config: Any
 
     @property
     def is_connected(self) -> bool: ...
 
     @property
     def model(self) -> str | None: ...
-
-    @property
-    def has_pending_question(self) -> bool: ...
-
-    @property
-    def has_pending_approval(self) -> bool: ...
-
-    @property
-    def has_pending_plan(self) -> bool: ...
 
     async def start(self, model: str | None = None) -> None: ...
 
@@ -84,16 +76,27 @@ class ChatSessionProtocol(Protocol):
 
     async def switch_model(self, new_model: str) -> None: ...
 
-    def provide_answer(self, answers: dict[str, str]) -> None: ...
+    def set_chat_mode(self, mode: str) -> None: ...
 
-    def provide_approval(self, decision: str) -> None: ...
+    async def sync_sdk_permission_mode(self) -> None: ...
+
+    # Plan approval
+    @property
+    def has_pending_plan(self) -> bool: ...
 
     def provide_plan_decision(self, decision: str) -> None: ...
-
-    def set_chat_mode(self, mode: str) -> None: ...
 
     def approve_plan(self) -> None: ...
 
     def set_plan_feedback(self, feedback: str) -> None: ...
 
-    async def sync_sdk_permission_mode(self) -> None: ...
+    # Ask-user / tool approval
+    @property
+    def has_pending_question(self) -> bool: ...
+
+    def provide_answer(self, answers: dict[str, Any]) -> None: ...
+
+    @property
+    def has_pending_approval(self) -> bool: ...
+
+    def provide_approval(self, decision: str) -> None: ...

@@ -28,6 +28,7 @@ class ChatMessagingMixin:
     _pending_modes: dict[str, str]
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
+    _pending_projects: dict[str, str]
 
     if TYPE_CHECKING:
 
@@ -37,6 +38,7 @@ class ChatMessagingMixin:
             model: str | None = None,
             project_id: str | None = None,
             resume_session_id: str | None = None,
+            provider: str | None = None,
         ) -> ChatSessionProtocol: ...
 
         async def _send_error(
@@ -204,6 +206,12 @@ class ChatMessagingMixin:
         model = data.get("model")
         request_id = data.get("request_id", "")
         project_id = data.get("project_id")
+        provider = data.get("provider")
+        if provider is not None and provider not in {"claude", "codex", "gemini"}:
+            await self._send_error(
+                websocket, f"Invalid provider '{provider}'", request_id=request_id
+            )
+            return
 
         # Use content_blocks (multimodal) if provided, otherwise plain text
         if content_blocks and isinstance(content_blocks, list):
@@ -236,6 +244,7 @@ class ChatMessagingMixin:
                 request_id,
                 project_id,
                 inject_context=inject_context,
+                provider=provider,
             )
         )
         task.add_done_callback(self._on_chat_task_done)
@@ -258,6 +267,7 @@ class ChatMessagingMixin:
         request_id: str = "",
         project_id: str | None = None,
         inject_context: str | None = None,
+        provider: str | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
         from gobby.llm.claude_models import (
@@ -331,10 +341,11 @@ class ChatMessagingMixin:
 
                 sm = getattr(self, "session_manager", None)
                 if sm and sm.db:
+                    chat_session_id = getattr(session, "db_session_id", None) or conversation_id
                     await asyncio.to_thread(
                         cm_store.save_message,
                         sm.db,
-                        conversation_id=conversation_id,
+                        conversation_id=chat_session_id,
                         role=role,
                         content=text,
                     )
@@ -384,7 +395,10 @@ class ChatMessagingMixin:
             if session is None:
                 try:
                     session = await self._create_chat_session(
-                        conversation_id, model=model, project_id=project_id
+                        conversation_id,
+                        model=model,
+                        project_id=project_id,
+                        provider=provider,
                     )
                     # Notify client of session identity + branch context
                     ref = _session_ref()
@@ -392,8 +406,8 @@ class ChatMessagingMixin:
                         type="session_info",
                         conversation_id=conversation_id,
                     )
-                    # Include DB session ID so frontend can call session APIs
-                    # (e.g. synthesize-title) without waiting for sessions list poll
+                    # Include DB session ID so frontend can address session APIs
+                    # before the sessions list has refreshed.
                     db_sid = getattr(session, "db_session_id", None)
                     if db_sid:
                         session_info_msg["db_session_id"] = db_sid
@@ -429,6 +443,13 @@ class ChatMessagingMixin:
                 old_model = session.model
                 try:
                     await session.switch_model(model)
+                    db_sid = getattr(session, "db_session_id", None)
+                    session_mgr = getattr(self, "session_manager", None)
+                    if db_sid and session_mgr:
+                        try:
+                            await asyncio.to_thread(session_mgr.update_model, db_sid, model)
+                        except Exception:
+                            logger.debug("Failed to persist switched model", exc_info=True)
                     await websocket.send(
                         json.dumps(
                             {
@@ -653,12 +674,12 @@ class ChatMessagingMixin:
                         f"DoneEvent context_window={event.context_window} total_input={event.total_input_tokens} (uncached={event.input_tokens} cache_read={event.cache_read_input_tokens} cache_creation={event.cache_creation_input_tokens}) output={event.output_tokens}",
                     )
 
-                    # Adopt SDK session_id as external_id (replaces temp frontend UUID)
+                    # Provider-native identity is persisted for resume/transcript
+                    # linkage, but it no longer mutates the frontend/session key.
                     sdk_sid = event.sdk_session_id
                     if sdk_sid:
                         done_msg["sdk_session_id"] = sdk_sid
-                    if sdk_sid and sdk_sid != conversation_id:
-                        # Update DB external_id
+                    if sdk_sid:
                         db_sid = getattr(session, "db_session_id", None)
                         session_mgr = getattr(self, "session_manager", None)
                         if db_sid and session_mgr:
@@ -671,41 +692,6 @@ class ChatMessagingMixin:
                                     f"Failed to update external_id to SDK session_id for {db_sid}",
                                     exc_info=True,
                                 )
-                        # Re-key in-memory dicts
-                        self._chat_sessions[sdk_sid] = self._chat_sessions.pop(
-                            conversation_id, session
-                        )
-                        if conversation_id in self._active_chat_tasks:
-                            self._active_chat_tasks[sdk_sid] = self._active_chat_tasks.pop(
-                                conversation_id
-                            )
-                        # Update client metadata so broadcasts use the new ID
-                        old_cid = conversation_id
-                        for _ws_client, ws_meta in list(self.clients.items()):
-                            if ws_meta and ws_meta.get("conversation_id") == old_cid:
-                                ws_meta["conversation_id"] = sdk_sid
-
-                        logger.info(
-                            f"Re-keyed web chat session {conversation_id[:8]} → {sdk_sid[:8]}",
-                        )
-                        conversation_id = sdk_sid
-
-                        # Notify all connected clients to update their conversation_id
-                        rekey_msg = json.dumps(
-                            {
-                                "type": "conversation_id_changed",
-                                "old_id": old_cid,
-                                "new_id": sdk_sid,
-                            }
-                        )
-                        for ws_client, ws_meta in list(self.clients.items()):
-                            cid = ws_meta.get("conversation_id") if ws_meta else None
-                            if cid is not None and cid != sdk_sid:
-                                continue
-                            try:
-                                await ws_client.send(rekey_msg)
-                            except (ConnectionClosed, ConnectionClosedError):
-                                pass
 
                     await _safe_send(done_msg)
 
@@ -722,10 +708,6 @@ class ChatMessagingMixin:
                                 new_output = prev_output + (event.output_tokens or 0)
                                 session._accumulated_output_tokens = new_output
 
-                                prev_cost = getattr(session, "_accumulated_cost_usd", 0.0)
-                                new_cost = prev_cost + (event.cost_usd or 0.0)
-                                session._accumulated_cost_usd = new_cost
-
                                 await asyncio.to_thread(
                                     session_manager.update_usage,
                                     db_sid,
@@ -733,7 +715,6 @@ class ChatMessagingMixin:
                                     output_tokens=new_output,
                                     cache_creation_tokens=event.cache_creation_input_tokens or 0,
                                     cache_read_tokens=event.cache_read_input_tokens or 0,
-                                    total_cost_usd=new_cost,
                                     context_window=event.context_window,
                                     model=getattr(session, "_last_model", None),
                                 )

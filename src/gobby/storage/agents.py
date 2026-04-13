@@ -28,7 +28,9 @@ class AgentRun:
     updated_at: str
     # Optional fields
     child_session_id: str | None = None
+    claimed_session_id: str | None = None
     workflow_name: str | None = None
+    agent_name: str | None = None
     model: str | None = None
     result: str | None = None
     error: str | None = None
@@ -52,7 +54,11 @@ class AgentRun:
             id=row["id"],
             parent_session_id=row["parent_session_id"],
             child_session_id=row["child_session_id"],
+            claimed_session_id=(
+                row["claimed_session_id"] if "claimed_session_id" in row.keys() else None
+            ),
             workflow_name=row["workflow_name"],
+            agent_name=row["agent_name"] if "agent_name" in row.keys() else None,
             provider=row["provider"],
             model=row["model"],
             status=row["status"],
@@ -87,7 +93,9 @@ class AgentRun:
             "session_id": self.child_session_id,
             "parent_session_id": self.parent_session_id,
             "child_session_id": self.child_session_id,
+            "claimed_session_id": self.claimed_session_id,
             "workflow_name": self.workflow_name,
+            "agent_name": self.agent_name,
             "provider": self.provider,
             "model": self.model,
             "status": self.status,
@@ -136,8 +144,10 @@ class LocalAgentRunManager:
         provider: str,
         prompt: str,
         workflow_name: str | None = None,
+        agent_name: str | None = None,
         model: str | None = None,
         child_session_id: str | None = None,
+        claimed_session_id: str | None = None,
         run_id: str | None = None,
         task_id: str | None = None,
         timeout_seconds: float | None = None,
@@ -150,8 +160,10 @@ class LocalAgentRunManager:
             provider: LLM provider (claude, gemini, etc.)
             prompt: The prompt given to the agent.
             workflow_name: Optional workflow being executed.
+            agent_name: Agent definition name used to spawn the run.
             model: Optional model override.
             child_session_id: Optional child session for the agent.
+            claimed_session_id: Session that owned the task when the run was created.
             run_id: Optional pre-generated run ID. If not provided, one is generated.
             task_id: Optional task ID this agent is working on.
 
@@ -165,17 +177,20 @@ class LocalAgentRunManager:
         self.db.execute(
             """
             INSERT OR REPLACE INTO agent_runs (
-                id, parent_session_id, child_session_id, workflow_name,
+                id, parent_session_id, child_session_id, claimed_session_id,
+                workflow_name, agent_name,
                 provider, model, status, prompt, task_id, timeout_seconds,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
                 parent_session_id,
                 child_session_id,
+                claimed_session_id,
                 workflow_name,
+                agent_name,
                 provider,
                 model,
                 prompt,

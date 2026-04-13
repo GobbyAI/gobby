@@ -58,6 +58,78 @@ def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
     return response
 
 
+MAX_PENDING_PER_SESSION = 3
+
+
+async def _maybe_hold_open(
+    request: Request,
+    session_id: str,
+    hook_type: str,
+    payload: dict[str, Any],
+    source: str,
+) -> dict[str, Any] | None:
+    """Hold HTTP response open for web chat sessions needing user approval.
+
+    Returns a response dict if the request was held open and resolved, or
+    ``None`` if the session is not a web chat session (so the caller should
+    fall through to the normal adapter response path).
+    """
+    from gobby.storage.sessions import LocalSessionManager
+
+    db = request.app.state.server.services.database
+    if not db:
+        return None
+    session_store = LocalSessionManager(db)
+    db_session = await asyncio.to_thread(session_store.get, session_id)
+
+    if not db_session:
+        return None
+
+    if getattr(db_session, "session_type", "terminal") != "web_chat":
+        return None
+
+    # Guard: PendingInteractionManager may not be wired yet
+    manager = getattr(request.app.state, "pending_interaction_manager", None)
+    if manager is None:
+        return None
+
+    if hook_type == "PreToolUse":
+        tool_name = payload.get("input_data", {}).get("tool_name", "")
+
+        # Rate-limit pending interactions per session
+        pending_count = await manager.count_pending(db_session.id)
+        if pending_count >= MAX_PENDING_PER_SESSION:
+            return {"decision": "deny", "reason": "too_many_pending"}
+
+        interaction_id = await manager.create(
+            session_id=db_session.id,
+            kind="tool",
+            provider=source,
+            payload={
+                "tool_name": tool_name,
+                "arguments": payload.get("input_data", {}).get("arguments", {}),
+            },
+            tool_name=tool_name,
+        )
+        result_data = await manager.wait(interaction_id)
+        return {"decision": result_data.get("decision", "deny")}
+
+    if hook_type == "AskUserQuestion":
+        question = payload.get("input_data", {}).get("question", "")
+
+        interaction_id = await manager.create(
+            session_id=db_session.id,
+            kind="ask_user",
+            provider=source,
+            payload={"question": question},
+        )
+        result_data = await manager.wait(interaction_id)
+        response = result_data.get("response", {})
+        return {"additionalContext": response.get("answers", {})}
+
+    return None
+
+
 def create_hooks_router(server: "HTTPServer") -> APIRouter:
     """
     Create hooks router with endpoints bound to server instance.
@@ -115,34 +187,42 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
             from gobby.adapters.gemini import GeminiAdapter
-            from gobby.hooks.events import SessionSource
 
             if source == "claude":
                 adapter: BaseAdapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-            elif source == "claude_sdk":
-                adapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-                adapter.source = SessionSource.CLAUDE_SDK
-            elif source == "claude_sdk_web_chat":
-                adapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-                adapter.source = SessionSource.CLAUDE_SDK_WEB_CHAT
             elif source == "gemini":
                 adapter = GeminiAdapter(hook_manager=hook_manager)
             elif source == "codex":
-                # Use bidirectional adapter when app-server is connected
-                codex_adapter = getattr(request.app.state, "codex_adapter", None)
-                if codex_adapter is not None:
-                    adapter = codex_adapter
-                else:
-                    adapter = CodexHooksAdapter(hook_manager=hook_manager)
+                # Always use CodexHooksAdapter for HTTP hook requests from
+                # hook_dispatcher.py.  app.state.codex_adapter is the
+                # WebSocket-oriented CodexAdapter whose translate_to_hook_event
+                # expects JSON-RPC format ("method"/"params"), not the
+                # hooks.json format ("hook_type"/"input_data") that the
+                # dispatcher sends.  Using the wrong adapter silently drops
+                # every hook — no terminal_context, no rule enforcement, no
+                # stop gates.
+                adapter = CodexHooksAdapter(hook_manager=hook_manager)
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported source: {source}. Supported: claude, claude_sdk, claude_sdk_web_chat, gemini, codex",
+                    detail=f"Unsupported source: {source}. Supported: claude, gemini, codex",
                 )
 
             # Execute hook via adapter
             try:
                 result = await asyncio.to_thread(adapter.handle_native, payload, hook_manager)
+
+                # After existing hook processing, check for web chat hold-open.
+                # Terminal sessions pass straight through; only web_chat sessions
+                # create pending interactions that hold the HTTP response open
+                # until the user approves/denies in the browser.
+                session_header = request.headers.get("X-Gobby-Session-Id", "")
+                if session_header and hook_type in ("PreToolUse", "AskUserQuestion"):
+                    hold_open_result = await _maybe_hold_open(
+                        request, session_header, hook_type, payload, source
+                    )
+                    if hold_open_result is not None:
+                        return hold_open_result
 
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 inc_counter("hooks_succeeded_total")

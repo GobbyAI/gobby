@@ -179,9 +179,10 @@ class TestLLMProvidersConfigGetEnabledProviders:
         config = LLMProvidersConfig(
             claude=LLMProviderConfig(models="c"),
             codex=LLMProviderConfig(models="c"),
+            gemini=LLMProviderConfig(models="c"),
         )
         providers = config.get_enabled_providers()
-        assert providers == ["claude", "codex"]
+        assert providers == ["claude", "codex", "gemini"]
 
 
 class TestLLMProviderConfigFromAppPy:

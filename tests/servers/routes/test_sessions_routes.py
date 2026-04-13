@@ -429,6 +429,57 @@ class TestRegisterSession:
         assert response.status_code == 400
         assert "No project found" in response.json()["detail"]
 
+
+# =============================================================================
+# POST /sessions/web-chat
+# =============================================================================
+
+
+class TestCreateWebChatSession:
+    """Test POST /sessions/web-chat endpoint."""
+
+    def test_create_web_chat_session_success(self, client, mock_server) -> None:
+        session = _make_session(source="claude", model="sonnet", chat_mode="plan")
+        mock_server.session_manager.create_web_chat_session.return_value = session
+
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="machine-123"):
+            response = client.post(
+                "/api/sessions/web-chat",
+                json={
+                    "provider": "claude",
+                    "project_id": "proj-123",
+                    "cwd": "/repo",
+                    "title": "Web Chat",
+                    "model": "sonnet",
+                    "chat_mode": "plan",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "created"
+        mock_server.resolve_project_id.assert_called_once_with("proj-123", "/repo")
+        mock_server.session_manager.create_web_chat_session.assert_called_once_with(
+            machine_id="machine-123",
+            project_id="proj-123",
+            source="claude",
+            title="Web Chat",
+            model="sonnet",
+            chat_mode="plan",
+        )
+        mock_server.session_manager.update_model.assert_not_called()
+        mock_server.session_manager.update_chat_mode.assert_not_called()
+
+    def test_create_web_chat_session_rejects_invalid_provider(self, client, mock_server) -> None:
+        response = client.post(
+            "/api/sessions/web-chat",
+            json={"provider": "invalid-provider"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid provider. Must be one of: claude, gemini, codex"
+        mock_server.session_manager.create_web_chat_session.assert_not_called()
+
     def test_register_internal_error(self, client, mock_server) -> None:
         """Returns 500 on unexpected internal error."""
         mock_server.session_manager.register.side_effect = RuntimeError("boom")
@@ -1025,128 +1076,6 @@ class TestUpdateSessionSummary:
         )
 
         assert response.status_code == 503
-
-
-# =============================================================================
-# POST /sessions/{session_id}/synthesize-title
-# =============================================================================
-
-
-class TestSynthesizeTitle:
-    """Test POST /sessions/{session_id}/synthesize-title endpoint."""
-
-    def test_synthesize_title_success(self, client, mock_server) -> None:
-        """Synthesizes and saves a title from conversation messages."""
-        session = _make_session()
-        mock_server.session_manager.get.return_value = session
-        mock_server.transcript_reader.get_messages.return_value = [
-            {"role": "user", "content": "Help me write a CLI"},
-            {"role": "assistant", "content": "Sure, let me help with that CLI tool."},
-        ]
-        provider = AsyncMock()
-        provider.generate_text.return_value = "CLI Tool Development"
-        mock_server.llm_service.get_default_provider.return_value = provider
-        mock_server.session_manager.update_title.return_value = session
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert data["title"] == "CLI Tool Development"
-        assert "response_time_ms" in data
-
-    def test_synthesize_title_no_session_manager(self, client, mock_server) -> None:
-        """Returns 503 when session_manager is None."""
-        mock_server.session_manager = None
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 503
-
-    def test_synthesize_title_no_llm_service(self, client, mock_server) -> None:
-        """Returns 503 when llm_service is None."""
-        mock_server.llm_service = None
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 503
-
-    def test_synthesize_title_no_transcript_reader(self, client, mock_server) -> None:
-        """Returns 503 when transcript_reader is None."""
-        mock_server.transcript_reader = None
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 503
-
-    def test_synthesize_title_session_not_found(self, client, mock_server) -> None:
-        """Returns 404 when session does not exist."""
-        mock_server.session_manager.get.return_value = None
-
-        response = client.post("/api/sessions/nonexistent/synthesize-title")
-
-        assert response.status_code == 404
-
-    def test_synthesize_title_no_messages(self, client, mock_server) -> None:
-        """Returns 422 when session has no messages."""
-        session = _make_session()
-        mock_server.session_manager.get.return_value = session
-        mock_server.transcript_reader.get_messages.return_value = []
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 422
-        assert "No messages" in response.json()["detail"]
-
-    def test_synthesize_title_only_tool_messages(self, client, mock_server) -> None:
-        """Returns 422 when there are only tool messages (no user/assistant)."""
-        session = _make_session()
-        mock_server.session_manager.get.return_value = session
-        mock_server.transcript_reader.get_messages.return_value = [
-            {"role": "tool", "content": "some tool output"},
-        ]
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 422
-        assert "No user/assistant messages" in response.json()["detail"]
-
-    def test_synthesize_title_strips_quotes(self, client, mock_server) -> None:
-        """LLM output is stripped of surrounding quotes."""
-        session = _make_session()
-        mock_server.session_manager.get.return_value = session
-        mock_server.transcript_reader.get_messages.return_value = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi"},
-        ]
-        provider = AsyncMock()
-        provider.generate_text.return_value = '"Greeting Session"'
-        mock_server.llm_service.get_default_provider.return_value = provider
-        mock_server.session_manager.update_title.return_value = session
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 200
-        assert response.json()["title"] == "Greeting Session"
-
-    def test_synthesize_title_empty_llm_output(self, client, mock_server) -> None:
-        """Falls back to 'Untitled Session' when LLM returns empty string."""
-        session = _make_session()
-        mock_server.session_manager.get.return_value = session
-        mock_server.transcript_reader.get_messages.return_value = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi"},
-        ]
-        provider = AsyncMock()
-        provider.generate_text.return_value = "  "
-        mock_server.llm_service.get_default_provider.return_value = provider
-        mock_server.session_manager.update_title.return_value = session
-
-        response = client.post("/api/sessions/sess-abc123/synthesize-title")
-
-        assert response.status_code == 200
-        assert response.json()["title"] == "Untitled Session"
 
 
 # =============================================================================

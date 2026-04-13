@@ -6,7 +6,7 @@ Tests sync edge cases, error handling, orphan cleanup, and variable sync.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -177,6 +177,54 @@ rules:
 
         result = sync_bundled_rules(db, rules_path=rules_dir)
         assert len(result["errors"]) >= 1
+
+    def test_reload_cache_resync_updates_rule_event(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows._import import reload_cache
+        from gobby.workflows.sync import sync_bundled_rules
+
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        rule_yaml = rules_dir / "turn-end.yaml"
+        rule_yaml.write_text(
+            """
+rules:
+  bundled-rule:
+    event: stop
+    effect:
+      type: block
+      reason: "old event"
+"""
+        )
+
+        with patch("gobby.workflows.sync_rules.get_bundled_rules_path", return_value=rules_dir):
+            sync_bundled_rules(db)
+
+            row = manager.get_by_name("bundled-rule")
+            assert row is not None
+            assert '"event": "stop"' in row.definition_json
+
+            rule_yaml.write_text(
+                """
+rules:
+  bundled-rule:
+    event: turn_end
+    effect:
+      type: block
+      reason: "new event"
+"""
+            )
+
+            loader = MagicMock()
+            result = reload_cache(loader, db=db)
+
+        loader.clear_cache.assert_called_once()
+        assert result["rules_synced"] == 1
+
+        row = manager.get_by_name("bundled-rule")
+        assert row is not None
+        assert '"event": "turn_end"' in row.definition_json
 
 
 # ═══════════════════════════════════════════════════════════════════════

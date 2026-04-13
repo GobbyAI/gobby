@@ -83,7 +83,6 @@ def _mock_chat_session(response_json: dict | None = None) -> MagicMock:
             tool_calls_count=0,
             input_tokens=100,
             output_tokens=20,
-            cost_usd=0.001,
             duration_ms=500,
         )
 
@@ -159,7 +158,6 @@ class TestReviewCompletedPipelines:
                 tool_calls_count=0,
                 input_tokens=50,
                 output_tokens=10,
-                cost_usd=0.0005,
                 duration_ms=200,
             )
 
@@ -238,7 +236,6 @@ class TestGetLlmReview:
                 tool_calls_count=0,
                 input_tokens=10,
                 output_tokens=5,
-                cost_usd=0.0001,
                 duration_ms=100,
             )
 
@@ -261,7 +258,6 @@ class TestGetLlmReview:
                 tool_calls_count=0,
                 input_tokens=10,
                 output_tokens=5,
-                cost_usd=0.0001,
                 duration_ms=100,
             )
 

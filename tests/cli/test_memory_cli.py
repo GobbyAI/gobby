@@ -34,7 +34,7 @@ class TestMemoryShowCommand:
         mock_item.memory_type = "fact"
         mock_item.created_at = "2024-01-01"
         mock_item.updated_at = "2024-01-01"
-        mock_item.source_type = "cli"
+        mock_item.source_type = "user"
         mock_item.access_count = 0
         mock_item.tags = []
 
@@ -505,7 +505,7 @@ class TestMemoryShowNotFound:
         mock_item.memory_type = "fact"
         mock_item.created_at = "2024-01-01"
         mock_item.updated_at = "2024-01-01"
-        mock_item.source_type = "cli"
+        mock_item.source_type = "user"
         mock_item.access_count = 5
         mock_item.tags = ["tag1", "tag2"]
 

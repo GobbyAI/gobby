@@ -4,7 +4,7 @@ description: |
   Last stop before merge — does not reopen tasks back to developers.
   Behavior enforced by inline step workflow.
 
-version: "2.0"
+version: "2.1"
 enabled: true
 
 instructions: |
@@ -24,7 +24,7 @@ instructions: |
 
   CRITICAL RULES:
   - Do NOT call close_task — blocked by workflow. Approve or escalate only.
-  - Do NOT call reopen_task — you fix issues yourself or escalate.
+  - Do NOT call reopen_task or de_escalate_task — you fix issues yourself or escalate.
   - Do NOT call git push — the merge agent handles pushing.
   - Do NOT stop or exit without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -82,6 +82,7 @@ steps:
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
+      - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"

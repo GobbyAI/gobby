@@ -23,6 +23,8 @@ from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.search.embeddings import generate_embedding
 from gobby.servers.http import HTTPServer
+from gobby.servers.provider_models import ProviderModelCatalog
+from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.sessions.lifecycle import SessionLifecycleManager
@@ -210,16 +212,14 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         if resolved_key:
             runner.config.embeddings.api_key = resolved_key
 
-    # Populate model costs from OpenRouter into DB and load into memory
-    from gobby.llm.cost_table import init as init_cost_table
+    # Populate model metadata (context_length, max_completion_tokens) from OpenRouter
     from gobby.storage.model_costs import ModelCostStore
 
     try:
         cost_store = ModelCostStore(runner.database)
         cost_store.populate()
-        init_cost_table(runner.database)
     except Exception as e:
-        logger.warning(f"Failed to populate model costs: {e}")
+        logger.warning(f"Failed to populate model metadata: {e}")
 
     runner.session_manager = LocalSessionManager(runner.database)
     runner.task_manager = LocalTaskManager(runner.database)
@@ -824,6 +824,8 @@ def init_servers(runner: GobbyRunner) -> None:
         skill_manager=runner.skill_manager,
         hub_manager=runner.hub_manager,
         config_store=runner.config_store,
+        provider_model_catalog=ProviderModelCatalog(runner.config),
+        web_chat_runtime_manager=None,
         prompt_manager=runner.prompt_manager,
         dev_mode=runner._dev_mode,
         tool_proxy_getter=lambda: runner.http_server.tool_proxy,
@@ -838,18 +840,29 @@ def init_servers(runner: GobbyRunner) -> None:
             runner.communications_manager._store, services
         )
 
-    # Optionally create CodexAppServerClient for rich event lifecycle
+    # Create shared web-chat backends. Startup is handled in HTTP lifespan so
+    # backend failures are non-fatal to daemon boot.
     codex_client = None
-    if runner.config.codex_app_server:
-        from gobby.adapters.codex_impl.adapter import CodexAdapter
+    from gobby.adapters.codex_impl.adapter import CodexAdapter
 
-        if CodexAdapter.is_codex_available():
-            from gobby.adapters.codex_impl.client import CodexAppServerClient
+    if CodexAdapter.is_codex_available():
+        from gobby.adapters.codex_impl.client import CodexAppServerClient
 
-            codex_client = CodexAppServerClient()
-            logger.info("Codex app-server client created (will start in HTTP lifespan)")
-        else:
-            logger.warning("codex_app_server enabled but codex CLI not found in PATH")
+        codex_client = CodexAppServerClient()
+        logger.info("Codex app-server client created (will start in HTTP lifespan)")
+
+    gemini_default_model: str | None = None
+    gemini_config = getattr(runner.config.llm_providers, "gemini", None)
+    if gemini_config is not None:
+        gemini_default_model = gemini_config.default_model
+        if not gemini_default_model:
+            models = gemini_config.get_models_list()
+            gemini_default_model = models[0] if models else None
+
+    services.web_chat_runtime_manager = WebChatRuntimeManager(
+        codex_client=codex_client,
+        gemini_default_model=gemini_default_model,
+    )
 
     runner.http_server = HTTPServer(
         services=services,
@@ -882,6 +895,7 @@ def init_servers(runner: GobbyRunner) -> None:
             daemon_config=runner.config,
             internal_manager=runner.http_server._internal_manager,
         )
+        runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         # Pass WebSocket server reference to HTTP server for broadcasting
         runner.http_server.websocket_server = runner.websocket_server
         # Also set on services container so lifespan can wire workflow_handler

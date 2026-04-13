@@ -1,4 +1,4 @@
-"""Tests for RuleEvent, RuleEffect, and RuleDefinitionBody models."""
+"""Tests for rule trigger, effect, and definition models."""
 
 from __future__ import annotations
 
@@ -10,44 +10,54 @@ from pydantic import ValidationError
 pytestmark = pytest.mark.unit
 
 
-# --- RuleEvent tests ---
+# --- RuleTriggerEvent tests ---
 
 
-class TestRuleEvent:
-    def test_enum_has_seven_values(self) -> None:
-        from gobby.workflows.definitions import RuleEvent
+class TestRuleTriggerEvent:
+    def test_enum_exposes_raw_hook_events_and_turn_end(self) -> None:
+        from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert len(RuleEvent) == 7
+        assert len(RuleTriggerEvent) == 16
 
     def test_enum_values(self) -> None:
-        from gobby.workflows.definitions import RuleEvent
+        from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert RuleEvent.BEFORE_TOOL == "before_tool"
-        assert RuleEvent.AFTER_TOOL == "after_tool"
-        assert RuleEvent.BEFORE_AGENT == "before_agent"
-        assert RuleEvent.SESSION_START == "session_start"
-        assert RuleEvent.SESSION_END == "session_end"
-        assert RuleEvent.STOP == "stop"
-        assert RuleEvent.PRE_COMPACT == "pre_compact"
+        assert RuleTriggerEvent.TURN_END == "turn_end"
+        assert RuleTriggerEvent.BEFORE_TOOL == "before_tool"
+        assert RuleTriggerEvent.AFTER_TOOL == "after_tool"
+        assert RuleTriggerEvent.BEFORE_AGENT == "before_agent"
+        assert RuleTriggerEvent.AFTER_AGENT == "after_agent"
+        assert RuleTriggerEvent.SESSION_START == "session_start"
+        assert RuleTriggerEvent.SESSION_END == "session_end"
+        assert RuleTriggerEvent.STOP == "stop"
+        assert RuleTriggerEvent.PRE_COMPACT == "pre_compact"
+        assert RuleTriggerEvent.BEFORE_TOOL_SELECTION == "before_tool_selection"
+        assert RuleTriggerEvent.BEFORE_MODEL == "before_model"
+        assert RuleTriggerEvent.AFTER_MODEL == "after_model"
+        assert RuleTriggerEvent.SUBAGENT_START == "subagent_start"
+        assert RuleTriggerEvent.SUBAGENT_STOP == "subagent_stop"
+        assert RuleTriggerEvent.PERMISSION_REQUEST == "permission_request"
+        assert RuleTriggerEvent.NOTIFICATION == "notification"
 
     def test_enum_is_str(self) -> None:
-        """RuleEvent should be a str enum for JSON serialization."""
-        from gobby.workflows.definitions import RuleEvent
+        """RuleTriggerEvent should be a str enum for JSON serialization."""
+        from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert isinstance(RuleEvent.BEFORE_TOOL, str)
-        assert RuleEvent.BEFORE_TOOL == "before_tool"
+        assert isinstance(RuleTriggerEvent.BEFORE_TOOL, str)
+        assert RuleTriggerEvent.BEFORE_TOOL == "before_tool"
 
     def test_enum_from_string(self) -> None:
-        from gobby.workflows.definitions import RuleEvent
+        from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert RuleEvent("before_tool") == RuleEvent.BEFORE_TOOL
-        assert RuleEvent("stop") == RuleEvent.STOP
+        assert RuleTriggerEvent("before_tool") == RuleTriggerEvent.BEFORE_TOOL
+        assert RuleTriggerEvent("stop") == RuleTriggerEvent.STOP
+        assert RuleTriggerEvent("turn_end") == RuleTriggerEvent.TURN_END
 
     def test_enum_invalid_value(self) -> None:
-        from gobby.workflows.definitions import RuleEvent
+        from gobby.workflows.definitions import RuleTriggerEvent
 
         with pytest.raises(ValueError):
-            RuleEvent("invalid_event")
+            RuleTriggerEvent("invalid_event")
 
 
 # --- RuleEffect tests ---
@@ -418,6 +428,16 @@ class TestRuleDefinitionBody:
         assert data["effects"][0]["type"] == "set_variable"
         assert data["effects"][0]["variable"] == "stop_attempts"
         assert data["effects"][0]["value"] == 0
+
+    def test_turn_end_event_rule(self) -> None:
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+
+        body = RuleDefinitionBody(
+            event=RuleTriggerEvent.TURN_END,
+            effects=[RuleEffect(type="inject_context", template="Continue working.")],
+        )
+
+        assert body.event == RuleTriggerEvent.TURN_END
 
     def test_required_fields(self) -> None:
         """event and effects are required."""

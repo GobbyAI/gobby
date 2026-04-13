@@ -16,6 +16,7 @@ from gobby.llm.claude_models import (
     ToolResultEvent,
 )
 from gobby.llm.factory import create_llm_service
+from gobby.llm.local import LocalLLMProvider
 from gobby.llm.service import LLMService
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "DoneEvent",
     "LLMProvider",
     "LLMService",
+    "LocalLLMProvider",
     "ToolResultEvent",
     "create_llm_service",
 ]

@@ -174,7 +174,7 @@ First, plan your subtasks by saving an expansion specification:
 
 ```python
 # MCP: Save expansion spec for review/later execution
-call_tool(server_name="gobby-tasks", tool_name="save_expansion_spec", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="save_expansion_spec", arguments={
     "task_id": "gt-abc123",
     "spec": {
         "subtasks": [
@@ -192,7 +192,7 @@ Then atomically create all subtasks with dependencies:
 
 ```python
 # MCP: Execute the saved expansion spec
-call_tool(server_name="gobby-tasks", tool_name="execute_expansion", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="execute_expansion", arguments={
     "task_id": "gt-abc123"
 })
 ```
@@ -203,7 +203,7 @@ After session compaction, check if expansion was interrupted:
 
 ```python
 # MCP: Check for pending expansion spec
-call_tool(server_name="gobby-tasks", tool_name="get_expansion_spec", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="get_expansion_spec", arguments={
     "task_id": "gt-abc123"
 })
 ```
@@ -220,6 +220,12 @@ Get AI-powered suggestion for the best task to work on:
 # Get AI suggestion for next task
 call_tool(server_name="gobby-tasks", tool_name="suggest_next_task", arguments={
     "session_id": "<your_session_id>"
+})
+
+# Get multiple suggestions with conflict avoidance
+call_tool(server_name="gobby-tasks", tool_name="suggest_next_task", arguments={
+    "session_id": "<your_session_id>",
+    "count": 3  # Returns batch with conflict avoidance (default: 1)
 })
 ```
 
@@ -282,23 +288,7 @@ call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={
 
 ### Manual Validation
 
-```python
-# Validate a task explicitly (with optional changes_summary)
-call_tool(server_name="gobby-tasks", tool_name="validate_task", arguments={
-    "task_id": "gt-abc123",
-    "changes_summary": "Added login form with validation"  # Optional - uses git diff if not provided
-})
-
-# Check validation status
-call_tool(server_name="gobby-tasks", tool_name="get_validation_status", arguments={
-    "task_id": "gt-abc123"
-})
-
-# Reset validation count for retry
-call_tool(server_name="gobby-tasks", tool_name="reset_validation_count", arguments={
-    "task_id": "gt-abc123"
-})
-```
+> **Note:** Validation tools (`validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history`) are internal-only Python functions, not available via MCP. Use the CLI commands below or the automatic validation on `close_task` instead.
 
 ### CLI Validation Commands
 
@@ -370,7 +360,7 @@ call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
 })
 
 # Rebuild search index (usually automatic)
-call_tool(server_name="gobby-tasks", tool_name="reindex_tasks", arguments={
+call_tool(server_name="gobby-tasks-ops", tool_name="reindex_tasks", arguments={
     "all_projects": False       # Optional: reindex all projects
 })
 ```
@@ -453,42 +443,51 @@ task = call_tool(server_name="gobby-tasks", tool_name="get_task", arguments={"ta
 | `get_session_tasks` | Tasks linked to a session |
 | `get_task_sessions` | Sessions that touched a task |
 
-### Git Sync
+### Git Sync (CLI-only)
+
+> **Note:** Sync tools (`sync_tasks`, `get_sync_status`) are CLI-only, not available via MCP. Use `gobby tasks sync` from the command line.
+
+### Ready Work / Suggestions
 
 | Tool | Description |
 |------|-------------|
-| `sync_tasks` | Trigger import/export |
-| `get_sync_status` | Get sync status |
+| `suggest_next_task` | AI suggests next task to work on. Use `count` param (default 1) for batch with conflict avoidance. |
 
-### Task Expansion
-
-| Tool | Description |
-|------|-------------|
-| `save_expansion_spec` | Save expansion spec for later execution |
-| `execute_expansion` | Execute saved expansion atomically |
-| `get_expansion_spec` | Check for pending expansion (resume after compaction) |
-| `suggest_next_task` | AI suggests next task to work on |
-
-### Validation
+### Lifecycle
 
 | Tool | Description |
 |------|-------------|
-| `validate_task` | Validate task completion (auto-gathers git context) |
-| `get_validation_status` | Get validation details |
-| `reset_validation_count` | Reset failure count for retry |
-| `get_validation_history` | Full validation history with iterations |
-| `get_recurring_issues` | Analyze recurring validation issues |
-| `clear_validation_history` | Clear all validation history |
 | `de_escalate_task` | Return escalated task to open status |
 | `generate_validation_criteria` | Generate validation criteria using LLM |
 | `run_fix_attempt` | Spawn fix agent for validation issues |
 | `validate_and_fix` | Run validation loop with auto-fix |
+
+### Validation (internal-only)
+
+> **Note:** `validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history` are internal-only Python functions, not available via MCP.
 
 ### Search
 
 | Tool | Description |
 |------|-------------|
 | `search_tasks` | Full-text search tasks by content (TF-IDF) |
+
+### Task Expansion & Operations (`gobby-tasks-ops`)
+
+| Tool | Description |
+|------|-------------|
+| `save_expansion_spec` | Save expansion spec for later execution |
+| `execute_expansion` | Execute saved expansion atomically |
+| `get_expansion_spec` | Check for pending expansion (resume after compaction) |
+| `validate_expansion_spec` | Validate spec structure and dependencies |
+| `save_expansion_qa_result` | Save QA result for expansion |
+| `check_expansion_qa_result` | Check QA result for expansion |
+| `set_affected_files` | Set affected files for a task |
+| `get_affected_files` | Get affected files for a task |
+| `find_file_overlaps` | Find file contention across tasks |
+| `wire_affected_files_from_spec` | Wire affected files from expansion spec |
+| `import_github_issues` | Import issues from GitHub |
+| `link_task_to_github_issue` | Link a task to a GitHub issue |
 | `reindex_tasks` | Rebuild search index |
 
 ## CLI Command Reference

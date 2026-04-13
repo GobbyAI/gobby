@@ -1,3 +1,13 @@
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardDonutLayoutClass,
+  dashboardDotClass,
+  dashboardLegendClass,
+  dashboardLegendLabelClass,
+  dashboardLegendRowClass,
+  dashboardLegendValueClass,
+} from './dashboardStyles'
+
 type SegmentKey = 'running' | 'waiting_approval' | 'completed' | 'failed'
 
 type PipelineCounts = Record<SegmentKey, number> & { total: number }
@@ -21,30 +31,28 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 export function PipelinesCard({ pipelines }: Props) {
   const total = pipelines.total
 
-  let offset = 0
-  const rings = SEGMENTS.map(({ key, color }) => {
+  const rings = SEGMENTS.map(({ key, color }, index) => {
     const value = pipelines[key]
     const ratio = total > 0 ? value / total : 0
     const length = ratio * CIRCUMFERENCE
-    const ring = { key, color, length, offset }
-    offset += length
-    return ring
+    const offset = SEGMENTS.slice(0, index).reduce((sum, segment) => {
+      const segmentValue = pipelines[segment.key]
+      const segmentRatio = total > 0 ? segmentValue / total : 0
+      return sum + segmentRatio * CIRCUMFERENCE
+    }, 0)
+    return { key, color, length, offset }
   })
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Pipelines</h3>
-      </div>
-      <div className="dash-card-body">
-        <div className="dash-donut-container">
+    <DashboardCard title="Pipelines">
+      <div className={dashboardDonutLayoutClass}>
           <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label="Pipeline status chart">
             <circle
               cx={SIZE / 2}
               cy={SIZE / 2}
               r={RADIUS}
               fill="none"
-              stroke="var(--border-color)"
+              stroke="var(--border)"
               strokeWidth={STROKE}
             />
             {rings.map((ring) =>
@@ -76,17 +84,16 @@ export function PipelinesCard({ pipelines }: Props) {
               {total}
             </text>
           </svg>
-          <div className="dash-donut-legend">
+          <div className={dashboardLegendClass}>
             {SEGMENTS.map(({ key, label, color }) => (
-              <div key={key} className="dash-legend-item">
-                <span className="dash-legend-dot" style={{ background: color }} />
-                <span className="dash-legend-label">{label}</span>
-                <span className="dash-legend-value">{pipelines[key]}</span>
+              <div key={key} className={dashboardLegendRowClass}>
+                <span className={dashboardDotClass} style={{ background: color }} />
+                <span className={dashboardLegendLabelClass}>{label}</span>
+                <span className={dashboardLegendValueClass}>{pipelines[key]}</span>
               </div>
             ))}
           </div>
-        </div>
       </div>
-    </div>
+    </DashboardCard>
   )
 }

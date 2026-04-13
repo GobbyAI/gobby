@@ -4,6 +4,7 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import type {
   ChatState,
   ConversationState,
+  SwappedSessionTarget,
   VoiceProps,
 } from "../../types/chat";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
@@ -16,9 +17,15 @@ import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActiveSessionsModal } from "./ActiveSessionsModal";
-import { ActivityPanel, useActivityPanel } from "../activity/ActivityPanel";
+import { ActivityPanel } from "../activity/ActivityPanel";
+import { useActivityPanel } from "../activity/useActivityPanel";
+import { VoiceStatusBar } from "./VoiceStatusBar";
+import { AgentStatusBar } from "./AgentStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
+import { useConfirmDialog } from "../../hooks/useConfirmDialog";
+
+const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
 interface ChatPageProps {
   chat: ChatState;
@@ -32,6 +39,9 @@ interface ChatPageProps {
   agentShowScopeToggle?: boolean;
   agentHasGlobal?: boolean;
   agentHasProject?: boolean;
+  // Model selection
+  currentModel?: string;
+  onModelChange?: (model: string) => void;
   // Command palette actions from App.tsx
   paletteActions?: CommandPaletteAction[];
   // Active sessions modal
@@ -54,12 +64,14 @@ export function ChatPage({
   agentShowScopeToggle = false,
   agentHasGlobal = false,
   agentHasProject = false,
+  currentModel = "opus",
+  onModelChange,
   paletteActions = [],
   onViewAgent,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const activeSession = conversations.sessions.find(
-    (s) => s.external_id === conversations.activeSessionId,
+    (s) => s.id === conversations.activeSessionId,
   );
   const activeTitle = activeSession?.title ?? null;
   const effectiveSessionRef =
@@ -81,6 +93,199 @@ export function ChatPage({
   const canvas = useCanvasPanel();
   const activity = useActivityPanel();
   const fileChanges = useFileChanges(chat.messages, projectId ?? null);
+  const { confirm, ConfirmDialogElement } = useConfirmDialog();
+  const {
+    openCanvas,
+    closeCanvas,
+    activeCanvas,
+  } = canvas;
+  const {
+    activeTab: activityTab,
+    closeIfAutoOpened,
+    isPinned,
+    panelWidth,
+    setActiveTab: setActivityTab,
+    setIsPinned,
+    setPanelWidth,
+    showTab,
+    togglePanel,
+  } = activity;
+  const {
+    onApprovePlan,
+    onModeChangeLocal,
+    onPaletteSelect,
+    onRequestPlanChanges,
+    onSend,
+    planPendingApproval,
+    setOnArtifactEvent,
+    setOnPlanReady,
+  } = chat;
+
+  // Session browsing via activity panel instead of Observing mode
+  const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
+  const handleViewCliSession = useCallback(
+    (session: { id: string }) => {
+      setFocusSessionId(session.id);
+      showTab("sessions");
+    },
+    [showTab],
+  );
+  const handleFocusSessionHandled = useCallback(() => {
+    setFocusSessionId(null);
+  }, []);
+
+  // Watching: parked web chats stay selected in Sessions tab after starting a new chat
+  const [watchingSessionIds, setWatchingSessionIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const handleUnwatch = useCallback((sessionId: string) => {
+    setWatchingSessionIds((prev) => {
+      const next = new Set(prev);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
+
+  const parkCurrentSession = useCallback(
+    (nextSessionId?: string) => {
+      const currentSessionId = chat.viewingSessionId ?? chat.dbSessionId;
+      if (
+        !currentSessionId ||
+        chat.messages.length === 0 ||
+        currentSessionId === nextSessionId
+      ) {
+        return;
+      }
+      setWatchingSessionIds((prev) => new Set(prev).add(currentSessionId));
+      setFocusSessionId(currentSessionId);
+      showTab("sessions");
+    },
+    [chat.dbSessionId, chat.messages.length, chat.viewingSessionId, showTab],
+  );
+
+  const handleSwapSession = useCallback(
+    (target: SwappedSessionTarget) => {
+      parkCurrentSession(target.sessionId);
+      handleUnwatch(target.sessionId);
+
+      if (target.sessionType === "web_chat") {
+        const targetSession = conversations.sessions.find(
+          (session) => session.id === target.sessionId,
+        );
+        if (targetSession) {
+          conversations.onSelectSession(targetSession);
+        }
+        return;
+      }
+
+      chat.viewSession?.(target.sessionId);
+      chat.observeSession?.(
+        target.sessionId,
+        target.agentRunId ? "observe" : "proxy",
+      );
+    },
+    [chat, conversations, handleUnwatch, parkCurrentSession],
+  );
+
+  const handleAutonomousDetach = useCallback(() => {
+    if (chat.sessionInteractionMode === "proxy") {
+      chat.onDetachFromSession?.();
+      return;
+    }
+    if (chat.viewingSessionMeta?.sessionType === "terminal") {
+      chat.clearViewingSession?.();
+    }
+  }, [chat]);
+
+  const viewingMeta = chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
+  const isSwappedTerminal = viewingMeta?.sessionType === "terminal";
+  const isAutonomousSession = Boolean(
+    isSwappedTerminal && viewingMeta?.agentRunId,
+  );
+  const showObserveOverlay =
+    isAutonomousSession && chat.sessionInteractionMode !== "proxy";
+  const canAttachViewedSession =
+    viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
+  const providerPickerDisabledReason = isAutonomousSession
+    ? chat.sessionInteractionMode === "proxy"
+      ? "Cannot change provider on a pipeline-managed session"
+      : "Observing autonomous session"
+    : null;
+  const effectiveInputProvider = isSwappedTerminal
+    ? viewingMeta?.source ?? chat.provider
+    : chat.provider;
+  const effectiveInputModel = isSwappedTerminal
+    ? viewingMeta?.model ?? currentModel
+    : currentModel;
+
+  const handleSwappedSessionProviderSelection = useCallback(
+    async (provider: string, model: string) => {
+      if (
+        !isSwappedTerminal ||
+        isAutonomousSession ||
+        !chat.viewingSessionId ||
+        !chat.continueSessionInChat
+      ) {
+        return;
+      }
+
+      const confirmChange =
+        viewingMeta?.status === "active"
+          ? await confirm({
+              title: "Change provider?",
+              description:
+                `This will end the terminal session and resume the conversation with ${provider} ${model}.`,
+              confirmLabel: "Change Provider",
+              destructive: true,
+            })
+          : true;
+      if (!confirmChange) return;
+
+      chat.onProviderChange?.(provider);
+      onModelChange?.(model);
+      await chat.continueSessionInChat(chat.viewingSessionId, projectId ?? undefined, {
+        provider,
+        model,
+      });
+    },
+    [
+      chat,
+      confirm,
+      isAutonomousSession,
+      isSwappedTerminal,
+      onModelChange,
+      projectId,
+      viewingMeta?.status,
+    ],
+  );
+
+  // Wrap onNewChat to park the current session as Watching
+  const handleNewChat = useCallback(
+    (agentName?: string) => {
+      parkCurrentSession();
+      conversations.onNewChat(agentName);
+    },
+    [conversations, parkCurrentSession],
+  );
+
+  // Available LLM providers — fetched from daemon API
+  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/providers")
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error(`Provider fetch failed with ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((data) => {
+        const names = (Array.isArray(data?.providers) ? data.providers : [])
+          .filter((p: { available: boolean }) => p.available)
+          .map((p: { name: string }) => p.name);
+        setAvailableProviders(names);
+      })
+      .catch(() => setAvailableProviders(["claude"]));
+  }, []);
 
   // Modals
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -88,28 +293,23 @@ export function ChatPage({
 
   useEffect(() => {
     if (chat.canvasPanel) {
-      canvas.openCanvas(chat.canvasPanel);
+      openCanvas(chat.canvasPanel);
       // Auto-switch to canvas tab
-      activity.showTab("canvas");
+      showTab("canvas");
     } else {
-      canvas.closeCanvas();
+      closeCanvas();
     }
-  }, [chat.canvasPanel, canvas.openCanvas, canvas.closeCanvas]);
+  }, [chat.canvasPanel, closeCanvas, openCanvas, showTab]);
 
-  const planArtifactIdRef = useRef<string | null>(null);
-  // Local plan-pending state — kept in ChatPage (same scope as artifact
-  // creation) so React batches both state updates into a single render.
-  // The prop from useChat (chat.planPendingApproval) passes through App.tsx
-  // and may arrive in a separate render cycle, causing the ArtifactPanel
-  // to render the plan content WITHOUT the approval bar.
-  const [planPendingLocal, setPlanPendingLocal] = useState(false);
+  const [planArtifactId, setPlanArtifactId] = useState<string | null>(null);
+  const [pendingPlanArtifactId, setPendingPlanArtifactId] = useState<
+    string | null
+  >(null);
 
   // Clear artifacts and plan state on session switch / new chat
   useEffect(() => {
     clearArtifacts();
-    planArtifactIdRef.current = null;
-    setPlanPendingLocal(false);
-  }, [chat.conversationSwitchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chat.conversationSwitchKey, clearArtifacts]);
 
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {
@@ -133,99 +333,99 @@ export function ChatPage({
       if (!content) return;
       const headingMatch = content.match(/^#\s+(.+)$/m);
       const title = headingMatch?.[1]?.trim() || "Implementation Plan";
+      let nextArtifactId = planArtifactId;
 
-      if (planArtifactIdRef.current && artifacts.has(planArtifactIdRef.current)) {
-        updateArtifact(planArtifactIdRef.current, content);
-        openArtifact(planArtifactIdRef.current);
+      if (planArtifactId && artifacts.has(planArtifactId)) {
+        updateArtifact(planArtifactId, content);
+        openArtifact(planArtifactId);
       } else {
-        const id = createArtifact("text", content, "markdown", title, { isPlan: true });
-        planArtifactIdRef.current = id;
+        nextArtifactId = createArtifact("text", content, "markdown", title, {
+          isPlan: true,
+        });
       }
-      setPlanPendingLocal(true);
-      activity.showTab("plans");
+      setPlanArtifactId(nextArtifactId);
+      setPendingPlanArtifactId(nextArtifactId);
+      showTab("plans");
     },
-    [createArtifact, updateArtifact, openArtifact, artifacts, activity.showTab],
+    [artifacts, createArtifact, openArtifact, planArtifactId, showTab, updateArtifact],
   );
 
   useEffect(() => {
-    chat.setOnPlanReady?.(onPlanReady);
-  }, [chat.setOnPlanReady, onPlanReady]);
+    setOnPlanReady?.(onPlanReady);
+  }, [onPlanReady, setOnPlanReady]);
 
   // Wire artifact events (show_file) to artifact panel
-  const validArtifactTypes = new Set<string>([
-    "code",
-    "text",
-    "image",
-    "sheet",
-  ]);
   const onArtifactEvent = useCallback(
     (type: string, content: string, language?: string, title?: string) => {
-      if (validArtifactTypes.has(type)) {
+      if (VALID_ARTIFACT_TYPES.has(type)) {
         createArtifact(type as ArtifactType, content, language, title);
       }
     },
-    [createArtifact, activity.showTab],
+    [createArtifact],
   );
 
   useEffect(() => {
-    chat.setOnArtifactEvent?.(onArtifactEvent);
-  }, [chat.setOnArtifactEvent, onArtifactEvent]);
+    setOnArtifactEvent?.(onArtifactEvent);
+  }, [onArtifactEvent, setOnArtifactEvent]);
 
   // Intercept toggle_panel palette action before forwarding to App.tsx
   const handlePaletteSelect = useCallback(
     (item: PaletteItem) => {
       if (item.kind === "command" && item.action === "toggle_panel") {
-        activity.togglePanel();
+        togglePanel();
         return;
       }
-      chat.onPaletteSelect?.(item);
+      onPaletteSelect?.(item);
     },
-    [activity, chat],
+    [onPaletteSelect, togglePanel],
   );
 
   // Add file to chat from Files tab (right-click "Add to chat")
   const handleAddFileToChat = useCallback(
     (filePath: string) => {
-      chat.onSend(`Read and reference this file: ${filePath}`);
+      onSend?.(`Read and reference this file: ${filePath}`);
     },
-    [chat.onSend],
+    [onSend],
   );
 
   const handleApprovePlan = useCallback(() => {
-    setPlanPendingLocal(false);
-    chat.onApprovePlan?.();
-    activity.setIsPinned(false);
-  }, [chat.onApprovePlan, activity.setIsPinned]);
+    setPendingPlanArtifactId(null);
+    onApprovePlan?.();
+    // Direct local mode update — bypasses the ref-based callback bridge
+    // in useChat.approvePlan which can silently fail if the ref isn't wired.
+    onModeChangeLocal?.("accept_edits");
+    setIsPinned(false);
+  }, [onApprovePlan, onModeChangeLocal, setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
-      setPlanPendingLocal(false);
-      chat.onRequestPlanChanges?.(feedback);
-      activity.setIsPinned(false);
+      setPendingPlanArtifactId(null);
+      onRequestPlanChanges?.(feedback);
+      setIsPinned(false);
     },
-    [chat.onRequestPlanChanges, activity.setIsPinned],
+    [onRequestPlanChanges, setIsPinned],
   );
 
   // Close artifact and auto-close activity panel if it was opened programmatically
   const handleCloseArtifact = useCallback(() => {
     closeArtifactPanel();
-    activity.closeIfAutoOpened();
-  }, [closeArtifactPanel, activity.closeIfAutoOpened]);
+    closeIfAutoOpened();
+  }, [closeArtifactPanel, closeIfAutoOpened]);
 
   // Expose callback for /plan command to reopen plan artifact
   useEffect(() => {
     if (showPlanRef) {
       showPlanRef.current = () => {
-        if (planArtifactIdRef.current) {
-          openArtifact(planArtifactIdRef.current);
-          activity.showTab("plans");
+        if (planArtifactId) {
+          openArtifact(planArtifactId);
+          showTab("plans");
         }
       };
     }
     return () => {
       if (showPlanRef) showPlanRef.current = null;
     };
-  }, [showPlanRef, openArtifact, activity.showTab]);
+  }, [openArtifact, planArtifactId, showPlanRef, showTab]);
 
   // Listen for palette open event from App.tsx Cmd+K handler
   useEffect(() => {
@@ -248,34 +448,38 @@ export function ChatPage({
       // Cmd+` — Toggle Activity Panel
       if ((e.metaKey || e.ctrlKey) && e.key === "`") {
         e.preventDefault();
-        activity.togglePanel();
+        togglePanel();
         return;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activity.togglePanel]);
+  }, [togglePanel]);
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
+      {ConfirmDialogElement}
       {/* Main chat column */}
       <div className="flex flex-col flex-1 min-w-[400px]">
         {/* Command Bar */}
         <CommandBar
           sessionRef={effectiveSessionRef}
           title={
-            chat.viewingSessionMeta?.title ??
-            chat.attachedSessionMeta?.title ??
+            viewingMeta?.title ??
             activeTitle
           }
-          viewingMeta={chat.viewingSessionMeta ?? chat.attachedSessionMeta}
+          viewingMeta={viewingMeta}
           isAttached={!!chat.attachedSessionId}
-          onAttach={chat.onAttachToViewed}
-          onDetach={chat.onDetachFromSession}
+          sessionInteractionMode={chat.sessionInteractionMode}
+          isAutonomousSession={isAutonomousSession}
+          onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
+          onDetach={
+            isAutonomousSession ? handleAutonomousDetach : chat.clearViewingSession
+          }
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
-          onNewChat={conversations.onNewChat}
-          onTogglePanel={activity.togglePanel}
+          onNewChat={handleNewChat}
+          onTogglePanel={togglePanel}
           agents={conversations.agents ?? []}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
@@ -283,8 +487,18 @@ export function ChatPage({
           agentShowScopeToggle={agentShowScopeToggle}
           agentHasGlobal={agentHasGlobal}
           agentHasProject={agentHasProject}
-          isPanelPinned={activity.isPinned}
+          isPanelPinned={isPinned}
         />
+        {voice.sttEnabled &&
+          voice.voiceInputMode === "vad" &&
+          (voice.isListening || voice.isTranscribing || voice.voiceError) && (
+          <VoiceStatusBar
+            isListening={voice.isListening ?? false}
+            isSpeechDetected={voice.isSpeechDetected ?? false}
+            isTranscribing={voice.isTranscribing ?? false}
+            voiceError={voice.voiceError}
+          />
+        )}
 
         <ArtifactContext.Provider
           value={{ openCodeAsArtifact, openFileAsArtifact }}
@@ -311,16 +525,23 @@ export function ChatPage({
             />
           </div>
 
+          {isAutonomousSession && viewingMeta && (
+            <AgentStatusBar
+              viewingMeta={viewingMeta}
+              interactionMode={chat.sessionInteractionMode ?? "none"}
+            />
+          )}
+
           {/* Chat input */}
           <ChatInput
-            onSend={chat.onSend}
+            onSend={onSend}
             onStop={chat.onStop}
             isStreaming={chat.isStreaming}
             disabled={
               !chat.isConnected ||
-              (!!chat.viewingSessionId && !chat.attachedSessionId)
+              (isSwappedTerminal && chat.sessionInteractionMode !== "proxy")
             }
-            viewingSession={!!chat.viewingSessionId && !chat.attachedSessionId}
+            viewingSession={showObserveOverlay}
             onInputChange={chat.onInputChange}
             paletteItems={chat.paletteItems}
             onPaletteSelect={handlePaletteSelect}
@@ -339,27 +560,41 @@ export function ChatPage({
             agentShowScopeToggle={agentShowScopeToggle}
             agentHasGlobal={agentHasGlobal}
             agentHasProject={agentHasProject}
-            voiceMode={voice.voiceMode}
-            voiceAvailable={voice.voiceAvailable}
-            isListening={voice.isListening}
-            isSpeechDetected={voice.isSpeechDetected}
-            isTranscribing={voice.isTranscribing}
-            voiceError={voice.voiceError}
-            onToggleVoice={voice.onToggleVoice}
+            sttEnabled={voice.sttEnabled}
+            voiceInputMode={voice.voiceInputMode}
+            isRecording={voice.isRecording}
+            startRecording={voice.startRecording}
+            stopRecording={voice.stopRecording}
+            cancelRecording={voice.cancelRecording}
             isMobile={isMobile}
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
+            provider={effectiveInputProvider}
+            availableProviders={availableProviders}
+            currentModel={effectiveInputModel}
+            onModelChange={onModelChange}
+            onProviderChange={chat.onProviderChange}
+            onSwitchProvider={chat.onSwitchProvider}
+            onProviderSelectionChange={
+              isSwappedTerminal ? handleSwappedSessionProviderSelection : undefined
+            }
+            providerPickerDisabledReason={providerPickerDisabledReason}
+            hasMessages={chat.messages.length > 0}
+            proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
+            showObserveOverlay={showObserveOverlay}
+            onAttachObservedSession={chat.onAttachToViewed}
+            proxyDeliveryNotice={chat.proxyDeliveryNotice}
           />
         </ArtifactContext.Provider>
       </div>
 
       {/* Activity Panel */}
       <ActivityPanel
-        isPinned={activity.isPinned}
-        onPinnedChange={activity.setIsPinned}
-        panelWidth={activity.panelWidth}
-        onWidthChange={activity.setPanelWidth}
-        activeTab={activity.activeTab}
-        onTabChange={activity.setActiveTab}
+        isPinned={isPinned}
+        onPinnedChange={setIsPinned}
+        panelWidth={panelWidth}
+        onWidthChange={setPanelWidth}
+        activeTab={activityTab}
+        onTabChange={setActivityTab}
         artifacts={artifacts}
         activeArtifact={activeArtifact}
         onOpenArtifact={openArtifact}
@@ -367,14 +602,14 @@ export function ChatPage({
         onUpdateArtifactContent={updateArtifact}
         onSetArtifactVersion={setVersion}
         planPendingApproval={
-          (planPendingLocal || chat.planPendingApproval) &&
-          activeArtifact?.id === planArtifactIdRef.current &&
-          activeArtifact?.type === 'text'
+          (pendingPlanArtifactId === activeArtifact?.id || planPendingApproval) &&
+          activeArtifact?.id === planArtifactId &&
+          activeArtifact?.type === "text"
         }
         onApprovePlan={handleApprovePlan}
         onRequestPlanChanges={handleRequestPlanChanges}
-        canvasState={canvas.activeCanvas}
-        onCloseCanvas={canvas.closeCanvas}
+        canvasState={activeCanvas}
+        onCloseCanvas={closeCanvas}
         onClearCanvas={canvas.closeCanvas}
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
@@ -382,6 +617,11 @@ export function ChatPage({
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
         chatSessionId={chat.dbSessionId}
+        focusSessionId={focusSessionId}
+        onFocusSessionHandled={handleFocusSessionHandled}
+        watchingSessionIds={watchingSessionIds}
+        onUnwatchSession={handleUnwatch}
+        onSwapSession={handleSwapSession}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
       />
@@ -409,7 +649,7 @@ export function ChatPage({
           setShowActiveSessions(false);
         }}
         onKillAgent={conversations.onKillAgent}
-        onViewCliSession={conversations.onViewCliSession}
+        onViewCliSession={handleViewCliSession}
       />
     </div>
   );

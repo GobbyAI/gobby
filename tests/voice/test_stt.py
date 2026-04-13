@@ -17,6 +17,15 @@ from gobby.voice.stt import WhisperSTT
 pytestmark = pytest.mark.unit
 
 
+def _has_faster_whisper() -> bool:
+    try:
+        import faster_whisper  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -449,6 +458,10 @@ class TestMimeTypeMapping:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    not _has_faster_whisper(),
+    reason="faster-whisper not installed (optional voice dep)",
+)
 class TestEnsureModel:
     @pytest.mark.asyncio
     async def test_lazy_loads_model_on_first_call(self) -> None:

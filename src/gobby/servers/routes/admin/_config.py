@@ -67,14 +67,12 @@ def register_config_routes(router: APIRouter, server: "HTTPServer") -> None:
         Returns:
             Dictionary with models grouped by provider, default_model
         """
-        # Determine default model from config or fallback
-        default_model = "opus"
-        if (
-            server.services.config
-            and server.services.config.llm_providers
-            and server.services.config.llm_providers.default_model
-        ):
-            default_model = server.services.config.llm_providers.default_model
+        # Determine default model from config
+        default_model = (
+            server.services.config.llm_providers.default_model
+            if server.services.config and server.services.config.llm_providers
+            else None
+        )
 
         # Discover models from OpenRouter registry
         try:

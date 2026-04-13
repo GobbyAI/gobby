@@ -15,11 +15,17 @@ def build_cli_command(
     working_directory: str | None = None,
     sandbox_args: list[str] | None = None,
     model: str | None = None,
-) -> list[str]:
+    mode: str = "agent",
+    output_format: str | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
     """
-    Build the CLI command with proper prompt passing and permission flags.
+    Build the CLI command and env for any provider.
 
-    All spawned agents run autonomously (auto-approve, single-shot).
+    Supports three modes:
+    - "agent": Autonomous subagent (auto-approve, single-shot prompt)
+    - "interactive": Multi-turn web chat (stream-json I/O, no prompt)
+    - "headless": Single-turn headless query (not used for web chat)
 
     Each CLI has different syntax for passing prompts and handling permissions:
 
@@ -28,23 +34,31 @@ def build_cli_command(
 
     Gemini CLI:
     - gemini --approval-mode yolo "prompt" (one-shot)
+    - gemini --acp (interactive ACP mode)
 
     Codex CLI:
     - codex --full-auto -C <dir> [PROMPT]
 
     Args:
         cli: CLI name (claude, gemini, codex)
-        prompt: Optional prompt to pass
-        session_id: Optional session ID (used by Claude-compatible CLIs)
+        prompt: Optional prompt to pass (agent mode)
+        session_id: Optional session ID
         auto_approve: If True, add flags to auto-approve actions/permissions
         working_directory: Optional working directory (used by Codex -C flag)
         sandbox_args: Optional list of CLI args for sandbox configuration
-        model: Optional model name to pass to the CLI (used by CLIs that accept a --model flag)
+        model: Optional model name
+        mode: "agent" (default), "interactive", or "headless"
+        output_format: Output format override (e.g., "stream-json")
+        env_overrides: Environment variable overrides. Callers are responsible
+            for merging inherited environment variables if needed.
 
     Returns:
-        Command list for subprocess execution
+        Tuple of (command list, env dict) for subprocess execution
     """
     command = [cli]
+    env: dict[str, str] = {}
+    if env_overrides:
+        env.update(env_overrides)
 
     if cli == "claude":
         # Claude CLI flags
@@ -53,8 +67,10 @@ def build_cli_command(
         if model:
             command.extend(["--model", model])
         if auto_approve:
-            # Skip all permission prompts for autonomous subagent operation
             command.append("--dangerously-skip-permissions")
+        if mode == "interactive":
+            fmt = output_format or "stream-json"
+            command.extend(["--output-format", fmt, "--verbose", "--input-format", fmt])
 
     elif cli == "gemini":
         # Gemini CLI flags
@@ -62,14 +78,16 @@ def build_cli_command(
             command.extend(["--model", model])
         if auto_approve:
             command.extend(["--approval-mode", "yolo"])
-        # Positional prompt for one-shot execution (no -i flag)
+        if mode == "interactive":
+            command.append("--acp")
+            if session_id:
+                command.extend(["--resume", session_id])
 
     elif cli == "codex":
         # Codex CLI flags
         if model:
             command.extend(["--model", model])
         if auto_approve:
-            # --full-auto: low-friction sandboxed automatic execution
             command.append("--full-auto")
         if working_directory:
             command.extend(["-C", working_directory])
@@ -78,12 +96,11 @@ def build_cli_command(
     if sandbox_args:
         command.extend(sandbox_args)
 
-    # All three CLIs accept prompt as positional argument (must come last)
-    # For Gemini terminal mode, this is skipped (handled above with -i flag)
-    if prompt:
+    # Prompt only in agent/headless mode (interactive mode uses stdin)
+    if prompt and mode != "interactive":
         command.append(prompt)
 
-    return command
+    return command, env
 
 
 def build_gemini_command_with_resume(

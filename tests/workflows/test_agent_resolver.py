@@ -132,7 +132,7 @@ class TestProviderNormalization:
         assert result is not None
         assert result.provider == "gemini"
 
-    def test_claude_sdk_maps_to_claude(
+    def test_claude_source_maps_to_claude(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         body = {"name": "test3", "provider": "inherit"}
@@ -142,7 +142,7 @@ class TestProviderNormalization:
             definition_json=json.dumps(body),
             source="test",
         )
-        result = resolve_agent("test3", db, cli_source="claude_sdk_web_chat")
+        result = resolve_agent("test3", db, cli_source="claude")
         assert result is not None
         assert result.provider == "claude"
 

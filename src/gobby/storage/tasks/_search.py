@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.search.fts5 import FTS5SearchBackend, sanitize_fts_query
+from gobby.storage.tasks._state_sql import status_filter_sql
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
@@ -81,13 +82,10 @@ class TaskFTS5Searcher:
             params.append(project_id)
 
         if status:
-            if isinstance(status, list):
-                placeholders = ", ".join("?" for _ in status)
-                conditions.append(f"t.status IN ({placeholders})")
-                params.extend(status)
-            else:
-                conditions.append("t.status = ?")
-                params.append(status)
+            clause, clause_params = status_filter_sql(status, alias="t")
+            if clause:
+                conditions.append(clause)
+                params.extend(clause_params)
 
         if task_type:
             conditions.append("t.task_type = ?")

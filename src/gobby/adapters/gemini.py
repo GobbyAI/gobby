@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import BaseAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import truncate_additional_context
+from gobby.llm.sdk_utils import compress_and_truncate
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -93,11 +93,24 @@ class GeminiAdapter(BaseAdapter):
         "edit_file": "Edit",
         "EditFile": "Edit",
         "EditFileTool": "Edit",
+        "replace": "Edit",
+        "Replace": "Edit",
+        "ReplaceTool": "Edit",
         # Search/Glob/Grep
         "GlobTool": "Glob",
+        "glob": "Glob",
         "GrepTool": "Grep",
+        "grep": "Grep",
+        "grep_search": "Grep",
         "search_file_content": "Grep",
         "SearchText": "Grep",
+        # Directory listing
+        "list_directory": "Ls",
+        "ListDirectory": "Ls",
+        "ls": "Ls",
+        # Web access
+        "web_fetch": "Fetch",
+        "FetchTool": "Fetch",
         # MCP tools (Gobby MCP server)
         "call_tool": "mcp__gobby__call_tool",
         "list_mcp_servers": "mcp__gobby__list_mcp_servers",
@@ -161,7 +174,29 @@ class GeminiAdapter(BaseAdapter):
         if "tool_name" in data:
             data["tool_name"] = self.normalize_tool_name(data["tool_name"])
 
+        # Gemini AfterAgent hooks expose the model reply as ``prompt_response``.
+        # Normalize it so downstream transcript and hook consumers can rely on
+        # the same ``response`` field used by other CLIs.
+        if "prompt_response" in data and "response" not in data:
+            data["response"] = data["prompt_response"]
+
         return data
+
+    @staticmethod
+    def _is_cancelled_after_agent(input_data: dict[str, Any]) -> bool:
+        """Heuristic for Gemini ESC/user-interrupt AfterAgent turns.
+
+        Context7 docs show normal AfterAgent hooks expose ``prompt_response``.
+        When Gemini fires AfterAgent without any response payload, treat that
+        as a cancelled/interrupted turn and stop the loop instead of retrying
+        a block forever.
+        """
+        response = input_data.get("prompt_response") or input_data.get("response")
+        if response is None:
+            return True
+        if isinstance(response, str):
+            return response.strip() == ""
+        return False
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
         """Convert Gemini CLI native event to unified HookEvent.
@@ -272,8 +307,10 @@ class GeminiAdapter(BaseAdapter):
         Returns:
             Dict in Gemini CLI's expected format.
         """
+        should_continue = response.decision != "deny"
         result: dict[str, Any] = {
             "decision": response.decision,
+            "continue": should_continue,
         }
 
         # Add reason if present
@@ -336,14 +373,8 @@ class GeminiAdapter(BaseAdapter):
                         context_lines.append(
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
-                    # Add terminal-specific session IDs
                     for key in [
-                        "terminal_iterm_session_id",
-                        "terminal_term_session_id",
-                        "terminal_kitty_window_id",
                         "terminal_tmux_pane",
-                        "terminal_vscode_terminal_id",
-                        "terminal_alacritty_socket",
                     ]:
                         if response.metadata.get(key):
                             friendly_name = key.replace("terminal_", "").replace("_", " ")
@@ -356,15 +387,6 @@ class GeminiAdapter(BaseAdapter):
                     hook_specific["additionalContext"] = (
                         f"{existing}\n{new_context}" if existing else new_context
                     )
-                else:
-                    # Subsequent hooks: inject minimal session ref only (~8 tokens)
-                    if session_ref:
-                        hook_specific["hookEventName"] = hook_event_name
-                        existing = hook_specific.get("additionalContext", "")
-                        minimal_context = f"Gobby Session ID: {session_ref}"
-                        hook_specific["additionalContext"] = (
-                            f"{existing}\n{minimal_context}" if existing else minimal_context
-                        )
 
         # Handle BeforeModel-specific output (llm_request modification)
         if hook_type == "BeforeModel" and response.modify_args:
@@ -374,11 +396,11 @@ class GeminiAdapter(BaseAdapter):
         if hook_type == "BeforeToolSelection" and response.modify_args:
             hook_specific["toolConfig"] = response.modify_args
 
-        # Truncate additionalContext to SDK limit before emitting
+        # Compress + truncate additionalContext to SDK limit before emitting
         if "additionalContext" in hook_specific:
-            hook_specific["additionalContext"] = truncate_additional_context(
+            hook_specific["additionalContext"] = compress_and_truncate(
                 hook_specific["additionalContext"]
-            )
+            )[0]
 
         # Only add hookSpecificOutput if there's content
         if hook_specific:
@@ -412,9 +434,25 @@ class GeminiAdapter(BaseAdapter):
         hook_type = native_event.get("hook_type", "")
         if not hook_type:
             hook_type = native_event.get("input_data", {}).get("hook_event_name", "")
+        input_data = native_event.get("input_data", {}) or {}
+        if not input_data and "hook_event_name" in native_event:
+            input_data = native_event
 
         # Process through HookManager
         hook_response = hook_manager.handle(hook_event)
 
         # Translate response back to Gemini format
-        return self.translate_from_hook_response(hook_response, hook_type=hook_type)
+        result = self.translate_from_hook_response(hook_response, hook_type=hook_type)
+
+        # Normal AfterAgent blocks should retry so stop gates keep the agent
+        # alive. But when the user interrupts the turn (ESC) Gemini still fires
+        # AfterAgent without a completed prompt_response; in that case, kill the
+        # loop so the cancel doesn't get trapped in a retry cycle.
+        if (
+            hook_type == "AfterAgent"
+            and hook_response.decision == "block"
+            and self._is_cancelled_after_agent(input_data)
+        ):
+            result["continue"] = False
+
+        return result

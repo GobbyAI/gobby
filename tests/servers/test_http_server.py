@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
-from gobby.servers.models import SessionRegisterRequest
+from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import LocalSessionManager
@@ -115,6 +115,37 @@ class TestSessionRegisterRequest:
         assert request.git_branch == "main"
 
 
+class TestWebChatSessionRequest:
+    """Tests for WebChatSessionRequest model."""
+
+    def test_defaults(self) -> None:
+        request = WebChatSessionRequest()
+
+        assert request.provider == "claude"
+        assert request.project_id is None
+        assert request.cwd is None
+        assert request.title is None
+        assert request.model is None
+        assert request.chat_mode is None
+
+    def test_optional_fields(self) -> None:
+        request = WebChatSessionRequest(
+            provider="codex",
+            project_id="project-uuid",
+            cwd="/repo",
+            title="Web Chat",
+            model="gpt-5.4",
+            chat_mode="plan",
+        )
+
+        assert request.provider == "codex"
+        assert request.project_id == "project-uuid"
+        assert request.cwd == "/repo"
+        assert request.title == "Web Chat"
+        assert request.model == "gpt-5.4"
+        assert request.chat_mode == "plan"
+
+
 class TestAdminEndpoints:
     """Tests for admin endpoints."""
 
@@ -128,6 +159,7 @@ class TestAdminEndpoints:
         assert "server" in data
         assert "port" in data["server"]
         assert data["server"]["test_mode"] is True
+        assert "provider_models" in data
 
     def test_config_endpoint(self, client: TestClient) -> None:
         """Test /admin/config endpoint returns configuration."""

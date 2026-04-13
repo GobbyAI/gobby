@@ -24,6 +24,7 @@ from claude_agent_sdk import (
 
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import LLMProvider
+from gobby.utils.json_helpers import extract_json_from_text
 
 # Type alias for auth mode
 AuthMode = Literal["subscription", "api_key"]
@@ -76,6 +77,16 @@ class ClaudeLLMProvider(LLMProvider):
 
         self._auth_mode: AuthMode = "subscription"
         self._claude_cli_path = self._find_cli_path()
+
+        # Resolve default model from provider config → global config.
+        # Pydantic defaults guarantee llm_providers.default_model is never None.
+        providers = getattr(config, "llm_providers", None)
+        claude_cfg = getattr(providers, "claude", None) if providers else None
+        self._default_model: str = str(
+            getattr(claude_cfg, "default_model", None)
+            or getattr(providers, "default_model", None)
+            or config.llm_providers.default_model
+        )
 
     def _find_cli_path(self) -> str | None:
         """Find Claude CLI path. Delegates to claude_cli.find_cli_path()."""
@@ -358,6 +369,8 @@ class ClaudeLLMProvider(LLMProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """
         Generate text using Claude.
@@ -366,7 +379,13 @@ class ClaudeLLMProvider(LLMProvider):
         """
         cli_path = await self._verify_cli_path()
         if cli_path:
-            return await self._generate_text_sdk(prompt, system_prompt, model, max_tokens)
+            return await self._generate_text_sdk(
+                prompt,
+                system_prompt,
+                model,
+                max_tokens,
+                caller=caller,
+            )
         raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
     async def _generate_text_sdk(
@@ -375,6 +394,8 @@ class ClaudeLLMProvider(LLMProvider):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """Generate text using Claude Agent SDK (subscription mode)."""
         cli_path = await self._verify_cli_path()
@@ -386,7 +407,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt or "You are a helpful assistant.",
             max_turns=1,
-            model=model or "opus",
+            model=model or self._default_model,
             tools=[],  # Explicitly disable all tools
             allowed_tools=[],
             mcp_servers={},
@@ -421,9 +442,8 @@ class ClaudeLLMProvider(LLMProvider):
                 self.logger.warning(f"generate_text: {message_count} messages but no text content")
             return result_text
 
-        result: str = await self._execute_sdk_query(
-            "generate_text", _run_query, options, max_retries=3
-        )
+        operation = f"generate_text[{caller}]" if caller else "generate_text"
+        result: str = await self._execute_sdk_query(operation, _run_query, options, max_retries=3)
         # SDK doesn't support max_tokens directly; post-truncate if needed
         if max_tokens and len(result) > max_tokens * 4:
             result = result[: max_tokens * 4]
@@ -449,7 +469,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=max_turns,
-            model=model or "opus",
+            model=model or self._default_model,
             allowed_tools=allowed_tools,
             mcp_servers={},
             permission_mode="default",
@@ -504,7 +524,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt=system_prompt or "You are a helpful assistant.",
             max_turns=1,
-            model=model or "opus",
+            model=model or self._default_model,
             tools=[],
             allowed_tools=[],
             mcp_servers={},
@@ -515,15 +535,28 @@ class ClaudeLLMProvider(LLMProvider):
 
         async def _run_query() -> str:
             result_text = ""
+            message_count = 0
             async for message in query(prompt=prompt, options=options):
+                message_count += 1
+                self.logger.debug(
+                    "generate_json message %d: %s", message_count, type(message).__name__
+                )
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             result_text += block.text
+                elif isinstance(message, ResultMessage):
+                    if message.result:
+                        result_text = message.result
+            if message_count == 0:
+                self.logger.warning("generate_json: No messages received from Claude SDK")
+            elif not result_text:
+                self.logger.warning("generate_json: %d messages but no text content", message_count)
             return result_text
 
-        text = await self._execute_sdk_query("generate_json", _run_query, options)
+        text = await self._execute_sdk_query("generate_json", _run_query, options, max_retries=3)
         text = str(text).strip()
+        self.logger.debug("generate_json raw response (%d chars): %s", len(text), text[:500])
         if not text:
             raise ValueError("Claude SDK returned empty response for JSON generation")
 
@@ -531,12 +564,25 @@ class ClaudeLLMProvider(LLMProvider):
             result: dict[str, Any] = json.loads(text)
             return result
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse Claude response as JSON: {e}") from e
+            # Fallback: extract JSON from markdown fences or mixed content
+            self.logger.debug("Direct JSON parse failed, trying extract_json_from_text fallback")
+            extracted = extract_json_from_text(text)
+            if extracted:
+                try:
+                    result = json.loads(extracted)
+                    self.logger.debug(
+                        "Fallback extracted JSON (%d chars): %s", len(extracted), extracted[:200]
+                    )
+                    return result
+                except json.JSONDecodeError:
+                    pass
+            raise ValueError(f"Failed to parse Claude response as JSON: {text[:200]}") from e
 
     async def describe_image(
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Generate a text description of an image using Claude's vision capabilities.
@@ -544,11 +590,12 @@ class ClaudeLLMProvider(LLMProvider):
         Args:
             image_path: Path to the image file to describe
             context: Optional context to guide the description
+            model: Optional model override
 
         Returns:
             Text description of the image
         """
-        return await self._describe_image_sdk(image_path, context)
+        return await self._describe_image_sdk(image_path, context, model)
 
     def _prepare_image_data(self, image_path: str) -> tuple[str, str] | str:
         """
@@ -588,6 +635,7 @@ class ClaudeLLMProvider(LLMProvider):
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Describe image using Claude Agent SDK (subscription mode)."""
         cli_path = await self._verify_cli_path()
@@ -609,7 +657,7 @@ class ClaudeLLMProvider(LLMProvider):
         options = ClaudeAgentOptions(
             system_prompt="You are a vision assistant that describes images in detail.",
             max_turns=1,
-            model="haiku",
+            model=model or self._default_model,
             tools=[],
             allowed_tools=[],
             mcp_servers={},

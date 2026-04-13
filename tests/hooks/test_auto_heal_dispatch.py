@@ -453,6 +453,33 @@ class TestFormatDiscoveryResult:
         assert "**Schema for create_task:**" in formatted
         assert '"title"' in formatted
 
+    def test_format_get_skill(self) -> None:
+        from gobby.hooks.hook_manager import HookManager
+
+        dr = {
+            "tool": "get_skill",
+            "result": {
+                "skill": {
+                    "name": "python",
+                    "content": "# Python Best Practices\nUse type hints.",
+                },
+            },
+        }
+        formatted = HookManager._format_discovery_result(dr)
+        assert '<skill name="python">' in formatted
+        assert "# Python Best Practices" in formatted
+        assert "Use type hints." in formatted
+
+    def test_format_get_skill_empty_content(self) -> None:
+        from gobby.hooks.hook_manager import HookManager
+
+        dr = {
+            "tool": "get_skill",
+            "result": {"skill": {"name": "empty", "content": ""}},
+        }
+        formatted = HookManager._format_discovery_result(dr)
+        assert formatted == ""
+
     def test_format_unknown_tool(self) -> None:
         from gobby.hooks.hook_manager import HookManager
 

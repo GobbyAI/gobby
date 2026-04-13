@@ -729,44 +729,44 @@
 }
 
 /* =============================================================================
-   Cost & Token Tracker
+   Token Tracker
    ============================================================================= */
 
-.cost-tracker {
+.token-tracker {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
 }
 
-.cost-tracker-loading,
-.cost-tracker-empty {
+.token-tracker-loading,
+.token-tracker-empty {
   font-size: calc(var(--font-size-base) * 0.7);
   color: var(--text-muted);
 }
 
-.cost-tracker-total {
+.token-tracker-total {
   display: flex;
   align-items: baseline;
   gap: 0.4rem;
 }
 
-.cost-tracker-cost {
+.token-tracker-total-value {
   font-family: inherit;
   font-size: calc(var(--font-size-base) * 1.1);
   font-weight: 700;
   color: var(--text-primary);
 }
 
-.cost-tracker-total-label {
+.token-tracker-total-label {
   font-size: calc(var(--font-size-base) * 0.65);
   color: var(--text-muted);
 }
 
-.cost-tracker-bar-container {
+.token-tracker-bar-container {
   padding: 0.1rem 0;
 }
 
-.cost-tracker-bar {
+.token-tracker-bar {
   display: flex;
   height: 6px;
   border-radius: 3px;
@@ -774,50 +774,50 @@
   background: var(--bg-tertiary);
 }
 
-.cost-tracker-bar-input {
+.token-tracker-bar-input {
   background: var(--accent);
   border-radius: 3px 0 0 3px;
   transition: width 0.3s;
 }
 
-.cost-tracker-bar-output {
+.token-tracker-bar-output {
   background: #8b5cf6;
   border-radius: 0 3px 3px 0;
   transition: width 0.3s;
 }
 
-.cost-tracker-stats {
+.token-tracker-stats {
   display: flex;
   gap: 0.8rem;
 }
 
-.cost-tracker-stat {
+.token-tracker-stat {
   display: flex;
   align-items: center;
   gap: 0.25rem;
 }
 
-.cost-tracker-stat-dot {
+.token-tracker-stat-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.cost-tracker-stat-dot--input {
+.token-tracker-stat-dot--input {
   background: var(--accent);
 }
 
-.cost-tracker-stat-dot--output {
+.token-tracker-stat-dot--output {
   background: #8b5cf6;
 }
 
-.cost-tracker-stat-label {
+.token-tracker-stat-label {
   font-size: calc(var(--font-size-base) * 0.6);
   color: var(--text-muted);
 }
 
-.cost-tracker-stat-value {
+.token-tracker-stat-value {
   font-family: inherit;
   font-size: calc(var(--font-size-base) * 0.65);
   font-weight: 600;

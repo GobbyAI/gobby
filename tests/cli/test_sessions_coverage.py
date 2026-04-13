@@ -84,9 +84,8 @@ class TestManagerCreation:
 
 
 class TestListSessionsEdgeCases:
-    def test_list_with_cost(self, runner: CliRunner, mock_session_manager: MagicMock) -> None:
+    def test_list_with_tokens(self, runner: CliRunner, mock_session_manager: MagicMock) -> None:
         session = _make_session(
-            usage_total_cost_usd=1.23,
             usage_input_tokens=1000,
             usage_output_tokens=500,
             usage_cache_creation_tokens=0,
@@ -95,7 +94,6 @@ class TestListSessionsEdgeCases:
         mock_session_manager.list.return_value = [session]
         result = runner.invoke(sessions, ["list"])
         assert result.exit_code == 0
-        assert "$1.23" in result.output
 
     def test_list_long_title_truncated(
         self, runner: CliRunner, mock_session_manager: MagicMock
@@ -161,7 +159,6 @@ class TestShowSessionDetails:
             usage_output_tokens=500,
             usage_cache_creation_tokens=200,
             usage_cache_read_tokens=100,
-            usage_total_cost_usd=0.0123,
         )
         mock_session_manager.get.return_value = session
         result = runner.invoke(sessions, ["show", "sess-abc123"])
@@ -169,7 +166,6 @@ class TestShowSessionDetails:
         assert "Usage Stats:" in result.output
         assert "Input Tokens: 1000" in result.output
         assert "Cache Write: 200" in result.output
-        assert "$0.0123" in result.output
 
     def test_show_long_summary_truncated(
         self, runner: CliRunner, mock_session_manager: MagicMock, mock_resolve_session: MagicMock

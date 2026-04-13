@@ -356,7 +356,7 @@ class TestExecuteSpawn:
             ),
             patch(
                 "gobby.agents.spawn_executor.build_cli_command",
-                return_value=["gemini", "--approval-mode", "yolo", "-i", "prompt"],
+                return_value=(["gemini", "--approval-mode", "yolo", "-i", "prompt"], {}),
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
@@ -498,7 +498,7 @@ class TestExecuteSpawn:
             ),
             patch(
                 "gobby.agents.spawn_executor.build_cli_command",
-                return_value=["gemini", "--approval-mode", "yolo", "-i", "prompt"],
+                return_value=(["gemini", "--approval-mode", "yolo", "-i", "prompt"], {}),
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
@@ -711,7 +711,7 @@ class TestExecuteSpawnSandbox:
             ),
             patch(
                 "gobby.agents.spawn_executor.build_cli_command",
-                return_value=["gemini", "--approval-mode", "yolo", "-i", "prompt"],
+                return_value=(["gemini", "--approval-mode", "yolo", "-i", "prompt"], {}),
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",

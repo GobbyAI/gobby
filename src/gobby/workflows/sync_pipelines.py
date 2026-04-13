@@ -1,7 +1,8 @@
 """Pipeline definition synchronization from bundled YAML templates.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly — no intermediate template rows, no propagation.
+directly. Installed rows are overwritten when the template changes
+(preserving the user's enabled toggle). Soft-deleted rows are not restored.
 """
 
 import json
@@ -31,8 +32,9 @@ def get_bundled_pipelines_path() -> Path:
 def sync_bundled_pipelines(db: DatabaseProtocol) -> dict[str, Any]:
     """Sync bundled pipeline definitions from install/shared/workflows/pipelines/ to the database.
 
-    Creates installed rows directly from template files. Existing rows are
-    never overwritten — drift is detected via hash comparison at runtime.
+    Creates installed rows directly from template files. Installed rows are
+    overwritten when the template changes (preserving the user's enabled toggle).
+    Soft-deleted rows are not restored.
 
     Args:
         db: Database connection
@@ -102,12 +104,22 @@ def sync_bundled_pipelines(db: DatabaseProtocol) -> dict[str, Any]:
             existing = manager.get_by_name(name, include_deleted=True)
 
             if existing is not None:
-                # Respect soft-deletes
                 if existing.deleted_at is not None:
                     result["skipped"] += 1
                     continue
 
-                # Row exists and is active — skip (no overwrite)
+                if existing.source == "installed" and existing.definition_json != definition_json:
+                    manager.update(
+                        existing.id,
+                        definition_json=definition_json,
+                        description=description,
+                        version=version,
+                        priority=priority,
+                        sources=sources_list,
+                    )
+                    result["updated"] += 1
+                    continue
+
                 result["skipped"] += 1
                 continue
 

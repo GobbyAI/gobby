@@ -15,7 +15,11 @@ from typing import Any
 
 from gobby.cli.utils import get_install_dir
 
-from .mcp_config import configure_mcp_server_toml, remove_mcp_server_toml
+from .mcp_config import (
+    configure_mcp_server_toml,
+    remove_mcp_server_toml,
+    strip_mcp_tool_overrides_toml,
+)
 from .shared import (
     clean_project_hooks,
     install_cli_content,
@@ -45,7 +49,7 @@ def _set_toml_value(content: str, key: str, value: str) -> str:
     before the first ``[table]`` header to stay top-level.
     """
     # Check for the exact dotted key first (e.g., features.codex_hooks = ...)
-    pattern = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$")
+    pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}\s*=.*$")
     line = f"{key} = {value}"
 
     if pattern.search(content):
@@ -56,7 +60,9 @@ def _set_toml_value(content: str, key: str, value: str) -> str:
     if "." in key:
         section, subkey = key.rsplit(".", 1)
         section_pattern = re.compile(rf"(?m)^\[{re.escape(section)}\]\s*$")
-        bare_pattern = re.compile(rf"(?m)^\s*{re.escape(subkey)}\s*=.*$")
+        # Use horizontal whitespace only so we don't consume the newline
+        # after ``[section]`` when replacing the first key in that section.
+        bare_pattern = re.compile(rf"(?m)^[ \t]*{re.escape(subkey)}\s*=.*$")
 
         section_match = section_pattern.search(content)
         if section_match:
@@ -96,7 +102,7 @@ def _remove_toml_key(content: str, key: str) -> str:
     Same limitations as _set_toml_value — regex-based, for the controlled
     Codex config.toml shape only.
     """
-    pattern = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$\n?")
+    pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}\s*=.*$\n?")
     result = pattern.sub("", content)
     return re.sub(r"\n{3,}", "\n\n", result)
 
@@ -226,6 +232,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         "config_updated": False,
         "mcp_configured": False,
         "mcp_already_configured": False,
+        "mcp_tools_stripped": False,
         "error": None,
     }
 
@@ -297,6 +304,13 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         result["mcp_already_configured"] = mcp_result.get("already_configured", False)
     else:
         logger.warning(f"Failed to configure MCP server: {mcp_result['error']}")
+
+    # 5b. Strip per-tool approval overrides so tools inherit session approval mode
+    strip_result = strip_mcp_tool_overrides_toml(codex_config_path)
+    if strip_result["success"] and strip_result.get("stripped"):
+        result["mcp_tools_stripped"] = True
+    elif not strip_result["success"]:
+        logger.warning(f"Failed to strip MCP tool overrides: {strip_result['error']}")
 
     result["success"] = True
     return result

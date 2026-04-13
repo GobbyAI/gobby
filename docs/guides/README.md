@@ -12,10 +12,8 @@ Documentation guides for using Gobby's features.
 | [workflows-overview.md](workflows-overview.md) | How rules, agents, and pipelines fit together |
 | [rules.md](rules.md) | Rule engine — events, effects, conditions, enforcement |
 | [pipelines.md](pipelines.md) | Pipeline workflows with data flow and approval gates |
-| [lobster-migration.md](lobster-migration.md) | Migrating from Lobster to Gobby pipelines |
 | [search.md](search.md) | Unified search with TF-IDF, embeddings, and hybrid modes |
 | [code-index.md](code-index.md) | AST-based symbol indexing with `gobby-code` MCP tools |
-| [tool-compression.md](tool-compression.md) | Output compression and code index compression for token savings |
 | [tdd-enforcement.md](tdd-enforcement.md) | TDD enforcement — test-first ordering, nudges, and block rules |
 
 ## Orchestration & Parallel Development
@@ -25,7 +23,6 @@ Documentation guides for using Gobby's features.
 | [agents.md](agents.md) | Subagent spawning and management |
 | [worktrees.md](worktrees.md) | Git worktrees, clones, and merge operations |
 | [orchestration.md](orchestration.md) | Task orchestration — pipeline-based (v3) and MCP tool-based (v2) |
-| [orchestrator-test-battery.md](orchestrator-test-battery.md) | Real-world orchestration example: OTel epic built autonomously |
 
 ## Reference
 

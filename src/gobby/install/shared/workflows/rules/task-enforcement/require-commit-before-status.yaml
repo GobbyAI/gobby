@@ -14,6 +14,7 @@ rules:
       - type: block
         mcp_tools:
           - "gobby-tasks:close_task"
+          - "gobby-tasks:de_escalate_task"
           - "gobby-tasks:mark_task_needs_review"
           - "gobby-tasks:mark_task_review_approved"
         reason: |
@@ -37,12 +38,13 @@ rules:
       - type: block
         mcp_tools:
           - "gobby-tasks:close_task"
+          - "gobby-tasks:de_escalate_task"
           - "gobby-tasks:mark_task_needs_review"
           - "gobby-tasks:mark_task_review_approved"
         reason: |
           No commit linked to this task. Gobby auto-detects commits from Bash `git commit`
           and from `link_commit()`. If you already committed, try again — if the issue
-          persists, pass `commit_sha` explicitly to `close_task()`.
+          persists, pass `commit_sha` explicitly to `close_task()` before changing lifecycle state.
 
           If you have no code changes at all, pass a reason to skip the commit requirement:
           close_task(task_id="#N", reason="obsolete")

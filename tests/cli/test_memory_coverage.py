@@ -217,7 +217,7 @@ class TestRebuildCrossrefs:
         client = MagicMock()
         client.check_health.return_value = (True, None)
         resp = MagicMock()
-        resp.ok = True
+        resp.is_success = True
         resp.json.return_value = {"memories_processed": 10, "crossrefs_created": 5}
         client.call_http_api.return_value = resp
         mock_client_fn.return_value = client
@@ -246,7 +246,7 @@ class TestRebuildCrossrefs:
         client = MagicMock()
         client.check_health.return_value = (True, None)
         resp = MagicMock()
-        resp.ok = False
+        resp.is_success = False
         resp.status_code = 500
         resp.text = "Internal Server Error"
         client.call_http_api.return_value = resp
@@ -263,7 +263,7 @@ class TestRebuildCrossrefs:
         client = MagicMock()
         client.check_health.return_value = (True, None)
         resp = MagicMock()
-        resp.ok = True
+        resp.is_success = True
         resp.json.side_effect = ValueError("bad json")
         client.call_http_api.return_value = resp
         mock_client_fn.return_value = client
@@ -286,7 +286,7 @@ class TestRebuildGraph:
         client = MagicMock()
         client.check_health.return_value = (True, None)
         resp = MagicMock()
-        resp.ok = True
+        resp.is_success = True
         resp.json.return_value = {"memories_extracted": 8, "memories_processed": 10, "errors": 0}
         client.call_http_api.return_value = resp
         mock_client_fn.return_value = client
@@ -313,7 +313,7 @@ class TestRebuildGraph:
         client = MagicMock()
         client.check_health.return_value = (True, None)
         resp = MagicMock()
-        resp.ok = False
+        resp.is_success = False
         resp.status_code = 500
         resp.text = "err"
         client.call_http_api.return_value = resp
@@ -334,7 +334,7 @@ class TestRebuildGraph:
         client = MagicMock()
         client.check_health.return_value = (True, None)
         resp = MagicMock()
-        resp.ok = True
+        resp.is_success = True
         resp.json.return_value = {"memories_extracted": 1, "memories_processed": 1, "errors": 0}
         client.call_http_api.return_value = resp
         mock_client_fn.return_value = client

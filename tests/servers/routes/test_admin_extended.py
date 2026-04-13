@@ -69,8 +69,6 @@ class TestAdminRoutesExtended:
                 "gemini",
                 1000000,
                 65536,
-                1.25e-6,
-                10e-6,
             ),
             ModelInfo(
                 "google/gemini-2.5-flash",
@@ -78,8 +76,6 @@ class TestAdminRoutesExtended:
                 "gemini",
                 1000000,
                 65536,
-                0.15e-6,
-                0.6e-6,
             ),
             ModelInfo(
                 "openai/gpt-5.3-codex",
@@ -87,10 +83,8 @@ class TestAdminRoutesExtended:
                 "codex",
                 128000,
                 16384,
-                2.5e-6,
-                10e-6,
             ),
-            ModelInfo("openai/o4-mini", "OpenAI: O4 Mini", "codex", 128000, 16384, 1.1e-6, 4.4e-6),
+            ModelInfo("openai/o4-mini", "OpenAI: O4 Mini", "codex", 128000, 16384),
         ]
         with patch("gobby.llm.model_registry.fetch_models_sync", return_value=mock_models):
             response = client.get("/api/admin/models")
@@ -125,8 +119,6 @@ class TestAdminRoutesExtended:
                 "gemini",
                 1000000,
                 65536,
-                1.25e-6,
-                10e-6,
             ),
             ModelInfo(
                 "openai/gpt-5.3-codex",
@@ -134,8 +126,6 @@ class TestAdminRoutesExtended:
                 "codex",
                 128000,
                 16384,
-                2.5e-6,
-                10e-6,
             ),
         ]
         with patch("gobby.llm.model_registry.fetch_models_sync", return_value=mock_models):
@@ -230,7 +220,6 @@ class TestAdminRoutesExtended:
             "session_id": "sess-123",
             "input_tokens": 100,
             "output_tokens": 50,
-            "total_cost_usd": 0.05,
         }
         response = client.post("/api/admin/test/set-session-usage", json=payload)
         assert response.status_code == 200
@@ -245,5 +234,4 @@ class TestAdminRoutesExtended:
             output_tokens=50,
             cache_creation_tokens=0,
             cache_read_tokens=0,
-            total_cost_usd=0.05,
         )

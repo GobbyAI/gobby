@@ -14,6 +14,13 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 
+# Only inject full session metadata (IDs, terminal context) on context-building
+# events, never on lifecycle events like Stop or per-tool events.
+_METADATA_INJECTION_EVENTS = {
+    HookEventType.SESSION_START,
+    HookEventType.BEFORE_AGENT,
+}
+
 if TYPE_CHECKING:
     from gobby.storage.inter_session_messages import InterSessionMessageManager
 
@@ -24,12 +31,7 @@ TERMINAL_CONTEXT_KEYS = [
     "terminal_term_program",
     "terminal_tty",
     "terminal_parent_pid",
-    "terminal_iterm_session_id",
-    "terminal_term_session_id",
-    "terminal_kitty_window_id",
     "terminal_tmux_pane",
-    "terminal_vscode_terminal_id",
-    "terminal_alacritty_socket",
 ]
 
 # Hook events that fire frequently during execution — good piggyback candidates.
@@ -94,12 +96,15 @@ class EventEnricher:
                     response.metadata["session_ref"] = f"#{session_obj.seq_num}"
 
             # Track first hook per session for token optimization
-            # Adapters use this flag to inject full metadata only on first hook
+            # Adapters use this flag to inject full metadata only on first hook.
+            # Only allow metadata injection on context-building events
+            # (SESSION_START, BEFORE_AGENT) — never on Stop, PreToolUse, etc.
             session_key = f"{platform_session_id}:{event.source.value}"
             is_first = session_key not in self._injected_sessions
-            if is_first:
+            is_eligible = event.event_type in _METADATA_INJECTION_EVENTS
+            if is_first and is_eligible:
                 self._injected_sessions.add(session_key)
-            response.metadata["_first_hook_for_session"] = is_first
+            response.metadata["_first_hook_for_session"] = is_first and is_eligible
 
         if event.session_id:  # external_id (e.g., Claude Code's session UUID)
             response.metadata["external_id"] = event.session_id

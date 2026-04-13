@@ -338,16 +338,9 @@ code_index:
 
 ## Rule Templates
 
-Two rule templates are bundled in `src/gobby/install/shared/rules/code-index/`. Both are disabled by default and must be installed and enabled via the rules engine.
-
-### `compress-large-reads`
-
-Replaces large Read outputs with symbol outlines automatically.
-
-- **Event:** `after_tool` (Read)
-- **Trigger:** Output > 20,000 characters and `code_index_available` is true
-- **Effect:** `compress_output` with `compressor: code_index`
-- The compressed output includes the first 50 lines of the file plus a symbol outline table with IDs for targeted retrieval via `get_symbol()`
+The `nudge-on-large-read` rule template is bundled in
+`src/gobby/install/shared/workflows/rules/code-index/`. It is disabled by
+default and must be installed and enabled via the rules engine.
 
 ### `nudge-on-large-read`
 
@@ -439,7 +432,6 @@ This workflow reads only the symbols needed, saving 90%+ tokens compared to read
 
 ## See Also
 
-- [tool-compression.md](tool-compression.md) — Output and code index compression
 - [mcp-tools.md](mcp-tools.md) — Complete MCP tool reference
 - [search.md](search.md) — Unified search with TF-IDF and embeddings
 - [rules.md](rules.md) — Rule engine reference

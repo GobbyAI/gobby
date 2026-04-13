@@ -30,7 +30,6 @@ const SAMPLE_SESSIONS = [
     git_branch: 'main',
     usage_input_tokens: 1000,
     usage_output_tokens: 500,
-    usage_total_cost_usd: 0.05,
     had_edits: true,
     agent_depth: 0,
     chat_mode: null,
@@ -53,7 +52,6 @@ const SAMPLE_SESSIONS = [
     git_branch: null,
     usage_input_tokens: 2000,
     usage_output_tokens: 1000,
-    usage_total_cost_usd: 0.1,
     had_edits: false,
     agent_depth: 0,
     chat_mode: null,
@@ -203,12 +201,12 @@ describe('useSessions', () => {
     expect(result.current.deletingIds.has('sess-1')).toBe(true)
   })
 
-  it('confirmSessionDeleted removes by external_id', async () => {
+  it('confirmSessionDeleted removes by session id', async () => {
     const { result } = renderHook(() => useSessions())
 
     await waitFor(() => expect(result.current.sessions).toHaveLength(2))
 
-    act(() => result.current.confirmSessionDeleted('ext-1'))
+    act(() => result.current.confirmSessionDeleted('sess-1'))
 
     expect(result.current.sessions).toHaveLength(1)
     expect(result.current.sessions[0].external_id).toBe('ext-2')

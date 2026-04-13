@@ -189,34 +189,55 @@ class TestStatusNeo4jDisplay:
         msg = format_status_message(
             running=True,
             pid=123,
-            neo4j_installed=True,
-            neo4j_healthy=True,
-            neo4j_url="http://localhost:8474",
+            api_data={
+                "memory": {
+                    "neo4j": {
+                        "configured": True,
+                        "installed": True,
+                        "healthy": True,
+                        "url": "http://localhost:8474",
+                    }
+                }
+            },
         )
         assert "Neo4j" in msg
-        assert "Healthy" in msg or "healthy" in msg
+        assert "healthy" in msg
         assert "localhost:8474" in msg
 
     def test_status_shows_neo4j_installed_unhealthy(self) -> None:
         msg = format_status_message(
             running=True,
             pid=123,
-            neo4j_installed=True,
-            neo4j_healthy=False,
-            neo4j_url="http://localhost:8474",
+            api_data={
+                "memory": {
+                    "neo4j": {
+                        "configured": True,
+                        "installed": True,
+                        "healthy": False,
+                        "url": "http://localhost:8474",
+                    }
+                }
+            },
         )
         assert "Neo4j" in msg
-        assert "Unhealthy" in msg or "unhealthy" in msg or "Not responding" in msg
+        assert "not responding" in msg
 
     def test_status_shows_neo4j_not_installed(self) -> None:
         msg = format_status_message(
             running=True,
             pid=123,
-            neo4j_installed=False,
-            neo4j_healthy=False,
+            api_data={
+                "memory": {
+                    "neo4j": {
+                        "configured": True,
+                        "installed": False,
+                        "healthy": False,
+                    }
+                }
+            },
         )
         assert "Neo4j" in msg
-        assert "Not installed" in msg or "not installed" in msg
+        assert "not installed" in msg
 
     def test_status_omits_neo4j_when_no_data(self) -> None:
         msg = format_status_message(running=True, pid=123)

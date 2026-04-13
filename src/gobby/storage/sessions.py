@@ -7,6 +7,7 @@ import json
 import logging
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -26,6 +27,18 @@ class LocalSessionManager:
     def __init__(self, db: DatabaseProtocol):
         """Initialize with database connection."""
         self.db = db
+        self._title_listeners: list[Callable[[str, str], None]] = []
+
+    def register_title_listener(self, listener: Callable[[str, str], None]) -> None:
+        """Register a sync callback fired after successful title changes."""
+        self._title_listeners.append(listener)
+
+    def unregister_title_listener(self, listener: Callable[[str, str], None]) -> None:
+        """Remove a previously-registered title listener if present."""
+        try:
+            self._title_listeners.remove(listener)
+        except ValueError:
+            return
 
     def register(
         self,
@@ -41,6 +54,7 @@ class LocalSessionManager:
         spawned_by_agent_id: str | None = None,
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
+        session_type: str = "terminal",
     ) -> Session:
         """
         Register a new session or return existing one.
@@ -67,7 +81,24 @@ class LocalSessionManager:
         now = datetime.now(UTC).isoformat()
 
         # Check if this exact session already exists (daemon restart case)
-        existing = self.find_by_external_id(external_id, machine_id, project_id, source)
+        existing = self.find_by_external_id(
+            external_id, machine_id, project_id, source, session_type=session_type
+        )
+        if not existing and project_id:
+            # Relaxed fallback: same session, possibly different project (e.g.,
+            # daemon restart where the caller defaulted to the wrong project_id).
+            existing = self.find_by_external_id_any_project(
+                external_id, machine_id, source, session_type=session_type
+            )
+            if existing and existing.project_id != project_id:
+                self.db.execute(
+                    "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
+                    (project_id, now, existing.id),
+                )
+                logger.info(
+                    f"Recovered session {existing.id}: "
+                    f"project_id {existing.project_id} -> {project_id}"
+                )
         if existing:
             # Session exists - update metadata and return it
             self.db.execute(
@@ -116,10 +147,10 @@ class LocalSessionManager:
                         id, external_id, machine_id, source, project_id, title,
                         transcript_path, git_branch, parent_session_id,
                         agent_depth, spawned_by_agent_id, terminal_context,
-                        workflow_name, status, created_at, updated_at, seq_num, had_edits,
-                        message_count, turn_count, tool_call_count, last_assistant_content
+                        workflow_name, session_type, status, created_at, updated_at, seq_num,
+                        had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
                     """,
                     (
                         session_id,
@@ -135,6 +166,7 @@ class LocalSessionManager:
                         spawned_by_agent_id,
                         json.dumps(terminal_context) if terminal_context else None,
                         workflow_name,
+                        session_type,
                         now,
                         now,
                         next_seq_num,
@@ -156,6 +188,55 @@ class LocalSessionManager:
         session = self.get(session_id)
         if session is None:
             raise RuntimeError(f"Session {session_id} not found after creation")
+        return session
+
+    def create_web_chat_session(
+        self,
+        *,
+        machine_id: str,
+        project_id: str,
+        source: str,
+        title: str | None = None,
+        model: str | None = None,
+        chat_mode: str | None = None,
+    ) -> Session:
+        """Create a new web-chat session with a temporary runtime identity.
+
+        The durable identity for web chat is the DB session ID. A temporary
+        ``external_id`` is still required at row creation time and is later
+        replaced with the provider-native runtime/session identifier when known.
+        """
+        if chat_mode is not None and chat_mode not in self._VALID_CHAT_MODES:
+            raise ValueError(
+                f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
+            )
+
+        bootstrap_external_id = f"web-chat-bootstrap:{uuid.uuid4()}"
+        session = self.register(
+            external_id=bootstrap_external_id,
+            machine_id=machine_id,
+            source=source,
+            project_id=project_id,
+            title=title,
+            session_type="web_chat",
+        )
+        if model is None and chat_mode is None:
+            return session
+
+        now = datetime.now(UTC).isoformat()
+        self.db.execute(
+            """
+            UPDATE sessions
+            SET model = COALESCE(?, model),
+                chat_mode = COALESCE(?, chat_mode),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (model, chat_mode, now, session.id),
+        )
+        session.model = model if model is not None else session.model
+        session.chat_mode = chat_mode if chat_mode is not None else session.chat_mode
+        session.updated_at = now
         return session
 
     def get(self, session_id: str) -> Session | None:
@@ -181,6 +262,7 @@ class LocalSessionManager:
         machine_id: str,
         project_id: str | None,
         source: str,
+        session_type: str | None = None,
     ) -> Session | None:
         """
         Find session by external_id, machine_id, project_id, and source.
@@ -194,17 +276,23 @@ class LocalSessionManager:
             machine_id: Machine identifier
             project_id: Project identifier
             source: CLI source (claude, gemini, codex)
+            session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:
             Session if found, None otherwise.
         """
-        row = self.db.fetchone(
-            """
+        query = """
             SELECT * FROM sessions
-            WHERE external_id = ? AND machine_id = ? AND project_id = ? AND source = ?
-            """,
-            (external_id, machine_id, project_id, source),
-        )
+            WHERE external_id = ?
+              AND machine_id = ?
+              AND ((project_id = ?) OR (project_id IS NULL AND ? IS NULL))
+              AND source = ?
+        """
+        params: list[str | None] = [external_id, machine_id, project_id, project_id, source]
+        if session_type is not None:
+            query += " AND session_type = ?"
+            params.append(session_type)
+        row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
 
     def find_active_by_external_id(
@@ -233,6 +321,41 @@ class LocalSessionManager:
             """,
             (external_id, source),
         )
+        return Session.from_row(row) if row else None
+
+    def find_by_external_id_any_project(
+        self,
+        external_id: str,
+        machine_id: str,
+        source: str,
+        session_type: str | None = None,
+    ) -> Session | None:
+        """Find session by external_id, machine_id, source — ignoring project_id.
+
+        Fallback lookup for daemon restart recovery when the caller may not
+        know the correct project_id.  Returns the most recently updated match.
+
+        Args:
+            external_id: External session identifier
+            machine_id: Machine identifier
+            source: CLI source (claude, gemini, codex)
+            session_type: Optional session type filter ('terminal' or 'web_chat')
+
+        Returns:
+            Most recently updated matching session, or None.
+        """
+        query = """
+            SELECT * FROM sessions
+            WHERE external_id = ?
+              AND machine_id = ?
+              AND source = ?
+        """
+        params: list[str | None] = [external_id, machine_id, source]
+        if session_type is not None:
+            query += " AND session_type = ?"
+            params.append(session_type)
+        query += " ORDER BY updated_at DESC LIMIT 1"
+        row = self.db.fetchone(query, tuple(params))
         return Session.from_row(row) if row else None
 
     def find_parent(
@@ -375,13 +498,6 @@ class LocalSessionManager:
             (chat_mode, session_id),
         )
 
-    def update_pending_plan(self, session_id: str, plan_path: str | None) -> None:
-        """Persist or clear the pending plan file path for restart recovery."""
-        self.db.execute(
-            "UPDATE sessions SET pending_plan_path = ? WHERE id = ?",
-            (plan_path, session_id),
-        )
-
     def update_approved_tools(self, session_id: str, tools: set[str]) -> None:
         """Persist the set of user-approved tools as JSON."""
         import json as _json
@@ -392,24 +508,30 @@ class LocalSessionManager:
             (tools_json, session_id),
         )
 
-    def find_pending_plans(self) -> list[Session]:
-        """Find active web-chat sessions with a pending plan approval."""
-        rows = self.db.fetchall(
-            """SELECT * FROM sessions
-            WHERE status = 'active'
-            AND source IN ('claude_sdk_web_chat', 'codex_web_chat')
-            AND pending_plan_path IS NOT NULL""",
-        )
-        return [Session.from_row(r) for r in rows]
-
     def update_title(self, session_id: str, title: str) -> Session | None:
         """Update session title."""
+        current = self.get(session_id)
+        if current is None:
+            return None
+        if current.title == title:
+            return current
+
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
             (title, now, session_id),
         )
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is None:
+            return None
+
+        for listener in list(self._title_listeners):
+            try:
+                listener(session_id, title)
+            except Exception:
+                logger.warning("Title listener failed for session %s", session_id, exc_info=True)
+
+        return updated
 
     def update_model(self, session_id: str, model: str) -> Session | None:
         """Update session model (LLM model used)."""
@@ -496,6 +618,7 @@ class LocalSessionManager:
         session_id: str,
         *,
         external_id: str | None = None,
+        source: str | None = None,
         transcript_path: str | None = None,
         status: str | None = None,
         title: str | None = None,
@@ -509,6 +632,7 @@ class LocalSessionManager:
         Args:
             session_id: Session ID to update
             external_id: New external ID (optional)
+            source: New provider/source (optional)
             transcript_path: New transcript path (optional)
             status: New status (optional)
             title: New title (optional)
@@ -523,6 +647,8 @@ class LocalSessionManager:
 
         if external_id is not None:
             values["external_id"] = external_id
+        if source is not None:
+            values["source"] = source
         if transcript_path is not None:
             values["transcript_path"] = transcript_path
         if status is not None:
@@ -806,7 +932,6 @@ class LocalSessionManager:
         output_tokens: int,
         cache_creation_tokens: int,
         cache_read_tokens: int,
-        total_cost_usd: float,
         context_window: int | None = None,
         model: str | None = None,
     ) -> bool:
@@ -818,7 +943,6 @@ class LocalSessionManager:
             usage_output_tokens = ?,
             usage_cache_creation_tokens = ?,
             usage_cache_read_tokens = ?,
-            usage_total_cost_usd = ?,
             context_window = COALESCE(?, context_window),
             model = COALESCE(?, model),
             updated_at = datetime('now')
@@ -833,7 +957,6 @@ class LocalSessionManager:
                         output_tokens,
                         cache_creation_tokens,
                         cache_read_tokens,
-                        total_cost_usd,
                         context_window,
                         model,
                         session_id,
@@ -842,38 +965,6 @@ class LocalSessionManager:
                 return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Failed to update session usage {session_id}: {e}")
-            return False
-
-    def add_cost(self, session_id: str, cost_usd: float) -> bool:
-        """
-        Add cost to the session's usage_total_cost_usd.
-
-        This is used for internal agent runs that track cost via CostInfo.
-        Unlike update_usage which overwrites, this method adds to the existing cost.
-
-        Args:
-            session_id: Session ID to update.
-            cost_usd: Cost in USD to add.
-
-        Returns:
-            True if update succeeded, False otherwise.
-        """
-        if cost_usd <= 0:
-            return True  # Nothing to add
-
-        query = """
-        UPDATE sessions
-        SET
-            usage_total_cost_usd = COALESCE(usage_total_cost_usd, 0) + ?,
-            updated_at = datetime('now')
-        WHERE id = ?
-        """
-        try:
-            with self.db.transaction():
-                cursor = self.db.execute(query, (cost_usd, session_id))
-                return cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Failed to add cost to session {session_id}: {e}")
             return False
 
     def get_sessions_since(

@@ -18,15 +18,17 @@ gobby [--config PATH] <command>
 |-------|-------------|
 | `agents` | Manage subagent runs |
 | `clones` | Manage git clones for parallel development |
-| `conductor` | Manage the conductor orchestration loop |
+| `cron` | Manage scheduled jobs and orchestration ticks |
 | `github` | GitHub integration commands |
 | `hooks` | Manage hook system configuration |
 | `linear` | Linear integration commands |
 | `mcp-proxy` | Manage MCP proxy servers and tools |
 | `memory` | Manage persistent memories |
 | `merge` | AI-powered merge conflict resolution |
+| `pipelines` | Manage pipeline definitions and executions |
 | `plugins` | Manage Python hook plugins |
 | `projects` | Manage Gobby projects |
+| `rules` | Manage standalone workflow rules |
 | `sessions` | Manage Gobby sessions |
 | `skills` | Manage Gobby skills |
 | `tasks` | Manage development tasks |
@@ -146,17 +148,15 @@ gobby uninstall [OPTIONS]
 
 ### `gobby mcp-server`
 
-Run stdio MCP server for Claude Code integration.
+Run the stdio MCP server for MCP-capable CLI integrations.
 
 ```bash
 gobby mcp-server
 ```
 
-**Usage with Claude Code:**
-
-```bash
-claude mcp add --transport stdio gobby-daemon -- gobby mcp-server
-```
+Point your client at `gobby mcp-server` using that client's MCP registration
+flow. The exact command differs between Claude, Codex, Gemini, and other
+integrations.
 
 ### `gobby ui`
 
@@ -520,7 +520,13 @@ gobby agents spawn "PROMPT" --session SESSION_ID [OPTIONS]
 | `--session` | Parent session ID (required) |
 | `--workflow` | Workflow to activate |
 | `--task` | Task ID to link |
-| `--isolation` | Isolation mode: current, worktree, clone |
+| `--terminal` | Terminal mode: `auto`, `ghostty`, `iterm`, `kitty`, `wezterm`, `terminal` |
+| `--provider` | Provider override |
+| `--model` | Model override |
+| `--timeout` | Execution timeout |
+| `--max-turns` | Maximum turns |
+| `--context` | Context source for the child session |
+| `--json` | Output as JSON |
 
 ### `gobby agents list`
 
@@ -689,12 +695,12 @@ Show workflow details.
 gobby workflows show NAME [--json]
 ```
 
-### `gobby workflows set`
+### `gobby workflows check`
 
-Activate a workflow for a session.
+Validate a workflow definition without executing it.
 
 ```bash
-gobby workflows set NAME [--session ID] [--step INITIAL_STEP]
+gobby workflows check NAME [--json]
 ```
 
 ### `gobby workflows status`
@@ -703,46 +709,6 @@ Show current workflow state for a session.
 
 ```bash
 gobby workflows status [--session ID] [--json]
-```
-
-### `gobby workflows clear`
-
-Clear/deactivate workflow for a session.
-
-```bash
-gobby workflows clear [--session ID] [--force]
-```
-
-### `gobby workflows step`
-
-Manually transition to a step (escape hatch).
-
-```bash
-gobby workflows step STEP_NAME [--session ID] [--force]
-```
-
-### `gobby workflows reset`
-
-Reset workflow to initial step (escape hatch).
-
-```bash
-gobby workflows reset [--session ID]
-```
-
-### `gobby workflows disable`
-
-Temporarily disable workflow enforcement (escape hatch).
-
-```bash
-gobby workflows disable [--session ID]
-```
-
-### `gobby workflows enable`
-
-Re-enable a disabled workflow.
-
-```bash
-gobby workflows enable [--session ID]
 ```
 
 ### `gobby workflows reload`
@@ -783,6 +749,102 @@ Get workflow variable(s) for the current session.
 
 ```bash
 gobby workflows get-var [KEY] [--session ID]
+```
+
+### `gobby workflows reinstall`
+
+Delete and reinstall workflow definitions from bundled templates.
+
+```bash
+gobby workflows reinstall [--type TYPE] [--force]
+```
+
+Current workflow CLI commands are focused on inspection, validation, import,
+reload, and variable management. Runtime application of agent personas and
+pipeline-driven activation happens through the MCP/runtime layer.
+
+---
+
+## Pipeline Management
+
+### `gobby pipelines list`
+
+List available pipeline definitions.
+
+```bash
+gobby pipelines list [--json]
+```
+
+### `gobby pipelines show`
+
+Show a pipeline definition.
+
+```bash
+gobby pipelines show NAME [--json]
+```
+
+### `gobby pipelines run`
+
+Run a pipeline by name.
+
+```bash
+gobby pipelines run NAME [-i KEY=VALUE ...] [--json]
+```
+
+### `gobby pipelines status`
+
+Show execution status for a pipeline run.
+
+```bash
+gobby pipelines status EXECUTION_ID [--json]
+```
+
+### `gobby pipelines approve`
+
+Approve a pipeline waiting on an approval token.
+
+```bash
+gobby pipelines approve TOKEN [--json]
+```
+
+### `gobby pipelines reject`
+
+Reject a pipeline waiting on an approval token.
+
+```bash
+gobby pipelines reject TOKEN [--json]
+```
+
+### `gobby pipelines history`
+
+Show execution history for one pipeline.
+
+```bash
+gobby pipelines history NAME [--limit N] [--json]
+```
+
+### `gobby pipelines executions`
+
+List executions across pipelines.
+
+```bash
+gobby pipelines executions [--status STATUS] [--pipeline NAME] [--limit N] [--json]
+```
+
+### `gobby pipelines search`
+
+Search execution history by pipeline name or error text.
+
+```bash
+gobby pipelines search QUERY [--status STATUS] [--no-errors] [--limit N] [--json]
+```
+
+### `gobby pipelines import`
+
+Import an external pipeline file into Gobby format.
+
+```bash
+gobby pipelines import PATH [-o OUTPUT]
 ```
 
 ---
@@ -1078,49 +1140,16 @@ gobby skills meta NAME --get KEY
 
 ---
 
-## Conductor (Orchestration Loop)
+## Orchestration Entry Points
 
-### `gobby conductor start`
+Current orchestration is driven through pipelines and optional scheduled ticks,
+not a separate `gobby conductor` command group.
 
-Start the conductor loop.
+Use:
 
-```bash
-gobby conductor start [OPTIONS]
-```
-
-The conductor automatically orchestrates task execution across multiple agents.
-
-### `gobby conductor stop`
-
-Stop the conductor loop.
-
-```bash
-gobby conductor stop
-```
-
-### `gobby conductor status`
-
-Show conductor status.
-
-```bash
-gobby conductor status
-```
-
-### `gobby conductor restart`
-
-Restart the conductor loop.
-
-```bash
-gobby conductor restart
-```
-
-### `gobby conductor chat`
-
-Send a message to the conductor.
-
-```bash
-gobby conductor chat "MESSAGE"
-```
+- `gobby pipelines run ...` for one-shot orchestration runs
+- `gobby cron ...` to schedule recurring orchestration ticks
+- `gobby agents ...` for direct worker management when needed
 
 ---
 

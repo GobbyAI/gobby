@@ -482,6 +482,31 @@ class TestDaemonProxyMethods:
     """Tests for DaemonProxy specific methods."""
 
     @pytest.mark.asyncio
+    async def test_get_tool_schema_uses_seeded_session_header(self):
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        with patch.dict("os.environ", {"GOBBY_SESSION_ID": "session-123"}):
+            proxy = DaemonProxy(60887)
+
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {
+            "name": "tool",
+            "description": "desc",
+            "inputSchema": {},
+        }
+
+        with patch("gobby.mcp_proxy.stdio.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            result = await proxy.get_tool_schema("srv", "tool")
+
+        assert result["success"] is True
+        _, kwargs = mock_client.request.call_args
+        assert kwargs["headers"]["X-Gobby-Session-Id"] == "session-123"
+
+    @pytest.mark.asyncio
     async def test_list_tools(self):
         from gobby.mcp_proxy.stdio import DaemonProxy
 

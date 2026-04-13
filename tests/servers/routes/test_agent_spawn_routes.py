@@ -139,6 +139,49 @@ class TestSpawnAgent:
         updated = task_manager.get_task(task.id)
         assert updated.status == "in_progress"
 
+    def test_spawn_web_chat_preserves_review_status(
+        self, client: TestClient, task_manager: LocalTaskManager, test_project
+    ) -> None:
+        """Web chat spawn on needs_review should set assignee without regressing status."""
+        task = _create_task(task_manager, test_project.id, "Review task")
+        task_manager.update_task(task.id, status="needs_review")
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": test_project.id},
+        ):
+            response = client.post(
+                "/api/agents/spawn",
+                json={"task_id": task.id, "web_chat": True},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        updated = task_manager.get_task(task.id)
+        assert updated.status == "needs_review"
+        assert updated.assignee == data["conversation_id"]
+
+    def test_spawn_web_chat_does_not_steal_claimed_review_task(
+        self, client: TestClient, task_manager: LocalTaskManager, test_project
+    ) -> None:
+        """Web chat spawn should not overwrite a non-open task already owned elsewhere."""
+        task = _create_task(task_manager, test_project.id, "Claimed review task")
+        task_manager.update_task(task.id, status="needs_review", assignee="other-owner")
+
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": test_project.id},
+        ):
+            response = client.post(
+                "/api/agents/spawn",
+                json={"task_id": task.id, "web_chat": True},
+            )
+
+        assert response.status_code == 200
+        updated = task_manager.get_task(task.id)
+        assert updated.status == "needs_review"
+        assert updated.assignee == "other-owner"
+
 
 # ---------------------------------------------------------------------------
 # POST /api/agents/spawn/batch

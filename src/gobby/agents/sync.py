@@ -1,7 +1,8 @@
 """Agent definition synchronization for bundled agents.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly — no intermediate template rows, no propagation.
+directly. Installed rows are overwritten when the template changes
+(preserving the user's enabled toggle). Soft-deleted rows are not restored.
 """
 
 import logging
@@ -33,8 +34,9 @@ def get_bundled_agents_path() -> Path:
 def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
     """Sync bundled agent definitions from install/shared/workflows/agents/ to the database.
 
-    Creates installed rows directly from template files. Existing rows are
-    never overwritten — drift is detected via hash comparison at runtime.
+    Creates installed rows directly from template files. Installed rows are
+    overwritten when the template changes (preserving the user's enabled toggle).
+    Soft-deleted rows are not restored.
 
     Args:
         db: Database connection
@@ -89,7 +91,24 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                     result["skipped"] += 1
                     continue
 
-                # Respect soft-deletes and existing rows — skip
+                if existing.deleted_at is not None:
+                    result["skipped"] += 1
+                    continue
+
+                if existing.source == "installed" and existing.definition_json != body_json:
+                    manager.update(
+                        existing.id,
+                        definition_json=body_json,
+                        description=body.description,
+                    )
+                    result["updated"] += 1
+                    logger.debug(
+                        "Updated bundled agent definition %s (%s); installed definition_json changed",
+                        existing.id,
+                        existing.description or body.description,
+                    )
+                    continue
+
                 result["skipped"] += 1
                 continue
 

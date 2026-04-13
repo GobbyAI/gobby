@@ -84,11 +84,11 @@ describe('KanbanBoard', () => {
   it('renders all 6 columns', () => {
     render(<KanbanBoard {...defaultProps} />)
 
-    expect(screen.getByText('Backlog')).toBeTruthy()
+    expect(screen.getByText('Ready')).toBeTruthy()
     expect(screen.getByText('In Progress')).toBeTruthy()
     expect(screen.getByText('Review')).toBeTruthy()
     expect(screen.getByText('Blocked')).toBeTruthy()
-    expect(screen.getByText('Ready')).toBeTruthy()
+    expect(screen.getByText('Merge Ready')).toBeTruthy()
     expect(screen.getByText('Closed')).toBeTruthy()
   })
 
@@ -128,7 +128,7 @@ describe('KanbanBoard', () => {
   it('shows empty state in columns with no tasks', () => {
     render(<KanbanBoard {...defaultProps} />)
 
-    // Blocked and Ready columns should have "No tasks"
+    // Blocked and Merge Ready columns should have "No tasks"
     const empties = screen.getAllByText('No tasks')
     expect(empties.length).toBeGreaterThanOrEqual(2)
   })

@@ -6,7 +6,6 @@ import logging
 
 from gobby.savings.tracker import SavingsTracker
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.model_costs import ModelCostStore
 from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,7 @@ def record_discovery_savings(
         actual_chars = used_skills_chars + used_tools_chars
 
         if original_chars > 0:
-            tracker = SavingsTracker(db=db, model_costs=ModelCostStore(db))
+            tracker = SavingsTracker(db=db)
             tracker.record(
                 category="discovery",
                 original_chars=original_chars,

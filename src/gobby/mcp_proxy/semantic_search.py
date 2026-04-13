@@ -8,7 +8,6 @@ Provides infrastructure for embedding-based tool discovery:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import math
@@ -153,6 +152,8 @@ class SemanticToolSearch:
         server_name: str,
         project_id: str,
         embedding: list[float],
+        tool_name: str = "",
+        description: str | None = None,
     ) -> None:
         """
         Store a tool embedding in Qdrant.
@@ -162,6 +163,8 @@ class SemanticToolSearch:
             server_name: Name of the MCP server
             project_id: Project ID
             embedding: Embedding vector as list of floats
+            tool_name: Name of the tool (stored in payload for search results)
+            description: Tool description (stored in payload for search results)
         """
         if not self._vector_store:
             logger.warning(f"No VectorStore configured - cannot store embedding for tool {tool_id}")
@@ -176,6 +179,8 @@ class SemanticToolSearch:
             embedding=embedding,
             payload={
                 "server_name": server_name,
+                "tool_name": tool_name,
+                "description": description,
                 "project_id": project_id,
                 "embedding_model": self.embedding_model,
                 "updated_at": now,
@@ -303,6 +308,8 @@ class SemanticToolSearch:
             server_name=server_name,
             project_id=project_id,
             embedding=embedding,
+            tool_name=name,
+            description=description,
         )
         return True
 
@@ -441,14 +448,11 @@ class SemanticToolSearch:
         # Embed the query
         query_embedding = await self.embed_text(query, is_query=True)
 
-        # Get tool metadata for results
-        tool_info = await asyncio.to_thread(self._get_tool_info_map, project_id, server_filter)
-
         filters: dict[str, str] = {"project_id": project_id}
         if server_filter:
             filters["server_name"] = server_filter
 
-        qdrant_results = await self._vector_store.search(
+        qdrant_results = await self._vector_store.search_with_payload(
             query_embedding=query_embedding,
             limit=top_k,
             filters=filters,
@@ -456,56 +460,16 @@ class SemanticToolSearch:
         )
 
         results: list[SearchResult] = []
-        for tool_id, score in qdrant_results:
+        for tool_id, score, payload in qdrant_results:
             if score >= min_similarity:
-                tool_data = tool_info.get(tool_id, {})
                 results.append(
                     SearchResult(
                         tool_id=tool_id,
-                        server_name=tool_data.get("server_name", "unknown"),
-                        tool_name=tool_data.get("name", "unknown"),
-                        description=tool_data.get("description"),
+                        server_name=payload.get("server_name", "unknown"),
+                        tool_name=payload.get("tool_name", "unknown"),
+                        description=payload.get("description"),
                         similarity=score,
                         embedding_id=0,
                     )
                 )
         return results
-
-    def _get_tool_info_map(
-        self, project_id: str, server_filter: str | None = None
-    ) -> dict[str, dict[str, Any]]:
-        """
-        Get tool metadata map for search results.
-
-        Args:
-            project_id: Project ID
-            server_filter: Optional server name filter
-
-        Returns:
-            Dict mapping tool_id to {name, description}
-        """
-        if server_filter:
-            query = """
-                SELECT t.id, t.name, t.description, s.name as server_name
-                FROM tools t
-                JOIN mcp_servers s ON t.mcp_server_id = s.id
-                WHERE s.project_id = ? AND s.name = ?
-            """
-            rows = self.db.fetchall(query, (project_id, server_filter))
-        else:
-            query = """
-                SELECT t.id, t.name, t.description, s.name as server_name
-                FROM tools t
-                JOIN mcp_servers s ON t.mcp_server_id = s.id
-                WHERE s.project_id = ?
-            """
-            rows = self.db.fetchall(query, (project_id,))
-
-        return {
-            row["id"]: {
-                "name": row["name"],
-                "description": row["description"],
-                "server_name": row["server_name"],
-            }
-            for row in rows
-        }

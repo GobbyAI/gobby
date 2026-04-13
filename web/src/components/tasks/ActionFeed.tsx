@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { classifyRisk, RiskDot } from './RiskBadges'
-import type { RiskLevel } from './RiskBadges'
+import { RiskDot } from './RiskBadges'
+import { classifyRisk, type RiskLevel } from './riskUtils'
 import { relativeTime } from '../../utils/formatTime'
 
 // =============================================================================

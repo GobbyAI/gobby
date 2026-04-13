@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from gobby.servers.models import SessionRegisterRequest
+from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -176,6 +176,57 @@ def register_core_routes(
 ) -> None:
     """Register core session CRUD routes on the router."""
 
+    @router.post("/web-chat")
+    async def create_web_chat_session(body: WebChatSessionRequest) -> dict[str, Any]:
+        """Create a durable web-chat session row owned by the server."""
+        try:
+            if server.session_manager is None:
+                raise HTTPException(status_code=503, detail="Session manager not available")
+
+            provider = body.provider or "claude"
+            if provider not in {"claude", "gemini", "codex"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid provider. Must be one of: claude, gemini, codex",
+                )
+
+            project_id = server.resolve_project_id(body.project_id, body.cwd)
+
+            from gobby.utils.machine_id import get_machine_id
+
+            machine_id = get_machine_id() or "unknown-machine"
+            model = body.model if isinstance(body.model, str) and body.model else None
+            chat_mode = (
+                body.chat_mode if isinstance(body.chat_mode, str) and body.chat_mode else None
+            )
+
+            session = server.session_manager.create_web_chat_session(
+                machine_id=machine_id,
+                project_id=project_id,
+                source=provider,
+                title=body.title,
+                model=model,
+                chat_mode=chat_mode,
+            )
+
+            inc_counter("session_registrations_total")
+            await broadcast_session("session_created", session.id)
+
+            return {
+                "status": "created",
+                "session": session.to_dict(),
+            }
+
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error(f"Error creating web chat session: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500, detail="Internal server error while creating web chat session"
+            ) from e
+
     @router.post("/register")
     async def register_session(request_data: SessionRegisterRequest) -> dict[str, Any]:
         """
@@ -255,7 +306,7 @@ def register_core_routes(
         days: int = Query(1, ge=1, le=365, description="Number of days to look back"),
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
-        """Get token usage and cost breakdown by source and model.
+        """Get token usage breakdown by source and model.
 
         Returns aggregated usage statistics including per-model and
         per-source (CLI adapter) breakdowns.
@@ -270,8 +321,7 @@ def register_core_routes(
     async def statusline_update(request: Request) -> dict[str, Any]:
         """Receive usage data from the Claude Code statusline handler.
 
-        This is the primary path for accurate cost tracking -- Claude Code
-        computes total_cost_usd internally and we just store it.
+        This is the primary path for token usage tracking.
         """
         try:
             body = await request.json()
@@ -294,7 +344,6 @@ def register_core_routes(
             output_tokens=body.get("output_tokens", 0),
             cache_creation_tokens=body.get("cache_creation_tokens", 0),
             cache_read_tokens=body.get("cache_read_tokens", 0),
-            total_cost_usd=body.get("total_cost_usd", 0.0),
             context_window=body.get("context_window_size"),
             model=body.get("model_id"),
         )

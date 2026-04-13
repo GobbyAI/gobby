@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from gobby.storage.task_dependencies import TaskDependencyManager
+from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -230,17 +231,38 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         # Handle web_chat mode — return conversation_id for frontend to open
         if req.web_chat:
             conversation_id = str(uuid.uuid4())
+            task_updated = False
 
-            # Update task status
+            # Update task ownership/status conservatively.
             try:
-                task_manager.update_task(
-                    req.task_id, status="in_progress", assignee=conversation_id
-                )
+                if is_active_claim_status(task.status):
+                    current_owner = get_claimed_session_id(task)
+                    if current_owner and current_owner != conversation_id:
+                        logger.info(
+                            "Skipping web chat reassignment for task %s; already assigned to %s",
+                            req.task_id,
+                            current_owner,
+                        )
+                    elif task.status == "open":
+                        task_manager.update_task(
+                            req.task_id, status="in_progress", assignee=conversation_id
+                        )
+                        task_updated = True
+                    else:
+                        task_manager.update_task(req.task_id, assignee=conversation_id)
+                        task_updated = True
+                else:
+                    logger.info(
+                        "Skipping web chat auto-claim for task %s; status=%s is not active work",
+                        req.task_id,
+                        task.status,
+                    )
             except Exception as e:
                 logger.warning(f"Failed to update task status: {e}")
 
             # Broadcast task update
-            _broadcast_task_update(server, req.task_id)
+            if task_updated:
+                _broadcast_task_update(server, req.task_id)
 
             return AgentSpawnResponse(
                 success=True,
@@ -323,7 +345,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             # Update task status
             try:
                 child_sid = result.get("child_session_id", "")
-                task_manager.update_task(req.task_id, status="in_progress", assignee=child_sid)
+                task_manager.claim_task(req.task_id, session_id=child_sid)
             except Exception as e:
                 logger.warning(f"Failed to update task after spawn: {e}")
 

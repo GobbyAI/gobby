@@ -11,7 +11,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent, RuleTriggerEvent
 from gobby.workflows.rule_engine import RuleEngine
 
 pytestmark = pytest.mark.unit
@@ -1747,6 +1747,239 @@ class TestEditWritePending:
         assert variables["edit_write_pending"] is True
 
 
+class TestInlineMcpCallDispatch:
+    """Tests for inline mcp_call dispatch (inject_result atomicity)."""
+
+    @pytest.mark.asyncio
+    async def test_inline_dispatch_success_injects_context(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """inject_result mcp_call dispatched inline should inject context."""
+        _insert_rule(
+            manager,
+            "inject-skill",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                    ),
+                    RuleEffect(
+                        type="set_variable",
+                        variable="injected",
+                        value=True,
+                    ),
+                ],
+            ),
+        )
+
+        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+            return {
+                "success": True,
+                "inject_result": True,
+                "result": {"skill": {"name": "python", "content": "# Python skill content"}},
+            }
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
+        variables: dict[str, Any] = {}
+        event = _make_event(data={"tool_name": "Read"})
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        # Context should contain injected skill
+        assert response.context is not None
+        assert "python" in response.context.lower()
+        # Variable should be set (inline dispatch succeeded)
+        assert variables.get("injected") is True
+        # Should NOT appear in deferred mcp_calls
+        assert len(response.metadata.get("mcp_calls", [])) == 0
+
+    @pytest.mark.asyncio
+    async def test_inline_dispatch_failure_aborts_set_variable(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """When inline dispatch fails, sibling set_variable should NOT fire."""
+        _insert_rule(
+            manager,
+            "inject-skill-fail",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                    ),
+                    RuleEffect(
+                        type="set_variable",
+                        variable="injected",
+                        value=True,
+                    ),
+                ],
+            ),
+        )
+
+        async def mock_dispatcher_fail(server: str, tool: str, args: dict, event: Any) -> dict:
+            return {"success": False, "result": {"error": "skill not found"}}
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_fail)
+        variables: dict[str, Any] = {}
+        event = _make_event(data={"tool_name": "Read"})
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        # Variable should NOT be set (dispatch failed, effects aborted)
+        assert variables.get("injected") is None
+        # No deferred calls either
+        assert len(response.metadata.get("mcp_calls", [])) == 0
+
+    @pytest.mark.asyncio
+    async def test_inline_dispatch_exception_aborts_set_variable(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """When inline dispatch raises, sibling set_variable should NOT fire."""
+        _insert_rule(
+            manager,
+            "inject-skill-exc",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                    ),
+                    RuleEffect(
+                        type="set_variable",
+                        variable="injected",
+                        value=True,
+                    ),
+                ],
+            ),
+        )
+
+        async def mock_dispatcher_raise(server: str, tool: str, args: dict, event: Any) -> dict:
+            raise RuntimeError("connection refused")
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_raise)
+        variables: dict[str, Any] = {}
+        event = _make_event(data={"tool_name": "Read"})
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        # Variable should NOT be set
+        assert variables.get("injected") is None
+
+    @pytest.mark.asyncio
+    async def test_non_inject_mcp_call_still_deferred(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """mcp_call without inject_result should still be deferred."""
+        _insert_rule(
+            manager,
+            "background-call",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-memory",
+                        tool="recall",
+                        arguments={"limit": 5},
+                    ),
+                ],
+            ),
+        )
+
+        call_count = 0
+
+        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+            nonlocal call_count
+            call_count += 1
+            return {"success": True, "result": {}}
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
+        event = _make_event(data={"tool_name": "Read"})
+        response = await engine.evaluate(event, session_id="sess-1", variables={})
+
+        # Should be deferred, not dispatched inline
+        assert call_count == 0
+        assert len(response.metadata.get("mcp_calls", [])) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_dispatcher_falls_back_to_deferred(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """inject_result mcp_call without dispatcher falls back to deferred."""
+        _insert_rule(
+            manager,
+            "inject-no-dispatcher",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                    ),
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db, mcp_dispatcher=None)
+        event = _make_event(data={"tool_name": "Read"})
+        response = await engine.evaluate(event, session_id="sess-1", variables={})
+
+        # Should fall back to deferred
+        assert len(response.metadata.get("mcp_calls", [])) == 1
+        assert response.metadata["mcp_calls"][0]["inject_result"] is True
+
+    @pytest.mark.asyncio
+    async def test_background_inject_result_still_deferred(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Background mcp_call with inject_result should still be deferred."""
+        _insert_rule(
+            manager,
+            "bg-inject",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="mcp_call",
+                        server="gobby-skills",
+                        tool="get_skill",
+                        arguments={"name": "python"},
+                        inject_result=True,
+                        background=True,
+                    ),
+                ],
+            ),
+        )
+
+        call_count = 0
+
+        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+            nonlocal call_count
+            call_count += 1
+            return {"success": True, "result": {}}
+
+        engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
+        event = _make_event(data={"tool_name": "Read"})
+        response = await engine.evaluate(event, session_id="sess-1", variables={})
+
+        # Background should NOT dispatch inline
+        assert call_count == 0
+        assert len(response.metadata.get("mcp_calls", [])) == 1
+
+
 class TestRuleEngineHelpers:
     """Tests for internal helper methods of RuleEngine."""
 
@@ -1989,6 +2222,82 @@ class TestUnmappedEventType:
         event.event_type = "custom_unmapped_type"  # type: ignore
         response = await engine.evaluate(event, session_id="sess-1", variables={})
         assert response.decision == "allow"
+
+
+class TestTurnEndResolution:
+    @pytest.mark.asyncio
+    async def test_turn_end_rule_fires_for_stop(self, db: LocalDatabase, manager) -> None:
+        _insert_rule(
+            manager,
+            "turn-end-stop",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_END,
+                effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.STOP)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["matched"] is True
+        assert variables["stop_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_turn_end_rule_fires_for_after_agent(self, db: LocalDatabase, manager) -> None:
+        _insert_rule(
+            manager,
+            "turn-end-after-agent",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_END,
+                effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.GEMINI)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["matched"] is True
+        assert variables["stop_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_raw_stop_rule_does_not_fire_for_after_agent(
+        self, db: LocalDatabase, manager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "raw-stop-only",
+            RuleDefinitionBody(
+                event=RuleEvent.STOP,
+                effects=[RuleEffect(type="set_variable", variable="raw_stop", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.CODEX)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables.get("raw_stop") is not True
+
+    @pytest.mark.asyncio
+    async def test_raw_after_agent_rule_does_not_fire_for_stop(
+        self, db: LocalDatabase, manager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "raw-after-agent-only",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_AGENT,
+                effects=[RuleEffect(type="set_variable", variable="raw_after_agent", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.STOP)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables.get("raw_after_agent") is not True
 
 
 class TestAgentScope:

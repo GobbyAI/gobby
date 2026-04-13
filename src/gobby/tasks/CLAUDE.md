@@ -28,12 +28,20 @@ The `prompts/` directory contains LLM prompts used during expansion:
 
 ## Expansion Flow
 
-Task expansion is handled by the `expand-task` pipeline (not code in this directory). The MCP tools for expansion live in `src/gobby/mcp_proxy/tools/tasks/_expansion.py`:
+Task expansion is handled by the `expand-task` pipeline and the shared
+`ExpansionService` in `src/gobby/tasks/expansion_service.py`.
 
-- `save_expansion_spec` — Save JSON spec to task (called by expander agent)
-- `validate_expansion_spec` — Validate spec structure and dependencies
-- `execute_expansion` — Atomically create subtasks from spec
-- `get_expansion_spec` — Check for pending spec (resume support)
+Operational expansion state lives in `expansion_runs`, not on task records.
+The MCP tools for expansion live in `src/gobby/mcp_proxy/tools/tasks/_expansion.py`:
+
+- `start_expansion_run` — Create a run and start background compile/apply
+- `get_expansion_run` — Inspect current run status and stored artifacts
+- `get_latest_expansion_run` — Find the most recent run for a task
+- `resume_expansion_run` — Resume a failed or interrupted run
+- `cancel_expansion_run` — Cancel an active run
+- `validate_expansion_run` — Validate compiled and applied run structure
+- `save_expansion_qa_result` — Store QA findings on a run
+- `check_expansion_qa_result` — Read QA findings from a run
 
 ## Validation Flow
 

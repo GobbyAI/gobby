@@ -1,6 +1,7 @@
 """Session configuration handlers for WebSocket session control.
 
-Handles set_mode, set_project, set_worktree, and set_agent message types.
+Handles set_mode, set_project, set_worktree, set_agent, and set_provider
+message types.
 """
 
 from __future__ import annotations
@@ -119,6 +120,9 @@ async def handle_set_project(
                     logger.warning(f"Failed to update session on project switch: {e}")
         await session.stop()
         mixin._chat_sessions.pop(conversation_id, None)
+
+    # Store project for next session creation (works whether or not session existed)
+    mixin._pending_projects[conversation_id] = new_project_id
 
     await websocket.send(
         json.dumps(
@@ -279,3 +283,59 @@ async def handle_set_agent(
         )
     )
     logger.info(f"Agent switched for conversation {conversation_id[:8]}: {agent_name}")
+
+
+async def handle_set_provider(
+    mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
+) -> None:
+    """Handle set_provider message to switch the provider for a conversation."""
+    conversation_id = data.get("conversation_id")
+    provider = data.get("provider")
+    valid_providers = {"claude", "gemini", "codex"}
+
+    if not conversation_id or not provider:
+        await mixin._send_error(websocket, "set_provider requires conversation_id and provider")
+        return
+    if provider not in valid_providers:
+        await mixin._send_error(
+            websocket,
+            f"Invalid provider: {provider}. Must be one of {sorted(valid_providers)}",
+        )
+        return
+
+    session = mixin._chat_sessions.get(conversation_id)
+    old_provider = getattr(session, "provider", None) if session else None
+
+    if session:
+        await mixin._cancel_active_chat(conversation_id)
+        if session.db_session_id:
+            session_manager = getattr(mixin, "session_manager", None)
+            if session_manager:
+                try:
+                    await asyncio.to_thread(
+                        session_manager.update,
+                        session.db_session_id,
+                        source=provider,
+                        status="paused",
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update session on provider switch: {e}")
+        await session.stop()
+        mixin._chat_sessions.pop(conversation_id, None)
+
+    mixin._pending_providers[conversation_id] = provider
+
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "provider_switched",
+                "conversation_id": conversation_id,
+                "old_provider": old_provider,
+                "provider": provider,
+            }
+        )
+    )
+    logger.info(
+        f"Provider switched for conversation {conversation_id[:8]}: "
+        f"{old_provider or '(new)'} -> {provider}"
+    )

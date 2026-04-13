@@ -51,8 +51,6 @@ def test_create_task_registry_has_all_tools(task_registry) -> None:
         "link_task_to_session",
         "get_session_tasks",
         "get_task_sessions",
-        "sync_tasks",
-        "get_sync_status",
     ]
 
     tools_list = task_registry.list_tools()
@@ -240,18 +238,7 @@ async def test_list_ready_tasks_all_projects(mock_task_manager, mock_sync_manage
         assert result["count"] == 1
 
 
-@pytest.mark.asyncio
-async def test_sync_tasks(mock_task_manager, mock_sync_manager):
-    """Test sync_tasks tool execution."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
-    result = await registry.call("sync_tasks", {"direction": "both"})
-
-    mock_sync_manager.import_from_jsonl.assert_called_once()
-    mock_sync_manager.export_to_jsonl.assert_called_once()
-    assert result["import"] == "completed"
-    assert result["export"] == "completed"
-
+# NOTE: test_sync_tasks was removed — sync tools are now CLI-only, not MCP tools.
 
 # NOTE: test_expand_task_integration and test_expand_task_with_flags were removed
 # because they tested the old expand_task tool API which has been replaced by

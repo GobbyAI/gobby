@@ -165,3 +165,87 @@ def is_plan_file(file_path: str, source: str | None = None) -> bool:
         return False
 
     return any(seg in normalised for seg in _CLI_DIR_SEGMENTS)
+
+
+def _extract_change_path(change: Any) -> str | None:
+    """Extract a touched file path from a file-change dict."""
+    if not isinstance(change, dict):
+        return None
+
+    for key in (
+        "file_path",
+        "path",
+        "new_path",
+        "newPath",
+        "target_path",
+        "targetPath",
+    ):
+        value = change.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return None
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    """Dedupe paths while preserving order."""
+    unique_paths: list[str] = []
+    for path in paths:
+        if path and path not in unique_paths:
+            unique_paths.append(path)
+    return unique_paths
+
+
+def get_touched_file_paths(tool_input: Any) -> list[str]:
+    """Return all file paths touched by a write-like tool input."""
+    if isinstance(tool_input, dict):
+        file_paths = tool_input.get("file_paths")
+        if isinstance(file_paths, list):
+            normalized = [
+                path.strip() for path in file_paths if isinstance(path, str) and path.strip()
+            ]
+            if normalized:
+                return _dedupe_paths(normalized)
+
+        file_path = tool_input.get("file_path")
+        if isinstance(file_path, str) and file_path.strip():
+            return [file_path.strip()]
+
+        changes = tool_input.get("changes")
+        if isinstance(changes, list):
+            return _dedupe_paths(
+                [path for change in changes if (path := _extract_change_path(change))]
+            )
+
+        return []
+
+    if isinstance(tool_input, list):
+        return _dedupe_paths(
+            [path for change in tool_input if (path := _extract_change_path(change))]
+        )
+
+    return []
+
+
+def requires_task_for_any_touched_file(
+    tool_input: Any,
+    source: str | None = None,
+    plan_mode: bool = False,
+) -> bool:
+    """Return True when any touched file should be task-gated.
+
+    The helper fails closed: when no touched paths can be determined for a
+    write-like tool, the edit is treated as requiring a task.
+    """
+    touched_paths = get_touched_file_paths(tool_input)
+    if not touched_paths:
+        return True
+
+    for path in touched_paths:
+        if is_plan_file(path, source):
+            continue
+        if plan_mode and path.endswith(".md"):
+            continue
+        return True
+
+    return False

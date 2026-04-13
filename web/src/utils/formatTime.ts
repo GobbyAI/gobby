@@ -55,9 +55,3 @@ export function formatTokens(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(n)
 }
-
-export function formatCost(usd: number): string {
-  if (usd === 0) return '$0'
-  if (usd < 0.01) return '<$0.01'
-  return `$${usd.toFixed(2)}`
-}

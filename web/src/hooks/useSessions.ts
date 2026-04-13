@@ -18,23 +18,19 @@ export interface GobbySession {
   git_branch: string | null;
   usage_input_tokens: number;
   usage_output_tokens: number;
-  usage_total_cost_usd: number;
   had_edits: boolean;
   agent_depth: number;
   chat_mode: string | null;
+  agent_run_id: string | null;
   parent_session_id: string | null;
+  session_type: string;
   terminal_context: Record<string, unknown> | null;
   tasks_closed?: number;
   memories_created?: number;
   commit_count?: number;
 }
 
-export const KNOWN_SOURCES = [
-  "claude",
-  "gemini",
-  "codex",
-  "claude_sdk_web_chat",
-] as const;
+export const KNOWN_SOURCES = ["claude", "gemini", "codex"] as const;
 
 export interface SessionFilters {
   source: string | null;
@@ -208,9 +204,9 @@ export function useSessions() {
   }, []);
 
   // Backend confirmed deletion — remove from list and clear deleting state
-  const confirmSessionDeleted = useCallback((externalId: string) => {
+  const confirmSessionDeleted = useCallback((sessionId: string) => {
     setSessions((prev) => {
-      const session = prev.find((s) => s.external_id === externalId);
+      const session = prev.find((s) => s.id === sessionId);
       if (session) {
         setDeletingIds((ids) => {
           const next = new Set(ids);
@@ -218,7 +214,7 @@ export function useSessions() {
           return next;
         });
       }
-      return prev.filter((s) => s.external_id !== externalId);
+      return prev.filter((s) => s.id !== sessionId);
     });
   }, []);
 

@@ -30,9 +30,37 @@ import { ProjectSelector } from "./components/ProjectSelector";
 import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
+import { Badge } from "./components/chat/ui/Badge";
+import { Button } from "./components/chat/ui/Button";
 import type { GobbySession } from "./hooks/useSessions";
 import type { CommandPaletteAction } from "./components/chat/CommandPalette";
 import { FilesProvider } from "./contexts/FilesContext";
+import { cn } from "./lib/utils";
+
+const CONVERSATION_ID_STORAGE_KEY = "gobby-conversation-id";
+const DB_SESSION_ID_STORAGE_KEY = "gobby-db-session-id";
+
+
+function loadPersistedConversationId(): string | null {
+  try {
+    return (
+      localStorage.getItem(DB_SESSION_ID_STORAGE_KEY) ||
+      localStorage.getItem(CONVERSATION_ID_STORAGE_KEY)
+    );
+  } catch {
+    return null;
+  }
+}
+
+
+function loadPersistedDbSessionId(): string | null {
+  try {
+    return localStorage.getItem(DB_SESSION_ID_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 
 // Lazy-load non-default page components for code splitting
 const SessionsPage = lazy(() =>
@@ -259,18 +287,22 @@ export default function App() {
     requestPlanChanges,
     switchConversation,
     startNewChat,
+    switchProvider,
     continueSessionInChat,
     setOnModeChanged,
     setOnPlanReady,
     addSystemMessage,
     viewSession,
     clearViewingSession,
+    observeSession,
     viewingSessionId,
     viewingSessionMeta,
     attachToViewed,
     detachFromSession,
     attachedSessionId,
     attachedSessionMeta,
+    sessionInteractionMode,
+    proxyDeliveryNotice,
     wsRef,
     handleVoiceMessageRef,
     handleBinaryMessageRef,
@@ -280,8 +312,9 @@ export default function App() {
     setOnChatDeleted,
     activeAgent,
     sendAgentChange,
+    selectedProvider,
+    setSelectedProvider,
   } = useChat();
-  const voice = useVoice(wsRef, conversationId);
   const {
     settings,
     updateFontSize,
@@ -289,8 +322,22 @@ export default function App() {
     updateChatMode,
     updateTheme,
     updateDefaultChatMode,
+    updateSttEnabled,
+    updateTtsEnabled,
+    updateVoiceInputMode,
     resetSettings,
   } = useSettings();
+  const voice = useVoice(
+    wsRef,
+    conversationId,
+    conversationSwitchKey,
+    {
+      sttEnabled: settings.sttEnabled,
+      ttsEnabled: settings.ttsEnabled,
+      voiceInputMode: settings.voiceInputMode,
+    },
+    isConnected,
+  );
   const { agents, refreshAgents } = useTerminal();
   const tmux = useTmuxSessions();
   const mcp = useMcp();
@@ -339,10 +386,8 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
-  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [initialTraceId, setInitialTraceId] = useState<string | null>(null);
   const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
-  const [projectReady, setProjectReady] = useState(false);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
@@ -354,67 +399,11 @@ export default function App() {
     setActiveTab("traces");
   }, []);
 
-  // When switching to traces tab without navigation, clear initialTraceId
-  useEffect(() => {
-    if (activeTab !== "traces") {
-      setInitialTraceId(null);
-    }
-  }, [activeTab]);
-
-  // Auto-synthesize chat title when streaming completes
-  const wasStreamingRef = useRef(false);
-  const titleSynthesisCountRef = useRef(0); // messages since last synthesis
-  const sessionsRef = useRef(sessionsHook.sessions);
-  sessionsRef.current = sessionsHook.sessions;
-  const refreshSessionsRef = useRef(sessionsHook.refresh);
-  refreshSessionsRef.current = sessionsHook.refresh;
-
-  useEffect(() => {
-    // Detect streaming transition: true → false (response completed)
-    if (wasStreamingRef.current && !isStreaming) {
-      titleSynthesisCountRef.current += 1;
-
-      // Use dbSessionId directly (set by backend session_info message) to avoid
-      // race condition where the sessions list hasn't polled since registration
-      const sessionId = dbSessionId;
-
-      if (sessionId) {
-        // Check sessions list for current title (may be stale for new chats — that's OK)
-        const currentSession = sessionsRef.current.find(
-          (s) => s.id === sessionId,
-        );
-        const needsTitle = !currentSession?.title;
-        const periodicUpdate = titleSynthesisCountRef.current >= 4;
-
-        if (needsTitle || periodicUpdate) {
-          titleSynthesisCountRef.current = 0;
-          const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-          fetch(`${baseUrl}/api/sessions/${sessionId}/synthesize-title`, {
-            method: "POST",
-          })
-            .then((res) => {
-              if (!res.ok) {
-                console.warn(`Title synthesis returned ${res.status}`);
-                return null;
-              }
-              return res.json();
-            })
-            .then((data) => {
-              if (data?.title) refreshSessionsRef.current();
-            })
-            .catch(() => {
-              /* title synthesis is non-critical */
-            });
-        }
-      }
-    }
-    wasStreamingRef.current = isStreaming;
-  }, [isStreaming, conversationId, dbSessionId]);
-
-  // Reset title synthesis counter on conversation switch
-  useEffect(() => {
-    titleSynthesisCountRef.current = 0;
-  }, [conversationId]);
+  const setSessionFilters = sessionsHook.setFilters;
+  const confirmSessionDeleted = sessionsHook.confirmSessionDeleted;
+  const markSessionDeleting = sessionsHook.markSessionDeleting;
+  const restoreSession = sessionsHook.restoreSession;
+  const refreshTmuxSessions = tmux.refreshSessions;
 
   // Global keyboard: Cmd+K opens command palette (or chord Cmd+K → t for quick capture)
   const chordPendingRef = useRef(false);
@@ -490,14 +479,17 @@ export default function App() {
     );
   }, [projectOptions]);
 
-  const effectiveProjectId = selectedProjectId ?? defaultProjectId;
+  const projectReady = uiSettingsLoaded && projectOptions.length > 0;
+  const resolvedSelectedProjectId =
+    selectedProjectId &&
+    projectOptions.some((project) => project.id === selectedProjectId)
+      ? selectedProjectId
+      : null;
+  const effectiveProjectId = resolvedSelectedProjectId ?? defaultProjectId;
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
-  const agentDefs = useAgentDefinitions(
-    effectiveProjectId,
-    "claude_sdk_web_chat",
-  );
+  const agentDefs = useAgentDefinitions(effectiveProjectId, selectedProvider ?? undefined);
 
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {
@@ -507,9 +499,7 @@ export default function App() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
-        if (data?.selectedProjectId) {
-          setPendingProjectId(data.selectedProjectId);
-        }
+        if (data?.selectedProjectId) setSelectedProjectId(data.selectedProjectId);
         setUiSettingsLoaded(true);
       })
       .catch(() => {
@@ -519,20 +509,6 @@ export default function App() {
       cancelled = true;
     };
   }, []);
-
-  // Resolve project once: wait for both projects list and ui-settings fetch
-  useEffect(() => {
-    if (projectReady) return;
-    if (!uiSettingsLoaded || projectOptions.length === 0) return;
-
-    if (
-      pendingProjectId &&
-      projectOptions.some((p) => p.id === pendingProjectId)
-    ) {
-      setSelectedProjectId(pendingProjectId);
-    }
-    setProjectReady(true);
-  }, [uiSettingsLoaded, projectOptions, pendingProjectId, projectReady]);
 
   // Persist project selection to API (only after initial resolution)
   const isFirstProjectRender = useRef(true);
@@ -569,11 +545,11 @@ export default function App() {
   // Sync global project filter into sessions hook for cross-page filtering
   useEffect(() => {
     if (!projectReady) return;
-    sessionsHook.setFilters((prev) => ({
+    setSessionFilters((prev) => ({
       ...prev,
       projectId: effectiveProjectId ?? null,
     }));
-  }, [effectiveProjectId, projectReady]);
+  }, [effectiveProjectId, projectReady, setSessionFilters]);
 
   // Keep useChat's projectIdRef in sync with App's effectiveProjectId
   useEffect(() => {
@@ -587,7 +563,7 @@ export default function App() {
   const webChatSessions = useMemo(
     () =>
       sessionsHook.filteredSessions.filter(
-        (s) => s.source === "claude_sdk_web_chat",
+        (s) => s.session_type === "web_chat",
       ),
     [sessionsHook.filteredSessions],
   );
@@ -610,16 +586,25 @@ export default function App() {
 
     initialReconciliationDone.current = true;
 
-    // Does the current localStorage conversation_id match any server session?
-    const match = webChatSessions.find((s) => s.external_id === conversationId);
+    const persistedConversationId = loadPersistedConversationId();
+    const persistedDbSessionId = loadPersistedDbSessionId();
+
+    const match =
+      webChatSessions.find((s) => s.id === dbSessionId) ||
+      (persistedDbSessionId
+        ? webChatSessions.find((s) => s.id === persistedDbSessionId)
+        : undefined);
 
     if (match) {
-      // Valid session — hydrate messages from server (replaces stale localStorage)
-      switchConversation(match.external_id, match.id);
+      switchConversation(match.id);
+    } else if (persistedConversationId && !persistedDbSessionId) {
+      // Preserve an explicit local fresh-chat ID so reloads do not jump back
+      // to the most recent saved session before the user sends a first message.
+      return;
     } else if (webChatSessions.length > 0) {
       // Unknown conversation_id — switch to most recent session
       const mostRecent = webChatSessions[0]; // sorted newest-first
-      switchConversation(mostRecent.external_id, mostRecent.id);
+      switchConversation(mostRecent.id);
     } else {
       // No sessions for this project — clear any stale messages from mount effect
       startNewChat();
@@ -629,7 +614,7 @@ export default function App() {
     effectiveProjectId,
     sessionsHook.isLoading,
     webChatSessions,
-    conversationId,
+    dbSessionId,
     switchConversation,
     startNewChat,
   ]);
@@ -684,7 +669,7 @@ export default function App() {
       } else if (attachedSessionId) {
         detachFromSession();
       }
-      switchConversation(session.external_id, session.id);
+      switchConversation(session.id);
     },
     [
       switchConversation,
@@ -704,47 +689,47 @@ export default function App() {
     );
   }, []);
 
-  // Track pending delete timeouts: externalId → { sessionId, timerId }
+  // Track pending delete timeouts: sessionId → timerId
   const deleteTimeoutsRef = useRef<
     Map<string, { sessionId: string; timerId: number }>
   >(new Map());
 
   // Wire backend chat_deleted ACK to confirmed removal
   useEffect(() => {
-    setOnChatDeleted((externalId: string) => {
-      const entry = deleteTimeoutsRef.current.get(externalId);
+    setOnChatDeleted((sessionId: string) => {
+      const entry = deleteTimeoutsRef.current.get(sessionId);
       if (entry) {
         window.clearTimeout(entry.timerId);
-        deleteTimeoutsRef.current.delete(externalId);
+        deleteTimeoutsRef.current.delete(sessionId);
       }
-      sessionsHook.confirmSessionDeleted(externalId);
+      confirmSessionDeleted(sessionId);
     });
-  }, [setOnChatDeleted, sessionsHook.confirmSessionDeleted]);
+  }, [confirmSessionDeleted, setOnChatDeleted]);
 
   const handleDeleteConversation = useCallback(
     (session: GobbySession) => {
-      const sent = deleteConversation(session.external_id, session.id);
+      const sent = deleteConversation(session.id, session.id);
       if (!sent) {
         showToast("Cannot delete: disconnected from server");
         return;
       }
       // Mark as deleting (visually dimmed) while waiting for backend ACK
-      sessionsHook.markSessionDeleting(session.id);
+      markSessionDeleting(session.id);
       // Timeout: if backend doesn't confirm within 5s, restore and show error
       const timerId = window.setTimeout(() => {
-        sessionsHook.restoreSession(session.id);
-        deleteTimeoutsRef.current.delete(session.external_id);
+        restoreSession(session.id);
+        deleteTimeoutsRef.current.delete(session.id);
         showToast("Delete failed: server did not respond");
       }, 5000);
-      deleteTimeoutsRef.current.set(session.external_id, {
+      deleteTimeoutsRef.current.set(session.id, {
         sessionId: session.id,
         timerId,
       });
     },
     [
       deleteConversation,
-      sessionsHook.markSessionDeleting,
-      sessionsHook.restoreSession,
+      markSessionDeleting,
+      restoreSession,
       showToast,
     ],
   );
@@ -752,9 +737,9 @@ export default function App() {
   // Refresh terminal list when switching to terminals tab
   useEffect(() => {
     if (activeTab === "terminals") {
-      tmux.refreshSessions();
+      refreshTmuxSessions();
     }
-  }, [activeTab, tmux.refreshSessions]);
+  }, [activeTab, refreshTmuxSessions]);
 
   /* Navigate to Terminals tab and attach agent's tmux session */
   const handleNavigateToAgent = useCallback(
@@ -874,7 +859,12 @@ export default function App() {
   useEffect(() => {
     handleVoiceMessageRef.current = voice.handleVoiceMessage;
     handleBinaryMessageRef.current = voice.handleBinaryMessage;
-  }, [voice.handleVoiceMessage, voice.handleBinaryMessage, handleVoiceMessageRef, handleBinaryMessageRef]);
+  }, [
+    voice.handleVoiceMessage,
+    voice.handleBinaryMessage,
+    handleVoiceMessageRef,
+    handleBinaryMessageRef,
+  ]);
 
   // Wire backend-initiated mode changes (e.g. agent EnterPlanMode/ExitPlanMode)
   // to update the settings slider
@@ -888,14 +878,12 @@ export default function App() {
   // — does NOT reset the user's mode back to the default.
   useEffect(() => {
     if (sessionsHook.isLoading) return;
-    const session = webChatSessions.find(
-      (s) => s.external_id === conversationId,
-    );
+    const session = webChatSessions.find((s) => s.id === dbSessionId);
     const restoredMode =
       (session?.chat_mode as ChatMode | null) || settings.defaultChatMode;
     updateChatMode(restoredMode);
     sendMode(restoredMode);
-  }, [conversationSwitchKey, sessionsHook.isLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversationSwitchKey, sessionsHook.isLoading, dbSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = useCallback(
     (value: string) => {
@@ -1090,7 +1078,12 @@ export default function App() {
   const navItems = [
     { id: "chat", label: "Chat", icon: <ChatIcon /> },
     { id: "sessions", label: "Sessions", icon: <SessionsIcon /> },
-    { id: "dashboard", label: "Dashboard", icon: <DashboardIcon />, separator: true },
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      icon: <DashboardIcon />,
+      separator: true,
+    },
     { id: "projects", label: "Project", icon: <ProjectsIcon /> },
     { id: "tasks", label: "Tasks", icon: <TasksIcon /> },
     { id: "workflows", label: "Workflows", icon: <WorkflowsIcon /> },
@@ -1111,20 +1104,22 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="header-brand">
-          <button
-            className="hamburger-button"
+      <header className="relative z-[100] flex items-center justify-between gap-4 border-b border-border px-4 py-4">
+        <div className="flex min-w-0 items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             title="Toggle menu"
             aria-label="Toggle navigation menu"
           >
             <HamburgerIcon />
-          </button>
-          <img src="/logo.png" alt="Gobby logo" className="header-logo" />
-          <span className="header-title">Gobby</span>
+          </Button>
+          <img src="/logo.png" alt="Gobby logo" className="h-9 w-auto" />
+          <span className="truncate text-lg font-semibold text-foreground">Gobby</span>
         </div>
-        <div className="header-actions">
+        <div className="flex flex-wrap items-center justify-end gap-3">
           {projectOptions.length > 0 && (
             <ProjectSelector
               projects={projectOptions}
@@ -1133,27 +1128,32 @@ export default function App() {
               dropDirection="down"
             />
           )}
-          <span
-            className={`status ${isConnected ? "connected" : "disconnected"}`}
+          <Badge
+            variant={isConnected ? "success" : "error"}
+            className="gap-2 px-3 py-1 uppercase tracking-[0.05em]"
           >
-            {isConnected ? "Connected" : "Disconnected"}
-          </span>
+            <span
+              aria-hidden="true"
+              className={cn(
+                "size-2 rounded-full",
+                isConnected ? "bg-success-foreground" : "bg-destructive-foreground",
+              )}
+            />
+            <span className="hidden sm:inline">
+              {isConnected ? "Connected" : "Disconnected"}
+            </span>
+            <span className="sm:hidden">{isConnected ? "Up" : "Down"}</span>
+          </Badge>
           {authRequired && authenticated && (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
               onClick={logout}
               title="Sign out"
-              style={{
-                padding: "0.3rem 0.7rem",
-                borderRadius: 4,
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--text-secondary)",
-                cursor: "pointer",
-                fontSize: "0.8rem",
-              }}
             >
               Logout
-            </button>
+            </Button>
           )}
         </div>
       </header>
@@ -1173,15 +1173,7 @@ export default function App() {
         >
           <Suspense
             fallback={
-              <main
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flex: 1,
-                  color: "var(--text-secondary)",
-                }}
-              >
+              <main className="flex flex-1 items-center justify-center text-muted-foreground">
                 Loading...
               </main>
             }
@@ -1213,6 +1205,7 @@ export default function App() {
                     updateChatMode(mode);
                     sendMode(mode);
                   },
+                  onModeChangeLocal: updateChatMode,
                   onWorktreeChange: isPersonalProject
                     ? undefined
                     : sendWorktreeChange,
@@ -1223,19 +1216,29 @@ export default function App() {
                   canvasSurfaces,
                   canvasPanel,
                   onCanvasInteraction,
+                  continueSessionInChat,
+                  viewSession,
+                  clearViewingSession,
                   viewingSessionId,
                   viewingSessionMeta,
+                  observeSession,
                   attachedSessionId,
                   attachedSessionMeta,
+                  sessionInteractionMode,
+                  proxyDeliveryNotice,
                   onAttachToViewed: attachToViewed,
                   onDetachFromSession: detachFromSession,
                   activeAgent,
                   onAgentChange: sendAgentChange,
+                  provider: selectedProvider,
+                  onProviderChange: setSelectedProvider,
+                  onSwitchProvider: switchProvider,
+                  dbSessionId,
                   conversationSwitchKey,
                 }}
                 conversations={{
                   sessions: webChatSessions,
-                  activeSessionId: conversationId,
+                  activeSessionId: dbSessionId,
                   deletingIds: sessionsHook.deletingIds,
                   onNewChat: startNewChat,
                   onSelectSession: handleSelectConversation,
@@ -1253,6 +1256,8 @@ export default function App() {
                   onViewCliSession: handleViewCliSession,
                   onDetachFromSession: handleClearViewing,
                 }}
+                currentModel={settings.model}
+                onModelChange={updateModel}
                 agentDefinitions={agentDefs.definitions}
                 agentGlobalDefs={agentDefs.globalDefs}
                 agentProjectDefs={agentDefs.projectDefs}
@@ -1262,13 +1267,22 @@ export default function App() {
                 paletteActions={commandPaletteActions}
                 onViewAgent={handleNavigateToAgent}
                 voice={{
-                  voiceMode: voice.voiceMode,
+                  sttEnabled: settings.sttEnabled,
+                  ttsEnabled: settings.ttsEnabled,
+                  voiceInputMode: settings.voiceInputMode,
                   voiceAvailable: voice.voiceAvailable,
+                  voiceReady: voice.voiceReady,
+                  voiceLoading: voice.voiceLoading,
                   isListening: voice.isListening,
                   isSpeechDetected: voice.isSpeechDetected,
+                  isRecording: voice.isRecording,
                   isTranscribing: voice.isTranscribing,
+                  isSpeaking: voice.isSpeaking,
                   voiceError: voice.voiceError,
-                  onToggleVoice: voice.toggleVoiceMode,
+                  startRecording: voice.startRecording,
+                  stopRecording: voice.stopRecording,
+                  cancelRecording: voice.cancelRecording,
+                  stopTTS: voice.stopTTS,
                 }}
               />
             ) : activeTab === "sessions" ? (
@@ -1346,6 +1360,9 @@ export default function App() {
         onModelChange={updateModel}
         onThemeChange={updateTheme}
         onDefaultChatModeChange={updateDefaultChatMode}
+        onSttEnabledChange={updateSttEnabled}
+        onTtsEnabledChange={updateTtsEnabled}
+        onVoiceInputModeChange={updateVoiceInputMode}
         onReset={resetSettings}
       />
 

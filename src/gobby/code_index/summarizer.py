@@ -70,6 +70,7 @@ class SymbolSummarizer:
                 prompt=prompt,
                 model=self._model_name,
                 max_tokens=100,
+                caller="code_index.symbol_summary",
             )
             text = text.strip()
             return text if text else None

@@ -146,7 +146,7 @@ export function SkillsPage() {
     const ok = await deleteSkill(skillId)
     if (!ok) showError('Failed to delete skill')
     if (selectedSkill?.id === skillId) setSelectedSkill(null)
-  }, [deleteSkill, showError, selectedSkill])
+  }, [confirm, deleteSkill, showError, selectedSkill])
 
   const handleToggle = useCallback(async (skillId: string, enabled: boolean) => {
     const ok = await toggleSkill(skillId, enabled)

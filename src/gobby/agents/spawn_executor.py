@@ -52,7 +52,9 @@ class SpawnRequest:
     clone_id: str | None = None
     branch_name: str | None = None  # Git branch for worktree/clone isolation
     task_id: str | None = None  # Task being worked on (for dedup tracking)
+    claimed_session_id: str | None = None  # Original task owner before child-session claim
     title: str | None = None  # Session title (derived from agent/task name)
+    agent_name: str | None = None  # Agent definition name for UI/status surfaces
     agent_depth: int = 0
     max_agent_depth: int = 5
     session_manager: Any | None = None  # Required for Gemini/Codex preflight
@@ -139,7 +141,9 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         git_branch=request.branch_name,
         agent_run_id=request.agent_run_id,
         task_id=request.task_id,
+        claimed_session_id=request.claimed_session_id,
         title=request.title,
+        agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
     )
 
@@ -149,7 +153,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     # Pass session_id so Claude uses --session-id flag, which allows the
     # SessionStart hook to match this process to the pre-created session
     # (and auto-activate the workflow, which delivers the prompt via on_enter).
-    cmd = build_cli_command(
+    cmd, _cmd_env = build_cli_command(
         cli="claude",
         prompt=request.prompt,
         session_id=gobby_session_id,
@@ -255,7 +259,9 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         git_branch=request.branch_name,
         agent_run_id=request.agent_run_id,
         task_id=request.task_id,
+        claimed_session_id=request.claimed_session_id,
         title=request.title,
+        agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
     )
 
@@ -263,7 +269,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
 
     # Build command for fresh Gemini session (not resume)
     # Session context is injected via additionalContext at SessionStart by the daemon
-    cmd = build_cli_command(
+    cmd, _cmd_env = build_cli_command(
         cli="gemini",
         prompt=request.prompt,
         auto_approve=True,

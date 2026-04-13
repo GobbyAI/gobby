@@ -79,6 +79,21 @@ class LLMService:
         if name in self._providers:
             return self._providers[name]
 
+        # Handle "local" provider specially — its config lives on
+        # DaemonConfig.local, not inside llm_providers.
+        if name == "local":
+            if not self._config.local:
+                raise ValueError(
+                    "Provider 'local' requires the 'local' config section (url, model)"
+                )
+            from gobby.llm.local import LocalLLMProvider
+
+            provider: LLMProvider = LocalLLMProvider(self._config)
+            logger.debug("Initialized Local provider (url: %s)", self._config.local.url)
+            self._providers[name] = provider
+            self._initialized_providers.add(name)
+            return provider
+
         # Check if provider is configured
         if not self._config.llm_providers:
             raise ValueError("llm_providers not configured")
@@ -89,7 +104,6 @@ class LLMService:
             raise ValueError(f"Provider '{name}' is not configured. Available providers: {enabled}")
 
         # Create provider instance based on name
-        provider: LLMProvider
 
         if name == "claude":
             from gobby.llm.claude import ClaudeLLMProvider
@@ -203,12 +217,73 @@ class LLMService:
         # Otherwise use first available
         return self._get_provider_instance(enabled[0])
 
+    async def call_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        system_prompt: str | None = None,
+        max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
+    ) -> str:
+        """Call generate_text for a feature config with tier-based fallback.
+
+        When the primary provider is ``"local"`` and the call fails, this
+        method automatically retries with the Claude provider using the
+        tier-appropriate model (haiku / sonnet / opus).
+
+        Args:
+            feature_config: A FeatureDefaultConfig (or subclass) with
+                provider, model, and tier fields.
+            prompt: User prompt.
+            system_prompt: Optional system prompt.
+            max_tokens: Optional max output tokens.
+
+        Returns:
+            Generated text from the LLM.
+        """
+        provider, model, _ = self.get_provider_for_feature(feature_config)
+        try:
+            return await provider.generate_text(
+                prompt,
+                system_prompt,
+                model,
+                max_tokens,
+                caller=caller,
+            )
+        except Exception as e:
+            if provider.provider_name != "local":
+                raise
+
+            # Tier-based fallback to Claude
+            from gobby.config.feature_base import TIER_FALLBACK_MODEL, ModelTier
+
+            tier = getattr(feature_config, "tier", ModelTier.LOW)
+            fallback_model = TIER_FALLBACK_MODEL[tier]
+            logger.warning(
+                "Local provider failed (%s), falling back to claude/%s",
+                e,
+                fallback_model,
+            )
+            fallback = self.get_provider("claude")
+            return await fallback.generate_text(
+                prompt,
+                system_prompt,
+                fallback_model,
+                max_tokens,
+                caller=caller,
+            )
+
     @property
     def enabled_providers(self) -> list[str]:
         """Get list of enabled provider names."""
         if not self._config.llm_providers:
             return []
-        return self._config.llm_providers.get_enabled_providers()
+        # Copy before mutating — get_enabled_providers may return a cached list
+        providers = list(self._config.llm_providers.get_enabled_providers())
+        if self._config.local:
+            providers.append("local")
+        return providers
 
     @property
     def initialized_providers(self) -> list[str]:

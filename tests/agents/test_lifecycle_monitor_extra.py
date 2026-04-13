@@ -50,6 +50,7 @@ class TestRecoverTaskFromFailedAgent:
         # Setup mock task
         mock_task = MagicMock()
         mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task.seq_num = 5
         mock_task.dispatch_failure_count = 0
         mock_task_mgr.get_task.return_value = mock_task
@@ -59,8 +60,8 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task_mgr.get_task.assert_called_once_with("task-123")
         # Provider error: dispatch_failure_count unchanged (stays at 0)
-        mock_task_mgr.update_task.assert_called_once_with(
-            "task-123", status="open", assignee=None, dispatch_failure_count=0
+        mock_task_mgr.release_task_claim.assert_called_once_with(
+            "task-123", status="open", dispatch_failure_count=0
         )
 
     @pytest.mark.asyncio
@@ -96,6 +97,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_fallback_task = MagicMock()
         mock_fallback_task.id = "task-fallback"
         mock_fallback_task.status = "in_progress"
+        mock_fallback_task.claimed_by_session_id = "child-123"
         mock_fallback_task.seq_num = None
         mock_fallback_task.dispatch_failure_count = 0
         mock_task_mgr.list_tasks.return_value = [mock_fallback_task]
@@ -104,12 +106,53 @@ class TestRecoverTaskFromFailedAgent:
 
         await monitor._recover_task_from_failed_agent("run-2")
 
-        mock_task_mgr.list_tasks.assert_called_once_with(status="in_progress", assignee="child-123")
+        mock_task_mgr.list_tasks.assert_called_once_with(
+            claimed_by_session_id="child-123",
+            closed=False,
+        )
         mock_task_mgr.get_task.assert_called_once_with("task-fallback")
         # Non-provider error: dispatch_failure_count incremented from 0 to 1
-        mock_task_mgr.update_task.assert_called_once_with(
-            "task-fallback", status="open", assignee=None, dispatch_failure_count=1
+        mock_task_mgr.release_task_claim.assert_called_once_with(
+            "task-fallback", status="open", dispatch_failure_count=1
         )
+
+    @pytest.mark.asyncio
+    async def test_recover_task_releases_review_claim_without_status_change(self) -> None:
+        """Failed review agent should clear assignee without regressing status."""
+        mock_run_mgr = MagicMock()
+        mock_task_mgr = MagicMock()
+        mock_stall = MagicMock()
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            task_manager=mock_task_mgr,
+        )
+        monitor._stall_classifier = mock_stall
+
+        db_run = AgentRun(
+            id="run-review",
+            parent_session_id="p",
+            task_id="task-review",
+            provider="claude",
+            prompt="review it",
+            status="error",
+            error="agent crashed",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+        )
+        mock_run_mgr.get.return_value = db_run
+
+        mock_task = MagicMock()
+        mock_task.status = "needs_review"
+        mock_task.claimed_by_session_id = "reviewer-1"
+        mock_task.seq_num = 22
+        mock_task_mgr.get_task.return_value = mock_task
+        mock_stall.is_provider_error.return_value = False
+
+        await monitor._recover_task_from_failed_agent("run-review")
+
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-review")
 
     @pytest.mark.asyncio
     async def test_recover_task_no_task_manager(self) -> None:
@@ -146,10 +189,11 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = MagicMock()
         mock_task.status = "completed"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task_mgr.get_task.return_value = mock_task
 
         await monitor._recover_task_from_failed_agent("run-1")
-        mock_task_mgr.update_task.assert_not_called()
+        mock_task_mgr.release_task_claim.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_recover_task_escalates_after_three_failures(self) -> None:
@@ -180,6 +224,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = MagicMock()
         mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task.seq_num = 10
         mock_task.dispatch_failure_count = 2  # Already 2 failures, this will be 3rd
         mock_task_mgr.get_task.return_value = mock_task
@@ -187,10 +232,9 @@ class TestRecoverTaskFromFailedAgent:
 
         await monitor._recover_task_from_failed_agent("run-1")
 
-        mock_task_mgr.update_task.assert_called_once_with(
+        mock_task_mgr.release_task_claim.assert_called_once_with(
             "task-1",
             status="escalated",
-            assignee=None,
             dispatch_failure_count=0,
             escalation_reason="Failed 3 times across different agents",
         )
@@ -224,6 +268,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = MagicMock()
         mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "owner-1"
         mock_task.seq_num = 10
         mock_task.dispatch_failure_count = 2
         mock_task_mgr.get_task.return_value = mock_task
@@ -232,9 +277,49 @@ class TestRecoverTaskFromFailedAgent:
         await monitor._recover_task_from_failed_agent("run-1")
 
         # Should NOT block — provider errors are excluded
-        mock_task_mgr.update_task.assert_called_once_with(
-            "task-1", status="open", assignee=None, dispatch_failure_count=2
+        mock_task_mgr.release_task_claim.assert_called_once_with(
+            "task-1", status="open", dispatch_failure_count=2
         )
+
+    @pytest.mark.asyncio
+    async def test_recover_task_uses_persisted_claimed_session_id(self) -> None:
+        """Recovery should not release a task claimed by a different live session."""
+        mock_run_mgr = MagicMock()
+        mock_task_mgr = MagicMock()
+        mock_stall = MagicMock()
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            task_manager=mock_task_mgr,
+        )
+        monitor._stall_classifier = mock_stall
+
+        db_run = AgentRun(
+            id="run-claim-owner",
+            parent_session_id="parent-1",
+            claimed_session_id="original-owner",
+            task_id="task-1",
+            provider="claude",
+            prompt="p",
+            status="error",
+            error="agent crashed",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+        )
+        mock_run_mgr.get.return_value = db_run
+
+        mock_task = MagicMock()
+        mock_task.status = "in_progress"
+        mock_task.claimed_by_session_id = "different-owner"
+        mock_task.seq_num = 10
+        mock_task.dispatch_failure_count = 0
+        mock_task_mgr.get_task.return_value = mock_task
+        mock_stall.is_provider_error.return_value = False
+
+        await monitor._recover_task_from_failed_agent("run-claim-owner")
+
+        mock_task_mgr.release_task_claim.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_stale_pending_runs(self) -> None:
@@ -367,7 +452,7 @@ class TestDispatchFailureCountCRUD:
             id="t-1",
             project_id="p-1",
             title="test",
-            status="blocked",
+            status="escalated",
             priority=2,
             task_type="task",
             created_at="2024-01-01",
@@ -394,8 +479,8 @@ class TestDispatchFailureCountCRUD:
 
         mgr = LocalTaskManager(temp_db)
         task = mgr.create_task(title="test", task_type="task", project_id=sample_project["id"])
-        # Set failure count and block
-        mgr.update_task(task.id, status="blocked", dispatch_failure_count=3)
+        # Set failure count and move out of open state
+        mgr.update_task(task.id, status="escalated", dispatch_failure_count=3)
         # Reopen
         mgr.reopen_task(task.id)
         reopened = mgr.get_task(task.id)

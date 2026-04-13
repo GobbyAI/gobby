@@ -70,8 +70,8 @@ class TestRRFMerge:
     def test_single_source(self) -> None:
         """RRF with single source preserves order."""
         result = MemoryManager._rrf_merge(
-            qdrant_ranked=["a", "b", "c"],
-            graph_ranked=[],
+            ["a", "b", "c"],
+            [],
             k=60,
         )
         assert result == ["a", "b", "c"]
@@ -79,8 +79,8 @@ class TestRRFMerge:
     def test_both_sources_boost_shared(self) -> None:
         """Items in both lists rank higher than items in only one list."""
         result = MemoryManager._rrf_merge(
-            qdrant_ranked=["a", "b", "c"],
-            graph_ranked=["b", "d", "a"],
+            ["a", "b", "c"],
+            ["b", "d", "a"],
             k=60,
         )
         # "a" and "b" appear in both, should rank highest
@@ -92,8 +92,8 @@ class TestRRFMerge:
     def test_disjoint_lists(self) -> None:
         """RRF with disjoint lists produces interleaved results."""
         result = MemoryManager._rrf_merge(
-            qdrant_ranked=["a", "b"],
-            graph_ranked=["c", "d"],
+            ["a", "b"],
+            ["c", "d"],
             k=60,
         )
         # All items should appear
@@ -111,12 +111,23 @@ class TestRRFMerge:
         """Lower k gives more weight to rank position."""
         # With k=1, rank differences matter more
         result_low_k = MemoryManager._rrf_merge(
-            qdrant_ranked=["a", "b"],
-            graph_ranked=["b", "a"],
+            ["a", "b"],
+            ["b", "a"],
             k=1,
         )
         # With equal appearances, order depends on rank sum
         assert set(result_low_k) == {"a", "b"}
+
+    def test_three_sources(self) -> None:
+        """RRF with three sources (Qdrant + graph + FTS5)."""
+        result = MemoryManager._rrf_merge(
+            ["a", "b"],
+            ["b", "c"],
+            ["c", "a"],
+            k=60,
+        )
+        # All three appear in 2 sources each, all should be present
+        assert set(result) == {"a", "b", "c"}
 
 
 class TestSearchGraphForMemories:
@@ -355,7 +366,7 @@ class TestSearchMemoriesGraphIntegration:
         user_mem = _mock_memory("mem-2", "user content")
         user_mem.source_type = "user"
         system_mem = _mock_memory("mem-1", "system content")
-        system_mem.source_type = "session"
+        system_mem.source_type = "agent"
 
         manager.storage.get_memory = MagicMock(
             side_effect=lambda mid: user_mem if mid == "mem-2" else system_mem

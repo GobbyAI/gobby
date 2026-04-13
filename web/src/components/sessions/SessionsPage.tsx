@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from 'react'
 import './SessionsPage.css'
 import type { GobbySession, SessionFilters } from '../../hooks/useSessions'
 import { KNOWN_SOURCES } from '../../hooks/useSessions'
+import { useNow } from '../../hooks/useNow'
 import { useSessionDetail } from '../../hooks/useSessionDetail'
 import { SessionDetail } from './SessionDetail'
 import { SourceIcon } from '../shared/SourceIcon'
@@ -21,7 +22,6 @@ interface SessionsPageProps {
 
 function sourceLabel(source: string): string {
   switch (source) {
-    case 'claude_sdk_web_chat': return 'Web Chat'
     case 'claude': return 'Claude'
     case 'gemini': return 'Gemini'
     case 'codex': return 'Codex'
@@ -44,12 +44,12 @@ export function SessionsPage({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const saveOnBlurRef = useRef(true)
+  const now = useNow()
 
   const detail = useSessionDetail(selectedSessionId)
 
   // Time-group sessions
   const grouped = useMemo(() => {
-    const now = Date.now()
     const groups: { label: string; sessions: GobbySession[] }[] = [
       { label: 'Today', sessions: [] },
       { label: 'Yesterday', sessions: [] },
@@ -67,7 +67,7 @@ export function SessionsPage({
     }
 
     return groups.filter((g) => g.sessions.length > 0)
-  }, [sessions])
+  }, [sessions, now])
 
   return (
     <div className="sessions-page">

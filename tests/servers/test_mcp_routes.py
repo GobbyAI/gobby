@@ -302,6 +302,31 @@ class TestListMCPTools:
         assert len(data["tools"]) == 2
         assert "response_time_ms" in data
 
+    def test_list_tools_records_session_discovery_state(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Session header should drive listed_servers tracking for discovery routes."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        registry = FakeInternalRegistry(name="gobby-tasks")
+        server._internal_manager = FakeInternalManager([registry])
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with TestClient(server.app) as client:
+            response = client.get(
+                "/api/mcp/gobby-tasks/tools",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+            )
+
+        assert response.status_code == 200
+        server._tools_handler.tool_proxy.record_listed_server.assert_called_once_with(
+            "gobby-tasks",
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+        )
+
     def test_list_tools_internal_server_fallthrough(
         self, session_storage: LocalSessionManager
     ) -> None:
@@ -781,6 +806,36 @@ class TestGetToolSchema:
         assert data["name"] == "list_tasks"
         assert data["server"] == "gobby-tasks"
         assert "inputSchema" in data
+
+    def test_get_schema_records_session_discovery_state(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Session header should drive unlocked_tools tracking for schema lookups."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(name="gobby-tasks"),
+            ]
+        )
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/schema",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+                json={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            )
+
+        assert response.status_code == 200
+        server._tools_handler.tool_proxy.record_unlocked_tool.assert_called_once_with(
+            "gobby-tasks",
+            "list_tasks",
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+        )
 
     def test_get_schema_internal_server_tool_not_found(
         self, session_storage: LocalSessionManager
@@ -2098,7 +2153,7 @@ class TestHooksEndpoints:
         assert response.status_code == 200
 
     def test_execute_hook_codex_source(self, session_storage: LocalSessionManager) -> None:
-        """Test execute hook with Codex source."""
+        """Test execute hook with Codex source uses CodexHooksAdapter."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2109,7 +2164,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexNotifyAdapter") as MockAdapter,
+            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2118,12 +2173,122 @@ class TestHooksEndpoints:
             response = client.post(
                 "/api/hooks/execute",
                 json={
-                    "hook_type": "notification",
+                    "hook_type": "SessionStart",
                     "source": "codex",
+                    "input_data": {"session_id": "test-123", "cwd": "/tmp"},
                 },
             )
 
         assert response.status_code == 200
+        assert response.json()["continue"] is True
+        MockAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+
+    def test_execute_hook_codex_uses_hooks_adapter_not_app_server_adapter(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Regression: Codex HTTP hooks must use CodexHooksAdapter even when
+        the app-server CodexAdapter is connected.
+
+        The app-server adapter expects JSON-RPC format and silently drops
+        hooks.json payloads, breaking all hook enforcement for Codex.
+        """
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+        # Simulate connected app-server adapter on app.state
+        ws_adapter = MagicMock(name="WebSocketCodexAdapter")
+        server.app.state.codex_adapter = ws_adapter
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockHooksAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockHooksAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "SessionStart",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-456", "cwd": "/tmp"},
+                },
+            )
+
+        assert response.status_code == 200
+        # Must use CodexHooksAdapter, NOT the app-server adapter
+        MockHooksAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        mock_adapter.handle_native.assert_called_once()
+        # The app-server adapter must NOT have been called
+        ws_adapter.handle_native.assert_not_called()
+
+    def test_execute_hook_codex_stop_block_propagates(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Codex Stop hook block decisions must propagate through the HTTP response."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {
+                "continue": False,
+                "stopReason": "Task #11678 is still claimed — commit and close first.",
+            }
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "Stop",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-stop"},
+                },
+            )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["continue"] is False
+        assert "claimed" in result["stopReason"]
+
+
+class TestCodexValidateSettings:
+    """Tests for Codex entry in validate_settings CLI_VALIDATION_CONFIGS."""
+
+    def test_codex_config_exists(self) -> None:
+        """Codex must be registered in CLI_VALIDATION_CONFIGS."""
+        from gobby.install.shared.hooks.validate_settings import CLI_VALIDATION_CONFIGS
+
+        assert "codex" in CLI_VALIDATION_CONFIGS
+
+    def test_codex_config_hooks_json(self) -> None:
+        """Codex validation must target hooks.json, not settings.json."""
+        from gobby.install.shared.hooks.validate_settings import CLI_VALIDATION_CONFIGS
+
+        config = CLI_VALIDATION_CONFIGS["codex"]
+        assert config.settings_file == "hooks.json"
+        assert config.settings_dir == ".codex"
+
+    def test_codex_required_hooks(self) -> None:
+        """All critical Codex hook types must be required."""
+        from gobby.install.shared.hooks.validate_settings import CLI_VALIDATION_CONFIGS
+
+        config = CLI_VALIDATION_CONFIGS["codex"]
+        for hook in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
+            assert hook in config.required_hooks, f"Missing required hook: {hook}"
 
 
 # ============================================================================

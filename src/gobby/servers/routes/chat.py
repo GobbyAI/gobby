@@ -22,6 +22,30 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=503, detail="Session manager not available")
         return server.session_manager.db
 
+    def _resolve_chat_message_keys(chat_id: str) -> tuple[str, str | None]:
+        """Resolve primary/fallback keys for web-chat display persistence.
+
+        New web-chat messages are keyed by DB session ID. Older rows may still
+        be keyed by the session's former external_id, so we transparently fall
+        back for read/delete compatibility during the transition.
+        """
+        if server.session_manager is None:
+            return chat_id, None
+
+        try:
+            session = server.session_manager.get(chat_id)
+        except Exception as exc:
+            logger.debug(
+                "Chat message key resolution failed for %s: %s", chat_id, exc, exc_info=True
+            )
+            session = None
+
+        if not session or getattr(session, "session_type", None) != "web_chat":
+            return chat_id, None
+
+        fallback = session.external_id if session.external_id != session.id else None
+        return session.id, fallback
+
     @router.get("/{conversation_id}/messages")
     async def get_messages(
         conversation_id: str,
@@ -30,15 +54,26 @@ def create_chat_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Load chat messages for a conversation."""
         db = _get_db()
-        messages = chat_messages.get_messages(db, conversation_id, after_seq=after_seq, limit=limit)
-        max_seq = chat_messages.get_max_seq(db, conversation_id)
+        primary_key, fallback_key = _resolve_chat_message_keys(conversation_id)
+
+        messages = chat_messages.get_messages(db, primary_key, after_seq=after_seq, limit=limit)
+        max_seq = chat_messages.get_max_seq(db, primary_key)
+
+        if not messages and fallback_key:
+            messages = chat_messages.get_messages(
+                db, fallback_key, after_seq=after_seq, limit=limit
+            )
+            max_seq = chat_messages.get_max_seq(db, fallback_key)
         return {"messages": messages, "max_seq": max_seq}
 
     @router.delete("/{conversation_id}/messages")
     async def delete_messages(conversation_id: str) -> dict[str, Any]:
         """Delete all chat messages for a conversation."""
         db = _get_db()
-        count = chat_messages.delete_messages(db, conversation_id)
+        primary_key, fallback_key = _resolve_chat_message_keys(conversation_id)
+        count = chat_messages.delete_messages(db, primary_key)
+        if fallback_key:
+            count += chat_messages.delete_messages(db, fallback_key)
         return {"deleted": count}
 
     return router

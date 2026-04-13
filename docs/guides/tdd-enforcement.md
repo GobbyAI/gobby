@@ -280,4 +280,4 @@ Plan updated. Ready for user approval.
 - [Task Expansion](./task-expansion.md) — How expansion creates the TDD sandwich
 - [Rules](./rules.md) — Rule system reference
 - [Variables](./variables.md) — Session variables and enforcement
-- [Orchestrator](./orchestrator.md) — How orchestration coordinates TDD-expanded tasks
+- [Orchestration](./orchestration.md) — How orchestration coordinates TDD-expanded tasks

@@ -2,8 +2,18 @@ import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Tree, type NodeRendererProps } from 'react-arborist'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { Markdown } from '../chat/Markdown'
+import { useNow } from '../../hooks/useNow'
+import { useWebSocketEvent } from '../../hooks/useWebSocketEvent'
 import '../tasks/task-execution.css'
 import type { GobbyTask } from '../../hooks/useTasks'
+import {
+  getCanonicalTaskState,
+  getTaskBucket,
+  getTaskStateSummary,
+  TASK_BUCKET_COLORS,
+  TASK_BUCKET_LABELS,
+  type TaskBucket,
+} from '../../lib/taskState'
 
 interface TasksTabProps {
   projectId?: string | null
@@ -30,18 +40,11 @@ interface TreeNode {
 // Constants
 // =============================================================================
 
-const CLOSED_STATUSES = new Set(['closed', 'review_approved'])
-const ALL_STATUSES = ['open', 'in_progress', 'needs_review', 'escalated', 'closed']
-const DEFAULT_FILTERS = new Set(['open', 'in_progress', 'needs_review', 'escalated'])
+const ALL_BUCKETS: TaskBucket[] = ['ready', 'in_progress', 'review', 'blocked', 'merge_ready', 'closed']
+const DEFAULT_FILTERS = new Set<TaskBucket>(['ready', 'in_progress', 'review', 'merge_ready', 'blocked'])
+const INITIAL_TASK_LIMIT = 10
 
-const STATUS_DOT_COLORS: Record<string, string> = {
-  open: '#3b82f6',
-  in_progress: '#f59e0b',
-  needs_review: '#8b5cf6',
-  review_approved: '#22c55e',
-  closed: '#737373',
-  escalated: '#ef4444',
-}
+const STATUS_DOT_COLORS = TASK_BUCKET_COLORS
 
 const PRIORITY_LABELS: Record<number, string> = {
   0: 'Critical',
@@ -99,32 +102,32 @@ function searchMatch(node: { data: TreeNode }, term: string): boolean {
 
 function PanelTaskNode({ node, style }: NodeRendererProps<TreeNode>) {
   const task = node.data.task
-  const dotColor = STATUS_DOT_COLORS[task.status] ?? '#737373'
+  const dotColor = STATUS_DOT_COLORS[getTaskBucket(task)] ?? '#737373'
   const textColor = PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? 'var(--text-secondary)'
   const ref = task.seq_num != null ? `#${task.seq_num}` : null
 
   return (
     <div
       style={style}
-      className={`paneltask-row${node.isSelected ? ' paneltask-row--expanded' : ''}${CLOSED_STATUSES.has(task.status) ? ' paneltask-row--closed' : ''}`}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${node.isSelected ? ' bg-accent/[0.06]' : ''}${getTaskBucket(task) === 'closed' ? ' opacity-50' : ''}`}
       onClick={() => node.activate()}
     >
       {node.isInternal ? (
         <button
-          className="paneltask-tree-toggle"
+          className="bg-transparent border-none text-muted-foreground text-xs cursor-pointer p-0 w-4 shrink-0 text-center leading-none"
           onClick={e => { e.stopPropagation(); node.toggle() }}
         >
           {node.isOpen ? '▾' : '▸'}
         </button>
       ) : (
-        <span className="paneltask-tree-toggle paneltask-tree-toggle--leaf" />
+        <span className="invisible w-4 shrink-0" />
       )}
       <span
-        className="paneltask-status-dot"
+        className="w-1.5 h-1.5 rounded-full shrink-0"
         style={{ backgroundColor: dotColor }}
       />
-      {ref && <span className="paneltask-ref">{ref}</span>}
-      <span className="paneltask-row-title" style={{ color: textColor }}>
+      {ref && <span className="text-sm text-muted-foreground shrink-0">{ref}</span>}
+      <span className="truncate min-w-0 flex-1 text-sm text-foreground" style={{ color: textColor }}>
         {task.title}
       </span>
     </div>
@@ -140,26 +143,27 @@ function FilterDropdown({
   onToggle,
   onClose,
 }: {
-  filters: Set<string>
-  onToggle: (status: string) => void
+  filters: Set<TaskBucket>
+  onToggle: (status: TaskBucket) => void
   onClose: () => void
 }) {
   return (
     <>
-      <div className="paneltask-filter-backdrop" onClick={onClose} />
-      <div className="paneltask-filter-dropdown">
-        {ALL_STATUSES.map((status) => (
-          <label key={status} className="paneltask-filter-chip">
+      <div className="fixed inset-0 z-[99]" onClick={onClose} />
+      <div className="absolute top-full right-2 z-[100] bg-secondary border border-border rounded-md shadow-lg p-1.5 flex flex-col gap-0.5 min-w-[10rem]">
+        {ALL_BUCKETS.map((status) => (
+          <label key={status} className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50 capitalize">
             <input
               type="checkbox"
+              className="w-3 h-3"
               checked={filters.has(status)}
               onChange={() => onToggle(status)}
             />
             <span
-              className="paneltask-status-dot"
+              className="w-1.5 h-1.5 rounded-full shrink-0"
               style={{ backgroundColor: STATUS_DOT_COLORS[status] ?? '#737373' }}
             />
-            <span>{status.replace(/_/g, ' ')}</span>
+            <span>{TASK_BUCKET_LABELS[status]}</span>
           </label>
         ))}
       </div>
@@ -176,7 +180,8 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [statusFilters, setStatusFilters] = useState<Set<string>>(() => new Set(DEFAULT_FILTERS))
+  const [statusFilters, setStatusFilters] = useState<Set<TaskBucket>>(() => new Set(DEFAULT_FILTERS))
+  const [visibleCount, setVisibleCount] = useState(INITIAL_TASK_LIMIT)
   const [showFilterDropdown, setShowFilterDropdown] = useState(false)
   const [topHeight, setTopHeight] = useState(50)
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null)
@@ -184,9 +189,17 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [treeHeight, setTreeHeight] = useState(300)
 
-  // Fetch all tasks (filter client-side)
-  useEffect(() => {
+  // Fetch tasks, then apply canonical bucket filters client-side.
+  const abortRef = useRef<AbortController | null>(null)
+  const debouncedRefetchRef = useRef<number | null>(null)
+  // Abort any in-flight WebSocket-triggered detail fetch when a newer one
+  // arrives or when the component unmounts.
+  const detailFetchControllerRef = useRef<AbortController | null>(null)
+
+  const fetchTasks = useCallback(() => {
+    abortRef.current?.abort()
     const controller = new AbortController()
+    abortRef.current = controller
     setLoading(true)
     const baseUrl = getBaseUrl()
     const params = new URLSearchParams()
@@ -197,8 +210,85 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
       .then((data) => setTasks(data.tasks ?? []))
       .catch((err) => { if (err.name !== 'AbortError') setTasks([]) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
   }, [projectId])
+
+  useEffect(() => {
+    fetchTasks()
+    return () => {
+      abortRef.current?.abort()
+      detailFetchControllerRef.current?.abort()
+      if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+    }
+  }, [fetchTasks])
+
+  // WebSocket: real-time task event subscription
+  const handleTaskEventRef = useRef<(event: string, taskData: Record<string, unknown>) => void>(() => {})
+  const handleTaskEvent = useCallback((event: string, taskData: Record<string, unknown>) => {
+    const taskId = taskData.id as string
+    if (!taskId) return
+
+    // Ignore events for other projects
+    const taskProjectId = taskData.project_id as string | undefined
+    if (projectId && taskProjectId && taskProjectId !== projectId) return
+
+    if (event === 'task_deleted') {
+      setTasks(prev => prev.filter(t => t.id !== taskId))
+      if (taskId === selectedTaskId) setSelectedTaskId(null)
+    } else if (event === 'task_created') {
+      const newTask = taskData as unknown as GobbyTask
+      setTasks(prev => {
+        if (prev.some(t => t.id === taskId)) return prev
+        return [...prev, newTask]
+      })
+    } else {
+      // task_updated, task_closed, task_reopened, task_de_escalated
+      const updated = taskData as unknown as GobbyTask
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updated } : t))
+    }
+
+    // Re-fetch detail if the affected task is currently selected.
+    // Abort any previous in-flight detail fetch so a stale response can't
+    // overwrite a newer one (or land after the component unmounts).
+    if (taskId === selectedTaskId && event !== 'task_deleted') {
+      detailFetchControllerRef.current?.abort()
+      const controller = new AbortController()
+      detailFetchControllerRef.current = controller
+      setDetailLoading(true)
+      const baseUrl = getBaseUrl()
+      fetch(`${baseUrl}/api/tasks/${taskId}`, { signal: controller.signal })
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (controller.signal.aborted) return
+          setTaskDetail(data?.id ? data : (data?.task ?? null))
+        })
+        .catch((err) => {
+          if (err?.name !== 'AbortError') {
+            // Swallow non-abort errors quietly — the periodic refetch
+            // below will retry shortly.
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setDetailLoading(false)
+        })
+    }
+
+    // Debounced full refetch to sync server truth
+    if (debouncedRefetchRef.current) window.clearTimeout(debouncedRefetchRef.current)
+    debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500)
+  }, [fetchTasks, projectId, selectedTaskId])
+
+  useEffect(() => {
+    handleTaskEventRef.current = handleTaskEvent
+  }, [handleTaskEvent])
+
+  useWebSocketEvent('task_event', useCallback((data: Record<string, unknown>) => {
+    if (data.event && (data.task || data.task_id)) {
+      handleTaskEventRef.current(
+        data.event as string,
+        (data.task || { id: data.task_id }) as Record<string, unknown>,
+      )
+    }
+  }, []))
 
   // Fetch task detail when selected
   useEffect(() => {
@@ -226,7 +316,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     return () => observer.disconnect()
   }, [])
 
-  const toggleFilter = useCallback((status: string) => {
+  const toggleFilter = useCallback((status: TaskBucket) => {
     setStatusFilters((prev) => {
       const next = new Set(prev)
       if (next.has(status)) next.delete(status)
@@ -235,21 +325,21 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     })
   }, [])
 
+  useEffect(() => {
+    setVisibleCount(INITIAL_TASK_LIMIT)
+  }, [projectId, search, statusFilters])
+
   // Client-side filtering
-  const now = Date.now()
+  const now = useNow()
   const DAY_MS = 24 * 60 * 60 * 1000
   const filtered = useMemo(() => {
     return tasks
       .filter((t) => {
-        if (!statusFilters.has(t.status)) {
-          // Show closed tasks if closed within 24h and closed filter is on
-          if (CLOSED_STATUSES.has(t.status) && statusFilters.has('closed')) {
-            const closedAt = (t as GobbyTaskDetail).closed_at
-            if (closedAt && now - new Date(closedAt).getTime() < DAY_MS) return true
-          }
-          return false
-        }
-        return true
+        const bucket = getTaskBucket(t)
+        if (!statusFilters.has(bucket)) return false
+        if (bucket !== 'closed') return true
+        const closedAt = (t as GobbyTaskDetail).closed_at
+        return !closedAt || now - new Date(closedAt).getTime() < DAY_MS
       })
       .sort((a, b) => {
         const pa = a.priority ?? 3
@@ -257,9 +347,26 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
         if (pa !== pb) return pa - pb
         return (b.created_at ?? '').localeCompare(a.created_at ?? '')
       })
-  }, [tasks, statusFilters, now])
+  }, [tasks, statusFilters, now, DAY_MS])
 
-  const treeData = useMemo(() => buildTree(filtered), [filtered])
+  const treeData = useMemo(() => {
+    const taskMap = new Map(tasks.map((task) => [task.id, task]))
+    const visibleIds = new Set<string>()
+
+    for (const task of filtered.slice(0, visibleCount)) {
+      let current: GobbyTask | undefined = task
+      while (current) {
+        if (visibleIds.has(current.id)) break
+        visibleIds.add(current.id)
+        current = current.parent_task_id ? taskMap.get(current.parent_task_id) : undefined
+      }
+    }
+
+    const visibleTasks = filtered.filter((task) => visibleIds.has(task.id))
+    return buildTree(visibleTasks)
+  }, [filtered, tasks, visibleCount])
+
+  const hasMore = filtered.length > visibleCount
 
   if (loading) {
     return <div className="activity-tab-empty"><p>Loading tasks...</p></div>
@@ -268,19 +375,19 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="paneltask-toolbar" style={{ position: 'relative' }}>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-secondary relative">
         <input
           type="text"
-          className="paneltask-search"
+          className="flex-1 min-w-0 px-2 py-0.5 border border-border rounded bg-background text-foreground text-xs outline-none focus:border-accent transition-colors placeholder:text-muted-foreground"
           placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <button
           type="button"
-          className="paneltask-filter-btn"
+          className="flex items-center justify-center bg-transparent border border-border rounded text-muted-foreground cursor-pointer px-1.5 py-0.5 shrink-0 hover:text-foreground hover:border-accent transition-colors"
           onClick={() => setShowFilterDropdown((v) => !v)}
-          title="Filter by status"
+          title="Filter by task state"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
@@ -306,21 +413,31 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
             <p>No tasks match filters</p>
           </div>
         ) : (
-          <Tree<TreeNode>
-            data={treeData}
-            openByDefault={true}
-            width="100%"
-            height={selectedTaskId ? undefined : treeHeight}
-            rowHeight={30}
-            indent={16}
-            searchTerm={search}
-            searchMatch={searchMatch}
-            onActivate={(node) => setSelectedTaskId(node.data.task.id)}
-            disableDrag
-            disableDrop
-          >
-            {PanelTaskNode}
-          </Tree>
+          <>
+            <Tree<TreeNode>
+              data={treeData}
+              openByDefault={true}
+              width="100%"
+              height={selectedTaskId ? undefined : treeHeight}
+              rowHeight={30}
+              indent={16}
+              searchTerm={search}
+              searchMatch={searchMatch}
+              onActivate={(node) => setSelectedTaskId(node.data.task.id)}
+              disableDrag
+              disableDrop
+            >
+              {PanelTaskNode}
+            </Tree>
+            {hasMore && (
+              <button
+                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                onClick={() => setVisibleCount((prev) => prev + INITIAL_TASK_LIMIT)}
+              >
+                Load more
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -332,13 +449,13 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
       {/* Detail pane */}
       {selectedTaskId && (
         <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-          <div className="paneltask-detail-header">
-            <span className="paneltask-detail-header-title">
+          <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border bg-secondary">
+            <span className="flex-1 min-w-0 truncate text-sm font-medium">
               {taskDetail ? taskDetail.title : 'Loading...'}
             </span>
             <button
               type="button"
-              className="paneltask-detail-close"
+              className="bg-transparent border-none text-muted-foreground cursor-pointer text-sm px-1 shrink-0 hover:text-foreground transition-colors"
               onClick={() => setSelectedTaskId(null)}
               title="Close detail"
             >
@@ -366,27 +483,27 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
   const priorityLabel = PRIORITY_LABELS[task.priority ?? 4] ?? 'Backlog'
 
   return (
-    <div className="paneltask-accordion-content">
-      <div className="paneltask-accordion-meta">
-        <span className="paneltask-accordion-status">{task.status.replace(/_/g, ' ')}</span>
-        <span className="paneltask-detail-sep">{'\u00B7'}</span>
+    <div className="px-3 py-2 flex flex-col gap-2">
+      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
+        <span className="capitalize">{getTaskStateSummary(task)}</span>
+        <span className="opacity-40">{'\u00B7'}</span>
         <span>{priorityLabel}</span>
         {task.task_type !== 'task' && (
           <>
-            <span className="paneltask-detail-sep">{'\u00B7'}</span>
+            <span className="opacity-40">{'\u00B7'}</span>
             <span>{task.task_type}</span>
           </>
         )}
-        {task.assignee && (
+        {getCanonicalTaskState(task).owner_session_id && (
           <>
-            <span className="paneltask-detail-sep">{'\u00B7'}</span>
-            <span>{task.assignee}</span>
+            <span className="opacity-40">{'\u00B7'}</span>
+            <span>{getCanonicalTaskState(task).owner_session_id}</span>
           </>
         )}
       </div>
 
       {task.description && (
-        <div className="paneltask-accordion-section">
+        <div className="border-t border-border pt-1.5">
           <div className="message-content text-xs">
             <Markdown content={task.description} id={`task-desc-${task.id}`} />
           </div>
@@ -394,15 +511,15 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
       )}
 
       {task.validation_criteria && (
-        <div className="paneltask-accordion-section">
-          <div className="paneltask-detail-label">Validation</div>
+        <div className="border-t border-border pt-1.5">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Validation</div>
           <div className="message-content text-xs">
             <Markdown content={task.validation_criteria} id={`task-vc-${task.id}`} />
           </div>
         </div>
       )}
 
-      <div className="paneltask-accordion-dates">
+      <div className="text-[10px] text-muted-foreground border-t border-border pt-1.5">
         <span>Created {new Date(task.created_at).toLocaleDateString()}</span>
         {task.closed_at && <span> {'\u00B7'} Closed {new Date(task.closed_at).toLocaleDateString()}</span>}
       </div>

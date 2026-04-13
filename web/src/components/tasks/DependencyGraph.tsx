@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect, useId } from 'react'
 import dagre from '@dagrejs/dagre'
 import type { GobbyTask } from '../../hooks/useTasks'
+import { getTaskBucket, TASK_BUCKET_COLORS } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -30,15 +31,6 @@ interface ViewBox {
 
 const NODE_WIDTH = 160
 const NODE_HEIGHT = 36
-
-const STATUS_COLORS: Record<string, string> = {
-  open: '#737373',
-  in_progress: '#3b82f6',
-  needs_review: '#f59e0b',
-  review_approved: '#22c55e',
-  closed: '#22c55e',
-  escalated: '#f97316',
-}
 
 // =============================================================================
 // Layout engine (simple layered DAG)
@@ -266,7 +258,7 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
 
           {/* Nodes */}
           {nodes.map(node => {
-            const color = STATUS_COLORS[node.task.status] || '#737373'
+            const color = TASK_BUCKET_COLORS[getTaskBucket(node.task)] || '#737373'
             const isHovered = hoveredId === node.id
             return (
               <g

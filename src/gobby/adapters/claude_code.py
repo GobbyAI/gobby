@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import BaseAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import truncate_additional_context
+from gobby.llm.sdk_utils import compress_and_truncate
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -260,24 +260,14 @@ class ClaudeCodeAdapter(BaseAdapter):
                         context_lines.append(
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
-                    # Add terminal-specific session IDs (only one will be present)
                     for key in [
-                        "terminal_iterm_session_id",
-                        "terminal_term_session_id",
-                        "terminal_kitty_window_id",
                         "terminal_tmux_pane",
-                        "terminal_vscode_terminal_id",
-                        "terminal_alacritty_socket",
                     ]:
                         if response.metadata.get(key):
                             # Use friendlier names in output
                             friendly_name = key.replace("terminal_", "").replace("_", " ")
                             context_lines.append(f"{friendly_name}: {response.metadata[key]}")
                     additional_context_parts.append("\n".join(context_lines))
-                else:
-                    # Subsequent hooks: inject minimal session ref only (~8 tokens)
-                    if session_ref:
-                        additional_context_parts.append(f"Gobby Session ID: {session_ref}")
 
         # Build hookSpecificOutput if we have any context to inject
         # Only include hookSpecificOutput for hook types that Claude Code's schema accepts
@@ -286,9 +276,9 @@ class ClaudeCodeAdapter(BaseAdapter):
         if additional_context_parts and hook_event_name in valid_hook_event_names:
             result["hookSpecificOutput"] = {
                 "hookEventName": hook_event_name,
-                "additionalContext": truncate_additional_context(
-                    "\n\n".join(additional_context_parts)
-                ),
+                "additionalContext": compress_and_truncate("\n\n".join(additional_context_parts))[
+                    0
+                ],
             }
 
         # PreToolUse: rewrite tool input via updatedInput
@@ -297,11 +287,6 @@ class ClaudeCodeAdapter(BaseAdapter):
             hook_output["updatedInput"] = response.modified_input
             if response.auto_approve:
                 hook_output["permissionDecision"] = "allow"
-
-        # PostToolUse: replace MCP tool output via updatedMCPToolOutput
-        if response.modified_output is not None and hook_event_name == "PostToolUse":
-            hook_output = result.setdefault("hookSpecificOutput", {"hookEventName": "PostToolUse"})
-            hook_output["updatedMCPToolOutput"] = response.modified_output
 
         return result
 

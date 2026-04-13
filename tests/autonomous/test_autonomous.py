@@ -358,6 +358,21 @@ class TestProgressTrackerToolCall:
         assert event.progress_type == ProgressType.TEST_PASSED
         assert event.is_high_value is True
 
+    def test_record_tool_call_for_exec_command_test_pass(
+        self, progress_tracker: ProgressTracker, session_id: str
+    ) -> None:
+        """Shell aliases should use the same progress heuristics as Bash."""
+        event = progress_tracker.record_tool_call(
+            session_id=session_id,
+            tool_name="exec_command",
+            tool_args={"command": "pytest tests/"},
+            tool_result="5 passed in 1.23s",
+        )
+
+        assert event is not None
+        assert event.progress_type == ProgressType.TEST_PASSED
+        assert event.is_high_value is True
+
     def test_record_tool_call_for_bash_test_fail(
         self, progress_tracker: ProgressTracker, session_id: str
     ) -> None:

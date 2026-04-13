@@ -67,7 +67,7 @@ export function McpPage() {
     if (!await confirm({ title: `Remove "${name}"?`, confirmLabel: 'Remove', destructive: true })) return
     const ok = await removeServer(name)
     if (!ok) showError(`Failed to remove ${name}`)
-  }, [removeServer, showError])
+  }, [confirm, removeServer, showError])
 
   const handleRefreshTools = useCallback(async () => {
     const ok = await refreshToolCache()

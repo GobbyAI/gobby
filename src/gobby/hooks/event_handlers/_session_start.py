@@ -17,6 +17,8 @@ from gobby.hooks.event_handlers._session_responses import (
     get_claimed_task_info,
 )
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
+from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -174,9 +176,13 @@ class SessionStartMixin(EventHandlersBase):
         # Step 0: Check if this is a pre-created session (terminal mode agent)
         # Two cases:
         # 1. Claude: We pass --session-id <internal_id>, so external_id IS our internal ID
-        # 2. Gemini: We pass GOBBY_SESSION_ID env var, hook_dispatcher includes it in terminal_context
+        # 2. Terminal-backed CLIs: hook_dispatcher forwards GOBBY_SESSION_ID in terminal_context
         existing_session = None
-        terminal_context = input_data.get("terminal_context")
+        terminal_context = (
+            input_data.get("terminal_context")
+            if isinstance(input_data.get("terminal_context"), dict)
+            else None
+        )
         gobby_session_id_from_env = (
             terminal_context.get("gobby_session_id") if terminal_context else None
         )
@@ -193,11 +199,13 @@ class SessionStartMixin(EventHandlersBase):
                         cli_source=cli_source,
                         event=event,
                         cwd=cwd,
+                        terminal_context=terminal_context,
                     )
             except Exception as e:
                 self.logger.debug(f"No pre-created session found by external_id: {e}")
 
-            # Gemini case: Look up by gobby_session_id from terminal_context
+            # Terminal CLI case: look up the prepared child session by
+            # GOBBY_SESSION_ID carried in terminal_context.
             if gobby_session_id_from_env and not existing_session:
                 try:
                     existing_session = self._session_storage.get(gobby_session_id_from_env)
@@ -227,6 +235,7 @@ class SessionStartMixin(EventHandlersBase):
                             cli_source=cli_source,
                             event=event,
                             cwd=cwd,
+                            terminal_context=terminal_context,
                         )
                 except Exception as e:
                     self.logger.debug(f"No pre-created session found by gobby_session_id: {e}")
@@ -445,20 +454,52 @@ class SessionStartMixin(EventHandlersBase):
                             k: parent_vars[k] for k in _TASK_CLAIM_KEYS if parent_vars.get(k)
                         }
                         if task_handoff:
-                            sv_mgr.merge_variables(session_id, task_handoff)
-                            # Re-assign all claimed tasks and re-link to new session
                             claimed_tasks = task_handoff.get("claimed_tasks") or {}
+                            merged_claims: dict[str, Any] = {}
+                            if task_handoff.get("session_had_task"):
+                                merged_claims["session_had_task"] = True
+
+                            filtered_claims: dict[str, str] = {}
                             if task_handoff.get("task_claimed") and claimed_tasks:
-                                for claimed_id in claimed_tasks:
+                                for claimed_id, claimed_ref in claimed_tasks.items():
+                                    task_obj = None
                                     if self._task_manager:
                                         try:
-                                            self._task_manager.update_task(
-                                                claimed_id, assignee=session_id
+                                            task_obj = self._task_manager.get_task(claimed_id)
+                                        except Exception as e:
+                                            self.logger.debug(
+                                                f"Best-effort task lookup failed for session={session_id} task={claimed_id}: {e}"
+                                            )
+                                            continue
+
+                                    if task_obj is not None:
+                                        if not is_active_claim_status(task_obj.status):
+                                            continue
+                                        current_owner = get_claimed_session_id(task_obj)
+                                        if current_owner not in (None, parent_session_id):
+                                            self.logger.debug(
+                                                "Skipping task handoff for session=%s task=%s; "
+                                                "already assigned to %s",
+                                                session_id,
+                                                claimed_id,
+                                                current_owner,
+                                            )
+                                            continue
+                                        if self._task_manager is None:
+                                            continue
+                                        try:
+                                            self._task_manager.claim_task(
+                                                claimed_id,
+                                                session_id=session_id,
+                                                force=current_owner == parent_session_id,
                                             )
                                         except Exception as e:
                                             self.logger.debug(
                                                 f"Best-effort task re-assignment failed for session={session_id} task={claimed_id}: {e}"
                                             )
+                                            continue
+
+                                    filtered_claims[claimed_id] = claimed_ref
                                     if self._session_task_manager:
                                         try:
                                             self._session_task_manager.link_task(
@@ -468,6 +509,11 @@ class SessionStartMixin(EventHandlersBase):
                                             self.logger.debug(
                                                 f"Best-effort session-task link failed for session={session_id} task={claimed_id}: {e}"
                                             )
+                            if filtered_claims:
+                                merged_claims["task_claimed"] = True
+                                merged_claims["claimed_tasks"] = filtered_claims
+                            if merged_claims:
+                                sv_mgr.merge_variables(session_id, merged_claims)
 
         # Deterministic claimed task context injection (compact/clear/restart)
         # Ensures agents always know which tasks they've claimed, even after
@@ -532,6 +578,7 @@ class SessionStartMixin(EventHandlersBase):
         cli_source: str,
         event: HookEvent,
         cwd: str | None,
+        terminal_context: dict[str, Any] | None = None,
     ) -> HookResponse:
         """Handle session start for a pre-created session (terminal mode agent).
 
@@ -554,12 +601,34 @@ class SessionStartMixin(EventHandlersBase):
             transcript_path = self._derive_transcript_path(cli_source, input_data, external_id)
 
         # Update the session with actual runtime info
+        session_obj = existing_session
         if self._session_storage:
-            self._session_storage.update(
+            updated = self._session_storage.update(
                 session_id=existing_session.id,
                 transcript_path=transcript_path,
                 status="active",
             )
+            if updated is not None:
+                session_obj = updated
+
+        tmux_pane_added = False
+        if self._session_manager and terminal_context:
+            refreshed, tmux_pane_added = self._session_manager.backfill_terminal_context(
+                existing_session.id,
+                terminal_context,
+            )
+            if refreshed is not None:
+                session_obj = refreshed
+
+        if tmux_pane_added:
+            title = getattr(session_obj, "title", None)
+            digest = getattr(session_obj, "digest_markdown", None)
+            if title and digest:
+                schedule_tmux_window_rename(
+                    session_obj,
+                    title,
+                    loop=getattr(self._session_coordinator, "_event_loop", None),
+                )
 
         # Cache mapping so subsequent hooks skip DB lookup
         if self._session_manager:
@@ -569,8 +638,8 @@ class SessionStartMixin(EventHandlersBase):
                 session_id=existing_session.id,
             )
 
-        session_id = existing_session.id
-        parent_session_id = existing_session.parent_session_id
+        session_id = session_obj.id
+        parent_session_id = session_obj.parent_session_id
         machine_id = self._get_machine_id()
 
         # Track registered session
@@ -581,21 +650,21 @@ class SessionStartMixin(EventHandlersBase):
                 self.logger.error(f"Failed to setup session tracking: {e}")
 
         # Start the agent run if this is a terminal-mode agent session
-        if existing_session.agent_run_id and self._session_coordinator:
+        if session_obj.agent_run_id and self._session_coordinator:
             try:
-                self._session_coordinator.start_agent_run(existing_session.agent_run_id)
+                self._session_coordinator.start_agent_run(session_obj.agent_run_id)
             except Exception as e:
                 self.logger.warning(f"Failed to start agent run: {e}")
 
         # Pipeline workflows are executed by the agent via run_pipeline MCP tool
-        if existing_session.workflow_name and session_id:
+        if session_obj.workflow_name and session_id:
             self.logger.debug(
                 "Pipeline workflow registered for session -- agent will execute via run_pipeline",
-                extra={"workflow_name": existing_session.workflow_name, "session_id": session_id},
+                extra={"workflow_name": session_obj.workflow_name, "session_id": session_id},
             )
 
         # Set code_index_available if project has an index
-        self._setup_code_index(session_id, existing_session.project_id)
+        self._setup_code_index(session_id, session_obj.project_id)
 
         # Deep load default agent (rules, skills, variables) for pre-created session
         agent_result: AgentActivationResult | None = None
@@ -605,7 +674,7 @@ class SessionStartMixin(EventHandlersBase):
             agent_result = self._activate_default_agent(
                 session_id,
                 cli_source,
-                existing_session.project_id,
+                session_obj.project_id,
                 agent_name_override=agent_override,
             )
         except Exception as e:
@@ -632,25 +701,26 @@ class SessionStartMixin(EventHandlersBase):
             additional_context.append(agent_result.context)
 
         # Deterministic claimed task context injection for pre-created sessions
-        if session_id and existing_session.project_id and not event.task_id:
-            claimed_ctx = build_claimed_task_context(self, session_id, existing_session.project_id)
+        if session_id and session_obj.project_id and not event.task_id:
+            claimed_ctx = build_claimed_task_context(self, session_id, session_obj.project_id)
             if claimed_ctx:
                 additional_context.append(claimed_ctx)
 
         # Fetch claimed task info for system_message tree display
-        claimed_tasks_info = get_claimed_task_info(self, session_id, existing_session.project_id)
+        claimed_tasks_info = get_claimed_task_info(self, session_id, session_obj.project_id)
 
         return compose_session_response(
             self,
-            session=existing_session,
+            session=session_obj,
             session_id=session_id,
             external_id=external_id,
             parent_session_id=parent_session_id,
             machine_id=machine_id,
-            project_id=existing_session.project_id,
+            project_id=session_obj.project_id,
             task_id=event.task_id,
             additional_context=additional_context,
             is_pre_created=True,
+            terminal_context=session_obj.terminal_context,
             agent_info=agent_result,
             claimed_tasks_info=claimed_tasks_info,
         )
@@ -829,18 +899,19 @@ class SessionStartMixin(EventHandlersBase):
         _ta_vars = time.monotonic()
         sv_mgr.merge_variables(session_id, changes)
 
-        # Build injection context
+        # Build injection context — identity only (role + personality).
+        # Instructions, skills, and code-index are deferred to first before_agent.
         _ta_format = time.monotonic()
-        context_parts: list[str] = []
-        preamble = agent_body.build_prompt_preamble()
-        if preamble:
-            context_parts.append(preamble)
+        identity_parts: list[str] = []
+        if agent_body.role:
+            identity_parts.append(f"## Role\n{agent_body.role}")
+        if agent_body.personality:
+            identity_parts.append(f"## Personality\n{agent_body.personality}")
 
-        formatted, skills_count, injected_names = select_and_format_agent_skills(
-            agent_body, all_skills, active_skills, cli_source
-        )
-        if formatted:
-            context_parts.append(formatted)
+        # Skills count is no longer needed at SessionStart (agent tree removed).
+        # Selection + formatting deferred to _inject_agent_instructions_if_needed().
+        skills_count = 0
+        injected_names: list[str] = []
 
         def _ms(a: float, b: float) -> int:
             return int((b - a) * 1000)
@@ -851,7 +922,7 @@ class SessionStartMixin(EventHandlersBase):
         )
 
         return AgentActivationResult(
-            context="\n\n".join(context_parts) if context_parts else None,
+            context="\n\n".join(identity_parts) if identity_parts else None,
             agent_name=agent_body.name,
             description=agent_body.description,
             role=agent_body.role,

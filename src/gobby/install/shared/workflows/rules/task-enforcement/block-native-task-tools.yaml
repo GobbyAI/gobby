@@ -1,17 +1,30 @@
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
-  block-native-task-tools:
-    description: "Block CC native task/todo tools - use gobby-tasks instead"
+  block-native-task-tools-unclaimed:
+    description: "Block CC native task tools when no Gobby task is claimed"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: "not variables.get('is_subagent') and not variables.get('task_claimed')"
+    effects:
+      - type: block
+        tools: [TaskCreate, TaskUpdate, TaskGet, TaskList]
+        reason: |
+          Native task tools require a claimed Gobby task. Create or claim a task first:
+          - create_task(title, description, category, claim=True)
+          - claim_task(task_id)
+          - list_ready_tasks()
+          Once a Gobby task is claimed, native task tools are available for sub-step tracking.
+
+  block-native-todo-write:
+    description: "Block TodoWrite - use gobby-tasks instead"
     event: before_tool
     enabled: true
     priority: 30
     when: "not variables.get('is_subagent')"
     effects:
       - type: block
-        tools: [TaskCreate, TaskUpdate, TaskGet, TaskList, TodoWrite]
+        tools: [TodoWrite]
         reason: |
-          CC native task tools are disabled. Use gobby-tasks MCP tools instead. Follow progressive discovery then:
-          - create_task(title, description, category, claim=True)
-          - claim_task(task_id)
-          - list_ready_tasks()
+          TodoWrite is disabled. Use gobby-tasks MCP tools for task management instead.

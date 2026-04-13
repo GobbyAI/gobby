@@ -12,6 +12,14 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from gobby.tasks.state_semantics import (
+    TaskLifecycleStage,
+    get_pre_escalation_status,
+    lifecycle_stage_from_status,
+    project_legacy_status,
+    serialize_task_state,
+)
+
 # Priority name to numeric value mapping
 PRIORITY_MAP = {"backlog": 4, "low": 3, "medium": 2, "high": 1, "critical": 0}
 
@@ -28,8 +36,18 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
-# Sentinel for unset optional parameters
-UNSET: Any = object()
+
+class UnsetType:
+    """Sentinel type for optional parameters that were not provided."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = UnsetType()
+type MaybeUnset[T] = T | UnsetType
 
 
 def validate_category(category: str | None) -> str | None:
@@ -114,6 +132,8 @@ class Task:
     description: str | None = None
     parent_task_id: str | None = None
     created_in_session_id: str | None = None
+    claimed_by_session_id: str | None = None
+    lifecycle_stage: TaskLifecycleStage | None = None
     closed_in_session_id: str | None = None
     closed_commit_sha: str | None = None
     closed_at: str | None = None
@@ -123,7 +143,6 @@ class Task:
     validation_status: Literal["pending", "valid", "invalid"] | None = None
     validation_feedback: str | None = None
     category: str | None = None
-    expansion_context: str | None = None
     validation_criteria: str | None = None
     validation_fail_count: int = 0
     dispatch_failure_count: int = 0
@@ -143,13 +162,17 @@ class Task:
     # Human-friendly ID fields (task renumbering)
     seq_num: int | None = None
     path_cache: str | None = None
-    # Skill-based expansion status (for new /gobby-expand flow)
-    expansion_status: Literal["none", "pending", "completed"] = "none"
     # Scheduling fields (Gantt chart)
     start_date: str | None = None
     due_date: str | None = None
     # Dependency fields (populated on demand, not stored in tasks table)
     blocked_by: set[str] = field(default_factory=set)
+    active_blocked_by: set[str] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        """Fill canonical lifecycle stage for manually constructed legacy-style tasks."""
+        if self.lifecycle_stage is None:
+            self.lifecycle_stage = lifecycle_stage_from_status(self.status)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
@@ -159,12 +182,25 @@ class Task:
 
         # Handle optional columns that might not exist yet if migration pending
         keys = row.keys()
+        closed_at = row["closed_at"] if "closed_at" in keys else None
+        escalated_at = row["escalated_at"] if "escalated_at" in keys else None
+        lifecycle_stage = (
+            row["lifecycle_stage"]
+            if "lifecycle_stage" in keys
+            else lifecycle_stage_from_status(row["status"])
+        )
+        projected_status = project_legacy_status(
+            lifecycle_stage=lifecycle_stage,
+            closed_at=closed_at,
+            escalated_at=escalated_at,
+            legacy_status=row["status"],
+        )
 
         return cls(
             id=row["id"],
             project_id=row["project_id"],
             title=row["title"],
-            status=row["status"],
+            status=projected_status,
             priority=normalize_priority(row["priority"]),
             task_type=row["task_type"],
             created_at=row["created_at"],
@@ -178,11 +214,15 @@ class Task:
                     row["discovered_in_session_id"] if "discovered_in_session_id" in keys else None
                 )
             ),
+            claimed_by_session_id=(
+                row["claimed_by_session_id"] if "claimed_by_session_id" in keys else None
+            ),
+            lifecycle_stage=lifecycle_stage,
             closed_in_session_id=(
                 row["closed_in_session_id"] if "closed_in_session_id" in keys else None
             ),
             closed_commit_sha=row["closed_commit_sha"] if "closed_commit_sha" in keys else None,
-            closed_at=row["closed_at"] if "closed_at" in keys else None,
+            closed_at=closed_at,
             assignee=row["assignee"],
             labels=labels,
             closed_reason=row["closed_reason"],
@@ -191,7 +231,6 @@ class Task:
                 row["validation_feedback"] if "validation_feedback" in keys else None
             ),
             category=row["category"] if "category" in keys else None,
-            expansion_context=row["expansion_context"] if "expansion_context" in keys else None,
             validation_criteria=(
                 row["validation_criteria"] if "validation_criteria" in keys else None
             ),
@@ -205,7 +244,7 @@ class Task:
                 row["validation_override_reason"] if "validation_override_reason" in keys else None
             ),
             commits=json.loads(row["commits"]) if "commits" in keys and row["commits"] else None,
-            escalated_at=row["escalated_at"] if "escalated_at" in keys else None,
+            escalated_at=escalated_at,
             escalation_reason=row["escalation_reason"] if "escalation_reason" in keys else None,
             github_issue_number=(
                 row["github_issue_number"] if "github_issue_number" in keys else None
@@ -216,21 +255,22 @@ class Task:
             linear_team_id=row["linear_team_id"] if "linear_team_id" in keys else None,
             seq_num=row["seq_num"] if "seq_num" in keys else None,
             path_cache=row["path_cache"] if "path_cache" in keys else None,
-            expansion_status=(
-                row["expansion_status"]
-                if "expansion_status" in keys and row["expansion_status"]
-                else "none"
-            ),
             start_date=row["start_date"] if "start_date" in keys else None,
             due_date=row["due_date"] if "due_date" in keys else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert Task to dictionary."""
+        state = serialize_task_state(self)
         return {
             "ref": f"#{self.seq_num}" if self.seq_num else self.id[:8],
             "project_id": self.project_id,
             "title": self.title,
+            "state": state,
+            "compat": {
+                "status": self.status,
+                "assignee": self.assignee,
+            },
             "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,
@@ -239,6 +279,8 @@ class Task:
             "description": self.description,
             "parent_task_id": self.parent_task_id,
             "created_in_session_id": self.created_in_session_id,
+            "claimed_by_session_id": self.claimed_by_session_id,
+            "lifecycle_stage": self.lifecycle_stage,
             "closed_in_session_id": self.closed_in_session_id,
             "closed_commit_sha": self.closed_commit_sha,
             "closed_at": self.closed_at,
@@ -248,7 +290,6 @@ class Task:
             "validation_status": self.validation_status,
             "validation_feedback": self.validation_feedback,
             "category": self.category,
-            "expansion_context": self.expansion_context,
             "validation_criteria": self.validation_criteria,
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
@@ -256,6 +297,7 @@ class Task:
             "commits": self.commits,
             "escalated_at": self.escalated_at,
             "escalation_reason": self.escalation_reason,
+            "pre_escalation_status": get_pre_escalation_status(self),
             "github_issue_number": self.github_issue_number,
             "github_pr_number": self.github_pr_number,
             "github_repo": self.github_repo,
@@ -263,7 +305,6 @@ class Task:
             "linear_team_id": self.linear_team_id,
             "seq_num": self.seq_num,
             "path_cache": self.path_cache,
-            "expansion_status": self.expansion_status,
             "start_date": self.start_date,
             "due_date": self.due_date,
             "id": self.id,  # UUID at end for backwards compat
@@ -279,9 +320,15 @@ class Task:
         - list_tasks() returns brief format (~22 fields)
         - get_task() returns brief format by default, full with brief=False (~35 fields)
         """
+        state = serialize_task_state(self)
         return {
             "ref": f"#{self.seq_num}" if self.seq_num else self.id[:8],
             "title": self.title,
+            "state": state,
+            "compat": {
+                "status": self.status,
+                "assignee": self.assignee,
+            },
             "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,
@@ -291,12 +338,15 @@ class Task:
             "seq_num": self.seq_num,
             "path_cache": self.path_cache,
             "assignee": self.assignee,
+            "claimed_by_session_id": self.claimed_by_session_id,
+            "lifecycle_stage": self.lifecycle_stage,
             "category": self.category,
             "closed_at": self.closed_at,
             "closed_in_session_id": self.closed_in_session_id,
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
             "escalated_at": self.escalated_at,
+            "pre_escalation_status": get_pre_escalation_status(self),
             "start_date": self.start_date,
             "due_date": self.due_date,
             "github_issue_number": self.github_issue_number,

@@ -131,6 +131,20 @@ def setup_internal_registries(
             manager.add_registry(tasks_registry)
             logger.debug("Tasks registry initialized")
 
+            # Initialize tasks-ops registry (expansion, affected files, github, reindex)
+            from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+
+            ops_registry = create_task_ops_registry(
+                task_manager=task_manager,
+                sync_manager=sync_manager,
+                task_validator=task_validator,
+                config=_config,
+                llm_service=llm_service,
+                completion_registry=completion_registry,
+            )
+            manager.add_registry(ops_registry)
+            logger.debug("Tasks-ops registry initialized")
+
     # Initialize sessions registry (messages + session CRUD)
     if local_session_manager is not None:
         from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
@@ -190,15 +204,15 @@ def setup_internal_registries(
     if metrics_manager is not None:
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry
 
-        # Get daily budget from metrics config
-        daily_budget_usd = 50.0  # Default
+        # Get daily token budget from metrics config
+        daily_budget_tokens = 10_000_000  # Default: 10M tokens
         if _config is not None:
-            daily_budget_usd = _config.metrics.daily_budget_usd
+            daily_budget_tokens = _config.metrics.daily_budget_tokens
 
         metrics_registry = create_metrics_registry(
             metrics_manager=metrics_manager,
             session_storage=local_session_manager,
-            daily_budget_usd=daily_budget_usd,
+            daily_budget_tokens=daily_budget_tokens,
             event_store=metrics_manager.event_store,
         )
         manager.add_registry(metrics_registry)

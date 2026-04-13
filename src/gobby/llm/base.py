@@ -68,6 +68,8 @@ class LLMProvider(ABC):
         system_prompt: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
+        *,
+        caller: str | None = None,
     ) -> str:
         """
         Generate text from a prompt.
@@ -77,6 +79,7 @@ class LLMProvider(ABC):
             system_prompt: Optional system prompt
             model: Optional model override
             max_tokens: Optional max output tokens override
+            caller: Optional feature slug for provider-side logging
 
         Returns:
             Generated text response
@@ -116,6 +119,7 @@ class LLMProvider(ABC):
         self,
         image_path: str,
         context: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Generate a text description of an image.

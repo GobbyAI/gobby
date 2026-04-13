@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { TabBar } from '../shared/TabBar'
 import { FilesPage } from '../FilesPage'
 import { CodeGraphExplorer } from '../code-graph/CodeGraphExplorer'
-import { useFilesContext } from '../../contexts/FilesContext'
+import { useFilesContext } from '../../contexts/useFilesContext'
 import './CodePage.css'
 
 interface CodePageProps {

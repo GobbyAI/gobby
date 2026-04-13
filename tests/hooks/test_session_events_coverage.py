@@ -72,6 +72,7 @@ class _TestHandler(SessionEventHandlerMixin):
         self.logger = MagicMock()
         self._session_manager = MagicMock()
         self._session_storage = MagicMock()
+        self._session_storage.update.return_value = None
         self._session_coordinator = MagicMock()
         self._message_processor = MagicMock()
         self._task_manager = MagicMock()
@@ -485,6 +486,7 @@ class TestSessionMoreCoverage:
             mock_agent.name = "test-agent"
             mock_agent.description = "Test"
             mock_agent.role = "Role"
+            mock_agent.personality = "Sharp and opinionated"
             mock_agent.goal = "Goal"
             mock_agent.build_prompt_preamble.return_value = "Preamble"
             mock_resolve.return_value = mock_agent
@@ -501,7 +503,10 @@ class TestSessionMoreCoverage:
             assert result.agent_name == "test-agent"
             assert result.rules_count == 1
             assert result.variables_count == 1
-            assert "Preamble\n\nformatted" == result.context
+            # Context now contains identity only (role + personality),
+            # instructions and skills are deferred to first before_agent
+            assert "## Role\nRole" in result.context
+            assert "## Personality" in result.context
 
     def test_handle_session_start_gemini_terminal(self) -> None:
         handler = _TestHandler()
@@ -552,6 +557,10 @@ class TestSessionMoreCoverage:
             patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
         ):
             handler._session_manager.register_session.return_value = "new-sess-1"
+            handler._task_manager.get_task.return_value = MagicMock(
+                status="needs_review",
+                assignee="parent-1",
+            )
 
             handler.handle_session_start(event)
 
@@ -572,7 +581,11 @@ class TestSessionMoreCoverage:
             handler._session_manager.mark_session_expired.assert_called_with("parent-1")
 
             # Should have handed off task
-            handler._task_manager.update_task.assert_called_with("task-1", assignee="new-sess-1")
+            handler._task_manager.claim_task.assert_called_with(
+                "task-1",
+                session_id="new-sess-1",
+                force=True,
+            )
 
     def test_empty_parent_backoff(self) -> None:
         handler = _TestHandler()
@@ -635,8 +648,9 @@ class TestComposeSessionResponse:
             machine_id="m-1",
             session_source="clear",
         )
-        assert "Parent Session ID" in result.system_message
-        assert "Handoff" in result.system_message
+        # system_message is now session ID banner only — parent info in metadata
+        assert "#42" in result.system_message
+        assert result.metadata["parent_session_id"] == "parent-1"
 
     def test_with_agent_info(self) -> None:
         handler = _TestHandler()
@@ -661,9 +675,9 @@ class TestComposeSessionResponse:
             machine_id="m-1",
             agent_info=agent_info,
         )
-        assert "Agent: default" in result.system_message
-        assert "Role: developer" in result.system_message
-        assert "Injected: commit" in result.system_message
+        # Agent tree removed from system_message — just session ID banner
+        assert "#42" in result.system_message
+        assert "Agent:" not in result.system_message
 
     def test_with_terminal_context(self) -> None:
         handler = _TestHandler()
@@ -696,7 +710,8 @@ class TestComposeSessionResponse:
         )
         assert "sess-uuid-1" in result.system_message
 
-    def test_claimed_tasks_rendered_in_system_message(self) -> None:
+    def test_claimed_tasks_not_in_system_message(self) -> None:
+        """Claimed tasks are in additional_context, not system_message."""
         handler = _TestHandler()
         session = _make_session()
 
@@ -712,42 +727,8 @@ class TestComposeSessionResponse:
             machine_id="m-1",
             claimed_tasks_info=claimed,
         )
-        assert "Claimed Tasks: 2" in result.system_message
-        assert "#42 [in_progress] Fix auth bug" in result.system_message
-        assert "#43 [open] Write tests" in result.system_message
-        # First item uses ├─, last uses └─
-        assert "├─ #42" in result.system_message
-        assert "└─ #43" in result.system_message
-
-    def test_claimed_tasks_none_omits_section(self) -> None:
-        handler = _TestHandler()
-        session = _make_session()
-
-        result = handler._compose_session_response(
-            session=session,
-            session_id="sess-uuid-1",
-            external_id="ext-1",
-            parent_session_id=None,
-            machine_id="m-1",
-            claimed_tasks_info=None,
-        )
+        # Claimed tasks removed from system_message (handled by build_claimed_task_context)
         assert "Claimed Tasks" not in result.system_message
-
-    def test_single_claimed_task_uses_last_connector(self) -> None:
-        handler = _TestHandler()
-        session = _make_session()
-
-        claimed = [("#99", "in_progress", "Solo task")]
-        result = handler._compose_session_response(
-            session=session,
-            session_id="sess-uuid-1",
-            external_id="ext-1",
-            parent_session_id=None,
-            machine_id="m-1",
-            claimed_tasks_info=claimed,
-        )
-        assert "Claimed Tasks: 1" in result.system_message
-        assert "└─ #99 [in_progress] Solo task" in result.system_message
 
 
 # ---------------------------------------------------------------------------
@@ -802,6 +783,30 @@ class TestClaimedTaskHelpers:
 
         result = handler._get_claimed_task_info("sess-1", "proj-1")
         assert result == [("#42", "in_progress", "Fix auth bug")]
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_db_fallback_rebuilds_review_claims(self, mock_svm_cls: MagicMock) -> None:
+        handler = _TestHandler()
+        mock_svm = mock_svm_cls.return_value
+        mock_svm.get_variables.return_value = {}
+
+        task = MagicMock()
+        task.id = "uuid-review"
+        task.seq_num = 55
+        task.status = "needs_review"
+        task.title = "Review the patch"
+        handler._task_manager.list_tasks.return_value = [task]
+
+        result = handler._get_claimed_task_info("sess-1", "proj-1")
+
+        assert result == [("#55", "needs_review", "Review the patch")]
+        handler._task_manager.list_tasks.assert_called_once_with(
+            claimed_by_session_id="sess-1",
+            status=["open", "in_progress", "needs_review", "review_approved", "escalated"],
+            project_id="proj-1",
+        )
+        mock_svm.set_variable.assert_any_call("sess-1", "task_claimed", True)
+        mock_svm.set_variable.assert_any_call("sess-1", "claimed_tasks", {"uuid-review": "#55"})
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_multiple_claimed_tasks(self, mock_svm_cls: MagicMock) -> None:

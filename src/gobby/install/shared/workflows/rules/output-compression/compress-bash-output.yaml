@@ -7,7 +7,8 @@ rules:
     enabled: true
     priority: 50
     when: >
-      event.data.get('tool_name') in ('Bash', 'run_shell_command')
+      source != 'codex'
+      and event.data.get('tool_name') in ('Bash', 'run_shell_command')
       and not event.data.get('tool_input', {}).get('command', '').lstrip().startswith('gcode')
     effects:
       - type: rewrite_input

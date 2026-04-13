@@ -1,4 +1,15 @@
 import { useTimeStats } from '../../hooks/useTimeStats'
+import { cn } from '../../lib/utils'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardCardBodyCenteredClass,
+  dashboardDotClass,
+  dashboardStatusListClass,
+  dashboardStatusRowClass,
+  dashboardStatusRowDimmedClass,
+  dashboardStatusRowLabelClass,
+  dashboardStatusRowValueClass,
+} from './dashboardStyles'
 
 type TaskStats = {
   open: number; in_progress: number; closed: number
@@ -50,15 +61,11 @@ export function TasksCard({ hours, projectId }: Props) {
   })
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Tasks</h3>
-      </div>
-      <div className="dash-card-body" style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-        <svg width={SIZE} height={SIZE} style={{ flexShrink: 0 }}>
+    <DashboardCard title="Tasks" bodyClassName={dashboardCardBodyCenteredClass}>
+      <svg width={SIZE} height={SIZE} className="shrink-0">
           {total === 0 ? (
             <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
-              fill="none" stroke="#333" strokeWidth={STROKE} />
+              fill="none" stroke="var(--border)" strokeWidth={STROKE} />
           ) : (
             arcs.map(a => (
               <circle key={a.key} cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
@@ -69,28 +76,27 @@ export function TasksCard({ hours, projectId }: Props) {
               />
             ))
           )}
-          <text x={SIZE / 2} y={SIZE / 2 - 6} textAnchor="middle" fill="#e5e5e5"
+          <text x={SIZE / 2} y={SIZE / 2 - 6} textAnchor="middle" fill="var(--text-primary)"
             fontSize="22" fontWeight="bold">{openTotal}</text>
-          <text x={SIZE / 2} y={SIZE / 2 + 12} textAnchor="middle" fill="#a3a3a3"
+          <text x={SIZE / 2} y={SIZE / 2 + 12} textAnchor="middle" fill="var(--text-secondary)"
             fontSize="10">open</text>
-        </svg>
-        <div className="dash-status-list" style={{ flex: 1, minWidth: 0 }}>
-          {segments.map(({ key, label, color, value }) => (
-            <div key={key} className="dash-status-row">
-              <span className="dash-legend-dot" style={{ background: color }} />
-              <span className="dash-status-row-label">{label}</span>
-              <span className="dash-status-row-value">{value}</span>
-            </div>
-          ))}
-          {tasks.closed > 0 && (
-            <div className="dash-status-row dash-status-row--dimmed">
-              <span className="dash-legend-dot" style={{ background: '#737373' }} />
-              <span className="dash-status-row-label">Closed</span>
-              <span className="dash-status-row-value">{tasks.closed}</span>
-            </div>
-          )}
-        </div>
+      </svg>
+      <div className={dashboardStatusListClass}>
+        {segments.map(({ key, label, color, value }) => (
+          <div key={key} className={dashboardStatusRowClass}>
+            <span className={dashboardDotClass} style={{ background: color }} />
+            <span className={dashboardStatusRowLabelClass}>{label}</span>
+            <span className={dashboardStatusRowValueClass}>{value}</span>
+          </div>
+        ))}
+        {tasks.closed > 0 && (
+          <div className={cn(dashboardStatusRowClass, dashboardStatusRowDimmedClass)}>
+            <span className={dashboardDotClass} style={{ background: '#737373' }} />
+            <span className={dashboardStatusRowLabelClass}>Closed</span>
+            <span className={dashboardStatusRowValueClass}>{tasks.closed}</span>
+          </div>
+        )}
       </div>
-    </div>
+    </DashboardCard>
   )
 }

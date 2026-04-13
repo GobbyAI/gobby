@@ -29,6 +29,8 @@ class TestVoiceRoutes:
         config = MagicMock()
         config.voice = voice_config
         server.config = config
+        server.services.websocket_server = None
+        server.websocket_server = None
         return server
 
     @pytest.fixture
@@ -52,6 +54,10 @@ class TestVoiceRoutes:
         assert data["stt_reason"] == "Voice not enabled in config"
         assert data["stt_enabled"] is True
         assert data["whisper_model"] == "base"
+        assert data["voice_ready"] is False
+        assert data["voice_loading"] is False
+        assert data["stt_warmup_status"] == "idle"
+        assert data["tts_warmup_status"] == "idle"
 
     def test_status_no_config(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """When server.config is None."""
@@ -61,6 +67,8 @@ class TestVoiceRoutes:
         assert data["enabled"] is False
         assert data["stt_available"] is False
         assert data["reason"] == "Voice config not found"
+        assert data["voice_ready"] is False
+        assert data["voice_loading"] is False
 
     def test_status_no_voice_attr(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """When config exists but has no voice attribute."""
@@ -96,6 +104,39 @@ class TestVoiceRoutes:
         assert data["enabled"] is True
         assert data["stt_available"] is True
         assert data["stt_reason"] == ""
+        assert data["stt_warmup_status"] == "idle"
+
+    def test_status_prefers_websocket_voice_status(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        """Live warmup state should come from the WebSocket voice subsystem when present."""
+        mock_ws = MagicMock()
+        mock_ws.get_voice_status.return_value = {
+            "enabled": True,
+            "stt_enabled": True,
+            "stt_available": True,
+            "stt_reason": "",
+            "whisper_model": "base",
+            "stt_warmup_status": "ready",
+            "stt_warmup_error": "",
+            "tts_enabled": True,
+            "tts_provider": "chatterbox",
+            "tts_available": True,
+            "tts_reason": "",
+            "tts_warmup_status": "loading",
+            "tts_warmup_error": "",
+            "voice_ready": False,
+            "voice_loading": True,
+        }
+        server_with_voice.services.websocket_server = mock_ws
+
+        response = client.get("/api/voice/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["stt_warmup_status"] == "ready"
+        assert data["tts_warmup_status"] == "loading"
+        assert data["voice_loading"] is True
 
     def test_status_stt_disabled(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """STT unavailable when stt_enabled=False."""

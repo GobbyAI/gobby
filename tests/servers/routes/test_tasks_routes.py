@@ -13,6 +13,8 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
@@ -35,6 +37,19 @@ def project_id(temp_db) -> str:
 @pytest.fixture
 def task_manager(temp_db) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
+
+
+@pytest.fixture
+def session_id(temp_db, project_id: str) -> str:
+    session_manager = LocalSessionManager(temp_db)
+    session = session_manager.register(
+        external_id="test-external-session",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project_id,
+        title="Test session",
+    )
+    return session.id
 
 
 @pytest.fixture
@@ -95,8 +110,9 @@ class TestListTasks:
         assert response.status_code == 200
         data = response.json()
         assert data["total"] >= 1
-        ids = [t["id"] for t in data["tasks"]]
-        assert sample_task["id"] in ids
+        task = next(t for t in data["tasks"] if t["id"] == sample_task["id"])
+        assert "state" in task
+        assert "compat" in task
 
     def test_list_with_status_filter(self, client: TestClient, sample_task: dict) -> None:
         response = client.get("/api/tasks?status=open")
@@ -112,6 +128,62 @@ class TestListTasks:
         response = client.get("/api/tasks?priority=1")
         assert response.status_code == 200
         assert len(response.json()["tasks"]) >= 1
+
+    def test_list_with_lifecycle_filter(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        response = client.get("/api/tasks?lifecycle_stage=needs_review")
+        assert response.status_code == 200
+        ids = [t["id"] for t in response.json()["tasks"]]
+        assert sample_task["id"] in ids
+
+    def test_list_with_claimed_filter(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        response = client.get("/api/tasks?claimed=true")
+        assert response.status_code == 200
+        ids = [t["id"] for t in response.json()["tasks"]]
+        assert sample_task["id"] in ids
+
+    def test_list_with_closed_filter(
+        self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
+    ) -> None:
+        task_manager.close_task(sample_task["id"], reason="done")
+        response = client.get("/api/tasks?closed=true")
+        assert response.status_code == 200
+        ids = [t["id"] for t in response.json()["tasks"]]
+        assert sample_task["id"] in ids
+
+    def test_list_state_marks_only_unresolved_external_blockers(
+        self, client: TestClient, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
+        dep_manager = TaskDependencyManager(task_manager.db)
+        blocker = task_manager.create_task(project_id=project_id, title="Blocker")
+        blocked = task_manager.create_task(project_id=project_id, title="Blocked")
+        dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
+
+        response = client.get("/api/tasks")
+        assert response.status_code == 200
+        data = next(t for t in response.json()["tasks"] if t["id"] == blocked.id)
+        assert data["state"]["is_blocked"] is True
+
+        task_manager.close_task(blocker.id, reason="done")
+
+        response = client.get("/api/tasks")
+        assert response.status_code == 200
+        data = next(t for t in response.json()["tasks"] if t["id"] == blocked.id)
+        assert data["state"]["is_blocked"] is False
 
     def test_list_with_task_type_filter(self, client: TestClient, sample_task: dict) -> None:
         response = client.get("/api/tasks?task_type=task")
@@ -157,6 +229,8 @@ class TestCreateTask:
         data = response.json()
         assert data["title"] == "New task"
         assert data["status"] == "open"
+        assert "state" in data
+        assert "compat" in data
         assert "id" in data
 
     def test_create_with_all_fields(self, client: TestClient) -> None:
@@ -209,6 +283,25 @@ class TestGetTask:
         data = response.json()
         assert data["id"] == sample_task["id"]
         assert data["title"] == "Sample task"
+        assert "state" in data
+        assert "compat" in data
+
+    def test_get_state_ignores_descendant_completion_blocks(
+        self, client: TestClient, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
+        dep_manager = TaskDependencyManager(task_manager.db)
+        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        child = task_manager.create_task(
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+        )
+        dep_manager.add_dependency(parent.id, child.id, "blocks")
+
+        response = client.get(f"/api/tasks/{parent.id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["state"]["is_blocked"] is False
 
     def test_get_not_found(self, client: TestClient) -> None:
         response = client.get("/api/tasks/nonexistent-id-000")
@@ -236,7 +329,7 @@ class TestUpdateTask:
                 "title": "New title",
                 "description": "New desc",
                 "priority": 3,
-                "status": "in_progress",
+                "task_type": "bug",
             },
         )
         assert response.status_code == 200
@@ -244,7 +337,23 @@ class TestUpdateTask:
         assert data["title"] == "New title"
         assert data["description"] == "New desc"
         assert data["priority"] == 3
-        assert data["status"] == "in_progress"
+        assert data["task_type"] == "bug"
+
+    def test_update_status_rejected(self, client: TestClient, sample_task: dict) -> None:
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"status": "in_progress"},
+        )
+        assert response.status_code == 400
+        assert "Use lifecycle-specific task endpoints" in response.json()["detail"]
+
+    def test_update_assignee_rejected(self, client: TestClient, sample_task: dict) -> None:
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"assignee": "session-123"},
+        )
+        assert response.status_code == 400
+        assert "Use lifecycle-specific task endpoints" in response.json()["detail"]
 
     def test_update_no_fields_returns_existing(self, client: TestClient, sample_task: dict) -> None:
         """Empty update returns the existing task unchanged."""
@@ -309,6 +418,88 @@ class TestDeleteTask:
         # Child should also be gone
         get_child = client.get(f"/api/tasks/{child.id}")
         assert get_child.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /tasks/{task_id}/claim and related lifecycle endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleMutations:
+    def test_claim_task(self, client: TestClient, sample_task: dict, session_id: str) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claimed_by_session_id"] == session_id
+        assert data["state"]["owner_session_id"] == session_id
+        assert data["state"]["is_claimed"] is True
+
+    def test_release_task_claim(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/release-claim",
+            json={"status": "open"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claimed_by_session_id"] is None
+        assert data["state"]["is_claimed"] is False
+
+    def test_mark_task_needs_review(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/needs-review",
+            json={"notes": "Ready for QA"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "needs_review"
+        assert data["state"]["lifecycle_stage"] == "needs_review"
+
+    def test_mark_task_review_approved(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready")
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/review-approved",
+            json={"notes": "Looks good"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "review_approved"
+        assert data["state"]["lifecycle_stage"] == "review_approved"
+        assert data["state"]["is_merge_ready"] is True
+
+    def test_escalate_task(self, client: TestClient, sample_task: dict) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/escalate",
+            json={"reason": "Blocked on external input"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "escalated"
+        assert data["state"]["is_escalated"] is True
+        assert data["escalation_reason"] == "Blocked on external input"
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +589,22 @@ class TestReopenTask:
 
 
 class TestDeEscalateTask:
+    def test_get_task_detail_exposes_pre_escalation_status(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
+
+        response = client.get(f"/api/tasks/{sample_task['id']}")
+
+        assert response.status_code == 200
+        assert response.json()["pre_escalation_status"] == "needs_review"
+
     def test_de_escalate_task(
         self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
     ) -> None:
@@ -416,8 +623,30 @@ class TestDeEscalateTask:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "in_progress"
+        assert data["status"] == "open"
         assert "User approved the approach" in data["description"]
+
+    def test_de_escalate_task_with_explicit_target_status(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
+        task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
+        detail = client.get(f"/api/tasks/{sample_task['id']}").json()
+
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/de-escalate",
+            json={
+                "decision_context": "Resume review",
+                "target_status": detail["pre_escalation_status"],
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "needs_review"
 
     def test_de_escalate_not_escalated(self, client: TestClient, sample_task: dict) -> None:
         """De-escalating a task that's not escalated returns 400."""
@@ -447,7 +676,7 @@ class TestDeEscalateTask:
             },
         )
         assert response.status_code == 200
-        assert response.json()["status"] == "in_progress"
+        assert response.json()["status"] == "open"
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,51 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Startup progress tracking (module-level so the admin API can read it)
+# ---------------------------------------------------------------------------
+
+_startup_tracker: StartupTracker | None = None
+
+
+class StartupTracker:
+    """Tracks subsystem initialization progress for CLI polling."""
+
+    __slots__ = ("steps_completed", "steps_scheduled", "errors", "done", "started_at")
+
+    def __init__(self) -> None:
+        self.steps_completed: list[str] = []
+        self.steps_scheduled: list[str] = []
+        self.errors: list[dict[str, str]] = []
+        self.done: bool = False
+        self.started_at: float = time.monotonic()
+
+    def complete(self, step: str) -> None:
+        self.steps_completed.append(step)
+
+    def schedule(self, step: str) -> None:
+        self.steps_scheduled.append(step)
+
+    def error(self, subsystem: str, error: str) -> None:
+        self.errors.append({"subsystem": subsystem, "error": error})
+
+    def finish(self) -> None:
+        self.done = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "steps_completed": list(self.steps_completed),
+            "steps_scheduled": list(self.steps_scheduled),
+            "errors": list(self.errors),
+            "done": self.done,
+            "elapsed_seconds": round(time.monotonic() - self.started_at, 1),
+        }
+
+
+def get_startup_tracker() -> StartupTracker | None:
+    """Return the current startup tracker (used by admin API)."""
+    return _startup_tracker
+
 
 async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> None:
     """Heavy initialization that runs after HTTP is already serving.
@@ -26,13 +72,48 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
     All work here is non-critical for the health endpoint — subsystems
     come online progressively while the daemon is already reachable.
     """
+    global _startup_tracker
+    tracker = _startup_tracker
+
+    provider_catalog = getattr(runner.http_server.services, "provider_model_catalog", None)
+    if provider_catalog is not None:
+        try:
+            status = await provider_catalog.refresh(codex_client=runner.http_server.codex_client)
+            if tracker:
+                tracker.complete("Provider model catalogs updated")
+                for provider, info in status.items():
+                    source = info.get("source", "failed")
+                    error = info.get("error")
+                    if source == "live":
+                        continue
+                    if source == "cache":
+                        tracker.error(
+                            f"Provider models ({provider})",
+                            f"using cache: {error or 'live probe failed'}",
+                        )
+                    else:
+                        tracker.error(
+                            f"Provider models ({provider})",
+                            error or "model discovery failed",
+                        )
+        except Exception as e:
+            logger.warning(f"Provider model discovery failed: {e}")
+            if tracker:
+                tracker.error("Provider models", str(e))
+
     # Connect MCP servers
     try:
         await asyncio.wait_for(runner.mcp_proxy.connect_all(), timeout=10.0)
+        if tracker:
+            tracker.complete("MCP servers connected")
     except TimeoutError:
         logger.warning("MCP connection timed out")
+        if tracker:
+            tracker.error("MCP servers", "connection timed out")
     except Exception as e:
         logger.error(f"MCP connection failed: {e}")
+        if tracker:
+            tracker.error("MCP servers", str(e))
 
     # Qdrant health check: disable vector features if unreachable
     db_cfg = runner.config.databases
@@ -44,6 +125,10 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                 f"Qdrant configured but unreachable at {db_cfg.qdrant.url} — vector features disabled"
             )
             runner.vector_store = None
+            if tracker:
+                tracker.error("Qdrant", f"unreachable at {db_cfg.qdrant.url}")
+        elif tracker:
+            tracker.complete("Qdrant healthy")
 
     # Neo4j health check: disable KG features if unreachable
     if runner.memory_manager and db_cfg.neo4j.url:
@@ -54,6 +139,10 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                 f"Neo4j configured but unreachable at {db_cfg.neo4j.url} — graph features disabled"
             )
             runner.memory_manager.clear_graph_clients()
+            if tracker:
+                tracker.error("Neo4j", f"unreachable at {db_cfg.neo4j.url}")
+        elif tracker:
+            tracker.complete("Neo4j healthy")
 
     # Embedding health check: probe endpoint, attempt auto-load, warn if down
     emb_cfg = runner.config.embeddings
@@ -78,6 +167,10 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                     f"Embedding endpoint unreachable at {emb_cfg.api_base} "
                     f"(model: {emb_cfg.model}) — semantic search will fall back to FTS5"
                 )
+                if tracker:
+                    tracker.error("Embeddings", f"unreachable at {emb_cfg.api_base}")
+            elif tracker:
+                tracker.complete("Embeddings healthy")
 
     # Run metrics cleanup on startup
     try:
@@ -112,24 +205,40 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                             rebuild_vector_store(runner.vector_store, memory_dicts, embed_fn),
                             name="vector-store-rebuild",
                         )
+                        if tracker:
+                            tracker.schedule(
+                                f"Vector store rebuild ({len(sqlite_memories)} memories)"
+                            )
                     else:
                         logger.warning("No embed_fn configured, skipping VectorStore rebuild")
+            if tracker:
+                tracker.complete("Vector store initialized")
         except Exception as e:
             logger.error(f"VectorStore initialization failed: {e}")
+            if tracker:
+                tracker.error("Vector store", str(e))
 
     # Start Message Processor
     if runner.message_processor:
         await runner.message_processor.start()
+        if tracker:
+            tracker.complete("Message processor")
 
     # Start Communications Manager
     if runner.communications_manager:
         try:
             await runner.communications_manager.start()
+            if tracker:
+                tracker.complete("Communications manager")
         except Exception as e:
             logger.error(f"CommunicationsManager start failed: {e}")
+            if tracker:
+                tracker.error("Communications manager", str(e))
 
     # Start Session Lifecycle Manager
     await runner.lifecycle_manager.start()
+    if tracker:
+        tracker.complete("Session lifecycle manager")
 
     # tmux socket health check before any agent operations
     try:
@@ -137,17 +246,25 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
 
         tmux_mgr = TmuxSessionManager()
         await tmux_mgr.health_check()
+        if tracker:
+            tracker.complete("tmux healthy")
     except Exception as e:
         logger.warning(f"tmux health check failed on startup: {e}")
+        if tracker:
+            tracker.error("tmux", str(e))
 
     # Start agent lifecycle monitor
     if runner.agent_lifecycle_monitor:
         await runner.agent_lifecycle_monitor.cleanup_stale_pending_runs()
         await runner.agent_lifecycle_monitor.start()
+        if tracker:
+            tracker.complete("Agent lifecycle monitor")
 
     # Start Cron Scheduler
     if runner.cron_scheduler:
         await runner.cron_scheduler.start()
+        if tracker:
+            tracker.complete("Cron scheduler")
 
     # Code index maintenance loop
     runner._code_index_task = None
@@ -176,6 +293,8 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
             ),
             name="code-index-maintenance",
         )
+        if tracker:
+            tracker.schedule("Code index maintenance")
 
     # Code index sync worker (external store sync: Qdrant embeddings, Neo4j edges)
     runner._sync_worker_task = None
@@ -195,6 +314,8 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
             ),
             name="code-index-sync-worker",
         )
+        if tracker:
+            tracker.schedule("Code index sync")
 
     # Resume interrupted pipelines and fail non-resumable stale executions
     if runner.pipeline_executor and runner.pipeline_execution_manager and runner.workflow_loader:
@@ -251,12 +372,18 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                     )
                 except Exception as e:
                     logger.warning(f"Failed to wake subscribers of interrupted pipelines: {e}")
+            if tracker:
+                tracker.complete("Pipeline recovery")
         except Exception as e:
             logger.warning(f"Pipeline recovery after restart failed: {e}")
+            if tracker:
+                tracker.error("Pipeline recovery", str(e))
 
     # Start WebSocket server
     if runner.websocket_server:
         runner._websocket_task = asyncio.create_task(runner.websocket_server.start())
+        if tracker:
+            tracker.schedule("WebSocket server")
 
     # Auto-start UI dev server if configured
     if runner.config.ui.enabled and runner.config.ui.mode == "dev":
@@ -286,6 +413,8 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
         else:
             logger.warning("UI dev mode enabled but web/ directory not found")
 
+    if tracker:
+        tracker.finish()
     logger.info("Subsystem initialization complete")
 
 
@@ -348,6 +477,26 @@ def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:
             name="approval-timeout-expiry",
         )
 
+    # Count how many periodic tasks we started
+    task_count = sum(
+        1
+        for t in (
+            runner._metrics_cleanup_task,
+            runner._metrics_archive_task,
+            runner._span_cleanup_task,
+            getattr(runner, "_memory_reconcile_task", None),
+            runner._zombie_messages_task,
+            runner._comms_messages_task,
+            runner._expired_isolation_task,
+            runner._metric_snapshot_task,
+            runner._approval_timeout_task,
+        )
+        if t is not None
+    )
+    tracker = _startup_tracker
+    if tracker:
+        tracker.schedule(f"Periodic maintenance ({task_count} tasks)")
+
 
 async def run_daemon(runner: GobbyRunner) -> None:
     """Main daemon startup, event loop, and shutdown sequence."""
@@ -367,6 +516,10 @@ async def run_daemon(runner: GobbyRunner) -> None:
     )
 
     try:
+        # Initialize startup tracker for CLI progress polling
+        global _startup_tracker
+        _startup_tracker = StartupTracker()
+
         setup_signal_handlers(lambda: setattr(runner, "_shutdown_requested", True))
 
         # Write PID file (ensures it exists regardless of how the runner

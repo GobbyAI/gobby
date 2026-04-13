@@ -3,7 +3,7 @@ tags: [memory-lifecycle, memory, lifecycle, digest, gobby, default]
 rules:
   digest-on-response:
     description: "Build turn record and append to digest after agent response"
-    event: stop
+    event: turn_end
     enabled: true
     priority: 11
     effects:

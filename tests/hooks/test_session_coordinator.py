@@ -20,7 +20,7 @@ import logging
 import threading
 import time
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -139,8 +139,18 @@ class TestSessionLifecycleTransitions:
         mock_session_storage = MagicMock()
         mock_session_storage.list.side_effect = lambda status, limit: {
             "active": [
-                MagicMock(id="session-1", transcript_path="/path/to/1.jsonl", source="claude", transcript_processed=False),
-                MagicMock(id="session-2", transcript_path="/path/to/2.jsonl", source="gemini", transcript_processed=False),
+                MagicMock(
+                    id="session-1",
+                    transcript_path="/path/to/1.jsonl",
+                    source="claude",
+                    transcript_processed=False,
+                ),
+                MagicMock(
+                    id="session-2",
+                    transcript_path="/path/to/2.jsonl",
+                    source="gemini",
+                    transcript_processed=False,
+                ),
             ],
             "paused": [],
         }[status]
@@ -162,10 +172,20 @@ class TestSessionLifecycleTransitions:
         mock_session_storage = MagicMock()
         mock_session_storage.list.side_effect = lambda status, limit: {
             "active": [
-                MagicMock(id="session-1", transcript_path="/path/to/1.jsonl", source="claude", transcript_processed=False),
+                MagicMock(
+                    id="session-1",
+                    transcript_path="/path/to/1.jsonl",
+                    source="claude",
+                    transcript_processed=False,
+                ),
             ],
             "paused": [
-                MagicMock(id="session-2", transcript_path="/path/to/2.jsonl", source="claude", transcript_processed=False),
+                MagicMock(
+                    id="session-2",
+                    transcript_path="/path/to/2.jsonl",
+                    source="claude",
+                    transcript_processed=False,
+                ),
             ],
         }[status]
 
@@ -208,8 +228,18 @@ class TestSessionLifecycleTransitions:
         mock_session_storage = MagicMock()
         mock_session_storage.list.side_effect = lambda status, limit: {
             "active": [
-                MagicMock(id="session-1", transcript_path="/path/1.jsonl", source="claude", transcript_processed=False),
-                MagicMock(id="session-2", transcript_path="/path/2.jsonl", source="claude", transcript_processed=False),
+                MagicMock(
+                    id="session-1",
+                    transcript_path="/path/1.jsonl",
+                    source="claude",
+                    transcript_processed=False,
+                ),
+                MagicMock(
+                    id="session-2",
+                    transcript_path="/path/2.jsonl",
+                    source="claude",
+                    transcript_processed=False,
+                ),
             ],
             "paused": [],
         }[status]
@@ -230,6 +260,38 @@ class TestSessionLifecycleTransitions:
 
         # Should still count the successful one
         assert count == 1
+
+    def test_reregister_resets_agent_context_injected(self) -> None:
+        """Test re-registration resets _agent_context_injected so instructions re-inject."""
+        mock_session_storage = MagicMock()
+        mock_session_storage.list.side_effect = lambda status, limit: {
+            "active": [
+                MagicMock(
+                    id="session-1",
+                    transcript_path="/path/to/1.jsonl",
+                    source="claude",
+                    transcript_processed=False,
+                ),
+            ],
+            "paused": [],
+        }[status]
+
+        mock_message_processor = MagicMock()
+
+        coordinator = SessionCoordinator(
+            session_storage=mock_session_storage,
+            message_processor=mock_message_processor,
+        )
+
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as MockSVMgr:
+            mock_sv_instance = MockSVMgr.return_value
+            count = coordinator.reregister_active_sessions()
+
+        assert count == 1
+        MockSVMgr.assert_called_once_with(mock_session_storage.db)
+        mock_sv_instance.set_variable.assert_called_once_with(
+            "session-1", "_agent_context_injected", False
+        )
 
 
 class TestAgentRunCompletion:

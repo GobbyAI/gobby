@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import type { PullRequest } from '../../hooks/useSourceControl'
 import { StatusBadge } from './StatusBadge'
 
@@ -13,15 +13,12 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const fetchDetailRef = useRef(fetchDetail)
-  fetchDetailRef.current = fetchDetail
-
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     setDetail(null)
-    fetchDetailRef.current(prNumber)
+    fetchDetail(prNumber)
       .then((d) => {
         if (!cancelled) setDetail(d)
       })
@@ -32,7 +29,7 @@ export function PullRequestDetail({ prNumber, summary, fetchDetail, onClose }: P
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [prNumber])
+  }, [prNumber, fetchDetail])
 
   const body = (detail?.body as string) || ''
   const htmlUrl = (detail?.html_url as string) || ''

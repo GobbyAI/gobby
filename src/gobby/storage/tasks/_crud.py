@@ -8,19 +8,73 @@ import json
 import logging
 import sqlite3
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._models import (
     UNSET,
+    MaybeUnset,
     SeqNumCollisionError,
     Task,
     TaskIDCollisionError,
     TaskNotFoundError,
 )
+from gobby.tasks.state_semantics import (
+    lifecycle_stage_from_status,
+    normalize_lifecycle_stage,
+    project_legacy_status,
+)
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_TASK_STATUSES = {
+    "open",
+    "in_progress",
+    "needs_review",
+    "review_approved",
+    "closed",
+    "escalated",
+}
+
+
+def _session_exists(db: DatabaseProtocol, session_id: str) -> bool:
+    """Return whether the given session ID exists in storage."""
+    return bool(db.fetchone("SELECT 1 FROM sessions WHERE id = ?", (session_id,)))
+
+
+def _derive_claimed_by_session_id(
+    db: DatabaseProtocol,
+    *,
+    assignee: MaybeUnset[str | None] = UNSET,
+    claimed_by_session_id: MaybeUnset[str | None] = UNSET,
+) -> MaybeUnset[str | None]:
+    """Project canonical ownership from explicit owner or session assignee.
+
+    `claimed_by_session_id` is authoritative when explicitly provided.
+    When only `assignee` is supplied, we mirror it into canonical ownership
+    only if it resolves to a real session ID. This preserves compatibility-only
+    assignee values such as web-chat conversation IDs.
+    """
+    if claimed_by_session_id is not UNSET:
+        return claimed_by_session_id
+    if assignee is UNSET:
+        return UNSET
+    if assignee is None:
+        return None
+    if isinstance(assignee, str) and _session_exists(db, assignee):
+        return assignee
+    return UNSET
+
+
+def _normalize_legacy_status(status: Any) -> str:
+    """Validate and normalize a projected legacy status."""
+    normalized = str(status).strip().lower().replace("-", "_")
+    if normalized not in _LEGACY_TASK_STATUSES:
+        allowed = ", ".join(sorted(_LEGACY_TASK_STATUSES))
+        raise ValueError(f"Invalid task status '{status}'. Expected one of: {allowed}.")
+    return normalized
 
 
 def create_task(
@@ -33,9 +87,10 @@ def create_task(
     priority: int = 2,
     task_type: str = "task",
     assignee: str | None = None,
+    claimed_by_session_id: str | None = None,
+    lifecycle_stage: str | None = None,
     labels: list[str] | None = None,
     category: str | None = None,
-    expansion_context: str | None = None,
     validation_criteria: str | None = None,
     github_issue_number: int | None = None,
     github_pr_number: int | None = None,
@@ -56,6 +111,15 @@ def create_task(
 
     # Default validation status
     validation_status = "pending" if validation_criteria else None
+    canonical_owner = _derive_claimed_by_session_id(
+        db,
+        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
+    )
+    canonical_lifecycle_stage = normalize_lifecycle_stage(lifecycle_stage)
+    projected_status = project_legacy_status(lifecycle_stage=canonical_lifecycle_stage)
+    if canonical_owner is UNSET:
+        canonical_owner = None
 
     for attempt in range(max_retries + 1):
         try:
@@ -73,13 +137,14 @@ def create_task(
                     """
                     INSERT INTO tasks (
                         id, project_id, title, description, parent_task_id,
-                        created_in_session_id, priority, task_type, assignee,
+                        created_in_session_id, claimed_by_session_id, lifecycle_stage,
+                        priority, task_type, assignee,
                         labels, status, created_at, updated_at,
-                        validation_status, category, expansion_context,
+                        validation_status, category,
                         validation_criteria, validation_fail_count,
                         github_issue_number, github_pr_number, github_repo,
                         linear_issue_id, linear_team_id, seq_num
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -88,15 +153,17 @@ def create_task(
                         description,
                         parent_task_id,
                         created_in_session_id,
+                        canonical_owner,
+                        canonical_lifecycle_stage,
                         priority,
                         task_type,
                         assignee,
                         labels_json,
+                        projected_status,
                         now,
                         now,
                         validation_status,
                         category,
-                        expansion_context,
                         validation_criteria,
                         github_issue_number,
                         github_pr_number,
@@ -192,7 +259,9 @@ def get_task(db: DatabaseProtocol, task_id: str, project_id: str | None = None) 
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
     if not row:
         raise ValueError(f"Task {task_id} not found")
-    return Task.from_row(row)
+    task = Task.from_row(row)
+    hydrate_task_blocking_state(db, [task])
+    return task
 
 
 def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
@@ -200,55 +269,67 @@ def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
     # First try exact match
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (prefix,))
     if row:
-        return Task.from_row(row)
+        task = Task.from_row(row)
+        hydrate_task_blocking_state(db, [task])
+        return task
 
     # Try prefix match
     rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE ?", (f"{prefix}%",))
     if len(rows) == 1:
-        return Task.from_row(rows[0])
+        task = Task.from_row(rows[0])
+        hydrate_task_blocking_state(db, [task])
+        return task
     return None
 
 
 def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
     """Find all tasks matching an ID prefix."""
     rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE ?", (f"{prefix}%",))
-    return [Task.from_row(row) for row in rows]
+    tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_blocking_state(db, tasks)
+    return tasks
 
 
 def update_task(
     db: DatabaseProtocol,
     task_id: str,
-    title: Any = UNSET,
-    description: Any = UNSET,
-    status: Any = UNSET,
-    priority: Any = UNSET,
-    task_type: Any = UNSET,
-    assignee: Any = UNSET,
-    labels: Any = UNSET,
-    parent_task_id: Any = UNSET,
-    validation_status: Any = UNSET,
-    validation_feedback: Any = UNSET,
-    category: Any = UNSET,
-    expansion_context: Any = UNSET,
-    validation_criteria: Any = UNSET,
-    validation_fail_count: Any = UNSET,
-    dispatch_failure_count: Any = UNSET,
-    escalated_at: Any = UNSET,
-    escalation_reason: Any = UNSET,
-    github_issue_number: Any = UNSET,
-    github_pr_number: Any = UNSET,
-    github_repo: Any = UNSET,
-    linear_issue_id: Any = UNSET,
-    linear_team_id: Any = UNSET,
-    expansion_status: Any = UNSET,
-    validation_override_reason: Any = UNSET,
+    title: MaybeUnset[str | None] = UNSET,
+    description: MaybeUnset[str | None] = UNSET,
+    status: MaybeUnset[str | None] = UNSET,
+    priority: MaybeUnset[int | None] = UNSET,
+    task_type: MaybeUnset[str | None] = UNSET,
+    assignee: MaybeUnset[str | None] = UNSET,
+    claimed_by_session_id: MaybeUnset[str | None] = UNSET,
+    lifecycle_stage: MaybeUnset[str | None] = UNSET,
+    labels: MaybeUnset[list[str] | None] = UNSET,
+    parent_task_id: MaybeUnset[str | None] = UNSET,
+    closed_reason: MaybeUnset[str | None] = UNSET,
+    closed_at: MaybeUnset[str | None] = UNSET,
+    closed_in_session_id: MaybeUnset[str | None] = UNSET,
+    closed_commit_sha: MaybeUnset[str | None] = UNSET,
+    validation_status: MaybeUnset[str | None] = UNSET,
+    validation_feedback: MaybeUnset[str | None] = UNSET,
+    category: MaybeUnset[str | None] = UNSET,
+    validation_criteria: MaybeUnset[str | None] = UNSET,
+    validation_fail_count: MaybeUnset[int | None] = UNSET,
+    dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalation_reason: MaybeUnset[str | None] = UNSET,
+    github_issue_number: MaybeUnset[int | None] = UNSET,
+    github_pr_number: MaybeUnset[int | None] = UNSET,
+    github_repo: MaybeUnset[str | None] = UNSET,
+    linear_issue_id: MaybeUnset[str | None] = UNSET,
+    linear_team_id: MaybeUnset[str | None] = UNSET,
+    validation_override_reason: MaybeUnset[str | None] = UNSET,
 ) -> bool:
     """Update task fields.
 
     Returns True if parent_task_id was changed (indicating path cache needs update).
     """
+    current_task = get_task(db, task_id)
     updates: list[str] = []
     params: list[Any] = []
+    now = datetime.now(UTC).isoformat()
 
     if title is not UNSET:
         updates.append("title = ?")
@@ -256,9 +337,6 @@ def update_task(
     if description is not UNSET:
         updates.append("description = ?")
         params.append(description)
-    if status is not UNSET:
-        updates.append("status = ?")
-        params.append(status)
     if priority is not UNSET:
         updates.append("priority = ?")
         params.append(priority)
@@ -268,6 +346,14 @@ def update_task(
     if assignee is not UNSET:
         updates.append("assignee = ?")
         params.append(assignee)
+    derived_claimed_by_session_id = _derive_claimed_by_session_id(
+        db,
+        assignee=assignee,
+        claimed_by_session_id=claimed_by_session_id,
+    )
+    if derived_claimed_by_session_id is not UNSET:
+        updates.append("claimed_by_session_id = ?")
+        params.append(derived_claimed_by_session_id)
     if labels is not UNSET:
         updates.append("labels = ?")
         if labels is None:
@@ -286,9 +372,6 @@ def update_task(
     if category is not UNSET:
         updates.append("category = ?")
         params.append(category)
-    if expansion_context is not UNSET:
-        updates.append("expansion_context = ?")
-        params.append(expansion_context)
     if validation_criteria is not UNSET:
         updates.append("validation_criteria = ?")
         params.append(validation_criteria)
@@ -298,12 +381,6 @@ def update_task(
     if dispatch_failure_count is not UNSET:
         updates.append("dispatch_failure_count = ?")
         params.append(dispatch_failure_count)
-    if escalated_at is not UNSET:
-        updates.append("escalated_at = ?")
-        params.append(escalated_at)
-    if escalation_reason is not UNSET:
-        updates.append("escalation_reason = ?")
-        params.append(escalation_reason)
     if github_issue_number is not UNSET:
         updates.append("github_issue_number = ?")
         params.append(github_issue_number)
@@ -319,39 +396,89 @@ def update_task(
     if linear_team_id is not UNSET:
         updates.append("linear_team_id = ?")
         params.append(linear_team_id)
-    if expansion_status is not UNSET:
-        updates.append("expansion_status = ?")
-        params.append(expansion_status)
     if validation_override_reason is not UNSET:
         updates.append("validation_override_reason = ?")
         params.append(validation_override_reason)
-    # Auto-reset closed metadata when transitioning from 'closed' to any other status
-    if status is not UNSET and status != "closed":
-        current_task = get_task(db, task_id)
-        if current_task and current_task.status == "closed":
-            # Wipe closed metadata
-            updates.append("closed_reason = ?")
-            params.append(None)
-            updates.append("closed_at = ?")
-            params.append(None)
-            updates.append("closed_in_session_id = ?")
-            params.append(None)
-            updates.append("closed_commit_sha = ?")
-            params.append(None)
+    normalized_status = _normalize_legacy_status(status) if status is not UNSET else None
+    next_lifecycle_stage = current_task.lifecycle_stage
+    if lifecycle_stage is not UNSET:
+        next_lifecycle_stage = normalize_lifecycle_stage(cast(str | None, lifecycle_stage))
+    if normalized_status in {"open", "in_progress", "needs_review", "review_approved"}:
+        next_lifecycle_stage = lifecycle_stage_from_status(normalized_status)
 
-            # Wipe validation metadata if not explicitly set
-            if validation_status is UNSET:
-                updates.append("validation_status = ?")
-                params.append(None)
-            if validation_feedback is UNSET:
-                updates.append("validation_feedback = ?")
-                params.append(None)
+    next_closed_at = current_task.closed_at if closed_at is UNSET else cast(str | None, closed_at)
+    next_escalated_at = (
+        current_task.escalated_at if escalated_at is UNSET else cast(str | None, escalated_at)
+    )
+
+    if normalized_status == "closed" and next_closed_at is None:
+        next_closed_at = now
+    elif normalized_status and normalized_status != "closed" and closed_at is UNSET:
+        next_closed_at = None
+
+    if normalized_status == "escalated" and next_escalated_at is None:
+        next_escalated_at = now
+    elif normalized_status and normalized_status != "escalated" and escalated_at is UNSET:
+        next_escalated_at = None
+
+    state_inputs_touched = any(
+        value is not UNSET for value in (status, lifecycle_stage, closed_at, escalated_at)
+    )
+    if state_inputs_touched:
+        updates.append("lifecycle_stage = ?")
+        params.append(next_lifecycle_stage)
+        updates.append("closed_at = ?")
+        params.append(next_closed_at)
+        updates.append("escalated_at = ?")
+        params.append(next_escalated_at)
+        updates.append("status = ?")
+        params.append(
+            project_legacy_status(
+                lifecycle_stage=next_lifecycle_stage,
+                closed_at=next_closed_at,
+                escalated_at=next_escalated_at,
+            )
+        )
+
+    if closed_reason is not UNSET:
+        updates.append("closed_reason = ?")
+        params.append(closed_reason)
+    elif current_task.closed_at and next_closed_at is None:
+        updates.append("closed_reason = ?")
+        params.append(None)
+    if closed_in_session_id is not UNSET:
+        updates.append("closed_in_session_id = ?")
+        params.append(closed_in_session_id)
+    elif current_task.closed_at and next_closed_at is None:
+        updates.append("closed_in_session_id = ?")
+        params.append(None)
+    if closed_commit_sha is not UNSET:
+        updates.append("closed_commit_sha = ?")
+        params.append(closed_commit_sha)
+    elif current_task.closed_at and next_closed_at is None:
+        updates.append("closed_commit_sha = ?")
+        params.append(None)
+
+    if escalation_reason is not UNSET:
+        updates.append("escalation_reason = ?")
+        params.append(escalation_reason)
+    elif current_task.escalated_at and next_escalated_at is None:
+        updates.append("escalation_reason = ?")
+        params.append(None)
+
+    if current_task.closed_at and next_closed_at is None:
+        if validation_status is UNSET:
+            updates.append("validation_status = ?")
+            params.append(None)
+        if validation_feedback is UNSET:
+            updates.append("validation_feedback = ?")
+            params.append(None)
 
     if not updates:
         return False
 
     updates.append("updated_at = ?")
-    params.append(datetime.now(UTC).isoformat())
+    params.append(now)
 
     params.append(task_id)  # for WHERE clause
 

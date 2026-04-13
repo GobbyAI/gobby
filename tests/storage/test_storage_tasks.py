@@ -58,11 +58,45 @@ class TestLocalTaskManager:
         assert updated.status == "in_progress"
         assert updated.updated_at > task.updated_at
 
+    def test_status_projects_from_canonical_lifecycle_stage(self, task_manager, project_id) -> None:
+        """Raw legacy status should no longer drive task projection."""
+        task = task_manager.create_task(project_id=project_id, title="Projected")
+
+        task_manager.db.execute(
+            """
+            UPDATE tasks
+            SET status = 'open',
+                lifecycle_stage = 'review_approved',
+                escalated_at = NULL,
+                closed_at = NULL
+            WHERE id = ?
+            """,
+            (task.id,),
+        )
+
+        projected = task_manager.get_task(task.id)
+
+        assert projected.status == "review_approved"
+        assert projected.lifecycle_stage == "review_approved"
+
     def test_close_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="To Close")
         closed = task_manager.close_task(task.id, reason="Done")
         assert closed.status == "closed"
         assert closed.closed_reason == "Done"
+
+    def test_close_task_preserves_lifecycle_stage_projection(
+        self, task_manager, project_id
+    ) -> None:
+        """Closed tasks keep their last lifecycle stage as latent context."""
+        task = task_manager.create_task(project_id=project_id, title="To Close Cleanly")
+        reviewed = task_manager.update_task(task.id, status="review_approved")
+
+        closed = task_manager.close_task(reviewed.id, reason="Merged")
+
+        assert closed.status == "closed"
+        assert closed.lifecycle_stage == "review_approved"
+        assert closed.closed_reason == "Merged"
 
     def test_delete_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="To Delete")
@@ -275,6 +309,80 @@ class TestLocalTaskManager:
         blocked = task_manager.list_blocked_tasks(project_id=project_id)
         # T1 is no longer blocked by OPEN task
 
+    def test_dependency_unblocks_only_when_blocker_is_closed(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Review stages should not satisfy blocking dependencies."""
+        blocked = task_manager.create_task(project_id, "Blocked")
+        blocker = task_manager.create_task(project_id, "Blocker")
+        dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
+
+        task_manager.update_task(blocker.id, status="needs_review")
+        assert blocked.id not in {
+            t.id for t in task_manager.list_ready_tasks(project_id=project_id)
+        }
+        assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+
+        task_manager.update_task(blocker.id, status="review_approved")
+        assert blocked.id not in {
+            t.id for t in task_manager.list_ready_tasks(project_id=project_id)
+        }
+        assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+
+        task_manager.close_task(blocker.id)
+        assert blocked.id in {t.id for t in task_manager.list_ready_tasks(project_id=project_id)}
+        assert blocked.id not in {
+            t.id for t in task_manager.list_blocked_tasks(project_id=project_id)
+        }
+
+    def test_list_blocked_tasks_includes_escalated_tasks(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Blocked is an independent predicate from the active lifecycle stage."""
+        blocked = task_manager.create_task(project_id, "Blocked")
+        blocker = task_manager.create_task(project_id, "Blocker")
+        dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
+
+        task_manager.escalate_task(blocked.id, reason="Needs human help")
+
+        blocked_ids = {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
+        assert blocked.id in blocked_ids
+        assert task_manager.count_blocked_tasks(project_id=project_id) == 1
+
+    def test_task_state_tracks_only_unresolved_external_blockers(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Canonical blocked state should ignore closed blockers but preserve dependency order."""
+        blocked = task_manager.create_task(project_id, "Blocked")
+        blocker = task_manager.create_task(project_id, "Blocker")
+        dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
+
+        fetched = task_manager.get_task(blocked.id)
+        assert fetched.blocked_by == {blocker.id}
+        assert fetched.active_blocked_by == {blocker.id}
+        assert fetched.to_brief()["state"]["is_blocked"] is True
+
+        task_manager.close_task(blocker.id)
+
+        fetched = task_manager.get_task(blocked.id)
+        assert fetched.blocked_by == {blocker.id}
+        assert fetched.active_blocked_by == set()
+        assert fetched.to_brief()["state"]["is_blocked"] is False
+
+    def test_task_state_ignores_descendant_completion_blocks(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Parent completion blockers should not project as canonical blocked state."""
+        parent = task_manager.create_task(project_id, "Parent Epic")
+        child = task_manager.create_task(project_id, "Child Task", parent_task_id=parent.id)
+        dep_manager.add_dependency(parent.id, child.id, "blocks")
+
+        fetched = task_manager.get_task(parent.id)
+
+        assert fetched.blocked_by == {child.id}
+        assert fetched.active_blocked_by == set()
+        assert fetched.to_dict()["state"]["is_blocked"] is False
+
     def test_parent_blocked_by_children_is_still_ready(
         self, task_manager, dep_manager, project_id
     ) -> None:
@@ -407,7 +515,6 @@ class TestLocalTaskManager:
             assignee="me",
             labels=["l1"],
             category="strat",
-            expansion_context="ctx",
             validation_criteria="crit",
             validation_fail_count=2,
             validation_status="valid",
@@ -420,7 +527,6 @@ class TestLocalTaskManager:
         assert updated.assignee == "me"
         assert updated.labels == ["l1"]
         assert updated.category == "strat"
-        assert updated.expansion_context == "ctx"
         assert updated.validation_criteria == "crit"
         assert updated.validation_fail_count == 2
         assert updated.validation_status == "valid"
@@ -622,6 +728,80 @@ class TestLocalTaskManager:
 
         assert reopened.status == "open"
         assert reopened.assignee is None
+
+    def test_claim_task_sets_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Claiming should dual-write canonical ownership and legacy assignee."""
+        session = session_manager.register(
+            external_id="claim-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Claim me")
+
+        claimed = task_manager.claim_task(task.id, session.id)
+
+        assert claimed.status == "in_progress"
+        assert claimed.assignee == session.id
+        assert claimed.claimed_by_session_id == session.id
+
+    def test_claim_task_preserves_review_status(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Review ownership should be explicit without regressing lifecycle state."""
+        session = session_manager.register(
+            external_id="review-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Needs review")
+        task_manager.update_task(task.id, status="needs_review")
+
+        claimed = task_manager.claim_task(task.id, session.id)
+
+        assert claimed.status == "needs_review"
+        assert claimed.assignee == session.id
+        assert claimed.claimed_by_session_id == session.id
+
+    def test_release_task_claim_clears_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Ownership release should clear both canonical and legacy fields."""
+        session = session_manager.register(
+            external_id="release-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Release me")
+        task_manager.claim_task(task.id, session.id)
+
+        released = task_manager.release_task_claim(task.id, status="open")
+
+        assert released.status == "open"
+        assert released.assignee is None
+        assert released.claimed_by_session_id is None
+
+    def test_deleting_session_clears_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Deleting an owning session should null the canonical owner FK."""
+        session = session_manager.register(
+            external_id="delete-owner-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Delete owner")
+        task_manager.claim_task(task.id, session.id)
+
+        session_manager.delete(session.id)
+
+        refreshed = task_manager.get_task(task.id)
+        assert refreshed.claimed_by_session_id is None
 
     # =========================================================================
     # Close Task Additional Tests
@@ -1066,7 +1246,6 @@ class TestLocalTaskManager:
             assignee="developer",
             labels=["important"],
             category="Unit tests",
-            expansion_context="More context",
             validation_criteria="All tests pass",
         )
 
@@ -1078,7 +1257,6 @@ class TestLocalTaskManager:
         assert task.assignee == "developer"
         assert task.labels == ["important"]
         assert task.category == "Unit tests"
-        assert task.expansion_context == "More context"
         assert task.validation_criteria == "All tests pass"
         # Validation status should be pending when criteria is set
         assert task.validation_status == "pending"

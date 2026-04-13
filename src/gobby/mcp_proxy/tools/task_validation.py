@@ -443,19 +443,21 @@ def create_validation_registry(
 
     @registry.tool(
         name="de_escalate_task",
-        description="Return an escalated task to open status after human intervention resolves the issue.",
+        description="Return an escalated task to an explicit next status after human intervention resolves the issue.",
     )
     def de_escalate_task(
         task_id: str,
         reason: str,
+        target_status: str | None = None,
         reset_validation: bool = False,
     ) -> dict[str, Any]:
         """
-        De-escalate a task back to open status.
+        De-escalate a task to an explicit next status.
 
         Args:
             task_id: Task reference: #N, N (seq_num), path (1.2.3), or UUID
             reason: Reason for de-escalation (required)
+            target_status: Where the task should return (default: open)
             reset_validation: Also reset validation fail count (default: False)
 
         Returns:
@@ -477,17 +479,15 @@ def create_validation_registry(
                 "error": f"Task {task_id} is not escalated (current status: {task.status})",
             }
 
-        # Build update kwargs
-        update_kwargs: dict[str, Any] = {
-            "status": "open",
-            "escalated_at": None,
-            "escalation_reason": None,
-        }
-
-        if reset_validation:
-            update_kwargs["validation_fail_count"] = 0
-
-        updated_task = task_manager.update_task(task.id, **update_kwargs)
+        try:
+            updated_task = task_manager.de_escalate_task(
+                task.id,
+                reason=reason,
+                target_status=target_status,
+                reset_validation=reset_validation,
+            )
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
 
         return {
             "success": True,
@@ -496,6 +496,7 @@ def create_validation_registry(
             "escalated_at": updated_task.escalated_at,
             "escalation_reason": updated_task.escalation_reason,
             "de_escalation_reason": reason,
+            "target_status": updated_task.status,
             "validation_reset": reset_validation,
         }
 

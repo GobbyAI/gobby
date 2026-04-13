@@ -35,7 +35,6 @@ def _make_session(**overrides: Any) -> Session:
         "last_turn_markdown": "# Turn\nLast turn details...",
         "usage_input_tokens": 50000,
         "usage_output_tokens": 10000,
-        "usage_total_cost_usd": 0.25,
         "context_window": 200000,
         "terminal_context": {"tty": "/dev/ttys001"},
     }
@@ -102,7 +101,6 @@ class TestSessionToBrief:
         assert "usage_output_tokens" not in brief
         assert "usage_cache_creation_tokens" not in brief
         assert "usage_cache_read_tokens" not in brief
-        assert "usage_total_cost_usd" not in brief
         assert "context_window" not in brief
 
     def test_to_brief_excludes_internal_metadata(self) -> None:

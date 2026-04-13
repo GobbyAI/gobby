@@ -80,19 +80,25 @@ describe('useTasks', () => {
 
     expect(result.current.tasks).toHaveLength(2)
     expect(result.current.total).toBe(2)
-    expect(result.current.stats).toEqual({ open: 2, closed: 0 })
+    expect(result.current.stats).toEqual({
+      ready: 2,
+      in_progress: 0,
+      review: 0,
+      blocked: 0,
+      merge_ready: 0,
+      closed: 0,
+    })
   })
 
-  it('defaults to open status filter', async () => {
+  it('defaults to no state filter and fetches the unfiltered list', async () => {
     const { result } = renderHook(() => useTasks())
 
-    expect(result.current.filters.status).toBe('open')
+    expect(result.current.filters.status).toBeNull()
 
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
-    // Should include status=open in the fetch URL
     expect(mockFetch.fn).toHaveBeenCalledWith(
-      expect.stringContaining('status=open'),
+      expect.stringContaining('limit=500'),
     )
   })
 
@@ -267,7 +273,16 @@ describe('useTasks', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false))
   })
 
-  it('maps recently_done filter to status=closed', async () => {
+  it('maps recently_done to the closed bucket client-side', async () => {
+    mockFetch.resetRoutes()
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      ...TASK_LIST_RESPONSE,
+      tasks: [
+        SAMPLE_TASKS[0],
+        { ...SAMPLE_TASKS[1], id: 'task-closed', status: 'closed', title: 'Closed task' },
+      ],
+    })
+
     const { result } = renderHook(() => useTasks())
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
@@ -276,13 +291,26 @@ describe('useTasks', () => {
     })
 
     await waitFor(() => {
-      const calls = mockFetch.fn.mock.calls
-      const lastCall = calls[calls.length - 1][0] as string
-      expect(lastCall).toContain('status=closed')
+      expect(result.current.tasks).toHaveLength(1)
+      expect(result.current.tasks[0]?.id).toBe('task-closed')
     })
   })
 
-  it('maps in_review filter to needs_review,review_approved', async () => {
+  it('maps in_review to review and merge-ready buckets client-side', async () => {
+    mockFetch.resetRoutes()
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      ...TASK_LIST_RESPONSE,
+      tasks: [
+        { ...SAMPLE_TASKS[0], id: 'task-review', status: 'needs_review', title: 'Needs review' },
+        {
+          ...SAMPLE_TASKS[1],
+          id: 'task-approved',
+          status: 'review_approved',
+          title: 'Approved task',
+        },
+      ],
+    })
+
     const { result } = renderHook(() => useTasks())
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
@@ -291,9 +319,7 @@ describe('useTasks', () => {
     })
 
     await waitFor(() => {
-      const calls = mockFetch.fn.mock.calls
-      const lastCall = calls[calls.length - 1][0] as string
-      expect(lastCall).toContain('status=needs_review')
+      expect(result.current.tasks.map(task => task.id)).toEqual(['task-review', 'task-approved'])
     })
   })
 })

@@ -103,9 +103,9 @@ class TestBudgetStatusTracking:
         budget = result.get("budget", {})
 
         # Verify expected fields
-        assert "daily_budget_usd" in budget, f"Missing daily_budget_usd: {result}"
-        assert "used_today_usd" in budget, f"Missing used_today_usd: {result}"
-        assert "remaining_usd" in budget, f"Missing remaining_usd: {result}"
+        assert "daily_budget_tokens" in budget, f"Missing daily_budget_tokens: {result}"
+        assert "used_today_tokens" in budget, f"Missing used_today_tokens: {result}"
+        assert "remaining_tokens" in budget, f"Missing remaining_tokens: {result}"
         assert "percentage_used" in budget, f"Missing percentage_used: {result}"
         assert "over_budget" in budget, f"Missing over_budget: {result}"
 
@@ -127,7 +127,6 @@ class TestBudgetStatusTracking:
         usage = result.get("usage", {})
 
         # Verify expected fields
-        assert "total_cost_usd" in usage, f"Missing total_cost_usd: {result}"
         assert "total_input_tokens" in usage, f"Missing total_input_tokens: {result}"
         assert "total_output_tokens" in usage, f"Missing total_output_tokens: {result}"
         assert "session_count" in usage, f"Missing session_count: {result}"
@@ -177,12 +176,11 @@ class TestBudgetThrottling:
         )
         session_id = session_result["id"]
 
-        # Set low usage (well under $1.00 budget)
+        # Set low usage (well under 10M token budget)
         usage_result = cli_events.set_session_usage(
             session_id=session_id,
             input_tokens=1000,
             output_tokens=500,
-            total_cost_usd=0.10,  # $0.10 - under $0.90 threshold
         )
         assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
 
@@ -207,10 +205,10 @@ class TestBudgetThrottling:
         """Test that exceeding budget threshold shows over_budget.
 
         Config has:
-        - daily_budget_usd: 1.0
+        - daily_budget_tokens: 10_000_000
         - throttle_threshold: 0.9 (90%)
 
-        So budget is exceeded when usage >= $0.90
+        So budget is exceeded when token usage >= 9_000_000
         """
         # Setup - register project and session
         project_result = cli_events.register_test_project(
@@ -229,12 +227,11 @@ class TestBudgetThrottling:
         )
         session_id = session_result["id"]
 
-        # Set high usage (exceeds $1.00 budget)
+        # Set high usage (exceeds 10M token budget)
         usage_result = cli_events.set_session_usage(
             session_id=session_id,
-            input_tokens=100000,
-            output_tokens=50000,
-            total_cost_usd=1.50,  # $1.50 - over $1.00 budget
+            input_tokens=6_000_000,
+            output_tokens=5_000_000,
         )
         assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
 
@@ -249,7 +246,9 @@ class TestBudgetThrottling:
         assert result.get("success") is True, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
         assert budget.get("over_budget") is True, f"Should be over budget: {budget}"
-        assert budget.get("used_today_usd") >= 1.0, f"Used should be >= $1.00: {budget}"
+        assert budget.get("used_today_tokens") >= 10_000_000, (
+            f"Used should be >= 10M tokens: {budget}"
+        )
 
     def test_usage_report_reflects_session_usage(
         self,
@@ -282,7 +281,6 @@ class TestBudgetThrottling:
             output_tokens=2500,
             cache_creation_tokens=100,
             cache_read_tokens=200,
-            total_cost_usd=0.25,
         )
         assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
 
@@ -298,7 +296,6 @@ class TestBudgetThrottling:
         usage = result.get("usage", {})
 
         # Verify usage reflects what we set (may be cumulative with other tests)
-        assert usage.get("total_cost_usd", 0) >= 0.25, f"Cost should include our session: {usage}"
         assert usage.get("total_input_tokens", 0) >= 5000, (
             f"Input tokens should include our session: {usage}"
         )
@@ -351,9 +348,8 @@ class TestAgentSpawnThrottling:
         # Set high usage to exceed budget
         usage_result = cli_events.set_session_usage(
             session_id=session_id,
-            input_tokens=500000,
-            output_tokens=250000,
-            total_cost_usd=5.00,  # $5.00 - way over $1.00 budget
+            input_tokens=6_000_000,
+            output_tokens=5_000_000,
         )
         assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
 
@@ -441,15 +437,14 @@ class TestMultiSessionBudgetAggregation:
             session_id = session_result["id"]
             session_ids.append(session_id)
 
-            # Each session has $0.20 cost
-            cost = 0.20
-            total_cost += cost
+            # Each session has some token usage
+            tokens = 2000 * (i + 1) + 1000 * (i + 1)
+            total_cost += tokens
 
             usage_result = cli_events.set_session_usage(
                 session_id=session_id,
                 input_tokens=2000 * (i + 1),
                 output_tokens=1000 * (i + 1),
-                total_cost_usd=cost,
             )
             assert usage_result["status"] == "success"
 
@@ -465,7 +460,7 @@ class TestMultiSessionBudgetAggregation:
         budget = result.get("budget", {})
 
         # Used should be at least what we added (may include other test sessions)
-        assert budget.get("used_today_usd", 0) >= total_cost, (
+        assert budget.get("used_today_tokens", 0) >= total_cost, (
             f"Budget should aggregate multiple sessions. "
-            f"Expected >= {total_cost}, got {budget.get('used_today_usd')}"
+            f"Expected >= {total_cost}, got {budget.get('used_today_tokens')}"
         )

@@ -3,11 +3,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 export interface SavingsData {
   days: number
   total_tokens_saved: number
-  total_cost_saved_usd: number
   total_events: number
   categories: Record<string, {
     tokens_saved: number
-    cost_saved_usd: number
     event_count: number
   }>
 }

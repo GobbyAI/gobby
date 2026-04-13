@@ -13,6 +13,7 @@ rules:
     effects:
       - type: block
         reason: |
-          reopen_task is blocked. Do not unclaim tasks to avoid work.
+          reopen_task is blocked. Do not use it to bounce active work or silently drop ownership.
           Only the user can instruct you to reopen a task.
-          If you are stuck, escalate with mark_task_needs_review instead.
+          If work is blocked, use escalate_task.
+          If an escalated task is ready to resume, use de_escalate_task instead of reopen_task.

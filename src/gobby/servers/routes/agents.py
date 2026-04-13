@@ -81,7 +81,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
 async def _batch_load_session_info(
     database: Any, session_ids: list[str]
 ) -> dict[str, dict[str, Any]]:
-    """Load session token/cost data for a batch of session IDs.
+    """Load session token usage data for a batch of session IDs.
 
     Returns dict mapping session_id to enrichment fields.
     """
@@ -99,7 +99,7 @@ async def _batch_load_session_info(
                     f"""
                 SELECT id, usage_input_tokens, usage_output_tokens,
                        usage_cache_creation_tokens, usage_cache_read_tokens,
-                       usage_total_cost_usd, summary_markdown, git_branch
+                       summary_markdown, git_branch
                 FROM sessions
                 WHERE id IN ({placeholders})
                 """,  # nosec B608
@@ -115,7 +115,6 @@ async def _batch_load_session_info(
                 "usage_output_tokens": row["usage_output_tokens"],
                 "usage_cache_creation_tokens": row["usage_cache_creation_tokens"],
                 "usage_cache_read_tokens": row["usage_cache_read_tokens"],
-                "usage_total_cost_usd": row["usage_total_cost_usd"],
                 "summary_markdown": row["summary_markdown"],
                 "git_branch": row["git_branch"],
             }

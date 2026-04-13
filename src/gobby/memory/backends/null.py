@@ -46,7 +46,7 @@ class NullBackend:
         project_id: str | None = None,
         user_id: str | None = None,
         tags: list[str] | None = None,
-        source_type: str | None = None,
+        source_type: str = "agent",
         source_session_id: str | None = None,
         media: list[MediaAttachment] | None = None,
         metadata: dict[str, Any] | None = None,

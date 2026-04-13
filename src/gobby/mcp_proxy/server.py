@@ -4,6 +4,7 @@ Gobby Daemon Tools MCP Server.
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -11,12 +12,13 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
 from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
-from gobby.utils.project_context import get_project_context
+from gobby.utils import project_context as project_context_utils
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -38,6 +40,7 @@ class GobbyDaemonTools:
         config_manager: Any | None = None,
         semantic_search: Any | None = None,
         fallback_resolver: Any | None = None,
+        hook_manager_resolver: Callable[[], Any | None] | None = None,
     ):
         self.config = config
         self.internal_manager = internal_manager
@@ -53,6 +56,7 @@ class GobbyDaemonTools:
             mcp_manager,
             internal_manager=internal_manager,
             fallback_resolver=fallback_resolver,
+            hook_manager_resolver=hook_manager_resolver,
         )
         self.server_mgmt = ServerManagementService(
             mcp_manager, config_manager, config, llm_service=llm_service
@@ -81,7 +85,11 @@ class GobbyDaemonTools:
             "uptime_seconds": round(uptime, 2),
         }
 
-    async def list_mcp_servers(self, name_filter: str | None = None) -> dict[str, Any]:
+    async def list_mcp_servers(
+        self,
+        name_filter: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """List configured MCP servers.
 
         Args:
@@ -122,12 +130,14 @@ class GobbyDaemonTools:
             server_list = [s for s in server_list if fnmatch.fnmatch(s["name"], name_filter)]
             connected_count = sum(1 for s in server_list if s.get("state") == "connected")
 
-        return {
+        result = {
             "success": True,
             "servers": server_list,
             "total": len(server_list),
             "connected": connected_count,
         }
+        self.tool_proxy.record_servers_listed(session_id)
+        return result
 
     # --- Tool Proxying ---
 
@@ -152,6 +162,7 @@ class GobbyDaemonTools:
         tool_name: str,
         arguments: str | dict[str, Any] | None = None,
         session_id: str | None = None,
+        project_id: str | None = None,
     ) -> Any:
         """Call a tool.
 
@@ -162,12 +173,53 @@ class GobbyDaemonTools:
 
         When session_id is provided and a workflow is active, checks that the
         tool is not blocked by the current workflow step's blocked_tools setting.
+
+        Args:
+            server_name: Target MCP server name.
+            tool_name: Tool to call on the server.
+            arguments: Tool arguments (dict or JSON string).
+            session_id: Session ID for context resolution and workflow checks.
+            project_id: Optional project UUID or name. When provided, overrides
+                session-derived project context, enabling cross-project tool
+                operations (e.g., an agent in project A creating a task in
+                project B).
         """
-        # Set session's project + session context for this call
+        # Set project + session context for this call.
+        # Priority: explicit project_id > session-derived project > no context.
+        # Session context (conversation tracking) is always from session_id.
         project_token = None
         session_token = None
-        if session_id:
+        if project_id:
+            if self._session_manager and self._session_manager.db:
+                project_token = project_context_utils.set_project_context_from_ref(
+                    project_id, self._session_manager.db
+                )
+                if project_token is None:
+                    return CallToolResult(
+                        content=[
+                            TextContent(
+                                type="text",
+                                text=f"Error: project_id '{project_id}' not found. "
+                                "Use a valid project UUID or name.",
+                            )
+                        ],
+                        isError=True,
+                    )
+            else:
+                return CallToolResult(
+                    content=[
+                        TextContent(
+                            type="text",
+                            text="Error: project_id provided but no database available "
+                            "to resolve it.",
+                        )
+                    ],
+                    isError=True,
+                )
+        elif session_id:
             project_token = self._resolve_and_set_project_context(session_id)
+
+        if session_id:
             conversation_id = None
             if self._session_manager:
                 session = self._session_manager.get(session_id)
@@ -179,11 +231,13 @@ class GobbyDaemonTools:
             session_token = set_session_context(
                 SessionContext(session_id=session_id, conversation_id=conversation_id)
             )
-        # Coerce string arguments to dict (agents often stringify JSON)
+        # Coerce string arguments to dict (agents often stringify JSON,
+        # sometimes with literal \" escapes instead of proper quotes)
         if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except (json.JSONDecodeError, TypeError):
+            parsed = coerce_string_arguments(arguments)
+            if parsed is not None:
+                arguments = parsed
+            else:
                 return CallToolResult(
                     content=[
                         TextContent(
@@ -200,7 +254,7 @@ class GobbyDaemonTools:
         effective_arguments: dict[str, Any] | None = None
         if isinstance(arguments, dict):
             effective_arguments = dict(arguments)  # Shallow copy to avoid modifying original
-            for leaked_key in ("server_name", "tool_name"):
+            for leaked_key in ("server_name", "tool_name", "project_id"):
                 effective_arguments.pop(leaked_key, None)
 
         try:
@@ -252,9 +306,18 @@ class GobbyDaemonTools:
         """List tools for a specific server, optionally filtered by workflow phase restrictions."""
         return await self.tool_proxy.list_tools(server_name, session_id=session_id)
 
-    async def get_tool_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
+    async def get_tool_schema(
+        self,
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Get tool schema."""
-        return await self.tool_proxy.get_tool_schema(server_name, tool_name)
+        return await self.tool_proxy.get_tool_schema(
+            server_name,
+            tool_name,
+            session_id=session_id,
+        )
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
@@ -354,7 +417,7 @@ class GobbyDaemonTools:
 
         project_id = self._mcp_manager.project_id
         if not project_id:
-            ctx = get_project_context()
+            ctx = project_context_utils.get_project_context()
             project_id = ctx.get("id") if ctx else None
         if not project_id:
             return {

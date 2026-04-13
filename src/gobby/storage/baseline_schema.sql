@@ -136,7 +136,9 @@ CREATE TABLE agent_runs (
     id TEXT PRIMARY KEY,
     parent_session_id TEXT NOT NULL REFERENCES sessions(id),
     child_session_id TEXT REFERENCES sessions(id),
+    claimed_session_id TEXT REFERENCES sessions(id),
     workflow_name TEXT,
+    agent_name TEXT,
     provider TEXT NOT NULL,
     model TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -188,7 +190,6 @@ CREATE TABLE sessions (
     usage_output_tokens INTEGER DEFAULT 0,
     usage_cache_creation_tokens INTEGER DEFAULT 0,
     usage_cache_read_tokens INTEGER DEFAULT 0,
-    usage_total_cost_usd REAL DEFAULT 0.0,
     context_window INTEGER,
     terminal_context TEXT,
     seq_num INTEGER,
@@ -202,8 +203,8 @@ CREATE TABLE sessions (
     turn_count INTEGER DEFAULT 0,
     tool_call_count INTEGER DEFAULT 0,
     last_assistant_content TEXT,
-    pending_plan_path TEXT,
     approved_tools_json TEXT,
+    session_type TEXT NOT NULL DEFAULT 'terminal',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -219,7 +220,7 @@ CREATE INDEX idx_sessions_spawned_by ON sessions(spawned_by_agent_id);
 CREATE INDEX idx_sessions_workflow ON sessions(workflow_name);
 CREATE INDEX idx_sessions_agent_run ON sessions(agent_run_id);
 CREATE UNIQUE INDEX idx_sessions_seq_num ON sessions(project_id, seq_num);
-CREATE UNIQUE INDEX idx_sessions_unique ON sessions(external_id, machine_id, source, project_id);
+CREATE UNIQUE INDEX idx_sessions_unique ON sessions(external_id, machine_id, source, project_id, session_type);
 
 -- System session: static root for pipelines and cron jobs with no caller session
 INSERT INTO sessions (id, external_id, machine_id, source, project_id, title, status, agent_depth, created_at, updated_at)
@@ -253,6 +254,8 @@ CREATE TABLE tasks (
     project_id TEXT NOT NULL REFERENCES projects(id),
     parent_task_id TEXT REFERENCES tasks(id),
     created_in_session_id TEXT REFERENCES sessions(id),
+    claimed_by_session_id TEXT REFERENCES sessions(id),
+    lifecycle_stage TEXT CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved')),
     closed_in_session_id TEXT REFERENCES sessions(id),
     closed_commit_sha TEXT,
     closed_at TEXT,
@@ -269,7 +272,6 @@ CREATE TABLE tasks (
     validation_feedback TEXT,
     validation_override_reason TEXT,
     category TEXT,
-    expansion_context TEXT,
     validation_criteria TEXT,
     validation_fail_count INTEGER DEFAULT 0,
     dispatch_failure_count INTEGER DEFAULT 0,
@@ -283,7 +285,6 @@ CREATE TABLE tasks (
     linear_team_id TEXT,
     seq_num INTEGER,
     path_cache TEXT,
-    expansion_status TEXT DEFAULT 'none',
     start_date TEXT,
     due_date TEXT,
     created_at TEXT NOT NULL,
@@ -293,6 +294,8 @@ CREATE INDEX idx_tasks_project ON tasks(project_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
 CREATE INDEX idx_tasks_created_session ON tasks(created_in_session_id);
+CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id);
+CREATE INDEX idx_tasks_lifecycle_stage ON tasks(lifecycle_stage);
 CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id);
 CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
 CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
@@ -307,6 +310,34 @@ CREATE TABLE task_dependencies (
 );
 CREATE INDEX idx_deps_task ON task_dependencies(task_id);
 CREATE INDEX idx_deps_depends_on ON task_dependencies(depends_on);
+
+CREATE TABLE expansion_runs (
+    id TEXT PRIMARY KEY,
+    parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    triggering_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'running', 'compiled', 'applying', 'completed', 'failed', 'cancelled')),
+    input_source TEXT NOT NULL
+        CHECK(input_source IN ('task', 'plan')),
+    plan_file TEXT,
+    provider TEXT,
+    model TEXT,
+    options_json TEXT,
+    compiled_spec_json TEXT,
+    qa_result_json TEXT,
+    task_id_map_json TEXT,
+    created_task_ids_json TEXT,
+    error TEXT,
+    logs_json TEXT,
+    checkpoints_json TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_expansion_runs_parent_task ON expansion_runs(parent_task_id, created_at DESC);
+CREATE INDEX idx_expansion_runs_status ON expansion_runs(status, created_at DESC);
 
 CREATE TABLE session_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -791,10 +822,6 @@ CREATE INDEX idx_auth_sessions_expires ON auth_sessions(expires_at);
 CREATE TABLE model_costs (
     model TEXT PRIMARY KEY,
     provider TEXT,
-    input_cost_per_token REAL NOT NULL,
-    output_cost_per_token REAL NOT NULL,
-    cache_read_cost_per_token REAL,
-    cache_creation_cost_per_token REAL,
     context_length INTEGER,
     max_completion_tokens INTEGER,
     source TEXT NOT NULL DEFAULT 'registry',
@@ -809,7 +836,6 @@ CREATE TABLE savings_ledger (
     original_tokens INTEGER NOT NULL,
     actual_tokens INTEGER NOT NULL,
     tokens_saved INTEGER NOT NULL,
-    cost_saved_usd REAL,
     model TEXT,
     metadata TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -1110,3 +1136,22 @@ CREATE TABLE checkpoints (
 CREATE INDEX idx_checkpoints_task ON checkpoints(task_id, created_at DESC);
 CREATE INDEX idx_checkpoints_session ON checkpoints(session_id);
 CREATE INDEX idx_checkpoints_run ON checkpoints(run_id);
+
+CREATE TABLE pending_interactions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    tool_name TEXT,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decision TEXT,
+    response_json TEXT,
+    timeout_seconds INTEGER NOT NULL DEFAULT 300,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT
+);
+CREATE INDEX idx_pending_interactions_session ON pending_interactions(session_id, status);
+CREATE UNIQUE INDEX idx_pending_interactions_active
+    ON pending_interactions(session_id, kind)
+    WHERE status = 'pending';

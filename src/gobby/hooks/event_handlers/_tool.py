@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.normalization import is_shell_tool
 
 logger = logging.getLogger(__name__)
+
+_GOBBY_TASKS_CLI_RE = re.compile(r"\b(?:uv\s+run\s+)?gobby\s+tasks\b")
+_GOBBY_TASKS_CLI_REASON = (
+    "The `gobby tasks` CLI is for humans. Use the gobby-tasks MCP server instead:\n"
+    "  - list_mcp_servers() -> confirm gobby-tasks is available\n"
+    "  - list_tools(server_name='gobby-tasks') -> see task tools\n"
+    "  - get_tool_schema(server_name='gobby-tasks', tool_name='<tool>') -> fetch params\n"
+    "  - call_tool(server_name='gobby-tasks', tool_name='<tool>', args={...})\n"
+    "Common equivalents: create_task, claim_task, update_task, close_task,\n"
+    "list_ready_tasks, get_task, list_tasks."
+)
 
 EDIT_TOOLS = {
     "write_file",
@@ -38,6 +51,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug(f"BEFORE_TOOL: {tool_name}")
 
+        block_response = self._maybe_block_gobby_tasks_cli(tool_name, input_data)
+        if block_response is not None:
+            return block_response
+
         # Intercept Skill tool calls to resolve gobby skills
         if tool_name == "Skill" and (self._skill_manager or self._call_tool):
             try:
@@ -58,6 +75,29 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 )
 
         return HookResponse(decision="allow")
+
+    def _maybe_block_gobby_tasks_cli(
+        self, tool_name: str, input_data: dict[str, Any]
+    ) -> HookResponse | None:
+        """Block native shell access to ``gobby tasks`` across adapters."""
+        if not is_shell_tool(tool_name):
+            return None
+
+        tool_input = input_data.get("tool_input", {})
+        command = ""
+        if isinstance(tool_input, dict):
+            command = str(tool_input.get("command", "") or "")
+        elif isinstance(tool_input, str):
+            command = tool_input
+
+        if not command or not _GOBBY_TASKS_CLI_RE.search(command):
+            return None
+
+        return HookResponse(
+            decision="block",
+            reason=_GOBBY_TASKS_CLI_REASON,
+            context=_GOBBY_TASKS_CLI_REASON,
+        )
 
     def _resolve_skill_tool_call(self, input_data: dict[str, Any]) -> HookResponse | None:
         """Resolve a Skill tool call via 4-tier fallback chain.
@@ -242,7 +282,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         has_claimed_task = False
                         if self._task_manager:
                             try:
-                                claimed_tasks = self._task_manager.list_tasks(assignee=session_id)
+                                claimed_tasks = self._task_manager.list_tasks(
+                                    claimed_by_session_id=session_id
+                                )
                                 has_claimed_task = len(claimed_tasks) > 0
                             except Exception as e:
                                 self.logger.debug(

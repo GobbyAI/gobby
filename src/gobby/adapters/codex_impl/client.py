@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess  # nosec B404 # subprocess needed for Codex app-server process
 import threading
 from collections.abc import AsyncIterator
@@ -126,6 +127,10 @@ class CodexAppServerClient:
         logger.debug("Starting Codex app-server...")
 
         try:
+            env = os.environ.copy()
+            # Prevent installed Codex hooks from registering nested daemon sessions.
+            env["GOBBY_HOOKS_DISABLED"] = "1"
+
             # Start the subprocess
             self._process = subprocess.Popen(  # nosec B603 # hardcoded argument list
                 [self._codex_command, "app-server"],
@@ -134,6 +139,7 @@ class CodexAppServerClient:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,  # Line buffered
+                env=env,
             )
 
             # Start the reader task
@@ -277,6 +283,7 @@ class CodexAppServerClient:
             preview=thread_data.get("preview", ""),
             model_provider=thread_data.get("modelProvider", "openai"),
             created_at=thread_data.get("createdAt", 0),
+            path=thread_data.get("path"),
         )
 
         self._threads[thread.id] = thread
@@ -301,6 +308,7 @@ class CodexAppServerClient:
             preview=thread_data.get("preview", ""),
             model_provider=thread_data.get("modelProvider", "openai"),
             created_at=thread_data.get("createdAt", 0),
+            path=thread_data.get("path"),
         )
 
         self._threads[thread.id] = thread
@@ -350,6 +358,44 @@ class CodexAppServerClient:
         await self._send_request("thread/archive", {"threadId": thread_id})
         self._threads.pop(thread_id, None)
         logger.debug(f"Archived Codex thread: {thread_id}")
+
+    async def list_models(
+        self,
+        *,
+        limit: int = 100,
+        include_hidden: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List Codex app-server models, following pagination when present."""
+        models: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+
+        while True:
+            params: dict[str, Any] = {
+                "limit": limit,
+                "includeHidden": include_hidden,
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            result = await self._send_request("model/list", params)
+            page = result.get("data", [])
+            if isinstance(page, list):
+                models.extend(item for item in page if isinstance(item, dict))
+
+            next_cursor_raw = result.get("nextCursor")
+            cursor = str(next_cursor_raw) if next_cursor_raw else None
+            if not cursor:
+                break
+            if cursor in seen_cursors:
+                logger.warning(
+                    "Codex model/list returned a repeated cursor (%s); stopping pagination",
+                    cursor,
+                )
+                break
+            seen_cursors.add(cursor)
+
+        return models
 
     # ===== Turn Management =====
 

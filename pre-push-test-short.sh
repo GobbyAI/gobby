@@ -59,6 +59,18 @@ else
 fi
 echo ""
 
+# ESLint - frontend linting
+echo ">>> Running frontend lint..."
+(cd web && npm run lint) 2>&1 | tee "$REPORTS_DIR/eslint-$TIMESTAMP.txt"
+eslint_status=${PIPESTATUS[0]}
+if [ "$eslint_status" -eq 0 ]; then
+    echo "✓ Frontend lint passed"
+else
+    echo "✗ Frontend lint failed"
+    FAILED=$((FAILED+1))
+fi
+echo ""
+
 # Bandit - security linting
 echo ">>> Running bandit..."
 uv run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$REPORTS_DIR/bandit-$TIMESTAMP.txt"

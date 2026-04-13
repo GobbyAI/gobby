@@ -1,12 +1,13 @@
 """Tests for the LLMService multi-provider support."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.config.app import DaemonConfig
+from gobby.config.app import DaemonConfig, LocalConfig
+from gobby.config.feature_base import ModelTier
 from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
-from gobby.config.sessions import SessionSummaryConfig
+from gobby.config.sessions import DigestConfig, SessionSummaryConfig
 from gobby.llm.service import LLMService
 
 pytestmark = pytest.mark.unit
@@ -263,3 +264,171 @@ class TestLLMServiceProperties:
         assert "LLMService" in repr_str
         assert "enabled=" in repr_str
         assert "initialized=" in repr_str
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Local provider integration
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestLLMServiceLocalProvider:
+    """Tests for local provider wiring in LLMService."""
+
+    @pytest.fixture
+    def llm_config_with_local(self) -> DaemonConfig:
+        return DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                claude=LLMProviderConfig(models="haiku,sonnet,opus"),
+            ),
+            local=LocalConfig(url="http://localhost:1234/v1", model="test-model"),
+        )
+
+    @patch("openai.AsyncOpenAI")
+    def test_get_provider_local(
+        self, mock_openai: MagicMock, llm_config_with_local: DaemonConfig
+    ) -> None:
+        from gobby.llm.local import LocalLLMProvider
+
+        service = LLMService(llm_config_with_local)
+        provider = service.get_provider("local")
+        assert isinstance(provider, LocalLLMProvider)
+
+    @patch("openai.AsyncOpenAI")
+    def test_get_provider_local_cached(
+        self, mock_openai: MagicMock, llm_config_with_local: DaemonConfig
+    ) -> None:
+        service = LLMService(llm_config_with_local)
+        p1 = service.get_provider("local")
+        p2 = service.get_provider("local")
+        assert p1 is p2
+
+    def test_get_provider_local_not_configured_raises(self, llm_config: DaemonConfig) -> None:
+        """local=None in config should raise ValueError."""
+        service = LLMService(llm_config)
+        with pytest.raises(ValueError, match="local"):
+            service.get_provider("local")
+
+    def test_enabled_providers_includes_local(self, llm_config_with_local: DaemonConfig) -> None:
+        service = LLMService(llm_config_with_local)
+        assert "local" in service.enabled_providers
+
+    def test_enabled_providers_excludes_local_when_not_configured(
+        self, llm_config: DaemonConfig
+    ) -> None:
+        service = LLMService(llm_config)
+        assert "local" not in service.enabled_providers
+
+
+class TestLLMServiceCallFeature:
+    """Tests for call_feature method with tier-based fallback."""
+
+    @pytest.fixture
+    def llm_config_with_local(self) -> DaemonConfig:
+        return DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                claude=LLMProviderConfig(models="haiku,sonnet,opus"),
+            ),
+            local=LocalConfig(url="http://localhost:1234/v1", model="test-model"),
+        )
+
+    @pytest.mark.asyncio
+    @patch("openai.AsyncOpenAI")
+    async def test_call_feature_success(
+        self, mock_openai: MagicMock, llm_config_with_local: DaemonConfig
+    ) -> None:
+        """call_feature routes through local provider successfully."""
+        service = LLMService(llm_config_with_local)
+        local_provider = service.get_provider("local")
+        local_provider.generate_text = AsyncMock(return_value="Fix Auth Bug")
+
+        config = DigestConfig(provider="local", model="test-model")
+        result = await service.call_feature(
+            config,
+            "prompt text",
+            caller="memory.title_synthesis",
+        )
+        assert result == "Fix Auth Bug"
+        assert local_provider.generate_text.await_args.kwargs["caller"] == "memory.title_synthesis"
+
+    @pytest.mark.asyncio
+    @patch("gobby.llm.claude.ClaudeLLMProvider")
+    @patch("openai.AsyncOpenAI")
+    async def test_call_feature_fallback_on_local_failure(
+        self,
+        mock_openai: MagicMock,
+        mock_claude_cls: MagicMock,
+        llm_config_with_local: DaemonConfig,
+    ) -> None:
+        """When local provider fails, falls back to Claude with tier model."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.generate_text = AsyncMock(return_value="Fallback Title")
+        mock_claude_cls.return_value = mock_claude_instance
+
+        service = LLMService(llm_config_with_local)
+        local_provider = service.get_provider("local")
+        local_provider.generate_text = AsyncMock(side_effect=ConnectionError("local server down"))
+
+        config = DigestConfig(provider="local", model="test-model")
+        result = await service.call_feature(
+            config,
+            "prompt text",
+            caller="memory.title_synthesis",
+        )
+
+        assert result == "Fallback Title"
+        # Should fall back to haiku (LOW tier). Inspect by inspecting bound
+        # arguments rather than positional index so the assertion survives
+        # signature changes.
+        mock_claude_instance.generate_text.assert_awaited_once()
+        call_args = mock_claude_instance.generate_text.call_args
+        # generate_text signature: (prompt, system_prompt, model, max_tokens)
+        bound_model = call_args.kwargs.get("model")
+        if bound_model is None and len(call_args.args) >= 3:
+            bound_model = call_args.args[2]
+        assert bound_model == "haiku"
+        assert call_args.kwargs["caller"] == "memory.title_synthesis"
+
+    @pytest.mark.asyncio
+    @patch("gobby.llm.claude.ClaudeLLMProvider")
+    @patch("openai.AsyncOpenAI")
+    async def test_call_feature_fallback_mid_tier(
+        self,
+        mock_openai: MagicMock,
+        mock_claude_cls: MagicMock,
+        llm_config_with_local: DaemonConfig,
+    ) -> None:
+        """MID tier features fall back to sonnet."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.generate_text = AsyncMock(return_value="Summary")
+        mock_claude_cls.return_value = mock_claude_instance
+
+        service = LLMService(llm_config_with_local)
+        local_provider = service.get_provider("local")
+        local_provider.generate_text = AsyncMock(side_effect=RuntimeError("down"))
+
+        config = SessionSummaryConfig(provider="local", model="test-model")
+        assert config.tier == ModelTier.MID
+
+        result = await service.call_feature(config, "prompt text")
+        assert result == "Summary"
+        call_args = mock_claude_instance.generate_text.call_args
+        bound_model = call_args.kwargs.get("model")
+        if bound_model is None and len(call_args.args) >= 3:
+            bound_model = call_args.args[2]
+        assert bound_model == "sonnet"
+
+    @pytest.mark.asyncio
+    @patch("gobby.llm.claude.ClaudeLLMProvider")
+    async def test_call_feature_non_local_does_not_fallback(
+        self, mock_claude_cls: MagicMock, llm_config: DaemonConfig
+    ) -> None:
+        """Non-local provider failures propagate normally."""
+        mock_claude_instance = MagicMock()
+        mock_claude_instance.generate_text = AsyncMock(side_effect=RuntimeError("claude error"))
+        mock_claude_cls.return_value = mock_claude_instance
+
+        service = LLMService(llm_config)
+        config = DigestConfig(provider="claude", model="haiku")
+
+        with pytest.raises(RuntimeError, match="claude error"):
+            await service.call_feature(config, "prompt text")

@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks._search import create_search_registry
+from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry, create_search_registry
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
@@ -407,14 +407,14 @@ class TestSearchTasksAllFilters:
 
 
 class TestReindexTasks:
-    """Tests for the reindex_tasks tool."""
+    """Tests for the reindex_tasks tool (now in create_reindex_registry)."""
 
     def test_successful_reindex(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         ctx.task_manager = MagicMock()
         ctx.task_manager.reindex_search.return_value = {"item_count": 50}
 
-        registry = create_search_registry(ctx)
+        registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
 
         result = func()
@@ -427,7 +427,7 @@ class TestReindexTasks:
         ctx.task_manager = MagicMock()
         ctx.task_manager.reindex_search.return_value = {"item_count": 10}
 
-        registry = create_search_registry(ctx)
+        registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
 
         func(project="my-project")
@@ -439,7 +439,7 @@ class TestReindexTasks:
         ctx.task_manager = MagicMock()
         ctx.task_manager.reindex_search.return_value = {"item_count": 100}
 
-        registry = create_search_registry(ctx)
+        registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
 
         func(all_projects=True)
@@ -450,7 +450,7 @@ class TestReindexTasks:
         ctx = _make_ctx(task_manager)
         ctx.resolve_project_filter.side_effect = ValueError("Project not found: bad")
 
-        registry = create_search_registry(ctx)
+        registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
 
         result = func(project="bad")
@@ -466,7 +466,7 @@ class TestReindexTasks:
         ctx.task_manager = MagicMock()
         ctx.task_manager.reindex_search.return_value = {}
 
-        registry = create_search_registry(ctx)
+        registry = create_reindex_registry(ctx)
         func = registry.get_tool("reindex_tasks")
 
         result = func()
@@ -488,15 +488,15 @@ class TestRegistryStructure:
         registry = create_search_registry(ctx)
         assert registry.get_tool("search_tasks") is not None
 
-    def test_registry_has_reindex_tasks_tool(self, task_manager: LocalTaskManager) -> None:
+    def test_reindex_registry_has_reindex_tasks_tool(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
-        registry = create_search_registry(ctx)
+        registry = create_reindex_registry(ctx)
         assert registry.get_tool("reindex_tasks") is not None
 
-    def test_registry_has_two_tools(self, task_manager: LocalTaskManager) -> None:
+    def test_search_registry_has_one_tool(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)
         registry = create_search_registry(ctx)
-        assert len(registry) == 2
+        assert len(registry) == 1
 
     def test_registry_name(self, task_manager: LocalTaskManager) -> None:
         ctx = _make_ctx(task_manager)

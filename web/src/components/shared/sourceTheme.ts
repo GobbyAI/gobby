@@ -1,0 +1,34 @@
+export const SOURCE_COLORS: Record<string, string> = {
+  claude: '#c084fc',
+  gemini: '#4ade80',
+  codex: '#3b82f6',
+  pipeline: '#737373',
+  cron: '#a3a3a3',
+  unknown: '#737373',
+  default: '#737373',
+}
+
+export const SOURCE_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  gemini: 'Gemini',
+  codex: 'Codex',
+  pipeline: 'Pipeline',
+  cron: 'Cron',
+  claude_code: 'Claude Code',
+  claude_sdk: 'Claude SDK',
+  claude_sdk_web_chat: 'Claude SDK Web Chat',
+  cursor: 'Cursor',
+  windsurf: 'Windsurf',
+  copilot: 'Copilot',
+}
+
+export const PROVIDER_COLORS: Record<string, string> = {
+  inherit: '#9ca3af',
+  claude: SOURCE_COLORS.claude,
+  gemini: SOURCE_COLORS.gemini,
+  codex: SOURCE_COLORS.codex,
+  cursor: '#3b82f6',
+  windsurf: '#14b8a6',
+  copilot: '#f97316',
+  unknown: SOURCE_COLORS.unknown,
+}

@@ -11,14 +11,18 @@ Contains session-related Pydantic config models:
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
+
+from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
 
 __all__ = [
     "ChatHistoryConfig",
+    "ContextCompressionConfig",
     "ContextInjectionConfig",
     "DigestConfig",
     "SessionSummaryConfig",
-    "SessionTitleConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
 ]
@@ -91,20 +95,40 @@ class ContextInjectionConfig(BaseModel):
         return v
 
 
-class SessionSummaryConfig(BaseModel):
+class ContextCompressionConfig(BaseModel):
+    """Context compression settings for additionalContext injection.
+
+    Controls prose compression via ``gsqz input`` before the 9,950-char
+    truncation limit.  Compression is injection-time only — stored content
+    (memories, embeddings, FTS indexes) is never modified.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable prose compression before context truncation",
+    )
+    level: Literal["lite", "standard", "aggressive"] = Field(
+        default="standard",
+        description="Compression aggressiveness: "
+        "'lite' (articles only), 'standard' (articles + filler), "
+        "'aggressive' (maximum compression)",
+    )
+
+
+class SessionSummaryConfig(FeatureDefaultConfig):
     """Session summary generation configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable LLM-based session summary generation",
     )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for session summary",
-    )
     model: str = Field(
         default="sonnet",
         description="Model to use for session summary generation",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.MID,
+        description="Complexity tier — determines fallback model when local provider fails",
     )
     prompt: str = Field(
         default="""Generate a concise session summary for handoff to another agent or future session.
@@ -136,38 +160,17 @@ Be concise. Focus on what the next agent needs to know to continue effectively."
     )
 
 
-class DigestConfig(BaseModel):
+class DigestConfig(FeatureDefaultConfig):
     """Rolling digest and title generation configuration."""
 
     enabled: bool = Field(
         default=True,
         description="Enable background digest and title generation",
     )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for digest generation",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for digest generation",
-    )
-
-
-class SessionTitleConfig(BaseModel):
-    """Configuration for session title synthesis LLM calls."""
-
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for title synthesis",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for title synthesis (fast/cheap recommended)",
-    )
     timeout: int = Field(
         default=30,
         gt=0,
-        description="Timeout in seconds for the LLM call (default 30s to accommodate CLI subprocess cold start)",
+        description="Timeout in seconds for digest/title LLM calls (default 30s).",
     )
 
 

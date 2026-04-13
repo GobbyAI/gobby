@@ -1,5 +1,16 @@
 import { useState } from 'react'
 import type { AdminStatus } from '../../hooks/useDashboard'
+import { Badge } from '../chat/ui/Badge'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardHealthDotClass,
+  dashboardHealthGridClass,
+  dashboardHealthHeaderClass,
+  dashboardHealthNameClass,
+  dashboardHealthRowClass,
+  dashboardToggleButtonClass,
+  dashboardTransportBadgeVariant,
+} from './dashboardStyles'
 
 interface Props {
   mcpServers: AdminStatus['mcp_servers']
@@ -20,61 +31,58 @@ export function McpHealthCard({ mcpServers }: Props) {
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">MCP Servers</h3>
-        {allHealthy && (
-          <span className="dash-status-badge dash-status-badge--healthy">
-            all connected
-          </span>
-        )}
-      </div>
-      <div className="dash-card-body">
-        <div className="dash-health-header">
-          <span className={`dash-health-dot dash-health-dot--${allHealthy ? 'healthy' : 'degraded'}`} />
+    <DashboardCard
+      title="MCP Servers"
+      action={
+        allHealthy ? (
+          <Badge variant="success">all connected</Badge>
+        ) : undefined
+      }
+    >
+      <div className={dashboardHealthHeaderClass}>
+          <span className={`size-2 shrink-0 rounded-full ${dashboardHealthDotClass(allHealthy ? 'healthy' : 'degraded')}`} />
           {' '}{connected}/{entries.length} connected
-        </div>
-
-        {/* Always show unhealthy servers */}
-        {unhealthy.length > 0 && (
-          <div className="dash-health-grid">
-            {unhealthy.map(([name, server]) => (
-              <div key={name} className="dash-health-row">
-                <span className={`dash-health-dot dash-health-dot--${healthClass(server.health)}`} />
-                <span className="dash-health-name">{name}</span>
-                <span className={`dash-health-transport dash-health-transport--${server.transport}`}>
-                  {server.transport}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Collapsible healthy servers */}
-        {healthy.length > 0 && (
-          <>
-            <button
-              className="dash-mcp-toggle"
-              onClick={() => setExpanded(!expanded)}
-            >
-              {expanded ? 'Hide' : 'Show'} {healthy.length} healthy server{healthy.length !== 1 ? 's' : ''}
-            </button>
-            {expanded && (
-              <div className="dash-health-grid">
-                {healthy.map(([name, server]) => (
-                  <div key={name} className="dash-health-row">
-                    <span className={`dash-health-dot dash-health-dot--${healthClass(server.health)}`} />
-                    <span className="dash-health-name">{name}</span>
-                    <span className={`dash-health-transport dash-health-transport--${server.transport}`}>
-                      {server.transport}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
       </div>
-    </div>
+
+      {/* Always show unhealthy servers */}
+      {unhealthy.length > 0 && (
+        <div className={dashboardHealthGridClass}>
+          {unhealthy.map(([name, server]) => (
+            <div key={name} className={dashboardHealthRowClass}>
+              <span className={`size-2 shrink-0 rounded-full ${dashboardHealthDotClass(healthClass(server.health))}`} />
+              <span className={dashboardHealthNameClass}>{name}</span>
+              <Badge variant={dashboardTransportBadgeVariant(server.transport)} className="px-2 py-0 text-[10px] uppercase tracking-[0.03em]">
+                  {server.transport}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Collapsible healthy servers */}
+      {healthy.length > 0 && (
+        <>
+          <button
+            className={dashboardToggleButtonClass}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? 'Hide' : 'Show'} {healthy.length} healthy server{healthy.length !== 1 ? 's' : ''}
+          </button>
+          {expanded && (
+            <div className={dashboardHealthGridClass}>
+              {healthy.map(([name, server]) => (
+                <div key={name} className={dashboardHealthRowClass}>
+                  <span className={`size-2 shrink-0 rounded-full ${dashboardHealthDotClass(healthClass(server.health))}`} />
+                  <span className={dashboardHealthNameClass}>{name}</span>
+                  <Badge variant={dashboardTransportBadgeVariant(server.transport)} className="px-2 py-0 text-[10px] uppercase tracking-[0.03em]">
+                      {server.transport}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </DashboardCard>
   )
 }

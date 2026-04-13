@@ -621,7 +621,7 @@ class TestMarkTaskReviewApproved:
     async def test_approve_with_notes(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="needs_review", description="Original desc")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.update_task.return_value = task
+        mock_task_manager.mark_task_review_approved.return_value = task
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
@@ -632,15 +632,16 @@ class TestMarkTaskReviewApproved:
             },
         )
         assert "error" not in result
-        # Verify description was updated with approval notes
-        call_kwargs = mock_task_manager.update_task.call_args
-        assert "Approval Notes" in call_kwargs.kwargs.get("description", "")
+        mock_task_manager.mark_task_review_approved.assert_called_once_with(
+            task.id,
+            approval_notes="Looks good",
+        )
 
     @pytest.mark.asyncio
     async def test_approve_update_fails(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="needs_review")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.update_task.return_value = None
+        mock_task_manager.mark_task_review_approved.return_value = None
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
@@ -668,7 +669,7 @@ class TestMarkTaskNeedsReview:
     async def test_mark_needs_review_success(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.update_task.return_value = task
+        mock_task_manager.mark_task_needs_review.return_value = task
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
@@ -681,7 +682,7 @@ class TestMarkTaskNeedsReview:
     async def test_mark_needs_review_with_notes(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="in_progress", description="Original")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.update_task.return_value = task
+        mock_task_manager.mark_task_needs_review.return_value = task
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
@@ -692,14 +693,16 @@ class TestMarkTaskNeedsReview:
             },
         )
         assert "error" not in result
-        call_kwargs = mock_task_manager.update_task.call_args
-        assert "Review Notes" in call_kwargs.kwargs.get("description", "")
+        mock_task_manager.mark_task_needs_review.assert_called_once_with(
+            task.id,
+            review_notes="Please check the output",
+        )
 
     @pytest.mark.asyncio
     async def test_mark_needs_review_update_fails(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.update_task.return_value = None
+        mock_task_manager.mark_task_needs_review.return_value = None
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(

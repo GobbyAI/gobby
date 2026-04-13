@@ -82,6 +82,13 @@ _API_KEY_PROMPTS = [
         "description": "Linear MCP server authentication",
     },
     {
+        "secret_name": "brave_api_key",
+        "env_var": "BRAVE_API_KEY",
+        "label": "Brave Search API Key",
+        "category": "mcp_server",
+        "description": "Brave Search MCP server authentication",
+    },
+    {
         "secret_name": "openai_api_key",
         "env_var": "OPENAI_API_KEY",
         "label": "OpenAI API Key",
@@ -416,6 +423,109 @@ def _run_embedding_install(
     click.echo("")
 
     return provider
+
+
+def _run_voice_install(
+    results: dict[str, dict[str, Any]],
+    voice_flag: bool = False,
+    no_interactive: bool = False,
+) -> None:
+    """Interactive voice chat setup.
+
+    Installs voice dependencies (faster-whisper, chatterbox, torchaudio, torch)
+    and enables voice in daemon config. Skipped by default in non-interactive mode.
+
+    Args:
+        results: Results dict to accumulate install outcomes
+        voice_flag: If True, install voice deps without prompting
+        no_interactive: If True, skip the prompt (only install if voice_flag is set)
+    """
+    install_voice = voice_flag
+
+    if not install_voice and not no_interactive:
+        click.echo("-" * 40)
+        click.echo("Voice Chat (Optional)")
+        click.echo("-" * 40)
+        click.echo("Voice adds speech-to-text and text-to-speech with voice cloning.")
+        click.echo("Requires ~500MB of additional packages (PyTorch, Chatterbox).")
+        click.echo("")
+
+        try:
+            install_voice = click.confirm("Enable voice chat?", default=False)
+        except (click.Abort, EOFError):
+            click.echo("")
+            install_voice = False
+
+        click.echo("")
+
+    if not install_voice:
+        return
+
+    click.echo("-" * 40)
+    click.echo("Installing Voice Dependencies")
+    click.echo("-" * 40)
+
+    import subprocess
+    import sys
+
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "uv",
+                "pip",
+                "install",
+                "faster-whisper>=1.0.0",
+                "kokoro-onnx>=0.5.0",
+                "chatterbox-tts",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+        if proc.returncode == 0:
+            click.echo("Voice packages installed successfully")
+            results["voice"] = {"success": True}
+
+            # Enable voice in daemon config
+            try:
+                from gobby.storage.database import LocalDatabase
+
+                db = LocalDatabase()
+                with db.transaction() as conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO daemon_config (key, value) VALUES (?, ?)",
+                        ("voice.enabled", "true"),
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO daemon_config (key, value) VALUES (?, ?)",
+                        ("voice.tts_provider", "chatterbox"),
+                    )
+                click.echo("Voice enabled in daemon config")
+            except Exception as e:
+                logger.warning(f"Failed to update daemon config: {e}")
+                click.echo(f"  Warning: Could not enable voice in config: {e}")
+                click.echo("  Enable manually: set voice.enabled=true in config")
+
+            click.echo("")
+            click.echo("Next: place a 10-20s voice reference WAV at:")
+            click.echo("  ~/.gobby/voice/reference.wav")
+            click.echo("")
+            click.echo("See docs/guides/voice.md for how to sample from YouTube.")
+        else:
+            click.echo("Failed to install voice packages:", err=True)
+            click.echo(proc.stderr[:500] if proc.stderr else "(no error output)", err=True)
+            results["voice"] = {"success": False, "error": "pip install failed"}
+    except subprocess.TimeoutExpired:
+        click.echo("Voice package installation timed out (10 min limit)", err=True)
+        results["voice"] = {"success": False, "error": "install timeout"}
+    except Exception as e:
+        click.echo(f"Failed: {e}", err=True)
+        results["voice"] = {"success": False, "error": str(e)}
+
+    click.echo("")
 
 
 def _run_neo4j_install(

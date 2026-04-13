@@ -57,6 +57,7 @@ class TestAgentRun:
         assert agent_from_row.parent_session_id == sample_session["id"]
         assert agent_from_row.provider == "claude"
         assert agent_from_row.prompt == "Test prompt"
+        assert agent_from_row.claimed_session_id is None
         assert agent_from_row.workflow_name == "test-workflow"
         assert agent_from_row.model == "claude-3-opus"
         assert agent_from_row.status == "pending"
@@ -108,6 +109,7 @@ class TestAgentRun:
         assert d["model"] == "gemini-pro"
         assert d["status"] == "pending"
         assert d["child_session_id"] is None
+        assert d["claimed_session_id"] is None
         assert d["result"] is None
         assert d["error"] is None
         assert d["tool_calls_count"] == 0
@@ -137,6 +139,7 @@ class TestAgentRun:
             "id",
             "parent_session_id",
             "child_session_id",
+            "claimed_session_id",
             "workflow_name",
             "provider",
             "model",
@@ -224,6 +227,21 @@ class TestLocalAgentRunManager:
         )
 
         assert agent_run.child_session_id == child_session.id
+
+    def test_create_agent_run_with_claimed_session(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Test creating agent run with persisted claimed session ownership."""
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Task with owner",
+            claimed_session_id=sample_session["id"],
+        )
+
+        assert agent_run.claimed_session_id == sample_session["id"]
 
     def test_create_logs_debug(
         self,

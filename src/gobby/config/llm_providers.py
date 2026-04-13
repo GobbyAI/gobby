@@ -3,7 +3,7 @@ LLM providers configuration module.
 
 Contains LLM-related Pydantic config models:
 - LLMProviderConfig: Single provider config (models, auth_mode)
-- LLMProvidersConfig: Multi-provider config (claude, codex)
+- LLMProvidersConfig: Multi-provider config (claude, codex, gemini)
 
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
@@ -20,6 +20,11 @@ class LLMProviderConfig(BaseModel):
 
     models: str = Field(
         description="Comma-separated list of available models for this provider",
+    )
+    default_model: str | None = Field(
+        default=None,
+        description="Default model for this provider when callers don't specify one. "
+        "Falls back to LLMProvidersConfig.default_model if not set.",
     )
     auth_mode: Literal["subscription", "api_key", "adc"] = Field(
         default="subscription",
@@ -42,7 +47,10 @@ class LLMProvidersConfig(BaseModel):
       claude:
         models: haiku,sonnet,opus
       codex:
-        models: gpt-4o-mini,gpt-5-mini,gpt-5
+        models: gpt-5.4,gpt-5.4-mini,gpt-5.3-codex,gpt-5.3-codex-spark
+        auth_mode: subscription
+      gemini:
+        models: gemini-3.1-pro-preview,gemini-3-flash-preview
         auth_mode: subscription
     ```
     """
@@ -69,6 +77,10 @@ class LLMProvidersConfig(BaseModel):
         default=None,
         description="Codex (OpenAI) provider configuration",
     )
+    gemini: LLMProviderConfig | None = Field(
+        default=None,
+        description="Gemini provider configuration",
+    )
 
     def get_enabled_providers(self) -> list[str]:
         """Return list of enabled provider names."""
@@ -77,4 +89,6 @@ class LLMProvidersConfig(BaseModel):
             providers.append("claude")
         if self.codex:
             providers.append("codex")
+        if self.gemini:
+            providers.append("gemini")
         return providers

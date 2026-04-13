@@ -102,6 +102,7 @@ class WebSocketServer(
         self.webhook_dispatcher: WebhookDispatcher | None = None
         self.hook_broadcaster: HookEventBroadcaster | None = None
         self.inter_session_msg_manager: InterSessionMessageManager | None = None
+        self.web_chat_runtime_manager: Any | None = None
 
         # Connected clients: {websocket: client_metadata}
         self.clients: dict[Any, dict[str, Any]] = {}
@@ -120,6 +121,12 @@ class WebSocketServer(
 
         # Pending agent name overrides queued before session creation
         self._pending_agents: dict[str, str] = {}
+
+        # Pending project overrides queued before session creation
+        self._pending_projects: dict[str, str] = {}
+
+        # Pending provider overrides queued before session creation
+        self._pending_providers: dict[str, str] = {}
 
         # Dispatch table for message routing (lazily populated in _handle_message)
         self._dispatch_table: dict[str, Callable[..., Coroutine[Any, Any, None]]] = {}
@@ -185,8 +192,8 @@ class WebSocketServer(
                 )
             )
 
-            # Re-broadcast pending plan approvals for sessions orphaned by restart
-            await self._rebroadcast_pending_plans(websocket)
+            # Re-broadcast pending interactions for active conversations
+            await self._rebroadcast_pending_interactions(websocket, active_conversations)
 
             # Message processing loop
             async for message in websocket:
@@ -256,12 +263,14 @@ class WebSocketServer(
                 "set_project": self._handle_set_project,
                 "set_worktree": self._handle_set_worktree,
                 "set_agent": self._handle_set_agent,
+                "set_provider": self._handle_set_provider,
                 "continue_in_chat": self._handle_continue_in_chat,
                 "attach_to_session": self._handle_attach_to_session,
                 "detach_from_session": self._handle_detach_from_session,
                 "send_to_cli_session": self._handle_send_to_cli_session,
                 "voice_audio": self._handle_voice_audio,
                 "voice_mode_toggle": self._handle_voice_mode_toggle,
+                "voice_prepare": self._handle_voice_prepare,
                 "tts_stop": self._handle_tts_stop,
                 "canvas_interaction": self._handle_canvas_interaction,
                 "heartbeat": self._handle_heartbeat,

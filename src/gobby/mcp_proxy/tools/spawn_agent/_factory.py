@@ -346,7 +346,7 @@ def create_spawn_agent_registry(
         name="dispatch_batch",
         description=(
             "Dispatch multiple agents in parallel for non-conflicting tasks. "
-            "Takes task briefs from suggest_next_tasks and spawns an agent for each. "
+            "Takes task briefs from suggest_next_task and spawns an agent for each. "
             "Uses asyncio.gather for concurrent spawning."
         ),
     )
@@ -366,7 +366,7 @@ def create_spawn_agent_registry(
         """Dispatch multiple agents for non-conflicting tasks.
 
         Args:
-            suggestions: Task briefs from suggest_next_tasks output
+            suggestions: Task briefs from suggest_next_task output
             agent: Agent definition name (default: "developer")
             worktree_id: Shared worktree ID for all agents
             clone_id: Existing clone ID for all agents

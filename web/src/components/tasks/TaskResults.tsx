@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import type { GobbyTaskDetail } from '../../hooks/useTasks'
+import { getCanonicalTaskState, getTaskBucket, TASK_BUCKET_COLORS, TASK_BUCKET_LABELS } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -53,10 +54,13 @@ function formatDate(iso: string): string {
     + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
-function outcomeLabel(reason: string | null, status: string): { text: string; color: string } {
-  if (status === 'review_approved') return { text: 'Approved', color: '#22c55e' }
-  if (status === 'closed') {
-    switch (reason) {
+function outcomeLabel(task: GobbyTaskDetail): { text: string; color: string } {
+  const bucket = getTaskBucket(task)
+  const state = getCanonicalTaskState(task)
+
+  if (bucket === 'merge_ready') return { text: 'Approved', color: TASK_BUCKET_COLORS.merge_ready }
+  if (bucket === 'closed') {
+    switch (state.closed_reason) {
       case 'completed': return { text: 'Completed', color: '#22c55e' }
       case 'duplicate': return { text: 'Duplicate', color: '#737373' }
       case 'wont_fix': return { text: "Won't Fix", color: '#737373' }
@@ -65,9 +69,13 @@ function outcomeLabel(reason: string | null, status: string): { text: string; co
       default: return { text: 'Closed', color: '#22c55e' }
     }
   }
-  if (status === 'failed') return { text: 'Failed', color: '#ef4444' }
-  if (status === 'escalated') return { text: 'Escalated', color: '#eab308' }
-  return { text: status.replace(/_/g, ' '), color: '#737373' }
+  if (state.is_escalated) {
+    return { text: 'Escalated', color: '#f87171' }
+  }
+  if (bucket === 'blocked') {
+    return { text: 'Blocked', color: TASK_BUCKET_COLORS.blocked }
+  }
+  return { text: TASK_BUCKET_LABELS[bucket], color: TASK_BUCKET_COLORS[bucket] }
 }
 
 const VALIDATION_COLORS: Record<string, string> = {
@@ -88,11 +96,14 @@ interface TaskResultsProps {
 export function TaskResults({ task }: TaskResultsProps) {
   const sections = useMemo(() => {
     const result: ResultSection[] = []
+    const bucket = getTaskBucket(task)
+    const state = getCanonicalTaskState(task)
 
     // Outcome summary
-    const isDone = ['closed', 'review_approved'].includes(task.status)
+    const isDone = bucket === 'closed' || bucket === 'merge_ready' || state.is_escalated
     if (isDone) {
-      const outcome = outcomeLabel(task.closed_reason, task.status)
+      const outcome = outcomeLabel(task)
+      const outcomeDate = task.closed_at || (bucket !== 'closed' ? task.updated_at : null)
       result.push({
         key: 'outcome',
         label: 'Outcome',
@@ -102,8 +113,8 @@ export function TaskResults({ task }: TaskResultsProps) {
               <CheckIcon />
               {outcome.text}
             </span>
-            {task.closed_at && (
-              <span className="task-results-date">{formatDate(task.closed_at)}</span>
+            {outcomeDate && (
+              <span className="task-results-date">{formatDate(outcomeDate)}</span>
             )}
           </div>
         ),

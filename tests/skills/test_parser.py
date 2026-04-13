@@ -239,14 +239,14 @@ name: test
 description: test
 metadata:
   gobby:
-    sources: ["claude_sdk_web_chat"]
+    sources: ["claude"]
 ---
 
 Content
 """
         skill = parse_skill_text(text)
         assert skill.audience_config is not None
-        assert skill.audience_config.sources == ["claude_sdk_web_chat"]
+        assert skill.audience_config.sources == ["claude"]
 
     def test_parse_sources_single_string(self) -> None:
         """Test coerces string to list."""
@@ -255,14 +255,14 @@ name: test
 description: test
 metadata:
   gobby:
-    sources: "claude_sdk_web_chat"
+    sources: "claude"
 ---
 
 Content
 """
         skill = parse_skill_text(text)
         assert skill.audience_config is not None
-        assert skill.audience_config.sources == ["claude_sdk_web_chat"]
+        assert skill.audience_config.sources == ["claude"]
 
     def test_missing_name_raises_error(self) -> None:
         """Test that missing name raises error."""

@@ -370,7 +370,7 @@ class TestGenerateJson:
 
     @pytest.mark.asyncio
     async def test_generate_json_sdk_invalid_json(self, claude_config: DaemonConfig) -> None:
-        """SDK path raises ValueError on invalid JSON."""
+        """SDK path raises ValueError with response snippet on invalid JSON."""
 
         async def mock_query(prompt: str, options: object) -> object:
             yield MockAssistantMessage([MockTextBlock("not json")])
@@ -380,8 +380,25 @@ class TestGenerateJson:
 
             provider = ClaudeLLMProvider(claude_config)
 
-            with pytest.raises(ValueError, match="Failed to parse"):
+            with pytest.raises(ValueError, match="not json"):
                 await provider._generate_json_sdk("Generate JSON")
+
+    @pytest.mark.asyncio
+    async def test_generate_json_sdk_markdown_fence_fallback(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        """SDK path extracts JSON from markdown-fenced response."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockAssistantMessage([MockTextBlock('```json\n{"entities": []}\n```')])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider._generate_json_sdk("Generate JSON")
+
+            assert result == {"entities": []}
 
 
 # ─── describe_image tests ───────────────────────────────────────────────

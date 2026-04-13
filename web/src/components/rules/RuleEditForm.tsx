@@ -3,6 +3,7 @@ import { SidebarPanel } from "../shared/SidebarPanel";
 import { CodeMirrorEditor } from "../shared/CodeMirrorEditor";
 import { ExpressionBuilder } from "./ExpressionBuilder";
 import { useMcp, type McpToolSchema } from "../../hooks/useMcp";
+import type { RuleFormData } from "./ruleFormData";
 import "./RuleEditForm.css";
 
 const RULE_EVENTS = [
@@ -39,30 +40,6 @@ export interface RuleEditFormProps {
   onYamlSave: () => void;
   conflictWarning?: string | null;
 }
-
-export interface RuleFormData {
-  name: string;
-  event: string;
-  description: string;
-  priority: number;
-  enabled: boolean;
-  group: string;
-  tags: string[];
-  when: string;
-  effect: { type: string; [key: string]: unknown };
-}
-
-export const DEFAULT_RULE_FORM: RuleFormData = {
-  name: "",
-  event: "before_tool",
-  description: "",
-  priority: 100,
-  enabled: true,
-  group: "",
-  tags: [],
-  when: "",
-  effect: { type: "block", reason: "" },
-};
 
 function MetaRow({
   label,

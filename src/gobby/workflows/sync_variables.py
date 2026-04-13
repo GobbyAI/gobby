@@ -1,7 +1,10 @@
 """Variable definition synchronization from bundled YAML templates.
 
 Single-row model: templates live on disk only. The DB holds installed rows
-directly — no intermediate template rows, no propagation.
+directly. **Existing active installed rows are not modified during sync** —
+drift between the on-disk template and the DB row is detected via hash
+comparison at runtime, not corrected here. Soft-deleted rows are not
+restored.
 """
 
 import json
@@ -36,8 +39,10 @@ def sync_bundled_variables(
 ) -> dict[str, Any]:
     """Sync variable definitions from YAML files to the database.
 
-    Creates installed rows directly from template files. Existing rows are
-    never overwritten — drift is detected via hash comparison at runtime.
+    Creates installed rows directly from template files. **Existing active
+    installed rows are not modified during sync** — drift is detected via
+    hash comparison at runtime, not corrected here. Soft-deleted rows are
+    not restored.
 
     Args:
         db: Database connection.
@@ -151,8 +156,9 @@ def _sync_single_variable(
 ) -> None:
     """Sync a single variable to workflow_definitions.
 
-    Creates an installed row if none exists. Skips if the variable already
-    exists in the DB (drift is detected at runtime, not overwritten here).
+    Creates an installed row if none exists. **Existing active installed
+    rows are not modified** — drift is detected via hash comparison at
+    runtime, not corrected during sync. Soft-deleted rows are not restored.
     """
     from gobby.workflows.definitions import VariableDefinitionBody
 
@@ -174,7 +180,13 @@ def _sync_single_variable(
     existing = manager.get_by_name(var_name, include_deleted=True)
 
     if existing is not None:
-        # Respect soft-deletes and existing rows — skip
+        if existing.deleted_at is not None:
+            result["skipped"] += 1
+            return
+
+        # Row exists and is active — skip (no overwrite).
+        # Drift between the on-disk template and the DB row is detected
+        # via hash comparison at runtime, not corrected during sync.
         result["skipped"] += 1
         return
 

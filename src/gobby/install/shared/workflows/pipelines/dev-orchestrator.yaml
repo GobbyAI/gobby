@@ -1,18 +1,20 @@
 name: dev-orchestrator
 type: pipeline
-version: "1.0"
+version: "1.1"
 description: |
   Simplified tick-based orchestration: dispatches developer agents only.
   No QA, no merge, no epic close. Work stays on the isolation branch
   for manual review and merge.
 
-  "Done" = no open or in_progress tasks remaining.
+  "Done" = no unclaimed implementation work, no claimed active work,
+  and no unresolved escalations remaining.
 
 outputs:
   orchestration_complete: "${{ done_check.output.orchestration_complete if done_check.output else false }}"
   is_standalone: "${{ standalone_check.output.is_standalone if standalone_check.output else false }}"
-  open_count: "${{ len(scan_open.output.tasks) if scan_open.output else 0 }}"
-  in_progress_count: "${{ len(scan_in_progress.output.tasks) if scan_in_progress.output else 0 }}"
+  developer_queue_count: "${{ len(scan_developer_queue.output.tasks) if scan_developer_queue.output else 0 }}"
+  active_claim_count: "${{ len(scan_active_claims.output.tasks) if scan_active_claims.output else 0 }}"
+  escalated_count: "${{ len(scan_escalated.output.tasks) if scan_escalated.output else 0 }}"
 
 inputs:
   task_id: null
@@ -46,21 +48,56 @@ steps:
     exec: "git fetch origin"
 
   # --- SCAN CHILD TASKS ---
-  - id: scan_open
+  - id: scan_children
     mcp:
       server: gobby-tasks
       tool: list_tasks
       arguments:
         parent_task_id: "${{ inputs.task_id }}"
-        status: "open"
+        limit: 1
 
-  - id: scan_in_progress
+  - id: scan_developer_queue
     mcp:
       server: gobby-tasks
       tool: list_tasks
       arguments:
         parent_task_id: "${{ inputs.task_id }}"
-        status: "in_progress"
+        status: ["open", "in_progress"]
+        claimed: false
+
+  - id: scan_active_claims
+    mcp:
+      server: gobby-tasks
+      tool: list_tasks
+      arguments:
+        parent_task_id: "${{ inputs.task_id }}"
+        claimed: true
+        closed: false
+
+  - id: scan_escalated
+    mcp:
+      server: gobby-tasks
+      tool: list_tasks
+      arguments:
+        parent_task_id: "${{ inputs.task_id }}"
+        status: "escalated"
+        claimed: false
+
+  - id: scan_ready_tasks
+    mcp:
+      server: gobby-tasks
+      tool: list_ready_tasks
+      arguments:
+        parent_task_id: "${{ inputs.task_id }}"
+        limit: "${{ inputs.max_concurrent }}"
+
+  - id: select_ready_unclaimed
+    mcp:
+      server: gobby-workflows
+      tool: pipeline_eval
+      arguments:
+        data:
+          tasks: "${{ [t for t in (scan_ready_tasks.output.tasks if scan_ready_tasks.output else []) if not t.get('state', {}).get('is_claimed', False)] }}"
 
   # --- DETECT STANDALONE vs EPIC ---
   - id: standalone_check
@@ -69,7 +106,7 @@ steps:
       tool: pipeline_eval
       arguments:
         data:
-          is_standalone: "${{ len(scan_open.output.tasks) == 0 and len(scan_in_progress.output.tasks) == 0 }}"
+          is_standalone: "${{ len(scan_children.output.tasks) == 0 }}"
 
   - id: get_standalone_task
     condition: "${{ standalone_check.output.is_standalone }}"
@@ -88,9 +125,16 @@ steps:
         data:
           orchestration_complete: >-
             ${{
-              (standalone_check.output.is_standalone and get_standalone_task.output and get_standalone_task.output.status in ('closed', 'needs_review', 'review_approved'))
+              (standalone_check.output.is_standalone
+               and get_standalone_task.output
+               and (get_standalone_task.output.get('state', {}).get('is_closed', False)
+                    or ((get_standalone_task.output.get('status') in ('needs_review', 'review_approved'))
+                        and not get_standalone_task.output.get('state', {}).get('is_claimed', False))))
               or
-              (not standalone_check.output.is_standalone and len(scan_open.output.tasks) == 0 and len(scan_in_progress.output.tasks) == 0)
+              (not standalone_check.output.is_standalone
+               and len(scan_developer_queue.output.tasks) == 0
+               and len(scan_active_claims.output.tasks) == 0
+               and len(scan_escalated.output.tasks) == 0)
             }}
 
   # --- ISOLATION: get existing worktree or clone ---
@@ -168,17 +212,17 @@ steps:
       tool: pipeline_eval
       arguments:
         data:
-          active: "${{ len(scan_in_progress.output.tasks) }}"
-          available_slots: "${{ inputs.max_concurrent - len(scan_in_progress.output.tasks) }}"
+          active: "${{ len(scan_active_claims.output.tasks) }}"
+          available_slots: "${{ inputs.max_concurrent - len(scan_active_claims.output.tasks) if inputs.max_concurrent > len(scan_active_claims.output.tasks) else 0 }}"
 
   - id: suggest_tasks
-    condition: "${{ not done_check.output.orchestration_complete and count_active.output.available_slots > 0 and len(scan_open.output.tasks) > 0 }}"
+    condition: "${{ not done_check.output.orchestration_complete and count_active.output.available_slots > 0 and len(select_ready_unclaimed.output.tasks) > 0 }}"
     mcp:
       server: gobby-tasks
-      tool: suggest_next_tasks
+      tool: suggest_next_task
       arguments:
         parent_task_id: "${{ inputs.task_id }}"
-        max_count: "${{ count_active.output.available_slots }}"
+        count: "${{ count_active.output.available_slots }}"
 
   - id: dispatch_devs
     condition: "${{ suggest_tasks.output and len(suggest_tasks.output.suggestions) > 0 }}"
@@ -205,6 +249,7 @@ steps:
           tick_complete: true
           orchestration_complete: "${{ done_check.output.orchestration_complete if done_check.output else false }}"
           is_standalone: "${{ standalone_check.output.is_standalone }}"
-          open: "${{ len(scan_open.output.tasks) if scan_open.output else 0 }}"
-          in_progress: "${{ len(scan_in_progress.output.tasks) if scan_in_progress.output else 0 }}"
+          developer_queue: "${{ len(scan_developer_queue.output.tasks) if scan_developer_queue.output else 0 }}"
+          active_claims: "${{ len(scan_active_claims.output.tasks) if scan_active_claims.output else 0 }}"
+          escalated: "${{ len(scan_escalated.output.tasks) if scan_escalated.output else 0 }}"
           dispatched: "${{ dispatch_devs.output.dispatched if dispatch_devs.output else 0 }}"

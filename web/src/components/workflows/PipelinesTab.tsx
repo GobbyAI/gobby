@@ -151,7 +151,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     } finally {
       fetchWorkflows({ include_deleted: true })
     }
-  }, [deleteWorkflow, fetchWorkflows])
+  }, [confirm, deleteWorkflow, fetchWorkflows])
 
   const handleRestore = useCallback(async (wf: WorkflowDetail) => {
     try {
@@ -193,7 +193,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     } catch (e) {
       console.error('Failed to move workflow to project:', e)
     }
-  }, [projectId, fetchWorkflows])
+  }, [confirm, projectId, fetchWorkflows])
 
   const handleMoveToGlobal = useCallback(async (wf: WorkflowDetail) => {
     if (!await confirm({ title: 'Move to global?', description: `Move "${wf.name}" to global scope? It will apply to all projects.`, confirmLabel: 'Move' })) return
@@ -205,7 +205,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     } catch (e) {
       console.error('Failed to move workflow to global:', e)
     }
-  }, [fetchWorkflows])
+  }, [confirm, fetchWorkflows])
 
   const handleRestoreFromTemplate = useCallback(async (wf: WorkflowDetail) => {
     if (!await confirm({ title: 'Restore from template?', description: `Reset "${wf.name}" to the bundled template version? Your customizations will be lost.`, confirmLabel: 'Restore' })) return
@@ -217,7 +217,7 @@ export function PipelinesTab({ searchText, sourceFilter, devMode, showCreate, on
     } catch (e) {
       console.error('Failed to restore workflow from template:', e)
     }
-  }, [fetchWorkflows])
+  }, [confirm, fetchWorkflows])
 
   const handleCardClick = useCallback(async (wf: WorkflowDetail) => {
     setEditingWorkflow(wf)

@@ -46,6 +46,7 @@ export function useTerminal() {
   const reconnectTimeoutRef = useRef<number | null>(null)
   const outputCallbackRef = useRef<((runId: string, data: string) => void) | null>(null)
   const agentFetchControllerRef = useRef<AbortController | null>(null)
+  const connectRef = useRef<() => void>(() => {})
 
   // Fetch running agents from the API and replace local state (reconciliation)
   const refreshAgents = useCallback(() => {
@@ -81,60 +82,6 @@ export function useTerminal() {
       .catch((e) => console.debug('Failed to fetch running agents:', e))
   }, [])
 
-  // Connect to WebSocket
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
-
-    const isSecure = window.location.protocol === 'https:'
-    const wsUrl = isSecure
-      ? `wss://${window.location.host}/ws`
-      : `ws://${window.location.host}/ws`
-
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      setIsConnected(true)
-      // Subscribe to terminal and agent events
-      ws.send(JSON.stringify({
-        type: 'subscribe',
-        events: ['terminal_output', 'agent_event'],
-      }))
-      // Fetch current running agents to recover any missed before WS connected
-      refreshAgents()
-    }
-
-    ws.onclose = () => {
-      setIsConnected(false)
-      // Reconnect after 2 seconds
-      reconnectTimeoutRef.current = window.setTimeout(() => {
-        connect()
-      }, 2000)
-    }
-
-    ws.onerror = (error) => {
-      console.error('Terminal WebSocket error:', error)
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as WebSocketMessage
-
-        if (data.type === 'terminal_output') {
-          const msg = data as unknown as TerminalOutputMessage
-          if (outputCallbackRef.current) {
-            outputCallbackRef.current(msg.run_id, msg.data)
-          }
-        } else if (data.type === 'agent_event') {
-          const msg = data as unknown as AgentEventMessage
-          handleAgentEvent(msg)
-        }
-      } catch (e) {
-        console.error('Failed to parse terminal message:', e)
-      }
-    }
-  }, [])
-
   // Handle agent lifecycle events
   const handleAgentEvent = useCallback((event: AgentEventMessage) => {
     if (event.event === 'agent_started' && (SHOW_MODES as readonly string[]).includes(event.mode || '')) {
@@ -164,6 +111,64 @@ export function useTerminal() {
       setSelectedAgent(prev => prev === event.run_id ? null : prev)
     }
   }, [])
+
+  // Connect to WebSocket
+  const connect = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) return
+
+    const isSecure = window.location.protocol === 'https:'
+    const wsUrl = isSecure
+      ? `wss://${window.location.host}/ws`
+      : `ws://${window.location.host}/ws`
+
+    const ws = new WebSocket(wsUrl)
+    wsRef.current = ws
+
+    ws.onopen = () => {
+      setIsConnected(true)
+      // Subscribe to terminal and agent events
+      ws.send(JSON.stringify({
+        type: 'subscribe',
+        events: ['terminal_output', 'agent_event'],
+      }))
+      // Fetch current running agents to recover any missed before WS connected
+      refreshAgents()
+    }
+
+    ws.onclose = () => {
+      setIsConnected(false)
+      // Reconnect after 2 seconds
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        connectRef.current()
+      }, 2000)
+    }
+
+    ws.onerror = (error) => {
+      console.error('Terminal WebSocket error:', error)
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as WebSocketMessage
+
+        if (data.type === 'terminal_output') {
+          const msg = data as unknown as TerminalOutputMessage
+          if (outputCallbackRef.current) {
+            outputCallbackRef.current(msg.run_id, msg.data)
+          }
+        } else if (data.type === 'agent_event') {
+          const msg = data as unknown as AgentEventMessage
+          handleAgentEvent(msg)
+        }
+      } catch (e) {
+        console.error('Failed to parse terminal message:', e)
+      }
+    }
+  }, [handleAgentEvent, refreshAgents])
+
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   // Send terminal input
   const sendInput = useCallback((runId: string, data: string) => {

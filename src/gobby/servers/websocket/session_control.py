@@ -9,6 +9,7 @@ under ``handlers/``; this mixin is a thin router that dispatches to them.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.chat_session_base import ChatSessionProtocol
@@ -16,6 +17,8 @@ from gobby.servers.websocket.handlers import plan_approval as _plan
 from gobby.servers.websocket.handlers import session_config as _config
 from gobby.servers.websocket.handlers import session_lifecycle as _lifecycle
 from gobby.servers.websocket.handlers import session_observe as _observe
+
+logger = logging.getLogger(__name__)
 
 
 class SessionControlMixin:
@@ -37,6 +40,8 @@ class SessionControlMixin:
     _pending_modes: dict[str, str]
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
+    _pending_projects: dict[str, str]
+    _pending_providers: dict[str, str]
 
     # Provided by ChatMixin / HandlerMixin – declared for type checking only.
     if TYPE_CHECKING:
@@ -59,6 +64,7 @@ class SessionControlMixin:
             model: str | None = None,
             project_id: str | None = None,
             resume_session_id: str | None = None,
+            provider: str | None = None,
         ) -> ChatSessionProtocol: ...
 
     # -- Session lifecycle handlers ------------------------------------------
@@ -85,8 +91,33 @@ class SessionControlMixin:
     ) -> None:
         await _plan.handle_recovered_plan_approval(self, websocket, conversation_id, data)
 
-    async def _rebroadcast_pending_plans(self, websocket: Any) -> None:
-        await _plan.rebroadcast_pending_plans(self, websocket)
+    async def _rebroadcast_pending_interactions(
+        self, websocket: Any, conversation_ids: list[str]
+    ) -> None:
+        """Rebroadcast pending interactions for active conversations on reconnect."""
+        import json as _json
+
+        manager = getattr(self, "_pending_interaction_manager", None)
+        if not manager:
+            return
+
+        for conv_id in conversation_ids:
+            session = self._chat_sessions.get(conv_id)
+            if not session or not session.db_session_id:
+                continue
+            try:
+                pending = await manager.rebroadcast(session.db_session_id)
+                for interaction in pending:
+                    msg = _json.dumps(
+                        {
+                            "type": "pending_interaction",
+                            "conversation_id": conv_id,
+                            "interaction": interaction,
+                        }
+                    )
+                    await websocket.send(msg)
+            except Exception:
+                logger.debug(f"Failed to rebroadcast interactions for {conv_id}", exc_info=True)
 
     # -- Session configuration handlers --------------------------------------
 
@@ -101,6 +132,9 @@ class SessionControlMixin:
 
     async def _handle_set_agent(self, websocket: Any, data: dict[str, Any]) -> None:
         await _config.handle_set_agent(self, websocket, data)
+
+    async def _handle_set_provider(self, websocket: Any, data: dict[str, Any]) -> None:
+        await _config.handle_set_provider(self, websocket, data)
 
     # -- Session observation handlers ----------------------------------------
 

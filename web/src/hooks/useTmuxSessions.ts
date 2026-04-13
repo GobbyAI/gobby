@@ -44,6 +44,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const reconnectTimeoutRef = useRef<number | null>(null)
   const outputCallbackRef = useRef<((runId: string, data: string) => void) | null>(null)
   const attachedSessionRef = useRef<string | null>(null)
+  const connectRef = useRef<() => void>(() => {})
 
   // Keep ref in sync so handleMessage can read current value
   useEffect(() => {
@@ -56,44 +57,12 @@ export function useTmuxSessions(): TmuxSessionsResult {
     setAttachedSession(null)
   }, [])
 
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
-
-    const isSecure = window.location.protocol === 'https:'
-    const wsUrl = isSecure
-      ? `wss://${window.location.host}/ws`
-      : `ws://${window.location.host}/ws`
-
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        type: 'subscribe',
-        events: ['terminal_output', 'tmux_session_event', 'session_event'],
-      }))
-      // Fetch session list on connect
-      ws.send(JSON.stringify({ type: 'tmux_list_sessions', request_id: 'init' }))
-    }
-
-    ws.onclose = () => {
-      reconnectTimeoutRef.current = window.setTimeout(() => {
-        connect()
-      }, 2000)
-    }
-
-    ws.onerror = (error) => {
-      console.error('Tmux WebSocket error:', error)
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        handleMessage(data)
-      } catch (e) {
-        console.error('Failed to parse tmux message:', e)
-      }
-    }
+  const refreshSessions = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    wsRef.current.send(JSON.stringify({
+      type: 'tmux_list_sessions',
+      request_id: `refresh-${Date.now()}`,
+    }))
   }, [])
 
   const handleMessage = useCallback((data: Record<string, unknown>) => {
@@ -102,9 +71,8 @@ export function useTmuxSessions(): TmuxSessionsResult {
         const newSessions = data.sessions as TmuxSession[]
         setSessions(newSessions)
         setLiveCliSessionIds((data.live_cli_session_ids as string[]) || [])
-        // Detect if the attached session has died
         const attached = attachedSessionRef.current
-        if (attached && !newSessions.some(s => s.name === attached)) {
+        if (attached && !newSessions.some((session) => session.name === attached)) {
           setSessionEnded(true)
         }
         setIsLoading(false)
@@ -140,12 +108,10 @@ export function useTmuxSessions(): TmuxSessionsResult {
         break
 
       case 'tmux_session_event':
-        // Refresh on any session lifecycle change
         refreshSessions()
         break
 
       case 'session_event':
-        // Refresh when session titles or metadata change
         if (data.event === 'session_updated') {
           refreshSessions()
         }
@@ -157,15 +123,51 @@ export function useTmuxSessions(): TmuxSessionsResult {
         }
         break
     }
-  }, [])
+  }, [refreshSessions])
 
-  const refreshSessions = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
-    wsRef.current.send(JSON.stringify({
-      type: 'tmux_list_sessions',
-      request_id: `refresh-${Date.now()}`,
-    }))
-  }, [])
+  const connect = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) return
+
+    const isSecure = window.location.protocol === 'https:'
+    const wsUrl = isSecure
+      ? `wss://${window.location.host}/ws`
+      : `ws://${window.location.host}/ws`
+
+    const ws = new WebSocket(wsUrl)
+    wsRef.current = ws
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: 'subscribe',
+        events: ['terminal_output', 'tmux_session_event', 'session_event'],
+      }))
+      // Fetch session list on connect
+      ws.send(JSON.stringify({ type: 'tmux_list_sessions', request_id: 'init' }))
+    }
+
+    ws.onclose = () => {
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        connectRef.current()
+      }, 2000)
+    }
+
+    ws.onerror = (error) => {
+      console.error('Tmux WebSocket error:', error)
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        handleMessage(data)
+      } catch (e) {
+        console.error('Failed to parse tmux message:', e)
+      }
+    }
+  }, [handleMessage])
+
+  useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
 
   const attachSession = useCallback((sessionName: string, socket: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return

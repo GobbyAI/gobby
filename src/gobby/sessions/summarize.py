@@ -96,7 +96,8 @@ async def generate_session_summaries(
         }
 
     # Read and parse transcript
-    turns = await _read_transcript(path)
+    source = getattr(session, "source", "claude") or "claude"
+    turns = await _read_transcript(path, source=source)
 
     # Analyze transcript
     from gobby.sessions.analyzer import TranscriptAnalyzer
@@ -181,17 +182,62 @@ async def generate_session_summaries(
     }
 
 
-async def _read_transcript(path: Path) -> list[dict[str, Any]]:
-    """Read and parse JSONL transcript file."""
+async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str, Any]]:
+    """Read and parse a transcript file in its native format.
+
+    Claude and Codex use JSONL (one JSON object per line).
+    Gemini stores sessions as a single JSON object with a ``messages`` array.
+    The returned dicts are in the source's native format — callers that need
+    to iterate content blocks should use format-aware helpers.
+
+    Args:
+        path: Path to the transcript file.
+        source: Session source (``"claude"``, ``"gemini"``, ``"codex"``).
+    """
+    # Gemini JSON session files are a single JSON object, not JSONL.
+    if path.suffix == ".json" and source == "gemini":
+        return await _read_gemini_json_transcript(path)
+
+    # JSONL format (Claude, Codex, default)
     turns: list[dict[str, Any]] = []
     async with aiofiles.open(path, encoding="utf-8") as f:
         async for idx, line in async_enumerate(f):
             if line.strip():
                 try:
-                    turns.append(json.loads(line))
+                    obj = json.loads(line)
+                    if isinstance(obj, dict):
+                        turns.append(obj)
+                    else:
+                        logger.warning(f"Skipping non-dict JSONL value at line {idx + 1} in {path}")
                 except json.JSONDecodeError:
                     logger.warning(f"Skipping malformed JSONL line {idx + 1} in {path}")
     return turns
+
+
+async def _read_gemini_json_transcript(path: Path) -> list[dict[str, Any]]:
+    """Read a Gemini JSON session file and return its native message dicts.
+
+    Gemini session files have the structure::
+
+        {"sessionId": "...", "messages": [{...}, ...], "kind": "main"}
+
+    We return the ``messages`` array as-is so callers get native Gemini dicts.
+    """
+    async with aiofiles.open(path, encoding="utf-8") as f:
+        raw = await f.read()
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in Gemini transcript {path}: {e}")
+        return []
+
+    if not isinstance(data, dict):
+        logger.error(f"Expected JSON object in Gemini transcript {path}, got {type(data).__name__}")
+        return []
+
+    messages = data.get("messages", [])
+    return [m for m in messages if isinstance(m, dict)]
 
 
 async def async_enumerate(aiter: Any, start: int = 0) -> Any:
@@ -271,10 +317,20 @@ async def _generate_full_summary(
     try:
         provider = _resolve_provider(llm_service)
 
-        # Get transcript parser
-        from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+        # Get transcript parser — use the right one for this session's source
+        parser: Any
+        if getattr(session, "source", None) == "gemini":
+            from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
-        parser = ClaudeTranscriptParser()
+            parser = GeminiTranscriptParser()
+        elif getattr(session, "source", None) == "codex":
+            from gobby.sessions.transcripts.codex import CodexTranscriptParser
+
+            parser = CodexTranscriptParser()
+        else:
+            from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
+
+            parser = ClaudeTranscriptParser()
 
         # Load prompt template
         prompt_template = None

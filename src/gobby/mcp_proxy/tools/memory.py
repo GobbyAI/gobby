@@ -113,7 +113,7 @@ def create_memory_registry(
                 memory_type=memory_type,
                 project_id=project_id,
                 tags=tags,
-                source_type="mcp_tool",
+                source_type="agent",
                 source_session_id=resolved_session_id,
             )
 
@@ -158,6 +158,7 @@ def create_memory_registry(
     async def search_memories(
         query: str | None = None,
         limit: int = 10,
+        min_score: float = 0.0,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
@@ -168,35 +169,61 @@ def create_memory_registry(
         Args:
             query: Search query string
             limit: Maximum number of memories to return
+            min_score: Minimum similarity score (0.0-1.0). Memories below this are excluded.
             tags_all: Memory must have ALL of these tags
             tags_any: Memory must have at least ONE of these tags
             tags_none: Memory must have NONE of these tags
         """
         try:
-            memories = await memory_manager.search_memories(
+            effective_min_score = (
+                min_score if min_score > 0 else memory_manager.config.min_recall_score
+            )
+
+            # Fetch extra candidates so we can report diagnostics when
+            # nothing passes the threshold.
+            candidates = await memory_manager.search_memories(
                 query=query,
                 project_id=get_current_project_id(),
-                limit=limit,
+                limit=limit * 2,
+                min_score=None,  # no threshold — filter below
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
             )
-            result_memories = [
-                {
-                    "id": m.id,
-                    "content": m.content,
-                    "type": m.memory_type,
-                    "created_at": m.created_at,
-                    "tags": m.tags,
-                    "similarity": getattr(m, "similarity", None),
-                }
-                for m in memories
-            ]
 
-            return {
+            # Split by threshold
+            above: list[dict[str, Any]] = []
+            below_count = 0
+            max_score_seen = 0.0
+            for m in candidates:
+                score = getattr(m, "similarity", None) or 0.0
+                max_score_seen = max(max_score_seen, score)
+                if effective_min_score > 0 and score < effective_min_score:
+                    below_count += 1
+                    continue
+                if len(above) < limit:
+                    above.append(
+                        {
+                            "id": m.id,
+                            "content": m.content,
+                            "type": m.memory_type,
+                            "created_at": m.created_at,
+                            "tags": m.tags,
+                            "similarity": score,
+                            "search_via": getattr(m, "search_via", None),
+                        }
+                    )
+
+            result: dict[str, Any] = {
                 "success": True,
-                "memories": result_memories,
+                "memories": above,
             }
+            if not above and below_count > 0:
+                result["below_threshold_count"] = below_count
+                result["max_score_seen"] = round(max_score_seen, 4)
+                result["threshold"] = effective_min_score
+
+            return result
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -420,7 +447,7 @@ def create_memory_registry(
                 memory_type=memory_type,
                 project_id=get_current_project_id(),
                 tags=tags,
-                source_type="mcp_tool",
+                source_type="agent",
             )
             return {
                 "success": True,
@@ -475,7 +502,7 @@ def create_memory_registry(
                 memory_type=memory_type,
                 project_id=get_current_project_id(),
                 tags=tags,
-                source_type="mcp_tool",
+                source_type="agent",
             )
             return {
                 "success": True,
@@ -665,7 +692,7 @@ def create_memory_registry(
     # It is NOT called directly from Python code. Do not remove without also removing the DB rule.
     @registry.tool(
         name="build_turn_and_digest",
-        description="Build a detailed turn record from the last agent response, append to session digest, synthesize title, and extract memories. Fired by digest-on-response rule on stop events.",
+        description="Build a detailed turn record from the last agent response, append it to the session digest, and synthesize a title. Fired by digest-on-response rule on stop events.",
     )
     async def build_turn_and_digest_tool(
         session_id: str = "",
@@ -676,8 +703,8 @@ def create_memory_registry(
 
         Reads the last user/assistant exchange from the transcript,
         generates a structured turn record via LLM, appends it to the
-        session's rolling digest, synthesizes a title, and extracts
-        reusable memories.
+        session's rolling digest, and synthesizes a title via
+        ``build_turn_and_digest``.
 
         Args:
             session_id: Platform session ID (injected by dispatch layer)

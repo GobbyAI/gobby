@@ -220,7 +220,7 @@ class TestImportSkill:
         mock_loader = MockLoader.return_value
         parsed_mock = MagicMock()
         parsed_mock.name = "zip-skill"
-        parsed_mock.source_type = None
+        parsed_mock.source_type = "agent"
         mock_loader.load_from_zip.return_value = [parsed_mock]
 
         skill_mock = MagicMock()
@@ -235,7 +235,7 @@ class TestImportSkill:
         mock_loader = MockLoader.return_value
         parsed_mock = MagicMock()
         parsed_mock.name = "local-skill"
-        parsed_mock.source_type = None
+        parsed_mock.source_type = "agent"
         mock_loader.load_skill.return_value = parsed_mock
 
         skill_manager.create_skill.side_effect = ValueError("duplicate")

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
+import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
 
 // =============================================================================
 // Activity state classification
@@ -11,8 +12,10 @@ const ACTIVE_THRESHOLD_MS = 2 * 60 * 1000    // 2 minutes
 const IDLE_THRESHOLD_MS = 10 * 60 * 1000      // 10 minutes
 
 function classifyActivity(task: GobbyTask): ActivityState {
+  const state = getCanonicalTaskState(task)
+
   // Only show pulse for in-progress tasks with an assignee
-  if (task.status !== 'in_progress' || !task.assignee) return 'none'
+  if (getTaskBucket(task) !== 'in_progress' || !state.owner_session_id) return 'none'
 
   const elapsed = Date.now() - new Date(task.updated_at).getTime()
 

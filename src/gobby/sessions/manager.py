@@ -20,9 +20,23 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.storage.session_models import Session
     from gobby.storage.sessions import LocalSessionManager as SessionStorage
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_terminal_context(
+    current: dict[str, Any] | None,
+    incoming: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Merge terminal context, preferring new non-null values."""
+    merged: dict[str, Any] = dict(current or {})
+    for key, value in (incoming or {}).items():
+        if value is None:
+            continue
+        merged[key] = value
+    return merged
 
 
 class SessionManager:
@@ -363,6 +377,41 @@ class SessionManager:
                 "parent_session_id": session.parent_session_id,
             }
         return None
+
+    def backfill_terminal_context(
+        self,
+        session_id: str,
+        terminal_context: dict[str, Any] | None,
+    ) -> tuple[Session | None, bool]:
+        """Merge newly discovered terminal context into an existing session.
+
+        Returns the updated session plus a flag indicating whether a tmux pane
+        became available as part of the merge.
+        """
+        if not terminal_context:
+            session = self._storage.get(session_id)
+            return session, False
+
+        current = self._storage.get(session_id)
+        if current is None:
+            return None, False
+
+        current_ctx = current.terminal_context or {}
+        merged = _merge_terminal_context(current_ctx, terminal_context)
+        if merged == current_ctx:
+            return current, False
+
+        had_tmux_pane = bool(current_ctx.get("tmux_pane"))
+        updated = self._storage.update(session_id=session_id, terminal_context=merged)
+        if updated is None:
+            return current, False
+
+        with self._session_metadata_lock:
+            metadata = self._session_metadata.setdefault(session_id, {})
+            metadata["terminal_context"] = merged
+
+        has_tmux_pane = bool((updated.terminal_context or {}).get("tmux_pane"))
+        return updated, has_tmux_pane and not had_tmux_pane
 
     def resolve_session_reference(self, ref: str, project_id: str | None = None) -> str:
         """Resolve a session reference to a session UUID.

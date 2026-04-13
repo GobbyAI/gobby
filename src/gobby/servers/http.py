@@ -240,6 +240,7 @@ class HTTPServer:
             config_manager=services.mcp_db_manager,
             semantic_search=semantic_search,
             fallback_resolver=fallback_resolver,
+            hook_manager_resolver=lambda: self._hook_manager,
         )
         self._mcp_server = create_mcp_server(self._tools_handler)
         logger.debug("MCP server initialized and will be mounted at /mcp")

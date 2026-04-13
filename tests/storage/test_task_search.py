@@ -112,6 +112,41 @@ class TestTaskSearch:
         )
         assert len(results) == 0
 
+    def test_search_status_filter_uses_canonical_projection(self, db_with_tasks) -> None:
+        """Status filtering should follow canonical fields, not stale raw status."""
+        db, manager, project_id = db_with_tasks
+
+        task = manager.create_task(
+            project_id=project_id,
+            title="Authentication review gate",
+            description="Authentication task waiting on approval",
+        )
+        db.execute(
+            """
+            UPDATE tasks
+            SET status = 'open',
+                lifecycle_stage = 'review_approved',
+                escalated_at = NULL,
+                closed_at = NULL
+            WHERE id = ?
+            """,
+            (task.id,),
+        )
+
+        approved = manager.search_tasks(
+            "Authentication review gate",
+            project_id=project_id,
+            status="review_approved",
+        )
+        open_results = manager.search_tasks(
+            "Authentication review gate",
+            project_id=project_id,
+            status="open",
+        )
+
+        assert any(found.id == task.id for found, _ in approved)
+        assert all(found.id != task.id for found, _ in open_results)
+
     def test_search_with_status_list(self, db_with_tasks) -> None:
         """Test search with list of statuses."""
         db, manager, project_id = db_with_tasks

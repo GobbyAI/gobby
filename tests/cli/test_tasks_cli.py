@@ -45,6 +45,16 @@ def mock_task():
     task.project_id = "proj-123"
     task.parent_task_id = None
     task.assignee = None
+    task.claimed_by_session_id = None
+    task.lifecycle_stage = None
+    task.closed_at = None
+    task.closed_reason = None
+    task.closed_in_session_id = None
+    task.closed_commit_sha = None
+    task.escalated_at = None
+    task.escalation_reason = None
+    task.blocked_by = set()
+    task.active_blocked_by = set()
     task.labels = None
     task.validation_criteria = None
     task.validation_fail_count = 0
@@ -59,6 +69,25 @@ def mock_task():
         "created_at": "2024-01-01T00:00:00Z",
         "updated_at": "2024-01-01T00:00:00Z",
         "project_id": "proj-123",
+        "state": {
+            "owner_session_id": None,
+            "lifecycle_stage": None,
+            "is_claimed": False,
+            "is_closed": False,
+            "is_escalated": False,
+            "is_blocked": False,
+            "is_merge_ready": False,
+            "closed_at": None,
+            "closed_reason": None,
+            "closed_in_session_id": None,
+            "closed_commit_sha": None,
+            "escalated_at": None,
+            "escalation_reason": None,
+        },
+        "compat": {
+            "status": "open",
+            "assignee": None,
+        },
     }
     return task
 
@@ -120,6 +149,8 @@ class TestListTasksCommand:
 
         assert result.exit_code == 0
         assert "Found 1 tasks" in result.output
+        assert "LIFECYCLE" in result.output
+        assert "OWNER" in result.output
         assert "#1" in result.output  # Shows seq_num instead of full task ID
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -209,7 +240,70 @@ class TestListTasksCommand:
         assert result.exit_code == 0
         mock_manager.list_tasks.assert_called_once()
         call_kwargs = mock_manager.list_tasks.call_args.kwargs
-        assert call_kwargs["status"] == ["open", "in_progress"]
+        assert call_kwargs["closed"] is False
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_list_with_lifecycle_filter(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test list with canonical lifecycle filter."""
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [mock_task]
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "list", "--lifecycle", "needs-review"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_manager.list_tasks.call_args.kwargs
+        assert call_kwargs["lifecycle_stage"] == "needs_review"
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_list_with_claimed_filter(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test list with canonical claimed filter."""
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [mock_task]
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "list", "--claimed"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_manager.list_tasks.call_args.kwargs
+        assert call_kwargs["claimed"] is True
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.get_project_context")
+    def test_list_with_unclaimed_filter(
+        self,
+        mock_project_ctx: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """Test list with canonical unclaimed filter."""
+        mock_project_ctx.return_value = {"id": "proj-123"}
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = [mock_task]
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "list", "--unclaimed"])
+
+        assert result.exit_code == 0
+        call_kwargs = mock_manager.list_tasks.call_args.kwargs
+        assert call_kwargs["claimed"] is False
 
     def test_list_ready_and_blocked_mutually_exclusive(self, runner: CliRunner) -> None:
         """Test that --ready and --blocked are mutually exclusive."""
@@ -224,6 +318,20 @@ class TestListTasksCommand:
 
         assert result.exit_code == 0
         assert "--active and --status are mutually exclusive" in result.output
+
+    def test_list_status_and_lifecycle_mutually_exclusive(self, runner: CliRunner) -> None:
+        """Test that --status and --lifecycle are mutually exclusive."""
+        result = runner.invoke(cli, ["tasks", "list", "--status", "open", "--lifecycle", "open"])
+
+        assert result.exit_code == 0
+        assert "--status and --lifecycle are mutually exclusive" in result.output
+
+    def test_list_claimed_and_unclaimed_mutually_exclusive(self, runner: CliRunner) -> None:
+        """Test that --claimed and --unclaimed are mutually exclusive."""
+        result = runner.invoke(cli, ["tasks", "list", "--claimed", "--unclaimed"])
+
+        assert result.exit_code == 0
+        assert "--claimed and --unclaimed are mutually exclusive" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
@@ -488,6 +596,7 @@ class TestTaskStatsCommand:
         assert "Task Statistics" in result.output
         assert "Total: 1" in result.output
         assert "Open: 1" in result.output
+        assert "Claimed: 0" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     def test_stats_json_output(
@@ -507,8 +616,9 @@ class TestTaskStatsCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "total" in data
-        assert "by_status" in data
+        assert "by_lifecycle" in data
         assert "by_priority" in data
+        assert "compat_by_status" in data
 
 
 # ==============================================================================
@@ -629,6 +739,8 @@ class TestShowTaskCommand:
         assert result.exit_code == 0
         assert "Test Task" in result.output
         assert "gt-abc123" in result.output
+        assert "Lifecycle: open" in result.output
+        assert "Legacy Status: open" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -649,6 +761,7 @@ class TestShowTaskCommand:
 
         assert result.exit_code == 0
         assert "bug, priority" in result.output
+        assert "Compatibility Assignee: john" in result.output
         assert "john" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")

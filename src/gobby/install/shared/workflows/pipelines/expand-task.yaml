@@ -1,15 +1,17 @@
 name: expand-task
 type: pipeline
-version: "1.0"
+version: "2.0"
 description: |
-  Deterministic expansion sub-pipeline. Hard boundary between research (creative)
-  and task creation (mechanical).
+  Canonical task-expansion pipeline.
 
-  Flow: spawn researcher → wait → validate spec → execute expansion →
-        spawn QA → wait QA → check QA → wire affected files → analyze dependencies
+  Flow:
+    1. Start a background expansion run
+    2. Wait for the run to complete
+    3. Inspect the stored run result
+    4. Run deterministic validation on the compiled/applied output
 
-  Reusable: orchestrator invokes it, /gobby expand wraps it, other pipelines
-  compose with it.
+  The expansion run itself owns compile/apply state. The task tree is the only
+  state written back onto tasks.
 
 inputs:
   task_id:
@@ -19,111 +21,60 @@ inputs:
   plan_file:
     type: string
     required: false
-    description: "Relative path to plan file for subtask context injection"
-  agent: "expander"
+    description: "Relative path to a plan file for richer expansion context"
   provider: "claude"
   model: null
   wait_timeout: 600
-  qa_wait_timeout: 120
-  tdd:
-    type: boolean
-    required: false
-    description: "Apply TDD sandwich pattern (wrap phases with [TEST] and [REF] tasks)"
-    default: true
 
 outputs:
-  created: "${{ steps.execute.output.created }}"
-  count: "${{ steps.execute.output.count }}"
-  validation: "${{ steps.validate.output }}"
-  qa_result: "${{ steps.check_qa.output }}"
+  run_id: "${{ steps.start_run.output.run_id }}"
+  status: "${{ steps.wait_run.output.status }}"
+  created_task_ids: "${{ steps.get_run.output.run.created_task_ids }}"
+  validation: "${{ steps.validate_run.output }}"
 
 steps:
-  # --- 1. Spawn the researcher agent ---
-  - id: spawn_researcher
+  - id: start_run
     mcp:
-      server: gobby-agents
-      tool: spawn_agent
+      server: gobby-tasks-ops
+      tool: start_expansion_run
       arguments:
-        prompt: "Research and produce an expansion spec for task ${{ inputs.task_id }}. Plan file: ${{ inputs.plan_file or 'none' }}"
-        agent: "${{ inputs.agent }}"
         task_id: "${{ inputs.task_id }}"
+        plan_file: "${{ inputs.plan_file }}"
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"
-        parent_session_id: "${{ session_id }}"
+        auto_apply: true
 
-  # --- 2. Wait for researcher to complete ---
-  - id: wait_researcher
+  - id: wait_run
     wait:
-      completion_id: "${{ steps.spawn_researcher.output.run_id }}"
+      completion_id: "${{ steps.start_run.output.run_id }}"
       timeout: "${{ inputs.wait_timeout }}"
 
-  # --- 3. Validate the saved spec ---
-  - id: validate
+  - id: get_run
     mcp:
-      server: gobby-tasks
-      tool: validate_expansion_spec
+      server: gobby-tasks-ops
+      tool: get_expansion_run
       arguments:
-        task_id: "${{ inputs.task_id }}"
+        run_id: "${{ steps.start_run.output.run_id }}"
 
-  # --- 4. Gate: fail if spec is invalid ---
-  - id: check_valid
-    condition: "${{ not steps.validate.output.valid }}"
+  - id: validate_run
+    mcp:
+      server: gobby-tasks-ops
+      tool: validate_expansion_run
+      arguments:
+        run_id: "${{ steps.start_run.output.run_id }}"
+
+  - id: fail_run
+    condition: "${{ steps.wait_run.output.status != 'completed' }}"
     mcp:
       server: gobby-workflows
       tool: fail_pipeline
       arguments:
-        message: "Expansion spec validation failed: ${{ steps.validate.output.errors }}"
+        message: "Expansion run failed: ${{ steps.wait_run.output.error or steps.get_run.output.run.error or 'unknown error' }}"
 
-  # --- 5. Execute the expansion atomically ---
-  - id: execute
+  - id: fail_validation
+    condition: "${{ not steps.validate_run.output.compiled.valid or (steps.validate_run.output.applied and not steps.validate_run.output.applied.valid) }}"
     mcp:
-      server: gobby-tasks
-      tool: execute_expansion
+      server: gobby-workflows
+      tool: fail_pipeline
       arguments:
-        parent_task_id: "${{ inputs.task_id }}"
-        session_id: "${{ session_id }}"
-        tdd: "${{ inputs.tdd }}"
-
-  # --- 6. Spawn the QA agent to validate expansion ---
-  - id: spawn_qa
-    mcp:
-      server: gobby-agents
-      tool: spawn_agent
-      arguments:
-        prompt: "Validate expansion of task ${{ inputs.task_id }}. Plan file: ${{ inputs.plan_file or 'none' }}. Created tasks: ${{ steps.execute.output.created }}"
-        agent: "expansion-qa"
-        task_id: "${{ inputs.task_id }}"
-        provider: "${{ inputs.provider }}"
-        model: "${{ inputs.model }}"
-        parent_session_id: "${{ session_id }}"
-
-  # --- 7. Wait for QA agent to complete ---
-  - id: wait_qa
-    wait:
-      completion_id: "${{ steps.spawn_qa.output.run_id }}"
-      timeout: "${{ inputs.qa_wait_timeout }}"
-
-  # --- 8. Check QA result ---
-  - id: check_qa
-    mcp:
-      server: gobby-tasks
-      tool: check_expansion_qa_result
-      arguments:
-        task_id: "${{ inputs.task_id }}"
-
-  # --- 9. Wire affected files from spec to child tasks ---
-  - id: wire_files
-    mcp:
-      server: gobby-tasks
-      tool: wire_affected_files_from_spec
-      arguments:
-        parent_task_id: "${{ inputs.task_id }}"
-
-  # --- 10. Analyze dependencies for file overlaps ---
-  - id: analyze_deps
-    condition: "${{ steps.execute.output.count > 1 }}"
-    mcp:
-      server: gobby-tasks
-      tool: find_file_overlaps
-      arguments:
-        task_ids: "${{ steps.execute.output.created }}"
+        message: "Expansion validation failed: ${{ steps.validate_run.output }}"

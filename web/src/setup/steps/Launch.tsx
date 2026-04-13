@@ -11,7 +11,7 @@ import { StatusMessage } from "../components/StatusMessage.js";
 import { saveState } from "../utils/state.js";
 import type { StepProps } from "../types.js";
 
-export function Launch({ state, setState, onNext }: StepProps): React.ReactElement {
+export function Launch({ state, setState, onNext: _onNext }: StepProps): React.ReactElement {
   const [phase, setPhase] = useState<"starting" | "waiting" | "done">("starting");
   const [healthy, setHealthy] = useState(false);
 
@@ -64,7 +64,7 @@ export function Launch({ state, setState, onNext }: StepProps): React.ReactEleme
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setState, state]);
 
   if (phase === "starting") {
     return (
@@ -133,9 +133,8 @@ function writeInitialSetupMd(state: typeof import("../utils/state.js").loadState
 
   const allTools = [
     "python", "node", "uv", "claude", "tmux",
-    "git", "docker", "tailscale", "gemini", "codex", "copilot", "windsurf", "cursor",
+    "git", "docker", "tailscale", "gemini", "codex",
   ];
-  const required = ["python", "node", "uv", "claude", "tmux"];
 
   const cliRows = allTools
     .map((t) => {

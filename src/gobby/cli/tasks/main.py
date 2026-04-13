@@ -32,6 +32,7 @@ from gobby.cli.tasks.crud import (
     validation_history_cmd,
 )
 from gobby.cli.tasks.deps import dep_cmd
+from gobby.cli.tasks.expand import expand_cmd
 from gobby.cli.tasks.labels import label_cmd
 from gobby.cli.tasks.search import reindex_tasks, search_tasks
 
@@ -177,6 +178,7 @@ tasks.add_command(dep_cmd)
 tasks.add_command(label_cmd)
 tasks.add_command(commit_cmd)
 tasks.add_command(diff_cmd)
+tasks.add_command(expand_cmd)
 
 
 @tasks.group("import")

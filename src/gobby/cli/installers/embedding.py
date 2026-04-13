@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Provider configuration table
 _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
     "lmstudio": {
-        "model": "nomic-embed-text",
+        "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
         "api_base": "http://localhost:1234/v1",
         "dim": 768,
     },

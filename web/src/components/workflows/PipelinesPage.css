@@ -936,10 +936,6 @@
   color: var(--text-primary);
 }
 
-.reporting-stat-value--cost {
-  color: #4ade80;
-}
-
 /* ── Command entries ── */
 
 .reporting-commands-list {

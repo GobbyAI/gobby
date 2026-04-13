@@ -11,319 +11,351 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Label width for alignment in status sections
+_LW = 18
 
-async def fetch_rich_status(http_port: int, timeout: float = 2.0) -> dict[str, Any]:
+
+async def fetch_rich_status(http_port: int, timeout: float = 3.0) -> dict[str, Any]:
+    """Fetch rich status data from the daemon API.
+
+    Returns the raw /api/admin/status response dict, or empty dict on failure.
     """
-    Fetch rich status data from the daemon API asynchronously.
-
-    Args:
-        http_port: HTTP port of the daemon
-        timeout: Request timeout in seconds
-
-    Returns:
-        Dict of status kwargs to pass to format_status_message
-    """
-    status_kwargs: dict[str, Any] = {}
-
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"http://localhost:{http_port}/api/admin/status", timeout=timeout
             )
-        if response.status_code != 200:
-            return status_kwargs
-
-        data = response.json()
-
-        # Process metrics
-        process_data = data.get("process")
-        if process_data:
-            status_kwargs["memory_mb"] = process_data.get("memory_rss_mb")
-            status_kwargs["cpu_percent"] = process_data.get("cpu_percent")
-
-        # MCP servers
-        mcp_servers = data.get("mcp_servers", {})
-        if mcp_servers:
-            total = len(mcp_servers)
-            connected = sum(1 for s in mcp_servers.values() if s.get("connected"))
-            status_kwargs["mcp_total"] = total
-            status_kwargs["mcp_connected"] = connected
-            status_kwargs["mcp_tools_cached"] = data.get("mcp_tools_cached", 0)
-
-            # Find unhealthy servers
-            unhealthy = []
-            for name, info in mcp_servers.items():
-                health = info.get("health")
-                if health and health not in ("healthy", None):
-                    unhealthy.append((name, health))
-                elif info.get("consecutive_failures", 0) > 0:
-                    unhealthy.append((name, f"{info['consecutive_failures']} failures"))
-            if unhealthy:
-                status_kwargs["mcp_unhealthy"] = unhealthy
-
-        # Sessions
-        sessions = data.get("sessions", {})
-        if sessions:
-            status_kwargs["sessions_active"] = sessions.get("active", 0)
-            status_kwargs["sessions_paused"] = sessions.get("paused", 0)
-            status_kwargs["sessions_handoff_ready"] = sessions.get("handoff_ready", 0)
-
-        # Tasks
-        tasks = data.get("tasks", {})
-        if tasks:
-            status_kwargs["tasks_open"] = tasks.get("open", 0)
-            status_kwargs["tasks_in_progress"] = tasks.get("in_progress", 0)
-            status_kwargs["tasks_ready"] = tasks.get("ready", 0)
-            status_kwargs["tasks_blocked"] = tasks.get("blocked", 0)
-
-        # Memory
-        memory = data.get("memory", {})
-        if memory and memory.get("count", 0) > 0:
-            status_kwargs["memories_count"] = memory.get("count", 0)
-
-        # Skills
-        skills_data = data.get("skills", {})
-        if skills_data:
-            status_kwargs["skills_total"] = skills_data.get("total", 0)
-
-        # Neo4j (from memory.neo4j in admin/status response)
-        neo4j_data = memory.get("neo4j", {})
-        if neo4j_data:
-            status_kwargs["neo4j_installed"] = neo4j_data.get("installed", False)
-            status_kwargs["neo4j_healthy"] = neo4j_data.get("healthy", False)
-            status_kwargs["neo4j_url"] = neo4j_data.get("url")
-
+        if response.status_code == 200:
+            result: dict[str, Any] = response.json()
+            return result
     except (httpx.ConnectError, httpx.TimeoutException):
-        # Daemon not responding - return empty
         pass
     except Exception as e:
         logger.debug(f"Failed to fetch daemon status: {e}")
+    return {}
 
-    return status_kwargs
+
+def _format_bytes(n: int) -> str:
+    """Format bytes as human-readable size."""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 * 1024 * 1024):.1f} GB"
 
 
 def format_status_message(
     *,
     running: bool,
     pid: int | None = None,
-    pid_file: str | None = None,
-    log_files: str | None = None,
     uptime: str | None = None,
     http_port: int | None = None,
     websocket_port: int | None = None,
-    # Process metrics
-    memory_mb: float | None = None,
-    cpu_percent: float | None = None,
-    # MCP proxy info
-    mcp_connected: int | None = None,
-    mcp_total: int | None = None,
-    mcp_tools_cached: int | None = None,
-    mcp_unhealthy: list[tuple[str, str]] | None = None,
-    # Sessions info
-    sessions_active: int | None = None,
-    sessions_paused: int | None = None,
-    sessions_handoff_ready: int | None = None,
-    # Tasks info
-    tasks_open: int | None = None,
-    tasks_in_progress: int | None = None,
-    tasks_ready: int | None = None,
-    tasks_blocked: int | None = None,
-    # Memory
-    memories_count: int | None = None,
-    # Skills
-    skills_total: int | None = None,
+    service_info: str | None = None,
+    # Raw API data (new approach — pass full sections)
+    api_data: dict[str, Any] | None = None,
     # UI info
     ui_enabled: bool | None = None,
     ui_mode: str | None = None,
     ui_url: str | None = None,
     ui_pid: int | None = None,
-    # Neo4j info
-    neo4j_installed: bool | None = None,
-    neo4j_healthy: bool | None = None,
-    neo4j_url: str | None = None,
-    # Service info
-    service_info: str | None = None,
+    # Paths
+    log_files: str | None = None,
+    # Deps info (from collect_all_deps)
+    deps_info: dict[str, Any] | None = None,
+    # Config mismatches
+    config_issues: list[dict[str, str]] | None = None,
     **kwargs: Any,
 ) -> str:
-    """
-    Format Gobby daemon status message with consistent styling.
+    """Format the full operational health dashboard for gobby status."""
+    lines: list[str] = []
+    data = api_data or {}
 
-    Args:
-        running: Whether the daemon is running
-        pid: Process ID
-        pid_file: Path to PID file
-        log_files: Path to log files directory
-        uptime: Formatted uptime string (e.g., "1h 23m 45s")
-        http_port: HTTP server port
-        websocket_port: WebSocket server port
-        memory_mb: Memory usage in MB
-        cpu_percent: CPU usage percentage
-        mcp_connected: Number of connected MCP servers
-        mcp_total: Total number of configured MCP servers
-        mcp_tools_cached: Number of cached tools
-        mcp_unhealthy: List of (server_name, status) for unhealthy servers
-        sessions_active: Number of active sessions
-        sessions_paused: Number of paused sessions
-        sessions_handoff_ready: Number of sessions ready for handoff
-        tasks_open: Number of open tasks
-        tasks_in_progress: Number of in-progress tasks
-        tasks_ready: Number of ready tasks
-        tasks_blocked: Number of blocked tasks
-        memories_count: Total number of memories
-        skills_total: Total number of loaded skills
-        ui_enabled: Whether the web UI is enabled
-        ui_mode: UI mode ('production' or 'dev')
-        ui_url: URL where the UI is accessible
-        ui_pid: Process ID of the UI dev server (dev mode only)
-        neo4j_installed: Whether Neo4j is installed
-        neo4j_healthy: Whether Neo4j service is healthy
-        neo4j_url: URL for Neo4j service
-        service_info: OS service installation status (e.g., "launchd installed")
-
-    Returns:
-        Formatted status message string
-    """
-    lines = []
-
-    # Header
     lines.append("=" * 70)
     lines.append("GOBBY DAEMON STATUS")
     lines.append("=" * 70)
     lines.append("")
 
-    # Status section
+    # ---- Runtime ----
+    lines.append("Runtime:")
     if running:
-        status_line = "Status: Running"
-        if pid:
-            status_line += f" (PID: {pid})"
-        lines.append(status_line)
+        status_str = f"Running (PID: {pid})" if pid else "Running"
+        lines.append(f"  {'Status:':<{_LW}}{status_str}")
 
-        # Service status
         if service_info:
-            lines.append(f"Service: {service_info}")
+            lines.append(f"  {'Install:':<{_LW}}{service_info}")
 
-        # Uptime and process metrics on same conceptual level
-        metrics_parts = []
         if uptime:
-            metrics_parts.append(f"Uptime: {uptime}")
-        if memory_mb is not None:
-            metrics_parts.append(f"Memory: {memory_mb:.1f} MB")
-        if cpu_percent is not None:
-            metrics_parts.append(f"CPU: {cpu_percent:.1f}%")
+            lines.append(f"  {'Uptime:':<{_LW}}{uptime}")
 
-        if metrics_parts:
-            lines.append(f"  {' | '.join(metrics_parts)}")
+        process = data.get("process")
+        if process:
+            mem = process.get("memory_rss_mb")
+            cpu = process.get("cpu_percent")
+            parts = []
+            if mem is not None:
+                parts.append(f"{mem:.1f} MB")
+            if cpu is not None:
+                parts.append(f"CPU: {cpu:.1f}%")
+            if parts:
+                lines.append(f"  {'Memory:':<{_LW}}{' | '.join(parts)}")
+
+        fd = data.get("fd_usage", {})
+        if fd.get("current") is not None:
+            lines.append(
+                f"  {'File descriptors:':<{_LW}}{fd['current']} / {fd.get('soft_limit', '?')}"
+            )
+
+        db_size = data.get("db_size_bytes")
+        if db_size is not None:
+            lines.append(f"  {'Database:':<{_LW}}{_format_bytes(db_size)}")
+
+        last_shutdown = data.get("last_shutdown")
+        if last_shutdown:
+            lines.append(f"  {'Last shutdown:':<{_LW}}{last_shutdown}")
     else:
-        lines.append("Status: Stopped")
+        lines.append(f"  {'Status:':<{_LW}}Stopped")
 
     lines.append("")
 
-    # Server Configuration section
-    if http_port or websocket_port:
-        lines.append("Server Configuration:")
+    # ---- Network ----
+    if running and (http_port or websocket_port):
+        lines.append("Network:")
         if http_port:
-            lines.append(f"  HTTP: localhost:{http_port}")
+            lines.append(f"  {'HTTP:':<{_LW}}localhost:{http_port}")
         if websocket_port:
-            lines.append(f"  WebSocket: localhost:{websocket_port}")
+            lines.append(f"  {'WebSocket:':<{_LW}}localhost:{websocket_port}")
+
+        # Tailscale
+        ts_info = (deps_info or {}).get("dependencies", {}).get("tailscale")
+        if ts_info and isinstance(ts_info, dict) and ts_info.get("hostname"):
+            ts_line = f"https://{ts_info['hostname']}"
+            if ts_info.get("serving"):
+                ts_line += f" (serving, funnel: {'on' if ts_info.get('funnel') else 'off'})"
+            lines.append(f"  {'Tailscale:':<{_LW}}{ts_line}")
+
+        # Web UI
+        if ui_enabled and ui_url:
+            ui_detail = ui_url
+            if ui_mode:
+                ui_detail += f" ({ui_mode}"
+                if ui_mode == "dev" and ui_pid:
+                    ui_detail += f", PID: {ui_pid}"
+                ui_detail += ")"
+            lines.append(f"  {'Web UI:':<{_LW}}{ui_detail}")
+
         lines.append("")
 
-    # Web UI section (only show if enabled)
-    if ui_enabled:
-        lines.append("Web UI:")
-        if ui_mode == "dev":
-            if ui_pid:
-                msg = f"  Mode: dev | Running (PID: {ui_pid})"
-                if ui_url:
-                    msg += f" at {ui_url}"
-                lines.append(msg)
+    # ---- Gobby CLIs ----
+    if deps_info and deps_info.get("gobby"):
+        gobby = deps_info["gobby"]
+        lines.append("Gobby:")
+        if gobby.get("gobby"):
+            lines.append(f"  {'gobby:':<{_LW}}{gobby['gobby']}")
+        if gobby.get("gcode"):
+            path_str = f" ({gobby['gcode_path']})" if gobby.get("gcode_path") else ""
+            lines.append(f"  {'gcode:':<{_LW}}{gobby['gcode']}{path_str}")
+        elif gobby.get("gcode") is None:
+            lines.append(f"  {'gcode:':<{_LW}}not installed")
+        if gobby.get("gsqz"):
+            path_str = f" ({gobby['gsqz_path']})" if gobby.get("gsqz_path") else ""
+            lines.append(f"  {'gsqz:':<{_LW}}{gobby['gsqz']}{path_str}")
+        elif gobby.get("gsqz") is None:
+            lines.append(f"  {'gsqz:':<{_LW}}not installed")
+        lines.append("")
+
+    # ---- Coding CLIs ----
+    if deps_info and deps_info.get("coding_clis"):
+        clis = deps_info["coding_clis"]
+        hooks = clis.get("hooks", {})
+        lines.append("Coding CLIs:")
+        for name, label in [
+            ("claude", "Claude Code"),
+            ("gemini", "Gemini CLI"),
+            ("codex", "Codex CLI"),
+        ]:
+            version = clis.get(name)
+            hook_str = " (hooks installed)" if hooks.get(name) else ""
+            if version:
+                lines.append(f"  {label + ':':<{_LW}}{version}{hook_str}")
             else:
-                lines.append("  Mode: dev | Stopped")
-        elif ui_mode == "production":
-            msg = "  Mode: production | Serving"
-            if ui_url:
-                msg += f" at {ui_url}"
-            lines.append(msg)
-        else:
-            lines.append(f"  Mode: {ui_mode!r} | Unknown status")
+                lines.append(f"  {label + ':':<{_LW}}not installed{hook_str}")
         lines.append("")
 
-    # MCP Proxy section (only show if we have data)
-    if mcp_total is not None:
-        lines.append("MCP Proxy:")
-        connected = mcp_connected if mcp_connected is not None else 0
-        lines.append(f"  Servers: {connected} connected / {mcp_total} total")
-        if mcp_tools_cached is not None:
-            lines.append(f"  Tools cached: {mcp_tools_cached}")
-        if mcp_unhealthy:
-            unhealthy_str = ", ".join(f"{name} ({status})" for name, status in mcp_unhealthy)
-            lines.append(f"  Unhealthy: {unhealthy_str}")
+    # ---- Services ----
+    if running:
+        lines.append("Services:")
+        dep = (deps_info or {}).get("dependencies", {})
+
+        # Docker
+        docker_ver = dep.get("docker")
+        if docker_ver:
+            docker_running = dep.get("docker_running", False)
+            status_str = "running" if docker_running else "stopped"
+            lines.append(f"  {'Docker:':<{_LW}}{status_str} (v{docker_ver})")
+
+        # Qdrant
+        memory = data.get("memory", {})
+        qdrant = memory.get("qdrant", {})
+        if qdrant.get("configured"):
+            status_str = "healthy" if qdrant.get("healthy") else "unhealthy"
+            lines.append(f"  {'Qdrant:':<{_LW}}{status_str}")
+
+        # Neo4j
+        neo4j = memory.get("neo4j", {})
+        if neo4j.get("configured"):
+            url_str = f" ({neo4j['url']})" if neo4j.get("url") else ""
+            if neo4j.get("healthy"):
+                lines.append(f"  {'Neo4j:':<{_LW}}healthy{url_str}")
+            elif neo4j.get("installed"):
+                lines.append(f"  {'Neo4j:':<{_LW}}not responding{url_str}")
+            else:
+                lines.append(f"  {'Neo4j:':<{_LW}}not installed")
+
+        # Embeddings
+        ollama = dep.get("ollama")
+        lmstudio = dep.get("lmstudio")
+        if isinstance(ollama, dict) and ollama.get("running"):
+            ver_str = f" (v{ollama['version']})" if ollama.get("version") else ""
+            lines.append(f"  {'Embeddings:':<{_LW}}Ollama{ver_str}")
+        elif isinstance(lmstudio, dict) and lmstudio.get("running"):
+            lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (running)")
+        elif isinstance(ollama, dict):
+            lines.append(f"  {'Embeddings:':<{_LW}}Ollama (stopped)")
+        elif isinstance(lmstudio, dict):
+            lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (stopped)")
+
+        provider_models = data.get("provider_models", {})
+        for provider, info in provider_models.items():
+            source = info.get("source", "failed")
+            count = info.get("model_count", 0)
+            detail = f"{count} models ({source})"
+            if info.get("error"):
+                detail += f" - {info['error']}"
+            lines.append(f"  {('Models ' + provider + ':'):<{_LW}}{detail}")
+
         lines.append("")
 
-    # Skills section (only show if we have data)
-    if skills_total is not None:
-        lines.append("Skills:")
-        lines.append(f"  Loaded: {skills_total}")
+    # ---- Dependencies ----
+    if deps_info and deps_info.get("dependencies"):
+        dep = deps_info["dependencies"]
+        dep_items: list[tuple[str, str | None]] = [
+            ("tmux", dep.get("tmux")),
+            ("git", dep.get("git")),
+            ("node", dep.get("node")),
+        ]
+        # Add tailscale version (not the full info dict)
+        ts = dep.get("tailscale")
+        ts_ver = ts.get("version") if isinstance(ts, dict) else None
+        dep_items.append(("tailscale", ts_ver))
+
+        lines.append("Dependencies:")
+        for name, version in dep_items:
+            if version:
+                lines.append(f"  {name + ':':<{_LW}}{version}")
+            else:
+                lines.append(f"  {name + ':':<{_LW}}not installed")
         lines.append("")
 
-    # Sessions section (only show if we have data)
-    if sessions_active is not None or sessions_paused is not None:
-        lines.append("Sessions:")
-        parts = []
-        if sessions_active is not None:
-            parts.append(f"Active: {sessions_active}")
-        if sessions_paused is not None:
-            parts.append(f"Paused: {sessions_paused}")
-        if sessions_handoff_ready is not None:
-            parts.append(f"Handoff Ready: {sessions_handoff_ready}")
-        if parts:
-            lines.append(f"  {' | '.join(parts)}")
+    # ---- Active Work (only if non-zero) ----
+    if running:
+        sessions = data.get("sessions", {})
+        agents = data.get("agents", {})
+        pipelines = data.get("pipelines", {})
+
+        active_parts: list[tuple[str, str]] = []
+        s_active = sessions.get("active", 0)
+        s_paused = sessions.get("paused", 0)
+        if s_active or s_paused:
+            parts = []
+            if s_active:
+                parts.append(f"{s_active} active")
+            if s_paused:
+                parts.append(f"{s_paused} paused")
+            active_parts.append(("Sessions", ", ".join(parts)))
+
+        a_running = agents.get("running", 0)
+        if a_running:
+            active_parts.append(("Agents", f"{a_running} running"))
+
+        p_running = pipelines.get("running", 0)
+        p_waiting = pipelines.get("waiting_approval", 0)
+        if p_running or p_waiting:
+            parts = []
+            if p_running:
+                parts.append(f"{p_running} running")
+            if p_waiting:
+                parts.append(f"{p_waiting} waiting approval")
+            active_parts.append(("Pipelines", ", ".join(parts)))
+
+        if active_parts:
+            lines.append("Active Work:")
+            for label, detail in active_parts:
+                lines.append(f"  {label + ':':<{_LW}}{detail}")
+            lines.append("")
+
+    # ---- Health Issues (only if problems exist) ----
+    health_issues: list[str] = []
+
+    # Config mismatches
+    if config_issues:
+        for issue in config_issues:
+            health_issues.append(f"{issue['subsystem']}: {issue['error']}")
+
+    # MCP unhealthy
+    mcp_servers = data.get("mcp_servers", {})
+    for name, info in mcp_servers.items():
+        if info.get("internal"):
+            continue
+        health = info.get("health")
+        if health and health not in ("healthy", None):
+            health_issues.append(f"MCP: {name} — {health}")
+        elif info.get("consecutive_failures", 0) > 0:
+            health_issues.append(
+                f"MCP: {name} — {info['consecutive_failures']} consecutive failures"
+            )
+
+    provider_models = data.get("provider_models", {})
+    for name, info in provider_models.items():
+        source = info.get("source")
+        error = info.get("error")
+        if source == "cache":
+            health_issues.append(
+                f"Provider models: {name} — using cache ({error or 'probe failed'})"
+            )
+        elif source == "failed":
+            health_issues.append(f"Provider models: {name} — {error or 'discovery failed'}")
+
+    if health_issues:
+        lines.append("Health Issues:")
+        for issue_msg in health_issues:
+            lines.append(f"  ! {issue_msg}")
         lines.append("")
 
-    # Tasks section (only show if we have data)
-    if tasks_open is not None or tasks_in_progress is not None:
-        lines.append("Tasks:")
-        parts = []
-        if tasks_open is not None:
-            parts.append(f"Open: {tasks_open}")
-        if tasks_in_progress is not None:
-            parts.append(f"In Progress: {tasks_in_progress}")
-        if tasks_ready is not None:
-            parts.append(f"Ready: {tasks_ready}")
-        if tasks_blocked is not None:
-            parts.append(f"Blocked: {tasks_blocked}")
-        if parts:
-            lines.append(f"  {' | '.join(parts)}")
-        lines.append("")
-
-    # Memory section (only show if we have data)
-    if memories_count is not None:
-        lines.append("Memory:")
-        lines.append(f"  Memories: {memories_count}")
-        lines.append("")
-
-    # Neo4j section (only show if we have data)
-    if neo4j_installed is not None:
-        lines.append("Neo4j:")
-        if not neo4j_installed:
-            lines.append("  Not installed")
-        elif neo4j_healthy:
-            url_str = f" ({neo4j_url})" if neo4j_url else ""
-            lines.append(f"  Healthy{url_str}")
-        else:
-            url_str = f" ({neo4j_url})" if neo4j_url else ""
-            lines.append(f"  Not responding{url_str}")
-        lines.append("")
-
-    # Paths section (only when running)
-    if running and (pid_file or log_files):
-        lines.append("Paths:")
-        if pid_file:
-            lines.append(f"  PID file: {pid_file}")
-        if log_files:
-            lines.append(f"  Logs: {log_files}")
-        lines.append("")
-
-    # Footer
+    # ---- Footer ----
     lines.append("=" * 70)
 
+    return "\n".join(lines)
+
+
+def format_startup_summary(
+    *,
+    pid: int,
+    http_port: int,
+    websocket_port: int,
+    ui_url: str | None = None,
+    ui_mode: str | None = None,
+    log_files: str | None = None,
+) -> str:
+    """Compact summary shown after daemon startup."""
+    lines = [f"Gobby daemon ready (PID: {pid})"]
+    lines.append(f"  HTTP:      localhost:{http_port}")
+    lines.append(f"  WebSocket: localhost:{websocket_port}")
+    if ui_url:
+        mode_str = f" ({ui_mode})" if ui_mode else ""
+        lines.append(f"  Web UI:    {ui_url}{mode_str}")
+    if log_files:
+        lines.append(f"  Logs:      {log_files}")
     return "\n".join(lines)

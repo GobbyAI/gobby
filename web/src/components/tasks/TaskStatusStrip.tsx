@@ -1,19 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { relativeTime } from '../../utils/formatTime'
+import { getCanonicalTaskState, getTaskBucketLabel } from '../../lib/taskState'
 
 // =============================================================================
 // Status label mapping
 // =============================================================================
-
-const STEP_LABELS: Record<string, string> = {
-  open: 'Waiting',
-  in_progress: 'Working',
-  needs_review: 'In Review',
-  review_approved: 'Ready',
-  closed: 'Done',
-  escalated: 'Escalated',
-}
 
 // =============================================================================
 // TaskStatusStrip
@@ -25,9 +17,10 @@ interface TaskStatusStripProps {
 }
 
 export function TaskStatusStrip({ task, compact }: TaskStatusStripProps) {
-  const isActive = task.status === 'in_progress'
-  const agentLabel = task.agent_name || (task.assignee ? `#${task.assignee.slice(0, 6)}` : null)
-  const stepLabel = STEP_LABELS[task.status] || task.status
+  const state = getCanonicalTaskState(task)
+  const bucketLabel = getTaskBucketLabel(task)
+  const isActive = !state.is_closed && (state.is_claimed || state.lifecycle_stage === 'in_progress')
+  const ownerLabel = task.agent_name || (state.owner_session_id ? `#${state.owner_session_id.slice(0, 6)}` : null)
 
   // Live-updating relative timestamp
   const [timeLabel, setTimeLabel] = useState(() => relativeTime(task.updated_at))
@@ -38,14 +31,14 @@ export function TaskStatusStrip({ task, compact }: TaskStatusStripProps) {
     return () => window.clearInterval(interval)
   }, [task.updated_at, isActive])
 
-  // Only show strip if task has activity (assigned or in-progress)
-  if (!agentLabel && !isActive) return null
+  // Only show strip if task has active ownership or non-ready workflow state
+  if (!ownerLabel && !isActive && bucketLabel === 'Ready') return null
 
   return (
     <div className={`task-status-strip ${isActive ? 'task-status-strip--active' : ''} ${compact ? 'task-status-strip--compact' : ''}`}>
       {isActive && <span className="task-status-strip-pulse" />}
-      {agentLabel && <span className="task-status-strip-agent">{agentLabel}</span>}
-      <span className="task-status-strip-step">{stepLabel}</span>
+      {ownerLabel && <span className="task-status-strip-agent">{ownerLabel}</span>}
+      <span className="task-status-strip-step">{bucketLabel}</span>
       <span className="task-status-strip-time">{timeLabel}</span>
     </div>
   )

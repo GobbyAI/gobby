@@ -160,7 +160,7 @@ class TestCreateMemory:
         memory = await memory_manager.create_memory(content="Simple fact")
 
         assert memory.memory_type == "fact"
-        assert memory.source_type == "user"
+        assert memory.source_type == "agent"
         assert memory.tags == []
 
 

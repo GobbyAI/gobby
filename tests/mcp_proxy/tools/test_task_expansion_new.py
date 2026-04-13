@@ -1,18 +1,16 @@
-"""Tests for the new skill-based task expansion MCP tools.
+"""Tests for run-oriented task expansion MCP tools."""
 
-Tests cover:
-- save_expansion_spec: Save expansion spec to task.expansion_context
-- execute_expansion: Create subtasks atomically from saved spec
-- get_expansion_spec: Check for pending expansion spec (resume after compaction)
-"""
-
-import json
-from unittest.mock import patch
+import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
+from gobby.mcp_proxy.tools.tasks._expansion import (
+    _background_run_tasks,
+    create_expansion_registry,
+)
+from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
@@ -22,19 +20,16 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def task_manager(temp_db):
-    """Create a task manager with the shared temp database."""
     return LocalTaskManager(temp_db)
 
 
 @pytest.fixture
 def sync_manager(task_manager, temp_dir):
-    """Create a sync manager with task manager and temp directory."""
     return TaskSyncManager(task_manager, temp_dir / "tasks.jsonl")
 
 
 @pytest.fixture
 def test_project(project_manager):
-    """Create a test project for expansion tests."""
     project = project_manager.create(
         name="test-project",
         repo_path="/tmp/test-project",
@@ -44,7 +39,6 @@ def test_project(project_manager):
 
 @pytest.fixture
 def test_session(session_manager, test_project):
-    """Create a test session for expansion tests."""
     session = session_manager.register(
         project_id=test_project,
         source="test",
@@ -55,24 +49,31 @@ def test_session(session_manager, test_project):
 
 
 @pytest.fixture
-def expansion_registry(
-    task_manager: LocalTaskManager,
-    sync_manager: TaskSyncManager,
-) -> dict:
-    """Create expansion registry and return tools as dict."""
+def expansion_registry(task_manager, sync_manager):
     ctx = RegistryContext(
         task_manager=task_manager,
         sync_manager=sync_manager,
         task_validator=None,
         config=None,
     )
-    registry = create_expansion_registry(ctx)
-    return registry._tools
+    return create_expansion_registry(ctx)
+
+
+@pytest.fixture(autouse=True)
+async def clear_background_runs():
+    _background_run_tasks.clear()
+    yield
+    pending = list(_background_run_tasks.values())
+    for task in pending:
+        if not task.done():
+            task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    _background_run_tasks.clear()
 
 
 @pytest.fixture
-def parent_task(task_manager: LocalTaskManager, test_project: str) -> str:
-    """Create a parent task for expansion tests."""
+def parent_task(task_manager, test_project):
     task = task_manager.create_task(
         project_id=test_project,
         title="Parent task for expansion",
@@ -81,775 +82,199 @@ def parent_task(task_manager: LocalTaskManager, test_project: str) -> str:
     return task.id
 
 
-class TestSaveExpansionSpec:
-    """Tests for save_expansion_spec tool."""
-
-    @pytest.mark.asyncio
-    async def test_save_valid_spec(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        task_manager: LocalTaskManager,
-    ) -> None:
-        """Test saving a valid expansion spec."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-
-        spec = {
-            "subtasks": [
-                {"title": "First subtask", "category": "code"},
-                {"title": "Second subtask", "category": "test", "depends_on": [0]},
-            ]
-        }
-
-        result = await save_fn(task_id=parent_task, spec=spec)
-
-        assert result["saved"] is True
-        assert result["subtask_count"] == 2
-
-        # Verify task was updated
-        task = task_manager.get_task(parent_task)
-        assert task.expansion_status == "pending"
-        assert task.expansion_context is not None
-        saved_spec = json.loads(task.expansion_context)
-        assert len(saved_spec["subtasks"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_save_spec_missing_subtasks(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test saving spec without subtasks array."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-
-        spec = {"invalid": "spec"}
-
-        result = await save_fn(task_id=parent_task, spec=spec)
-
-        assert "error" in result
-        assert "subtasks" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_save_spec_empty_subtasks(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test saving spec with empty subtasks array."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-
-        spec = {"subtasks": []}
-
-        result = await save_fn(task_id=parent_task, spec=spec)
-
-        assert "error" in result
-        assert "at least one" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_save_spec_subtask_missing_title(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test saving spec with subtask missing title."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-
-        spec = {
-            "subtasks": [
-                {"category": "code"},  # Missing title
-            ]
-        }
-
-        result = await save_fn(task_id=parent_task, spec=spec)
-
-        assert "error" in result
-        assert "title" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_save_spec_task_not_found(
-        self,
-        expansion_registry: dict,
-    ) -> None:
-        """Test saving spec to non-existent task."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-
-        spec = {"subtasks": [{"title": "Test"}]}
-
-        result = await save_fn(task_id="nonexistent-task-id", spec=spec)
-
-        assert "error" in result
-        assert "not found" in result["error"].lower()
-
-
-class TestExecuteExpansion:
-    """Tests for execute_expansion tool."""
-
-    @pytest.mark.asyncio
-    async def test_execute_pending_expansion(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        task_manager: LocalTaskManager,
-        test_project: str,
-        test_session: str,
-    ) -> None:
-        """Test executing a pending expansion spec."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        execute_fn = expansion_registry["execute_expansion"].func
-
-        # First save a spec
-        spec = {
-            "subtasks": [
-                {"title": "Implement feature", "category": "code", "priority": 2},
-                {"title": "Write tests", "category": "test", "depends_on": [0]},
-            ]
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-
-        # Execute the expansion
-        with session_context_for_test(test_session):
-            result = await execute_fn(parent_task_id=parent_task)
-
-        assert "error" not in result
-        assert result["count"] == 2
-        assert len(result["created"]) == 2
-
-        # Verify parent task updated
-        task = task_manager.get_task(parent_task)
-        assert task.expansion_status == "completed"
-
-        # Verify subtasks created
-        subtasks = task_manager.list_tasks(
-            project_id=test_project,
-            parent_task_id=parent_task,
-        )
-        assert len(subtasks) == 2
-        subtask_titles = {s.title for s in subtasks}
-        assert subtask_titles == {"Implement feature", "Write tests"}
-
-    @pytest.mark.asyncio
-    async def test_execute_no_pending_expansion(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        test_session: str,
-    ) -> None:
-        """Test executing when no pending expansion."""
-        execute_fn = expansion_registry["execute_expansion"].func
-
-        with session_context_for_test(test_session):
-            result = await execute_fn(parent_task_id=parent_task)
-
-        assert "error" in result
-        assert "no pending" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_execute_creates_dependencies(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        task_manager: LocalTaskManager,
-        test_project: str,
-        test_session: str,
-    ) -> None:
-        """Test that execute_expansion creates proper dependencies."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        execute_fn = expansion_registry["execute_expansion"].func
-
-        # Spec with dependencies
-        spec = {
-            "subtasks": [
-                {"title": "First task"},
-                {"title": "Second task", "depends_on": [0]},
-                {"title": "Third task", "depends_on": [0, 1]},
-            ]
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-
-        with session_context_for_test(test_session):
-            result = await execute_fn(parent_task_id=parent_task)
-
-        assert result["count"] == 3
-
-        # Get created subtasks
-        subtasks = task_manager.list_tasks(
-            project_id=test_project,
-            parent_task_id=parent_task,
-        )
-        assert len(subtasks) == 3
-
-        # Verify task refs are returned (must be #N format)
-        for ref in result["created"]:
-            assert ref.startswith("#"), f"Expected #N format, got {ref}"
-
-    @pytest.mark.asyncio
-    async def test_execute_task_not_found(
-        self,
-        expansion_registry: dict,
-        test_session: str,
-    ) -> None:
-        """Test executing expansion on non-existent task."""
-        execute_fn = expansion_registry["execute_expansion"].func
-
-        with session_context_for_test(test_session):
-            result = await execute_fn(parent_task_id="nonexistent")
-
-        assert "error" in result
-        assert "not found" in result["error"].lower()
-
-
-class TestGetExpansionSpec:
-    """Tests for get_expansion_spec tool."""
-
-    @pytest.mark.asyncio
-    async def test_get_pending_spec(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test getting a pending expansion spec."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        get_fn = expansion_registry["get_expansion_spec"].func
-
-        # Save a spec
-        spec = {
-            "subtasks": [
-                {"title": "Task 1"},
-                {"title": "Task 2"},
-            ]
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-
-        # Get the spec
-        result = await get_fn(task_id=parent_task)
-
-        assert result["pending"] is True
-        assert result["subtask_count"] == 2
-        assert "spec" in result
-        assert len(result["spec"]["subtasks"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_get_no_pending_spec(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test getting spec when none is pending."""
-        get_fn = expansion_registry["get_expansion_spec"].func
-
-        result = await get_fn(task_id=parent_task)
-
-        assert result["pending"] is False
-
-    @pytest.mark.asyncio
-    async def test_get_spec_after_execution(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        test_session: str,
-    ) -> None:
-        """Test that get_expansion_spec returns pending=False after execution."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        execute_fn = expansion_registry["execute_expansion"].func
-        get_fn = expansion_registry["get_expansion_spec"].func
-
-        # Save and execute
-        spec = {"subtasks": [{"title": "Task 1"}]}
-        await save_fn(task_id=parent_task, spec=spec)
-        with session_context_for_test(test_session):
-            await execute_fn(parent_task_id=parent_task)
-
-        # Get should now show not pending
-        result = await get_fn(task_id=parent_task)
-
-        assert result["pending"] is False
-
-    @pytest.mark.asyncio
-    async def test_get_spec_task_not_found(
-        self,
-        expansion_registry: dict,
-    ) -> None:
-        """Test getting spec for non-existent task."""
-        get_fn = expansion_registry["get_expansion_spec"].func
-
-        result = await get_fn(task_id="nonexistent")
-
-        assert "error" in result
-        assert "not found" in result["error"].lower()
-
-
-class TestValidateExpansionSpec:
-    """Tests for validate_expansion_spec tool."""
-
-    @pytest.mark.asyncio
-    async def test_validate_valid_spec(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test validating a structurally correct spec."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-
-        spec = {
-            "subtasks": [
-                {
-                    "title": "First task",
-                    "description": "Do the first thing",
-                    "category": "code",
+def _compiled_spec() -> dict:
+    return {
+        "phases": [
+            {
+                "id": "phase-1",
+                "title": "Phase 1: Foundation",
+                "summary": "Build the foundation.",
+                "test_intent": {
+                    "behaviors": ["Writes the new files"],
+                    "suggested_test_files": ["tests/test_foundation.py"],
                 },
-                {
-                    "title": "Second task",
-                    "description": "Do the second thing",
-                    "category": "code",
-                    "depends_on": [0],
-                },
-            ]
-        }
-        await save_fn(task_id=parent_task, spec=spec)
+                "task_ids": ["task-1"],
+            }
+        ],
+        "tasks": [
+            {
+                "id": "task-1",
+                "phase_id": "phase-1",
+                "title": "Implement the foundation",
+                "description": "Create the initial implementation.",
+                "category": "code",
+                "priority": 2,
+                "task_type": "task",
+                "validation": "Implementation is present.",
+                "affected_files": ["src/foundation.py"],
+            }
+        ],
+        "dependencies": [],
+        "execution_groups": [],
+    }
 
-        result = await validate_fn(task_id=parent_task)
 
-        assert result["valid"] is True
-        assert result["errors"] == []
-        assert result["subtask_count"] == 2
-
+class TestExpansionRuns:
     @pytest.mark.asyncio
-    async def test_validate_no_spec(
+    async def test_start_expansion_run_creates_run(
         self,
-        expansion_registry: dict,
-        parent_task: str,
+        expansion_registry,
+        task_manager,
+        parent_task,
+        test_session,
     ) -> None:
-        """Test validating when no spec is saved."""
-        validate_fn = expansion_registry["validate_expansion_spec"].func
+        run_manager = LocalExpansionRunManager(task_manager.db)
 
-        result = await validate_fn(task_id=parent_task)
-
-        assert "error" in result
-        assert "no expansion spec" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_validate_empty_subtasks(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        task_manager: LocalTaskManager,
-    ) -> None:
-        """Test validating spec with empty subtasks list."""
-        # Directly set expansion_context to bypass save_expansion_spec validation
-        task_manager.update_task(
-            parent_task,
-            expansion_context=json.dumps({"subtasks": []}),
-            expansion_status="pending",
-        )
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-
-        result = await validate_fn(task_id=parent_task)
-
-        assert result["valid"] is False
-        assert any("no subtasks" in e.lower() for e in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_validate_missing_required_fields(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        task_manager: LocalTaskManager,
-    ) -> None:
-        """Test validating spec with missing title, description, category."""
-        task_manager.update_task(
-            parent_task,
-            expansion_context=json.dumps(
-                {
-                    "subtasks": [
-                        {"title": ""},  # empty title, no description, no category
-                    ]
-                }
-            ),
-            expansion_status="pending",
-        )
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-
-        result = await validate_fn(task_id=parent_task)
-
-        assert result["valid"] is False
-        errors_text = " ".join(result["errors"])
-        assert "title" in errors_text.lower()
-        assert "description" in errors_text.lower()
-        assert "category" in errors_text.lower()
-
-    @pytest.mark.asyncio
-    async def test_validate_self_reference(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test validating spec with self-referencing dependency."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-
-        spec = {
-            "subtasks": [
-                {
-                    "title": "Task A",
-                    "description": "Do A",
-                    "category": "code",
-                    "depends_on": [0],  # self-reference
-                },
-            ]
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-
-        result = await validate_fn(task_id=parent_task)
-
-        assert result["valid"] is False
-        assert any("self-reference" in e for e in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_validate_out_of_bounds_dep(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test validating spec with out-of-bounds dependency index."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-
-        spec = {
-            "subtasks": [
-                {
-                    "title": "Task A",
-                    "description": "Do A",
-                    "category": "code",
-                    "depends_on": [5],  # out of bounds
-                },
-            ]
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-
-        result = await validate_fn(task_id=parent_task)
-
-        assert result["valid"] is False
-        assert any("out of bounds" in e for e in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_validate_circular_dependency(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-    ) -> None:
-        """Test validating spec with circular dependencies."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-
-        spec = {
-            "subtasks": [
-                {
-                    "title": "Task A",
-                    "description": "Do A",
-                    "category": "code",
-                    "depends_on": [1],
-                },
-                {
-                    "title": "Task B",
-                    "description": "Do B",
-                    "category": "code",
-                    "depends_on": [0],  # A->B->A cycle
-                },
-            ]
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-
-        result = await validate_fn(task_id=parent_task)
-
-        assert result["valid"] is False
-        assert any("circular" in e.lower() for e in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_validate_plan_section_coverage_missing(
-        self,
-        expansion_registry: dict,
-        task_manager: LocalTaskManager,
-        test_project: str,
-    ) -> None:
-        """Test that validation catches missing plan section coverage."""
-        # Create task with plan sections in description
-        task = task_manager.create_task(
-            project_id=test_project,
-            title="Plan task",
-            task_type="epic",
-            description="## Plan\n\n### 1.1 Add models\nDetails...\n\n### 1.2 Add routes\nDetails...\n\n### 1.3 Add tests\nDetails...",
-        )
-
-        # Spec only covers 1.1 and 1.2, not 1.3
-        spec = {
-            "subtasks": [
-                {
-                    "title": "1.1 Add models",
-                    "description": "Section 1.1 content",
-                    "category": "code",
-                },
-                {
-                    "title": "1.2 Add routes",
-                    "description": "Section 1.2 content",
-                    "category": "code",
-                    "depends_on": [0],
-                },
-            ]
-        }
-        task_manager.update_task(
-            task.id,
-            expansion_context=json.dumps(spec),
-            expansion_status="pending",
-        )
-
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-        result = await validate_fn(task_id=task.id)
-
-        assert result["valid"] is False
-        assert any("1.3" in e for e in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_validate_plan_section_coverage_complete(
-        self,
-        expansion_registry: dict,
-        task_manager: LocalTaskManager,
-        test_project: str,
-    ) -> None:
-        """Test that validation passes when all plan sections are covered."""
-        task = task_manager.create_task(
-            project_id=test_project,
-            title="Plan task",
-            task_type="epic",
-            description="### 1.1 Models\nContent\n\n### 1.2 Routes\nContent",
-        )
-
-        spec = {
-            "subtasks": [
-                {
-                    "title": "1.1 Models",
-                    "description": "Section 1.1 implementation",
-                    "category": "code",
-                },
-                {
-                    "title": "1.2 Routes",
-                    "description": "Section 1.2 implementation",
-                    "category": "code",
-                },
-            ]
-        }
-        task_manager.update_task(
-            task.id,
-            expansion_context=json.dumps(spec),
-            expansion_status="pending",
-        )
-
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-        result = await validate_fn(task_id=task.id)
-
-        assert result["valid"] is True
-        assert result["errors"] == []
-
-    @pytest.mark.asyncio
-    async def test_validate_task_not_found(
-        self,
-        expansion_registry: dict,
-    ) -> None:
-        """Test validating spec for non-existent task."""
-        validate_fn = expansion_registry["validate_expansion_spec"].func
-
-        result = await validate_fn(task_id="nonexistent")
-
-        assert "error" in result
-        assert "not found" in result["error"].lower()
-
-
-class TestExpansionWithSeqNum:
-    """Tests for expansion with sequential task numbers."""
-
-    @pytest.mark.asyncio
-    async def test_save_spec_with_seq_num_reference(
-        self,
-        expansion_registry: dict,
-        task_manager: LocalTaskManager,
-        test_project: str,
-    ) -> None:
-        """Test saving spec using #N reference."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-
-        # Create task with seq_num
-        task = task_manager.create_task(
-            project_id=test_project,
-            title="Task with seq num",
-            task_type="feature",
-        )
-
-        # Mock project context so #N resolution works (patch both modules)
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.tasks._context.get_project_context",
-                return_value={"id": test_project},
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._resolution.get_project_context",
-                return_value={"id": test_project},
-            ),
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            new=AsyncMock(return_value=None),
         ):
-            # Use #N reference
-            spec = {"subtasks": [{"title": "Subtask"}]}
-            save_result = await save_fn(task_id=f"#{task.seq_num}", spec=spec)
+            with session_context_for_test(test_session):
+                result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {"task_id": parent_task, "auto_apply": False},
+                )
+            await asyncio.sleep(0)
 
-        assert save_result["saved"] is True
-        assert save_result["task_id"] == task.id
+        assert result["success"] is True
+        assert result["status"] == "running"
+        run = run_manager.get(result["run_id"])
+        assert run is not None
+        assert run.parent_task_id == parent_task
+        assert run.input_source == "task"
+        assert run.options == {"auto_apply": False}
 
     @pytest.mark.asyncio
-    async def test_execute_expansion_returns_seq_refs(
+    async def test_get_latest_expansion_run_returns_most_recent(
         self,
-        expansion_registry: dict,
-        task_manager: LocalTaskManager,
-        test_project: str,
-        test_session: str,
+        expansion_registry,
+        task_manager,
+        parent_task,
     ) -> None:
-        """Test that execute_expansion returns #N refs for created subtasks."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        execute_fn = expansion_registry["execute_expansion"].func
-
-        # Create parent task
-        task = task_manager.create_task(
-            project_id=test_project,
-            title="Parent for seq test",
-            task_type="feature",
+        parent = task_manager.get_task(parent_task)
+        assert parent is not None
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        first = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="task",
         )
-        parent_id = task.id
-
-        # Save and execute (use UUID directly for simplicity)
-        spec = {
-            "subtasks": [
-                {"title": "Subtask 1"},
-                {"title": "Subtask 2"},
-            ]
-        }
-        await save_fn(task_id=parent_id, spec=spec)
-        with session_context_for_test(test_session):
-            exec_result = await execute_fn(parent_task_id=parent_id)
-
-        # All refs should be #N format
-        for ref in exec_result["created"]:
-            assert ref.startswith("#"), f"Expected #N format, got {ref}"
-
-
-class TestPlanFileReference:
-    """Tests for plan_file reference injection into subtask descriptions."""
-
-    @pytest.mark.asyncio
-    async def test_plan_file_injected_into_descriptions(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        task_manager: LocalTaskManager,
-        test_project: str,
-        test_session: str,
-    ) -> None:
-        """Subtask descriptions should include plan reference block when plan_file is in spec."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        execute_fn = expansion_registry["execute_expansion"].func
-
-        spec = {
-            "plan_file": "docs/plans/my-plan.md",
-            "subtasks": [
-                {"title": "First task", "description": "Implement the auth module."},
-                {"title": "Second task", "description": "Write tests for auth."},
-            ],
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-        with session_context_for_test(test_session):
-            result = await execute_fn(parent_task_id=parent_task)
-
-        assert result["count"] == 2
-
-        subtasks = task_manager.list_tasks(
-            project_id=test_project,
-            parent_task_id=parent_task,
+        latest = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="plan",
+            plan_file="docs/plans/example.md",
         )
-        for st in subtasks:
-            assert st.description is not None
-            assert "**Plan reference:** `docs/plans/my-plan.md`" in st.description
-            assert "Your task description below is your scope" in st.description
 
-        # Original description content is preserved after the reference block
-        descriptions = {st.title: st.description for st in subtasks}
-        assert "Implement the auth module." in descriptions["First task"]
-        assert "Write tests for auth." in descriptions["Second task"]
-
-    @pytest.mark.asyncio
-    async def test_no_plan_file_no_reference_block(
-        self,
-        expansion_registry: dict,
-        parent_task: str,
-        task_manager: LocalTaskManager,
-        test_project: str,
-        test_session: str,
-    ) -> None:
-        """Subtask descriptions should NOT have reference block when no plan_file."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        execute_fn = expansion_registry["execute_expansion"].func
-
-        spec = {
-            "subtasks": [
-                {"title": "A task", "description": "Do something."},
-            ],
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-        with session_context_for_test(test_session):
-            result = await execute_fn(parent_task_id=parent_task)
-
-        assert result["count"] == 1
-
-        subtasks = task_manager.list_tasks(
-            project_id=test_project,
-            parent_task_id=parent_task,
+        result = await expansion_registry.call(
+            "get_latest_expansion_run",
+            {"task_id": parent_task},
         )
-        assert subtasks[0].description == "Do something."
+
+        assert result["success"] is True
+        assert result["run"]["id"] == latest.id
+        assert result["run"]["id"] != first.id
+        assert result["run"]["plan_file"] == "docs/plans/example.md"
 
     @pytest.mark.asyncio
-    async def test_validate_returns_plan_file(
+    async def test_validate_expansion_run_checks_compiled_and_applied(
         self,
-        expansion_registry: dict,
-        parent_task: str,
+        expansion_registry,
+        task_manager,
+        parent_task,
     ) -> None:
-        """validate_expansion_spec should return plan_file when present in spec."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        validate_fn = expansion_registry["validate_expansion_spec"].func
+        parent = task_manager.get_task(parent_task)
+        assert parent is not None
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        run = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="task",
+        )
+        run_manager.save_compiled_spec(run.id, _compiled_spec())
+        child = task_manager.create_task(
+            project_id=parent.project_id,
+            title="Implement the foundation",
+            parent_task_id=parent.id,
+            category="code",
+        )
+        run_manager.save_apply_result(
+            run.id,
+            task_id_map={"task-1": child.id},
+            created_task_ids=[child.id],
+            completed=True,
+        )
 
-        spec = {
-            "plan_file": "docs/plans/feature.md",
-            "subtasks": [
-                {"title": "Task", "description": "Details", "category": "code"},
-            ],
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-        result = await validate_fn(task_id=parent_task)
+        result = await expansion_registry.call(
+            "validate_expansion_run",
+            {"run_id": run.id},
+        )
 
-        assert result["valid"] is True
-        assert result["plan_file"] == "docs/plans/feature.md"
+        assert result["success"] is True
+        assert result["compiled"]["valid"] is True
+        assert result["applied"]["valid"] is True
 
     @pytest.mark.asyncio
-    async def test_validate_no_plan_file_key(
+    async def test_cancel_expansion_run_marks_run_cancelled(
         self,
-        expansion_registry: dict,
-        parent_task: str,
+        expansion_registry,
+        task_manager,
+        parent_task,
     ) -> None:
-        """validate_expansion_spec should not include plan_file when absent."""
-        save_fn = expansion_registry["save_expansion_spec"].func
-        validate_fn = expansion_registry["validate_expansion_spec"].func
+        parent = task_manager.get_task(parent_task)
+        assert parent is not None
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        run = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="task",
+        )
 
-        spec = {
-            "subtasks": [
-                {"title": "Task", "description": "Details", "category": "code"},
-            ],
-        }
-        await save_fn(task_id=parent_task, spec=spec)
-        result = await validate_fn(task_id=parent_task)
+        result = await expansion_registry.call(
+            "cancel_expansion_run",
+            {"run_id": run.id},
+        )
 
-        assert result["valid"] is True
-        assert "plan_file" not in result
+        assert result["success"] is True
+        assert result["run"]["status"] == "cancelled"
+        refreshed = run_manager.get(run.id)
+        assert refreshed is not None
+        assert refreshed.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_resume_expansion_run_restarts_failed_run(
+        self,
+        expansion_registry,
+        task_manager,
+        parent_task,
+        test_session,
+    ) -> None:
+        parent = task_manager.get_task(parent_task)
+        assert parent is not None
+        run_manager = LocalExpansionRunManager(task_manager.db)
+        run = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=parent.project_id,
+            triggering_session_id=None,
+            input_source="task",
+            options={"auto_apply": False},
+        )
+        run_manager.fail(run.id, "failed before resume")
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            new=AsyncMock(return_value=None),
+        ):
+            with session_context_for_test(test_session):
+                result = await expansion_registry.call(
+                    "resume_expansion_run",
+                    {"run_id": run.id},
+                )
+            await asyncio.sleep(0)
+
+        assert result["success"] is True
+        assert result["status"] == "running"

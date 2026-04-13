@@ -910,210 +910,345 @@ class TestClaudeExpandLine:
 
 
 class TestCodexTranscriptParser:
-    """Tests for Codex transcript parser."""
+    """Tests for Codex transcript parser (envelope format)."""
 
     @pytest.fixture
     def parser(self):
         return CodexTranscriptParser()
 
-    def test_codex_parser_simple(self, parser) -> None:
-        line = json.dumps(
-            {"role": "user", "content": "def hello():", "timestamp": "2023-01-01T12:00:00Z"}
+    # -- Helpers --
+
+    @staticmethod
+    def _msg(role: str, text: str, ts: str = "2024-06-15T10:30:00Z", **extra) -> str:
+        """Build a Codex response_item/message envelope line."""
+        block_type = "output_text" if role == "assistant" else "input_text"
+        payload: dict = {
+            "type": "message",
+            "role": role,
+            "content": [{"type": block_type, "text": text}],
+            **extra,
+        }
+        return json.dumps({"timestamp": ts, "type": "response_item", "payload": payload})
+
+    @staticmethod
+    def _function_call(
+        name: str, arguments: str, call_id: str, ts: str = "2024-06-15T10:30:00Z"
+    ) -> str:
+        """Build a Codex response_item/function_call envelope line."""
+        return json.dumps(
+            {
+                "timestamp": ts,
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": name,
+                    "arguments": arguments,
+                    "call_id": call_id,
+                },
+            }
         )
 
+    @staticmethod
+    def _function_call_output(call_id: str, output: str, ts: str = "2024-06-15T10:30:00Z") -> str:
+        """Build a Codex response_item/function_call_output envelope line."""
+        return json.dumps(
+            {
+                "timestamp": ts,
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                },
+            }
+        )
+
+    @staticmethod
+    def _event_msg(event_type: str, ts: str = "2024-06-15T10:30:00Z", **extra) -> str:
+        """Build a Codex event_msg envelope line."""
+        return json.dumps(
+            {"timestamp": ts, "type": "event_msg", "payload": {"type": event_type, **extra}}
+        )
+
+    @staticmethod
+    def _session_meta(session_id: str = "abc-123", ts: str = "2024-06-15T10:30:00Z") -> str:
+        return json.dumps({"timestamp": ts, "type": "session_meta", "payload": {"id": session_id}})
+
+    @staticmethod
+    def _turn_context(turn_id: str = "turn-1", ts: str = "2024-06-15T10:30:00Z") -> str:
+        return json.dumps(
+            {"timestamp": ts, "type": "turn_context", "payload": {"turn_id": turn_id}}
+        )
+
+    # -- parse_line: messages --
+
+    def test_parse_user_message(self, parser) -> None:
+        line = self._msg("user", "hello world")
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.role == "user"
-        assert msg.content == "def hello():"
+        assert msg.content == "hello world"
+        assert msg.content_type == "text"
         assert msg.index == 0
 
-    def test_codex_parser_missing_role(self, parser) -> None:
-        line = json.dumps({"content": "missing role"})
-        msg = parser.parse_line(line, 0)
-        assert msg is None
-
-    def test_codex_parse_line_invalid_json(self, parser) -> None:
-        """Test handling of invalid JSON."""
-        msg = parser.parse_line("not valid json", 0)
-        assert msg is None
-
-    def test_codex_parse_line_empty(self, parser) -> None:
-        """Test handling of empty/whitespace lines."""
-        assert parser.parse_line("", 0) is None
-        assert parser.parse_line("   ", 0) is None
-
-    def test_codex_parse_line_assistant(self, parser) -> None:
-        """Test parsing assistant messages."""
-        line = json.dumps({"role": "assistant", "content": "Here is the code"})
+    def test_parse_assistant_message(self, parser) -> None:
+        line = self._msg("assistant", "ok", phase="final_answer")
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.role == "assistant"
-        assert msg.content == "Here is the code"
+        assert msg.content == "ok"
 
-    def test_codex_parse_line_system(self, parser) -> None:
-        """Test parsing system messages."""
-        line = json.dumps({"role": "system", "content": "System prompt"})
+    def test_parse_developer_maps_to_system(self, parser) -> None:
+        line = self._msg("developer", "System prompt")
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.role == "system"
+        assert msg.content == "System prompt"
 
-    def test_codex_extract_last_messages(self, parser) -> None:
-        """Test extract_last_messages with various num_pairs."""
-        turns = [
-            {"role": "user", "content": "1"},
-            {"role": "assistant", "content": "2"},
-            {"role": "user", "content": "3"},
-            {"role": "assistant", "content": "4"},
-            {"role": "user", "content": "5"},
-            {"role": "assistant", "content": "6"},
+    def test_parse_multiple_content_blocks(self, parser) -> None:
+        payload = {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "First part."},
+                {"type": "output_text", "text": "Second part."},
+            ],
+        }
+        line = json.dumps(
+            {"timestamp": "2024-06-15T10:30:00Z", "type": "response_item", "payload": payload}
+        )
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.content == "First part. Second part."
+
+    def test_parse_empty_content_blocks(self, parser) -> None:
+        payload = {"type": "message", "role": "user", "content": []}
+        line = json.dumps(
+            {"timestamp": "2024-06-15T10:30:00Z", "type": "response_item", "payload": payload}
+        )
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.content == ""
+
+    def test_parse_message_missing_role(self, parser) -> None:
+        payload = {"type": "message", "content": [{"type": "input_text", "text": "hi"}]}
+        line = json.dumps(
+            {"timestamp": "2024-06-15T10:30:00Z", "type": "response_item", "payload": payload}
+        )
+        msg = parser.parse_line(line, 0)
+        assert msg is None
+
+    # -- parse_line: function calls --
+
+    def test_parse_function_call(self, parser) -> None:
+        line = self._function_call("exec_command", '{"cmd":"ls","workdir":"/tmp"}', "call_abc")
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.content_type == "tool_use"
+        assert msg.tool_name == "exec_command"
+        assert msg.tool_input == {"cmd": "ls", "workdir": "/tmp"}
+        assert msg.tool_use_id == "call_abc"
+
+    def test_parse_function_call_invalid_arguments(self, parser) -> None:
+        line = self._function_call("broken", "not json", "call_bad")
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.tool_input == {"raw": "not json"}
+
+    def test_parse_function_call_output(self, parser) -> None:
+        line = self._function_call_output("call_abc", "file1.txt\nfile2.txt")
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.role == "tool"
+        assert msg.content_type == "tool_result"
+        assert msg.tool_use_id == "call_abc"
+        assert msg.tool_result == {"output": "file1.txt\nfile2.txt"}
+        assert "file1.txt" in msg.content
+
+    # -- parse_line: skipped types --
+
+    def test_skip_event_msg(self, parser) -> None:
+        line = self._event_msg("task_started", turn_id="turn-1")
+        assert parser.parse_line(line, 0) is None
+
+    def test_skip_session_meta(self, parser) -> None:
+        assert parser.parse_line(self._session_meta(), 0) is None
+
+    def test_skip_turn_context(self, parser) -> None:
+        assert parser.parse_line(self._turn_context(), 0) is None
+
+    # -- parse_line: error handling --
+
+    def test_parse_line_invalid_json(self, parser) -> None:
+        assert parser.parse_line("not valid json", 0) is None
+
+    def test_parse_line_empty(self, parser) -> None:
+        assert parser.parse_line("", 0) is None
+        assert parser.parse_line("   ", 0) is None
+
+    def test_parse_line_non_dict_json(self, parser) -> None:
+        assert parser.parse_line('"just a string"', 0) is None
+        assert parser.parse_line("42", 0) is None
+
+    def test_parse_line_missing_payload(self, parser) -> None:
+        line = json.dumps({"timestamp": "2024-06-15T10:30:00Z", "type": "response_item"})
+        assert parser.parse_line(line, 0) is None
+
+    # -- parse_lines batch --
+
+    def test_parse_lines(self, parser) -> None:
+        lines = [
+            self._session_meta(),
+            self._event_msg("task_started"),
+            self._msg("user", "First"),
+            "",
+            self._msg("assistant", "Second"),
+            "invalid json",
+            self._function_call("exec_command", '{"cmd":"ls"}', "call_1"),
+            self._function_call_output("call_1", "output"),
+            self._msg("user", "Third"),
         ]
 
-        # Get last 1 pair (2 messages)
+        msgs = parser.parse_lines(lines, start_index=5)
+
+        assert len(msgs) == 5
+        assert msgs[0].index == 5
+        assert msgs[0].content == "First"
+        assert msgs[0].role == "user"
+        assert msgs[1].index == 6
+        assert msgs[1].content == "Second"
+        assert msgs[2].index == 7
+        assert msgs[2].content_type == "tool_use"
+        assert msgs[3].index == 8
+        assert msgs[3].content_type == "tool_result"
+        assert msgs[4].index == 9
+        assert msgs[4].content == "Third"
+
+    # -- extract_last_messages --
+
+    def test_extract_last_messages(self, parser) -> None:
+        turns = [
+            json.loads(self._msg("user", "1")),
+            json.loads(self._msg("assistant", "2")),
+            json.loads(self._event_msg("token_count")),
+            json.loads(self._msg("user", "3")),
+            json.loads(self._msg("assistant", "4")),
+            json.loads(self._msg("user", "5")),
+            json.loads(self._msg("assistant", "6")),
+        ]
+
         msgs = parser.extract_last_messages(turns, num_pairs=1)
         assert len(msgs) == 2
         assert msgs[0]["content"] == "5"
         assert msgs[1]["content"] == "6"
 
-        # Get last 2 pairs (4 messages)
         msgs = parser.extract_last_messages(turns, num_pairs=2)
         assert len(msgs) == 4
         assert msgs[0]["content"] == "3"
 
-        # Get more than available
         msgs = parser.extract_last_messages(turns, num_pairs=10)
         assert len(msgs) == 6
 
-    def test_codex_extract_last_messages_empty(self, parser) -> None:
-        """Test extract_last_messages with empty list."""
-        msgs = parser.extract_last_messages([], num_pairs=2)
-        assert msgs == []
+    def test_extract_last_messages_skips_non_messages(self, parser) -> None:
+        turns = [
+            json.loads(self._function_call("exec_command", '{"cmd":"ls"}', "c1")),
+            json.loads(self._msg("user", "hello")),
+            json.loads(self._msg("assistant", "hi")),
+        ]
+        msgs = parser.extract_last_messages(turns, num_pairs=5)
+        assert len(msgs) == 2
 
-    def test_codex_extract_turns_since_clear(self, parser) -> None:
-        """Test extract_turns_since_clear."""
-        turns = [{"role": "user"}] * 100
+    def test_extract_last_messages_developer_mapped(self, parser) -> None:
+        turns = [
+            json.loads(self._msg("developer", "System instructions")),
+            json.loads(self._msg("user", "hello")),
+        ]
+        msgs = parser.extract_last_messages(turns, num_pairs=5)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
 
-        # Should return last max_turns
+    def test_extract_last_messages_empty(self, parser) -> None:
+        assert parser.extract_last_messages([], num_pairs=2) == []
+
+    # -- extract_turns_since_clear --
+
+    def test_extract_turns_since_clear(self, parser) -> None:
+        turns = [json.loads(self._msg("user", str(i))) for i in range(100)]
+
         extracted = parser.extract_turns_since_clear(turns, max_turns=50)
         assert len(extracted) == 50
 
-        # Should return all if less than max_turns
-        small_turns = [{"role": "user"}] * 10
+        small_turns = [json.loads(self._msg("user", str(i))) for i in range(10)]
         extracted = parser.extract_turns_since_clear(small_turns, max_turns=50)
         assert len(extracted) == 10
 
-        # Default (no max_turns) returns all turns
         extracted = parser.extract_turns_since_clear(turns)
         assert len(extracted) == 100
 
-    def test_codex_is_session_boundary(self, parser) -> None:
-        """Test is_session_boundary always returns False for Codex."""
-        assert parser.is_session_boundary({"role": "user"}) is False
+    def test_extract_turns_since_clear_respects_session_boundary(self, parser) -> None:
+        turns = [
+            json.loads(self._msg("user", "old")),
+            json.loads(self._msg("assistant", "old reply")),
+            json.loads(self._session_meta()),
+            json.loads(self._msg("user", "new")),
+            json.loads(self._msg("assistant", "new reply")),
+        ]
+        extracted = parser.extract_turns_since_clear(turns)
+        assert len(extracted) == 2
+
+    # -- is_session_boundary --
+
+    def test_is_session_boundary(self, parser) -> None:
+        assert parser.is_session_boundary(json.loads(self._session_meta())) is True
+        assert parser.is_session_boundary(json.loads(self._event_msg("task_started"))) is False
+        assert parser.is_session_boundary(json.loads(self._msg("user", "hi"))) is False
         assert parser.is_session_boundary({}) is False
 
-    def test_codex_parse_lines(self, parser) -> None:
-        """Test batch parsing with parse_lines."""
-        lines = [
-            json.dumps({"role": "user", "content": "First"}),
-            "",  # Empty line should be skipped
-            json.dumps({"role": "assistant", "content": "Second"}),
-            "invalid json",  # Should be skipped
-            json.dumps({"role": "user", "content": "Third"}),
-        ]
+    # -- timestamp --
 
-        msgs = parser.parse_lines(lines, start_index=5)
-
-        # Should parse 3 valid messages
-        assert len(msgs) == 3
-        assert msgs[0].index == 5
-        assert msgs[0].content == "First"
-        assert msgs[1].index == 6
-        assert msgs[1].content == "Second"
-        assert msgs[2].index == 7
-        assert msgs[2].content == "Third"
-
-    def test_codex_extract_usage_input_tokens(self, parser) -> None:
-        """Test _extract_usage with input_tokens format."""
-        line = json.dumps(
-            {
-                "role": "assistant",
-                "content": "Response",
-                "input_tokens": 100,
-                "output_tokens": 50,
-                "cached_tokens": 25,
-                "cost": 0.005,
-            }
-        )
+    def test_timestamp_parsing(self, parser) -> None:
+        line = self._msg("user", "Hello", ts="2024-06-15T10:30:00Z")
         msg = parser.parse_line(line, 0)
         assert msg is not None
-        assert msg.usage is not None
-        assert msg.usage.input_tokens == 100
-        assert msg.usage.output_tokens == 50
-        assert msg.usage.cache_read_tokens == 25
-        assert msg.usage.total_cost_usd == 0.005
+        assert msg.timestamp.year == 2024
+        assert msg.timestamp.month == 6
+        assert msg.timestamp.day == 15
 
-    def test_codex_extract_usage_nested_usage_field(self, parser) -> None:
-        """Test _extract_usage with nested usage field."""
+    def test_timestamp_missing(self, parser) -> None:
         line = json.dumps(
             {
-                "role": "assistant",
-                "content": "Response",
-                "usage": {
-                    "inputTokens": 200,
-                    "outputTokens": 100,
-                    "cachedTokens": 50,
-                    "total_cost": 0.01,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}],
                 },
             }
         )
         msg = parser.parse_line(line, 0)
         assert msg is not None
-        assert msg.usage is not None
-        assert msg.usage.input_tokens == 200
-        assert msg.usage.output_tokens == 100
-        assert msg.usage.cache_read_tokens == 50
-        assert msg.usage.total_cost_usd == 0.01
+        assert msg.timestamp is not None
 
-    def test_codex_extract_usage_no_usage(self, parser) -> None:
-        """Test _extract_usage returns None when no usage data."""
-        line = json.dumps({"role": "assistant", "content": "Response"})
+    def test_timestamp_invalid_format(self, parser) -> None:
+        payload = {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hi"}],
+        }
+        line = json.dumps({"timestamp": "not-a-date", "type": "response_item", "payload": payload})
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.timestamp is not None
+
+    # -- usage --
+
+    def test_usage_returns_none_for_messages(self, parser) -> None:
+        """Usage data lives on event_msg lines, not on message lines."""
+        line = self._msg("assistant", "Response")
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.usage is None
-
-    def test_codex_timestamp_parsing(self, parser) -> None:
-        """Test timestamp parsing from message."""
-        # With timestamp
-        line = json.dumps(
-            {
-                "role": "user",
-                "content": "Hello",
-                "timestamp": "2024-06-15T10:30:00Z",
-            }
-        )
-        msg = parser.parse_line(line, 0)
-        assert msg is not None
-        assert msg.timestamp.year == 2024
-        assert msg.timestamp.month == 6
-
-        # Without timestamp (uses current time)
-        line = json.dumps({"role": "user", "content": "Hello"})
-        msg = parser.parse_line(line, 0)
-        assert msg is not None
-        assert msg.timestamp is not None
-
-    def test_codex_timestamp_invalid_format(self, parser) -> None:
-        """Test handling of invalid timestamp format."""
-        line = json.dumps(
-            {
-                "role": "user",
-                "content": "Hello",
-                "timestamp": "not-a-date",
-            }
-        )
-        msg = parser.parse_line(line, 0)
-        assert msg is not None
-        # Should use default timestamp without crashing
-        assert msg.timestamp is not None
 
 
 class TestGeminiTranscriptParser:
@@ -1290,6 +1425,43 @@ class TestGeminiTranscriptParser:
         small_turns = [{"role": "user"}] * 10
         extracted = parser.extract_turns_since_clear(small_turns, max_turns=50)
         assert len(extracted) == 10
+
+    def test_gemini_extract_last_messages_json_session_format(self, parser) -> None:
+        """Test extract_last_messages with Gemini JSON session format (type: user/gemini)."""
+        turns = [
+            {
+                "id": "msg-1",
+                "type": "user",
+                "timestamp": "2026-04-12T16:20:00Z",
+                "content": [{"text": "Fix the bug"}],
+            },
+            {
+                "id": "msg-2",
+                "type": "gemini",
+                "timestamp": "2026-04-12T16:20:01Z",
+                "content": "I'll fix it now.",
+                "toolCalls": [],
+            },
+            {
+                "id": "msg-3",
+                "type": "user",
+                "timestamp": "2026-04-12T16:21:00Z",
+                "content": [{"text": "Looks good"}],
+            },
+            {
+                "id": "msg-4",
+                "type": "gemini",
+                "timestamp": "2026-04-12T16:21:01Z",
+                "content": "Great, all done.",
+            },
+        ]
+
+        msgs = parser.extract_last_messages(turns, num_pairs=1)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "user"
+        assert "Looks good" in msgs[0]["content"]
+        assert msgs[1]["role"] == "assistant"
+        assert "all done" in msgs[1]["content"]
 
     def test_gemini_is_session_boundary(self, parser) -> None:
         """Test is_session_boundary always returns False for Gemini."""

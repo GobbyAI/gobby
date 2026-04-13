@@ -8,10 +8,8 @@ import {
   ChevronIcon,
   AlertIcon,
   PipelineStatusDot as StatusDot,
-  formatTime,
-  formatDuration,
-  formatJson,
 } from "./execution-utils";
+import { formatTime, formatDuration, formatJson } from "./executionFormatters";
 import { cn } from "../../lib/utils";
 import "./reports-page.css";
 
@@ -1381,15 +1379,6 @@ function AgentDetail({
                   </span>
                 </div>
               )}
-              {run.usage_total_cost_usd != null &&
-                run.usage_total_cost_usd > 0 && (
-                  <div className="reports-detail-stat">
-                    <span className="reports-detail-stat-label">Cost</span>
-                    <span className="reports-detail-stat-value reports-detail-stat-value--cost">
-                      ${run.usage_total_cost_usd.toFixed(4)}
-                    </span>
-                  </div>
-                )}
               <div className="reports-detail-stat">
                 <span className="reports-detail-stat-label">Tools</span>
                 <span className="reports-detail-stat-value">

@@ -56,6 +56,7 @@ class CLIConfig:
     source: str  # Source identifier sent to daemon
     critical_hooks: frozenset[str]  # Hooks requiring daemon to be running
     session_start_hooks: frozenset[str]  # Hooks that get terminal context injected
+    terminal_context_hooks: frozenset[str]  # Hooks that should carry terminal/process metadata
     json_error_exit_code: int  # Exit code for JSON parse errors (1 or 2)
     logger_name: str  # Logger name for this CLI's dispatcher
     suppress_logs: bool  # Whether to suppress logs in non-debug mode
@@ -72,6 +73,7 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         source="claude",
         critical_hooks=frozenset({"session-start", "session-end", "pre-compact"}),
         session_start_hooks=frozenset({"session-start"}),
+        terminal_context_hooks=frozenset({"session-start"}),
         json_error_exit_code=2,
         logger_name="gobby.hooks.dispatcher",
         suppress_logs=True,
@@ -81,6 +83,7 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         source="gemini",
         critical_hooks=frozenset({"SessionStart"}),
         session_start_hooks=frozenset({"SessionStart"}),
+        terminal_context_hooks=frozenset({"SessionStart"}),
         json_error_exit_code=1,
         logger_name="gobby.hooks.gemini.dispatcher",
         suppress_logs=False,
@@ -90,6 +93,9 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         source="codex",
         critical_hooks=frozenset({"SessionStart", "Stop"}),
         session_start_hooks=frozenset({"SessionStart"}),
+        terminal_context_hooks=frozenset(
+            {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
+        ),
         json_error_exit_code=2,
         logger_name="gobby.hooks.dispatcher.codex",
         suppress_logs=True,
@@ -179,19 +185,6 @@ def get_terminal_context() -> dict[str, str | int | bool | None]:
     except Exception:
         context["tty"] = None
 
-    # macOS Terminal.app session ID
-    context["term_session_id"] = os.environ.get("TERM_SESSION_ID")
-
-    # iTerm2 session ID
-    context["iterm_session_id"] = os.environ.get("ITERM_SESSION_ID")
-
-    # VS Code detection (multiple env vars across CLIs)
-    context["vscode_terminal_id"] = os.environ.get("VSCODE_GIT_ASKPASS_NODE")
-    vscode_ipc_hook = os.environ.get("VSCODE_IPC_HOOK_CLI")
-    term_program = os.environ.get("TERM_PROGRAM")
-    context["vscode_ipc_hook_cli"] = vscode_ipc_hook
-    context["vscode_terminal_detected"] = bool(vscode_ipc_hook) or term_program == "vscode"
-
     # Tmux pane (only if actually running INSIDE a tmux session)
     # IMPORTANT: Only report TMUX_PANE if TMUX env var is also set.
     # The TMUX_PANE env var can be inherited by child processes that are
@@ -202,13 +195,8 @@ def get_terminal_context() -> dict[str, str | int | bool | None]:
     else:
         context["tmux_pane"] = None
 
-    # Kitty terminal window ID
-    context["kitty_window_id"] = os.environ.get("KITTY_WINDOW_ID")
-
-    # Alacritty IPC socket path (unique per instance)
-    context["alacritty_socket"] = os.environ.get("ALACRITTY_SOCKET")
-
     # Generic terminal program identifier (set by many terminals)
+    term_program = os.environ.get("TERM_PROGRAM")
     context["term_program"] = term_program
 
     # Gobby agent context (set by spawn_executor for terminal-mode agents)
@@ -239,7 +227,7 @@ def _detect_source(config: CLIConfig) -> str:
     if gobby_source:
         return gobby_source
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-py":
-        return "claude_sdk"
+        return "claude"
     return config.source
 
 
@@ -252,6 +240,7 @@ def is_blocked(result: dict[str, Any]) -> bool:
     Checks all block patterns used across CLIs:
     - continue=False (Claude, Gemini)
     - decision in ("deny", "block") (Claude, Gemini)
+    - hookSpecificOutput.permissionDecision="deny" (Codex PreToolUse)
     """
     if result.get("continue") is False:
         return True
@@ -259,6 +248,9 @@ def is_blocked(result: dict[str, Any]) -> bool:
     if decision in ("deny", "block"):
         return True
     if result.get("permissionDecision") == "deny":
+        return True
+    hook_specific = result.get("hookSpecificOutput")
+    if isinstance(hook_specific, dict) and hook_specific.get("permissionDecision") == "deny":
         return True
     return False
 
@@ -631,9 +623,10 @@ async def main() -> int:
         raw = await loop.run_in_executor(None, sys.stdin.read)
         input_data = json.loads(raw)
 
-        # Inject terminal context for session start hooks
-        if hook_type in config.session_start_hooks:
-            input_data["terminal_context"] = get_terminal_context()
+        # Inject terminal context for hooks that may need to register or
+        # repair terminal-backed sessions later in the lifecycle.
+        if hook_type in config.terminal_context_hooks and isinstance(input_data, dict):
+            input_data.setdefault("terminal_context", get_terminal_context())
 
         log_hook_details(logger, hook_type, input_data, debug_mode)
 
@@ -685,7 +678,7 @@ async def main() -> int:
                     "-d",
                     "@-",
                     "--max-time",
-                    "90",
+                    "600",
                 ],
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
@@ -713,7 +706,7 @@ async def main() -> int:
                     "source": _detect_source(config),
                 },
                 headers=_context_headers,
-                timeout=90.0,  # LLM-powered hooks (pre-compact summary) need more time
+                timeout=httpx.Timeout(10.0, read=600.0),
             )
 
         if response.status_code == 200:
@@ -724,10 +717,12 @@ async def main() -> int:
 
             # Check for block/deny decision
             if is_blocked(result):
-                # Gemini and Codex read block decisions from JSON body
-                # (non-zero exit codes are treated as "hook failed", not
-                # "tool blocked"). Output the formatted JSON and exit 0.
-                if config.source in ("gemini", "codex"):
+                # Gemini and Codex read block decisions from JSON body for
+                # tool hooks (non-zero exit codes are treated as "hook
+                # failed", not "tool blocked"). Stop hooks are the
+                # exception — they use exit code 2 to block, same as
+                # Claude. Exit 0 would allow the stop.
+                if config.source in ("gemini", "codex") and hook_type != "Stop":
                     print(json.dumps(result))
                     return 0
 

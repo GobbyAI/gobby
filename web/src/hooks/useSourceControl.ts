@@ -482,8 +482,10 @@ export function useSourceControl(projectId: string | null = null) {
   }, [fetchLocal, fetchGitHub])
 
   // Keep refs updated with latest fetch functions
-  fetchLocalRef.current = fetchLocal
-  fetchGitHubRef.current = fetchGitHub
+  useEffect(() => {
+    fetchLocalRef.current = fetchLocal
+    fetchGitHubRef.current = fetchGitHub
+  }, [fetchLocal, fetchGitHub])
 
   // --- Effects ---
 

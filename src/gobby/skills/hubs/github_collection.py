@@ -329,7 +329,11 @@ Output ONLY the description text, no quotes, no explanation, no preamble."""
             else:
                 provider = self._llm_service.get_default_provider()
                 model = None
-            description = await provider.generate_text(prompt, model=model)
+            description = await provider.generate_text(
+                prompt,
+                model=model,
+                caller="skills.github_collection.description",
+            )
             # Clean up LLM output
             return description.strip().strip('"').strip("'")[:100]
         except Exception as e:

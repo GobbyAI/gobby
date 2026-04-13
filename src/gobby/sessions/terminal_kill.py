@@ -48,8 +48,19 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
                 )
                 return True
             else:
+                stderr_text = stderr.decode().strip() if stderr else "unknown"
+                if (
+                    "can't find pane" in stderr_text.lower()
+                    or "can't find window" in stderr_text.lower()
+                ):
+                    logger.debug(
+                        "tmux pane %s already gone for session %s",
+                        tmux_pane,
+                        session_id[:8],
+                    )
+                    return True
                 logger.debug(
-                    f"tmux kill-pane failed for {tmux_pane}: {(stderr.decode().strip() if stderr else 'unknown')}",
+                    f"tmux kill-pane failed for {tmux_pane}: {stderr_text}",
                 )
         except TimeoutError:
             logger.warning(f"tmux kill-pane timed out for pane {tmux_pane}")

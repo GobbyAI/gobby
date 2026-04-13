@@ -1,30 +1,16 @@
 import { useTimeStats } from '../../hooks/useTimeStats'
+import { SOURCE_COLORS, SOURCE_LABELS } from '../shared/sourceTheme'
+import { DashboardCard } from './DashboardCard'
+import {
+  dashboardCardBodyRowClass,
+  dashboardDotClass,
+  dashboardStatusListClass,
+  dashboardStatusRowClass,
+  dashboardStatusRowLabelClass,
+  dashboardStatusRowValueClass,
+} from './dashboardStyles'
 
-const SOURCE_COLORS: Record<string, string> = {
-  claude: '#f97316',
-  gemini: '#3b82f6',
-  cursor: '#06b6d4',
-  windsurf: '#10b981',
-  copilot: '#8b5cf6',
-  claude_sdk: '#f59e0b',
-  claude_sdk_web_chat: '#ec4899',
-  pipeline: '#737373',
-  cron: '#a3a3a3',
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  gemini: 'Gemini',
-  cursor: 'Cursor',
-  windsurf: 'Windsurf',
-  copilot: 'Copilot',
-  claude_sdk: 'Claude SDK',
-  claude_sdk_web_chat: 'Web Chat',
-  pipeline: 'Pipeline',
-  cron: 'Cron',
-}
-
-const FALLBACK_COLOR = '#525252'
+const FALLBACK_COLOR = SOURCE_COLORS.default
 
 const SIZE = 120
 const STROKE = 18
@@ -65,15 +51,11 @@ export function SessionsCard({ hours, projectId }: Props) {
   })
 
   return (
-    <div className="dash-card">
-      <div className="dash-card-header">
-        <h3 className="dash-card-title">Sessions</h3>
-      </div>
-      <div className="dash-card-body" style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-        <svg width={SIZE} height={SIZE} style={{ flexShrink: 0 }}>
+    <DashboardCard title="Sessions" bodyClassName={dashboardCardBodyRowClass}>
+      <svg width={SIZE} height={SIZE} className="shrink-0">
           {total === 0 ? (
             <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
-              fill="none" stroke="#333" strokeWidth={STROKE} />
+              fill="none" stroke="var(--border)" strokeWidth={STROKE} />
           ) : (
             arcs.map(a => (
               <circle key={a.key} cx={SIZE / 2} cy={SIZE / 2} r={RADIUS}
@@ -84,21 +66,20 @@ export function SessionsCard({ hours, projectId }: Props) {
               />
             ))
           )}
-          <text x={SIZE / 2} y={SIZE / 2 - 6} textAnchor="middle" fill="#e5e5e5"
+          <text x={SIZE / 2} y={SIZE / 2 - 6} textAnchor="middle" fill="var(--text-primary)"
             fontSize="22" fontWeight="bold">{total}</text>
-          <text x={SIZE / 2} y={SIZE / 2 + 12} textAnchor="middle" fill="#a3a3a3"
+          <text x={SIZE / 2} y={SIZE / 2 + 12} textAnchor="middle" fill="var(--text-secondary)"
             fontSize="10">total</text>
-        </svg>
-        <div className="dash-status-list" style={{ flex: 1, minWidth: 0 }}>
-          {segments.map(({ key, label, color, value }) => (
-            <div key={key} className="dash-status-row">
-              <span className="dash-legend-dot" style={{ background: color }} />
-              <span className="dash-status-row-label">{label}</span>
-              <span className="dash-status-row-value">{value}</span>
-            </div>
-          ))}
-        </div>
+      </svg>
+      <div className={dashboardStatusListClass}>
+        {segments.map(({ key, label, color, value }) => (
+          <div key={key} className={dashboardStatusRowClass}>
+            <span className={dashboardDotClass} style={{ background: color }} />
+            <span className={dashboardStatusRowLabelClass}>{label}</span>
+            <span className={dashboardStatusRowValueClass}>{value}</span>
+          </div>
+        ))}
       </div>
-    </div>
+    </DashboardCard>
   )
 }

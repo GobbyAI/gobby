@@ -404,17 +404,17 @@ class TestMatchesAudience:
         assert self.injector._matches_audience(config, ctx) is True
 
     def test_sources_list_matches(self) -> None:
-        config = SkillAudienceConfig(audience="all", sources=["claude_sdk_web_chat"])
-        ctx = AgentContext(source="claude_sdk_web_chat")
+        config = SkillAudienceConfig(audience="all", sources=["claude"])
+        ctx = AgentContext(source="claude")
         assert self.injector._matches_audience(config, ctx) is True
 
     def test_sources_list_rejects(self) -> None:
-        config = SkillAudienceConfig(audience="all", sources=["claude_sdk_web_chat"])
-        ctx = AgentContext(source="claude")
+        config = SkillAudienceConfig(audience="all", sources=["claude"])
+        ctx = AgentContext(source="gemini")
         assert self.injector._matches_audience(config, ctx) is False
 
     def test_sources_none_context_rejects(self) -> None:
-        config = SkillAudienceConfig(audience="all", sources=["claude_sdk_web_chat"])
+        config = SkillAudienceConfig(audience="all", sources=["claude"])
         ctx = AgentContext(source=None)
         assert self.injector._matches_audience(config, ctx) is False
 

@@ -3,7 +3,7 @@ import './tasks-page.css'
 import './task-views.css'
 import { useTasks } from '../../hooks/useTasks'
 import type { GobbyTask, GobbyTaskDetail } from '../../hooks/useTasks'
-import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
+import { StatusDot, PriorityBadge, TypeBadge, TaskStateBadges } from './TaskBadges'
 import { TaskDetail } from './TaskDetail'
 import { TaskCreateForm } from './TaskCreateForm'
 import type { TaskCreateDefaults } from './TaskCreateForm'
@@ -16,6 +16,13 @@ import { GanttChart } from './GanttChart'
 import { DigestView } from './DigestView'
 import { DependencyGraph } from './DependencyGraph'
 import { TaskSelectionToolbar } from './TaskSelectionToolbar'
+import {
+  getCanonicalTaskState,
+  getTaskBucket,
+  TASK_BUCKET_LABELS,
+  TASK_BUCKET_ORDER,
+  type TaskBucket,
+} from '../../lib/taskState'
 
 // =============================================================================
 // Constants
@@ -23,15 +30,26 @@ import { TaskSelectionToolbar } from './TaskSelectionToolbar'
 
 type ViewMode = 'list' | 'tree' | 'kanban' | 'priority' | 'audit' | 'gantt' | 'digest' | 'graph'
 type GroupBy = 'all' | 'agent'
-type SortColumn = 'ref' | 'title' | 'type' | 'priority' | 'status'
+type SortColumn = 'ref' | 'title' | 'type' | 'priority' | 'state'
 type SortDirection = 'asc' | 'desc'
 
-const STATUS_OPTIONS = [
-  'open', 'in_progress', 'needs_review', 'review_approved', 'closed', 'escalated',
+const STATE_FILTER_OPTIONS: TaskBucket[] = [
+  'ready',
+  'in_progress',
+  'review',
+  'blocked',
+  'merge_ready',
+  'closed',
 ]
 
-// Statuses grouped under the 'closed' filter
-const CLOSED_GROUP = ['closed']
+const FILTER_DOT_STATUS: Record<TaskBucket, string> = {
+  ready: 'open',
+  in_progress: 'in_progress',
+  review: 'needs_review',
+  blocked: 'escalated',
+  merge_ready: 'review_approved',
+  closed: 'closed',
+}
 
 const TYPE_OPTIONS = ['task', 'bug', 'feature', 'epic', 'chore']
 
@@ -42,8 +60,6 @@ const PRIORITY_OPTIONS = [
   { value: 3, label: 'Low' },
   { value: 4, label: 'Backlog' },
 ]
-
-const RECENTLY_DONE_CUTOFF_MS = 24 * 60 * 60 * 1000
 
 // =============================================================================
 // View toggle icons
@@ -151,8 +167,8 @@ function compareTasks(a: GobbyTask, b: GobbyTask, col: SortColumn, dir: SortDire
     case 'priority':
       cmp = a.priority - b.priority
       break
-    case 'status':
-      cmp = a.status.localeCompare(b.status)
+    case 'state':
+      cmp = TASK_BUCKET_ORDER.indexOf(getTaskBucket(a)) - TASK_BUCKET_ORDER.indexOf(getTaskBucket(b))
       break
   }
   return dir === 'asc' ? cmp : -cmp
@@ -161,7 +177,7 @@ function compareTasks(a: GobbyTask, b: GobbyTask, col: SortColumn, dir: SortDire
 function groupTasksByAgent(tasks: GobbyTask[]): Map<string, GobbyTask[]> {
   const groups = new Map<string, GobbyTask[]>()
   for (const t of tasks) {
-    const key = t.agent_name || t.assignee || 'Unassigned'
+    const key = t.agent_name || getCanonicalTaskState(t).owner_session_id || 'Unassigned'
     const arr = groups.get(key) || []
     arr.push(t)
     groups.set(key, arr)
@@ -196,7 +212,7 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
             onClick={e => { e.stopPropagation(); onToggleSelect(task.id, e as any) }}
           />
         ) : (
-          <StatusDot status={task.status} />
+          <StatusDot task={task} />
         )}
       </td>
       <td className="tasks-cell tasks-cell--ref">
@@ -209,7 +225,11 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
       <td className="tasks-cell tasks-cell--priority">
         <PriorityBadge priority={task.priority} />
       </td>
-      <td className="tasks-cell tasks-cell--status-text">{task.status.replace(/_/g, ' ')}</td>
+      <td className="tasks-cell tasks-cell--status-text">
+        <div className="flex items-center gap-1 flex-wrap">
+          <TaskStateBadges task={task} />
+        </div>
+      </td>
     </tr>
   )
 }
@@ -223,7 +243,29 @@ interface TasksPageProps {
 }
 
 export function TasksPage({ projectFilter }: TasksPageProps = {}) {
-  const { tasks, total, stats, isLoading, filters, setFilters, refreshTasks, getTask, createTask, updateTask, closeTask, reopenTask, getDependencies, getSubtasks } = useTasks(projectFilter)
+  const {
+    allTasks,
+    tasks,
+    total,
+    stats,
+    isLoading,
+    filters,
+    setFilters,
+    refreshTasks,
+    getTask,
+    createTask,
+    updateTask,
+    claimTask,
+    releaseTaskClaim,
+    markTaskNeedsReview,
+    markTaskReviewApproved,
+    escalateTask,
+    deEscalateTask,
+    closeTask,
+    reopenTask,
+    getDependencies,
+    getSubtasks,
+  } = useTasks(projectFilter)
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -261,24 +303,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
   }, [tasks, sortColumn, sortDirection])
 
   // Compute stats from the filtered task array so overview cards reflect project scope
-  const localStats = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const t of scopedTasks) {
-      counts[t.status] = (counts[t.status] || 0) + 1
-    }
-    return counts
-  }, [scopedTasks])
-
-  // Apply 24h cutoff when "Recently Done" filter is active so the displayed
-  // task list matches the overview card count (which uses the same cutoff).
-  const displayTasks = useMemo(() => {
-    if (filters.status !== 'recently_done') return scopedTasks
-    const cutoff = Date.now() - RECENTLY_DONE_CUTOFF_MS
-    const completed = new Set(['closed'])
-    return scopedTasks.filter(
-      t => completed.has(t.status) && new Date(t.updated_at).getTime() > cutoff
-    )
-  }, [scopedTasks, filters.status])
+  const displayTasks = scopedTasks
 
   const selectedTaskObjects = useMemo(() => {
     return displayTasks.filter(t => selectedTaskIds.has(t.id)).map(t => ({
@@ -290,11 +315,11 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
 
   // Subtree kanban: filter to leaf tasks under a specific parent
   const kanbanTasks = useMemo(() => {
-    if (!subtreeRootId) return scopedTasks
+    if (!subtreeRootId) return displayTasks
     // Collect all descendant IDs
     const descendantIds = new Set<string>()
     const collect = (parentId: string) => {
-      for (const t of tasks) {
+      for (const t of allTasks) {
         if (t.parent_task_id === parentId && !descendantIds.has(t.id)) {
           descendantIds.add(t.id)
           collect(t.id)
@@ -303,11 +328,11 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     }
     collect(subtreeRootId)
     // Leaf = has no children in the task set
-    const parentIds = new Set(tasks.map(t => t.parent_task_id).filter(Boolean))
-    return tasks.filter(t => descendantIds.has(t.id) && !parentIds.has(t.id))
-  }, [tasks, subtreeRootId, scopedTasks])
+    const parentIds = new Set(allTasks.map(t => t.parent_task_id).filter(Boolean))
+    return displayTasks.filter(t => descendantIds.has(t.id) && !parentIds.has(t.id))
+  }, [allTasks, subtreeRootId, displayTasks])
 
-  const subtreeRoot = subtreeRootId ? tasks.find(t => t.id === subtreeRootId) : null
+  const subtreeRoot = subtreeRootId ? allTasks.find(t => t.id === subtreeRootId) : null
 
   const handleSubtreeKanban = useCallback((taskId: string) => {
     setSubtreeRootId(taskId)
@@ -329,13 +354,13 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     if (filters.priority !== null) defaults.priority = filters.priority
     // Pre-fill parent from selected task (if it's an epic/task)
     if (selectedTaskId) {
-      const selected = tasks.find(t => t.id === selectedTaskId)
+      const selected = allTasks.find(t => t.id === selectedTaskId)
       if (selected && (selected.task_type === 'epic' || selected.task_type === 'task')) {
         defaults.parentTaskId = selectedTaskId
       }
     }
     return defaults
-  }, [filters.taskType, filters.priority, selectedTaskId, tasks, cloneDefaults])
+  }, [filters.taskType, filters.priority, selectedTaskId, allTasks, cloneDefaults])
 
   const handleClone = useCallback((task: GobbyTaskDetail) => {
     setCloneDefaults({
@@ -349,6 +374,86 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     })
     setShowCreateForm(true)
   }, [])
+
+  const promptForSessionId = useCallback((ownerSessionId?: string | null): string | null => {
+    if (ownerSessionId?.trim()) return ownerSessionId
+    const value = window.prompt('Enter the session ID that should own this task')
+    return value?.trim() || null
+  }, [])
+
+  const moveTaskToBucket = useCallback(async (taskId: string, targetBucket: string) => {
+    if (!STATE_FILTER_OPTIONS.includes(targetBucket as TaskBucket)) return
+
+    const task = allTasks.find(candidate => candidate.id === taskId)
+    if (!task) return
+
+    const state = getCanonicalTaskState(task)
+    const currentBucket = getTaskBucket(task)
+    if (currentBucket === targetBucket) return
+
+    switch (targetBucket as TaskBucket) {
+      case 'ready':
+        if (state.is_closed) {
+          await reopenTask(taskId, 'Returned to ready state from tasks view')
+        } else if (state.is_escalated) {
+          await deEscalateTask(taskId, 'Returned to ready state from tasks view', 'open')
+        } else if (state.is_claimed) {
+          await releaseTaskClaim(taskId, 'open')
+        } else if (state.lifecycle_stage) {
+          await reopenTask(taskId, 'Returned to ready state from tasks view')
+        }
+        break
+      case 'in_progress': {
+        if (state.is_escalated) {
+          await deEscalateTask(taskId, 'Resumed active work from tasks view', 'in_progress')
+          break
+        }
+        // Prompt for a session BEFORE any mutating action — a cancelled
+        // prompt must not leave the task reopened-but-unclaimed.
+        const sessionId = promptForSessionId(state.owner_session_id)
+        if (!sessionId) return
+        if (state.is_closed || state.lifecycle_stage === 'needs_review' || state.is_merge_ready) {
+          await reopenTask(taskId, 'Returned to active work from tasks view')
+        }
+        await claimTask(taskId, sessionId, true)
+        break
+      }
+      case 'review':
+        if (state.is_escalated) {
+          await deEscalateTask(taskId, 'Returned to review from tasks view', 'needs_review')
+        } else {
+          await markTaskNeedsReview(taskId)
+        }
+        break
+      case 'merge_ready':
+        if (state.is_escalated) {
+          await deEscalateTask(taskId, 'Returned to approval from tasks view', 'review_approved')
+        } else {
+          await markTaskReviewApproved(taskId)
+        }
+        break
+      case 'blocked': {
+        const reason = window.prompt('Why is this task blocked?', state.escalation_reason ?? '')
+        if (!reason?.trim()) return
+        await escalateTask(taskId, reason.trim())
+        break
+      }
+      case 'closed':
+        await closeTask(taskId)
+        break
+    }
+  }, [
+    allTasks,
+    claimTask,
+    closeTask,
+    deEscalateTask,
+    escalateTask,
+    markTaskNeedsReview,
+    markTaskReviewApproved,
+    promptForSessionId,
+    releaseTaskClaim,
+    reopenTask,
+  ])
 
   return (
     <main className="tasks-page">
@@ -404,28 +509,18 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
       {/* Filter bar */}
       <div className="tasks-filter-bar">
         <div className="tasks-filter-chips">
-          {STATUS_OPTIONS.filter(status => {
-              const count = status === 'closed'
-                ? CLOSED_GROUP.reduce((sum, s) => sum + ((localStats as Record<string, number>)[s] || 0), 0)
-                : (localStats as Record<string, number>)[status] || 0
-              return count > 0
-            }).map(status => {
-              const count = status === 'closed'
-                ? CLOSED_GROUP.reduce((sum, s) => sum + ((localStats as Record<string, number>)[s] || 0), 0)
-                : (localStats as Record<string, number>)[status] || 0
-              return (
+          {STATE_FILTER_OPTIONS.filter(bucket => (stats[bucket] || 0) > 0).map(bucket => (
               <button
-                key={status}
-                className={`tasks-stat-chip ${filters.status === status ? 'active' : ''}`}
+                key={bucket}
+                className={`tasks-stat-chip ${filters.status === bucket ? 'active' : ''}`}
                 onClick={() =>
-                  setFilters(f => ({ ...f, status: f.status === status ? null : status }))
+                  setFilters(f => ({ ...f, status: f.status === bucket ? null : bucket }))
                 }
               >
-                <StatusDot status={status} />
-                {status.replace(/_/g, ' ')} ({count})
+                <StatusDot status={FILTER_DOT_STATUS[bucket]} />
+                {TASK_BUCKET_LABELS[bucket]} ({stats[bucket] || 0})
               </button>
-              )
-          })}
+          ))}
         </div>
         <div className="tasks-filter-dropdowns">
           <select
@@ -462,9 +557,9 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
               setFilters(f => ({ ...f, status: e.target.value || null }))
             }
           >
-            <option value="">All Statuses</option>
-            {STATUS_OPTIONS.map(s => (
-              <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+            <option value="">All States</option>
+            {STATE_FILTER_OPTIONS.map(bucket => (
+              <option key={bucket} value={bucket}>{TASK_BUCKET_LABELS[bucket]}</option>
             ))}
           </select>
           {hasActiveFilters && (
@@ -521,7 +616,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         <PriorityBoard
           tasks={displayTasks}
           onSelectTask={setSelectedTaskId}
-          onUpdateStatus={(taskId, newStatus) => updateTask(taskId, { status: newStatus })}
+          onUpdateStatus={moveTaskToBucket}
         />
       ) : viewMode === 'kanban' ? (
         <>
@@ -539,7 +634,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           <KanbanBoard
             tasks={subtreeRootId ? kanbanTasks : displayTasks}
             onSelectTask={setSelectedTaskId}
-            onUpdateStatus={(taskId, newStatus) => updateTask(taskId, { status: newStatus })}
+            onUpdateStatus={moveTaskToBucket}
             onReorder={(taskId, newOrder) => updateTask(taskId, { sequence_order: newOrder })}
           />
         </>
@@ -565,7 +660,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
                         <th className="tasks-th tasks-th--sortable" onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                         <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                         <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('priority')}>Priority <SortArrow column="priority" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                        <th className="tasks-th tasks-th--sortable" style={{ width: 100 }} onClick={() => handleSort('status')}>Status <SortArrow column="status" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                        <th className="tasks-th tasks-th--sortable" style={{ width: 140 }} onClick={() => handleSort('state')}>State <SortArrow column="state" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -586,7 +681,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
                   <th className="tasks-th tasks-th--sortable" onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                   <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                   <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('priority')}>Priority <SortArrow column="priority" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                  <th className="tasks-th tasks-th--sortable" style={{ width: 100 }} onClick={() => handleSort('status')}>Status <SortArrow column="status" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                  <th className="tasks-th tasks-th--sortable" style={{ width: 140 }} onClick={() => handleSort('state')}>State <SortArrow column="state" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                 </tr>
               </thead>
               <tbody>
@@ -611,7 +706,16 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         getTask={getTask}
         getDependencies={getDependencies}
         getSubtasks={getSubtasks}
-        actions={{ updateTask, closeTask, reopenTask }}
+        actions={{
+          claimTask,
+          releaseTaskClaim,
+          markTaskNeedsReview,
+          markTaskReviewApproved,
+          escalateTask,
+          deEscalateTask,
+          closeTask,
+          reopenTask,
+        }}
         onSelectTask={setSelectedTaskId}
         onClose={() => setSelectedTaskId(null)}
         onClone={handleClone}
@@ -619,7 +723,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
 
       <TaskCreateForm
         isOpen={showCreateForm}
-        tasks={tasks}
+        tasks={allTasks}
         defaults={createDefaults}
         onSubmit={createTask}
         onClose={() => { setShowCreateForm(false); setCloneDefaults(null) }}

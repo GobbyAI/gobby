@@ -1,6 +1,6 @@
 [project]
 name = "gobby"
-version = "0.3.5"
+version = "0.3.6"
 description = "A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Gemini CLI, and Codex. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks."
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,15 +30,12 @@ dependencies = [
     "pydantic>=2.9.0",
     "uvicorn[standard]>=0.30.0",
     "websockets>=15.0",
-    "rich>=13.0.0",
     "pyyaml>=6.0.3",
     "jinja2>=3.1.0",
     "claude-agent-sdk>=0.1.39",
     "wcwidth>=0.2.14",
     "tomli-w>=1.0.0",
     "msgspec>=0.20.0",
-    # gitingest>=0.3.1 includes CVE-2024-56074 fix (commit 9996a06, Dec 2024)
-    "gitingest>=0.3.1",
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "qdrant-client>=1.12.0",
@@ -46,22 +43,12 @@ dependencies = [
     "python-multipart>=0.0.22",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
-    "protobuf>=5.29.6,<6.0.0",
-    # cryptography <46.0.6 has CVE-2026-26007, CVE-2026-34073
-    "cryptography>=46.0.6",
-    # faster-whisper for voice STT
-    "faster-whisper>=1.0.0",
-    # kokoro-onnx for local TTS (82M params, Apache 2.0, async streaming)
-    "kokoro-onnx>=0.5.0",
+    # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
+    "cryptography>=46.0.7",
     "cisco-ai-skill-scanner>=0.1.1",
     # pyjwt <2.12.0 has CVE-2026-32597 (transitive via mcp)
     "pyjwt>=2.12.0",
-    # diskcache 5.6.3 has CVE-2025-69872 (no fix version available)
-    "diskcache>=5.6.3",
-    # tree-sitter AST parsing for code indexing (gobby-code)
-    "tree-sitter-language-pack>=0.13.0",
     # Native SDK executors for autonomous mode
-    "google-genai>=1.0.0",
     "openai>=1.0.0",
     "opentelemetry-api>=1.28.0",
     "opentelemetry-sdk>=1.28.0",
@@ -73,12 +60,16 @@ dependencies = [
     # LLM provider instrumentation for OpenTelemetry tracing
     "opentelemetry-instrumentation-anthropic>=0.34.0",
     "opentelemetry-instrumentation-openai>=0.34.0",
-    "opentelemetry-instrumentation-google-genai>=0.1b0",
-    "requests>=2.33.0",
+    "yake>=0.7.3",
 ]
 
 [project.optional-dependencies]
 email = ["aiosmtplib>=2.0", "aioimaplib>=1.0"]
+voice = [
+    "faster-whisper>=1.0.0",
+    "kokoro-onnx>=0.5.0",
+    "chatterbox-tts",
+]
 
 [project.scripts]
 gobby = "gobby.cli:cli"
@@ -88,6 +79,11 @@ Homepage = "https://github.com/GobbyAI/gobby"
 Repository = "https://github.com/GobbyAI/gobby"
 Documentation = "https://github.com/GobbyAI/gobby#readme"
 Issues = "https://github.com/GobbyAI/gobby/issues"
+
+[tool.uv]
+# tokenizers 0.20.3 fails to build from sdist on Python 3.14
+# (missing project.version in pyproject.toml). Force >=0.21.
+constraint-dependencies = ["tokenizers>=0.21"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -142,9 +138,7 @@ filterwarnings = [
     "ignore:unclosed database:ResourceWarning",
     # Ignore fork() deprecation warning from embedded spawner tests (expected on macOS)
     "ignore:This process.*is multi-threaded.*use of fork:DeprecationWarning",
-    # Ignore third-party deprecation warnings (google-genai, oletools)
-    "ignore::DeprecationWarning:google.genai",
-    "ignore::DeprecationWarning:google.genai.*",
+    # Ignore third-party deprecation warnings (oletools)
     "ignore::DeprecationWarning:oletools",
     "ignore::DeprecationWarning:oletools.*",
     # Ignore MCP SDK streamable_http_client deprecation (upstream)

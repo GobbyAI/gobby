@@ -20,6 +20,7 @@ from gobby.cli.installers.mcp_config import (
     remove_mcp_server_json,
     remove_mcp_server_toml,
     remove_project_mcp_server,
+    strip_mcp_tool_overrides_toml,
 )
 
 pytestmark = pytest.mark.unit
@@ -321,6 +322,136 @@ class TestRemoveMCPServerTOML:
 
 
 # ---------------------------------------------------------------------------
+# strip_mcp_tool_overrides_toml
+# ---------------------------------------------------------------------------
+
+
+class TestStripMCPToolOverridesTOML:
+    """Tests for strip_mcp_tool_overrides_toml."""
+
+    def test_file_not_exists(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is True
+        assert result["stripped"] is False
+
+    def test_no_mcp_servers(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text('model = "gpt-5.4"\n')
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is True
+        assert result["stripped"] is False
+
+    def test_server_not_present(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text('[mcp_servers.other]\ncommand = "node"\n')
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is True
+        assert result["stripped"] is False
+
+    def test_no_tools_subtable(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\nargs = ["run", "gobby", "mcp-server"]\n'
+        )
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is True
+        assert result["stripped"] is False
+
+    def test_strips_tools(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\n'
+            'args = ["run", "gobby", "mcp-server"]\n\n'
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n\n'
+            "[mcp_servers.gobby.tools.get_tool_schema]\n"
+            'approval_mode = "approve"\n'
+        )
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is True
+        assert result["stripped"] is True
+        content = config.read_text()
+        assert "tools" not in content
+        assert "approval_mode" not in content
+        assert "command" in content
+        assert "uv" in content
+
+    def test_preserves_other_servers(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n\n'
+            '[mcp_servers.other]\ncommand = "node"\n\n'
+            "[mcp_servers.other.tools.search]\n"
+            'approval_mode = "approve"\n'
+        )
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is True
+        assert result["stripped"] is True
+        import tomllib
+
+        with open(config, "rb") as f:
+            parsed = tomllib.load(f)
+        # gobby tools stripped
+        assert "tools" not in parsed["mcp_servers"]["gobby"]
+        # other server tools preserved
+        assert "tools" in parsed["mcp_servers"]["other"]
+        assert "search" in parsed["mcp_servers"]["other"]["tools"]
+
+    def test_creates_backup(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        original = (
+            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n'
+        )
+        config.write_text(original)
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is True
+        assert result["backup_path"] is not None
+        backup = Path(result["backup_path"])
+        assert backup.exists()
+        assert backup.read_text() == original
+
+    def test_custom_server_name(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.custom]\ncommand = "uv"\n\n'
+            "[mcp_servers.custom.tools.call_tool]\n"
+            'approval_mode = "approve"\n'
+        )
+        result = strip_mcp_tool_overrides_toml(config, server_name="custom")
+        assert result["success"] is True
+        assert result["stripped"] is True
+        import tomllib
+
+        with open(config, "rb") as f:
+            parsed = tomllib.load(f)
+        assert "tools" not in parsed["mcp_servers"]["custom"]
+
+    def test_invalid_toml(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text("[invalid\ngarbage")
+        result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is False
+        assert "Failed to parse TOML" in result["error"]
+
+    def test_backup_failure(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n'
+        )
+        with patch.object(Path, "write_text", side_effect=OSError("fail")):
+            result = strip_mcp_tool_overrides_toml(config)
+        assert result["success"] is False
+        assert "Failed to create backup" in result["error"]
+
+
+# ---------------------------------------------------------------------------
 # configure_project_mcp_server
 # ---------------------------------------------------------------------------
 
@@ -502,6 +633,7 @@ class TestInstallDefaultMCPServers:
                     "servers": [
                         {"name": "github", "transport": "stdio", "command": "npx"},
                         {"name": "linear", "transport": "stdio", "command": "npx"},
+                        {"name": "brave-search", "transport": "stdio", "command": "npx"},
                         {"name": "context7", "transport": "stdio", "command": "npx"},
                     ]
                 }
@@ -521,7 +653,7 @@ class TestInstallDefaultMCPServers:
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 0
             result = install_default_mcp_servers()
         assert result["success"] is True
-        assert len(result["servers_skipped"]) == 3
+        assert len(result["servers_skipped"]) == 4
         assert len(result["servers_added"]) == 0
 
     def test_read_error(self, tmp_path: Path) -> None:

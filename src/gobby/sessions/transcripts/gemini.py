@@ -104,40 +104,49 @@ class GeminiTranscriptParser(BaseTranscriptParser):
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2
     ) -> list[dict[str, Any]]:
-        """
-        Extract last N user<>agent message pairs.
+        """Extract last N user<>agent message pairs.
 
-        Handles Gemini CLI's type-based event format.
+        Handles both Gemini JSONL event format (``type: "message"``) and
+        Gemini JSON session format (``type: "user"`` / ``"gemini"``).
         """
         messages: list[dict[str, str]] = []
         for turn in reversed(turns):
-            # Handle Gemini CLI's type-based format
             event_type = turn.get("type")
             role: str | None = None
             content: str | Any = None
 
+            # --- JSONL event format ---
             if event_type == "message":
                 role = turn.get("role")
                 content = turn.get("content")
             elif event_type in ("init", "result"):
-                # Skip non-message events
                 continue
             elif event_type == "tool_use":
-                # Include tool calls as assistant messages
                 role = "assistant"
                 tool_name = turn.get("tool_name") or turn.get("function_name", "unknown")
                 content = f"[Tool call: {tool_name}]"
             elif event_type == "tool_result":
-                # Skip tool results for message extraction
                 continue
+            # --- JSON session format ---
+            elif event_type == "user":
+                role = "user"
+                raw = turn.get("content")
+                if isinstance(raw, list):
+                    content = " ".join(
+                        item.get("text", "") if isinstance(item, dict) else str(item)
+                        for item in raw
+                    )
+                else:
+                    content = raw
+            elif event_type == "gemini":
+                role = "assistant"
+                content = turn.get("content", "")
             else:
-                # Unknown event type, skip
                 continue
 
-            if role in ["user", "model", "assistant"]:
+            if role in ("user", "model", "assistant"):
                 norm_role = "assistant" if role == "model" else role
 
-                # Handle complex content types if necessary
                 if isinstance(content, list):
                     content = " ".join(str(part) for part in content)
 
@@ -314,7 +323,6 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             return TokenUsage(
                 input_tokens=usage_data.get("promptTokenCount", 0),
                 output_tokens=usage_data.get("candidatesTokenCount", 0),
-                total_cost_usd=None,
             )
 
         return None

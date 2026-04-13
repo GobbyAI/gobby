@@ -48,12 +48,12 @@ from gobby.config.pipelines import PipelineConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
+    ContextCompressionConfig,
     ContextInjectionConfig,
     DigestConfig,
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
-    SessionTitleConfig,
 )
 from gobby.config.skills import SkillsConfig
 from gobby.config.tasks import CompactHandoffConfig, GobbyTasksConfig, WorkflowConfig
@@ -76,6 +76,32 @@ class LocalConfig(BaseModel):
         default=None,
         description="API key for the local endpoint. Use $secret:NAME for encrypted secrets store.",
     )
+
+
+class LocalLLMConfig(BaseModel):
+    """Configuration for routing providers through a local LLM endpoint.
+
+    When enabled, sets ANTHROPIC_BASE_URL for the specified providers so that
+    Claude Code (or other tools) routes API traffic through the local endpoint
+    (e.g., LMStudio, Ollama, llama.cpp server).
+    """
+
+    enabled: bool = Field(default=False, description="Enable local LLM endpoint override")
+    endpoint: str = Field(
+        default="",
+        description="Base URL for the local LLM (e.g., http://localhost:1234/v1)",
+    )
+    providers: list[str] = Field(
+        default_factory=lambda: ["claude"],
+        description="Providers to route through the local endpoint",
+    )
+
+    @model_validator(mode="after")
+    def validate_enabled_endpoint(self) -> LocalLLMConfig:
+        """Require a non-empty endpoint when local routing is enabled."""
+        if self.enabled and not self.endpoint.strip():
+            raise ValueError("endpoint must be set when enabled is True")
+        return self
 
 
 class ToolApprovalPolicy(BaseModel):
@@ -278,6 +304,17 @@ class DaemonConfig(BaseModel):
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_session_title_config(cls, data: Any) -> Any:
+        """Reject the removed session_title config section explicitly."""
+        if isinstance(data, dict) and "session_title" in data:
+            raise ValueError(
+                "session_title config has been removed. Use digest.provider, digest.model, "
+                "and digest.timeout instead."
+            )
+        return data
+
     # Daemon settings
     daemon_port: int = Field(
         default=60887,
@@ -327,6 +364,10 @@ class DaemonConfig(BaseModel):
     context_injection: ContextInjectionConfig = Field(
         default_factory=ContextInjectionConfig,
         description="Context injection configuration for subagent spawning",
+    )
+    context_compression: ContextCompressionConfig = Field(
+        default_factory=ContextCompressionConfig,
+        description="Prose compression for additionalContext before the 10K char truncation limit",
     )
     mcp_client_proxy: MCPClientProxyConfig = Field(
         default_factory=MCPClientProxyConfig,
@@ -464,10 +505,6 @@ class DaemonConfig(BaseModel):
         default_factory=ReviewConfig,
         description="Code review configuration",
     )
-    session_title: SessionTitleConfig = Field(
-        default_factory=SessionTitleConfig,
-        description="Session title synthesis LLM configuration",
-    )
     merge_resolution: MergeResolutionConfig = Field(
         default_factory=MergeResolutionConfig,
         description="Merge conflict resolution LLM configuration",
@@ -497,11 +534,9 @@ class DaemonConfig(BaseModel):
         description="Local model endpoint configuration (e.g., LMStudio). "
         "When configured, agents with model='local' resolve endpoint and model from here.",
     )
-    codex_app_server: bool = Field(
-        default=False,
-        description="Enable Codex app-server v2 integration (experimental). "
-        "When true, the daemon starts a CodexAppServerClient for rich event "
-        "lifecycle tracking (thread/turn/item events, bidirectional tool approval).",
+    local_llm: LocalLLMConfig = Field(
+        default_factory=LocalLLMConfig,
+        description="Route providers through a local LLM endpoint via ANTHROPIC_BASE_URL.",
     )
 
     def get_recommend_tools_config(self) -> RecommendToolsConfig:
@@ -719,12 +754,20 @@ _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
     "backup_count": "backup_count",
 }
 
+_SESSION_TITLE_TO_DIGEST_FIELDS: dict[str, str] = {
+    "enabled": "enabled",
+    "provider": "provider",
+    "model": "model",
+    "timeout": "timeout",
+}
+
 
 def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Migrate legacy config keys that were renamed or removed.
 
     Handles:
     - logging.* → telemetry.* (field name remapping)
+    - session_title.* → digest.* (legacy title synthesis settings)
     - Removal of _meta, title_synthesis, rules, ui_settings
     """
     # Drop removed top-level keys
@@ -739,6 +782,13 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
             for old_field, new_field in _LOGGING_TO_TELEMETRY_FIELDS.items():
                 if old_field in old_logging and new_field not in telemetry:
                     telemetry[new_field] = old_logging[old_field]
+
+    legacy_session_title = config_dict.pop("session_title", None)
+    if isinstance(legacy_session_title, dict):
+        digest = config_dict.setdefault("digest", {})
+        for old_field, new_field in _SESSION_TITLE_TO_DIGEST_FIELDS.items():
+            if old_field in legacy_session_title and new_field not in digest:
+                digest[new_field] = legacy_session_title[old_field]
 
     return config_dict
 

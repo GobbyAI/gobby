@@ -14,7 +14,7 @@ import concurrent.futures
 import json
 import threading
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -673,6 +673,19 @@ class TestVariablePersistence:
             data={},
         )
 
+    def _make_after_agent_event(
+        self,
+        session_id: str = "test-session",
+        source: SessionSource = SessionSource.GEMINI,
+    ) -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.AFTER_AGENT,
+            session_id=session_id,
+            source=source,
+            timestamp=datetime.now(),
+            data={},
+        )
+
     @pytest.mark.asyncio
     async def test_set_variable_persisted_to_session_variables(
         self, db, handler, session_var_manager
@@ -793,6 +806,73 @@ class TestVariablePersistence:
         assert variables.get("task_claimed") is True
         assert "task-uuid-observer" in variables.get("claimed_tasks", {})
         assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
+
+    @pytest.mark.asyncio
+    async def test_turn_end_reconciles_claimed_tasks_for_after_agent(
+        self, db, session_var_manager
+    ) -> None:
+        """AFTER_AGENT should run turn-end reconciliation before rule evaluation."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        mock_task_manager = MagicMock()
+        mock_task_manager.list_tasks.return_value = []
+
+        rule_engine = RuleEngine(db=db)
+        handler = WorkflowHookHandler(
+            rule_engine=rule_engine,
+            task_manager=mock_task_manager,
+        )
+
+        session_var_manager.merge_variables(
+            "test-session",
+            {
+                "task_claimed": True,
+                "claimed_tasks": {},
+            },
+        )
+
+        event = self._make_after_agent_event()
+        await handler._evaluate_rules(event)
+
+        variables = session_var_manager.get_variables("test-session")
+        assert variables.get("task_claimed") is False
+        assert variables.get("claimed_tasks") == {}
+
+    @pytest.mark.asyncio
+    async def test_turn_end_rebuilds_review_claims_for_after_agent(
+        self, db, session_var_manager
+    ) -> None:
+        """AFTER_AGENT should rebuild claimed review work from DB assignment state."""
+        from gobby.workflows.rule_engine import RuleEngine
+
+        mock_task_manager = MagicMock()
+        review_task = MagicMock()
+        review_task.id = "task-uuid-review"
+        review_task.seq_num = 123
+        review_task.status = "needs_review"
+        review_task.assignee = "test-session"
+        mock_task_manager.list_tasks.return_value = [review_task]
+
+        rule_engine = RuleEngine(db=db)
+        handler = WorkflowHookHandler(
+            rule_engine=rule_engine,
+            task_manager=mock_task_manager,
+        )
+
+        session_var_manager.merge_variables(
+            "test-session",
+            {
+                "task_claimed": True,
+                "claimed_tasks": {},
+            },
+        )
+
+        event = self._make_after_agent_event()
+        await handler._evaluate_rules(event)
+
+        variables = session_var_manager.get_variables("test-session")
+        assert variables.get("task_claimed") is True
+        assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
 
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
@@ -1233,3 +1313,130 @@ class TestStopFailsClosedOnVariableLoadError:
 
         # Non-STOP events should still allow (fail-open)
         assert response.decision == "allow"
+
+
+class TestCodexToolContextRehydration:
+    """Codex AFTER_TOOL events should regain BEFORE_TOOL context when needed."""
+
+    @staticmethod
+    def _make_event(
+        event_type: HookEventType,
+        *,
+        data: dict[str, object],
+        source: SessionSource = SessionSource.CODEX,
+    ) -> HookEvent:
+        return HookEvent(
+            event_type=event_type,
+            session_id="external-codex-session",
+            source=source,
+            timestamp=datetime.now(UTC),
+            data=data,
+            metadata={"_platform_session_id": "platform-codex-session"},
+        )
+
+    @staticmethod
+    def _make_handler() -> tuple[WorkflowHookHandler, MagicMock]:
+        rule_engine = MagicMock()
+        rule_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+        rule_engine.db = MagicMock()
+
+        handler = WorkflowHookHandler(loop=None)
+        handler.rule_engine = rule_engine
+        handler._session_var_manager = MagicMock()
+        handler._session_var_manager.get_variables.return_value = {
+            "baseline_dirty_files": [],
+            "session_edited_files": [],
+        }
+
+        return handler, rule_engine
+
+    @pytest.mark.asyncio
+    async def test_rehydrates_after_tool_by_tool_use_id(self) -> None:
+        """Codex AFTER_TOOL reuses stored BEFORE_TOOL data when tool_input is missing."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+                "tool_use_id": "codex-tool-1",
+            },
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_use_id": "codex-tool-1",
+                "tool_response": '{"success": true}',
+            },
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert after_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert after_event.metadata["_codex_tool_context_rehydrated"] is True
+        evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
+        assert evaluated_event.data["tool_input"]["tool_name"] == "claim_task"
+
+    @pytest.mark.asyncio
+    async def test_rehydrates_after_tool_without_identifier(self) -> None:
+        """Codex SDK/web flows can fall back to the latest matching BEFORE_TOOL."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+            },
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_response": '{"success": true}',
+            },
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert after_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert rule_engine.evaluate.await_args_list[-1].kwargs["event"].data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+
+    @pytest.mark.asyncio
+    async def test_non_codex_after_tool_is_unchanged(self) -> None:
+        """Other providers should not use Codex rehydration behavior."""
+        handler, rule_engine = self._make_handler()
+
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "Read",
+                "tool_input": {"file_path": "src/main.py"},
+            },
+            source=SessionSource.CLAUDE,
+        )
+        await handler._evaluate_rules(before_event)
+
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={"tool_name": "Read"},
+            source=SessionSource.CLAUDE,
+        )
+        await handler._evaluate_rules(after_event)
+
+        assert "tool_input" not in after_event.data
+        evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
+        assert "tool_input" not in evaluated_event.data
