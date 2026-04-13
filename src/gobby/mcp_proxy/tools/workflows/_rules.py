@@ -161,6 +161,84 @@ def toggle_rule(
     return {"success": True, "rule": _rule_detail(updated)}
 
 
+def update_rule(
+    def_manager: LocalWorkflowDefinitionManager,
+    name: str,
+    *,
+    definition: dict[str, Any] | None = None,
+    description: str | None = None,
+    enabled: bool | None = None,
+    priority: int | None = None,
+    tags: list[str] | None = None,
+    project_path: Path | None = None,
+    make_global_template: bool = False,
+) -> dict[str, Any]:
+    """
+    Update fields on an existing standalone rule.
+
+    Mirrors the HTTP PUT /api/rules/{name} endpoint: pass any subset of
+    definition / description / enabled / priority / tags. When ``definition``
+    is provided it replaces the rule body and is validated with
+    ``RuleDefinitionBody``; row-level metadata embedded in the body is
+    hoisted onto the row unless an explicit value was also passed.
+
+    Args:
+        def_manager: Definition storage manager
+        name: Rule name
+        definition: Full replacement rule body (validated)
+        description: New description
+        enabled: New enabled state
+        priority: New priority
+        tags: New tags
+        project_path: Project root for auto-export
+        make_global_template: If True, export to ~/.gobby/workflows/ instead
+
+    Returns:
+        Dict with success and updated rule, or error if not found / invalid
+    """
+    row = def_manager.get_by_name(name)
+    if row is None or row.workflow_type != "rule":
+        return {"success": False, "error": f"Rule '{name}' not found"}
+
+    fields: dict[str, Any] = {}
+    if description is not None:
+        fields["description"] = description
+    if enabled is not None:
+        fields["enabled"] = enabled
+    if priority is not None:
+        fields["priority"] = priority
+    if tags is not None:
+        fields["tags"] = tags
+
+    if definition is not None:
+        try:
+            RuleDefinitionBody.model_validate(definition)
+        except Exception as e:
+            return {"success": False, "error": f"Invalid rule definition: {e}"}
+
+        for key in ("description", "enabled", "priority", "tags"):
+            if key not in fields and key in definition:
+                fields[key] = definition.pop(key)
+
+        definition.pop("name", None)
+        fields["definition_json"] = json.dumps(definition)
+
+    if not fields:
+        return {"success": False, "error": "No fields to update"}
+
+    updated = def_manager.update(row.id, **fields)
+    logger.info(f"Updated rule '{name}' (fields={list(fields)})")
+
+    try:
+        from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
+
+        auto_export_definition(updated, project_path, make_global=make_global_template)
+    except Exception as e:
+        logger.warning(f"Failed to auto-export updated rule '{name}': {e}")
+
+    return {"success": True, "rule": _rule_detail(updated)}
+
+
 def create_rule(
     def_manager: LocalWorkflowDefinitionManager,
     name: str,

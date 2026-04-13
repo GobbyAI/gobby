@@ -42,6 +42,7 @@ from gobby.mcp_proxy.tools.workflows._rules import (
     get_rule,
     list_rules,
     toggle_rule,
+    update_rule,
 )
 from gobby.mcp_proxy.tools.workflows._variables import (
     create_variable,
@@ -364,6 +365,40 @@ def create_workflows_registry(
         if _def_manager is None:
             return {"error": "Rule tools require database connection"}
         return delete_rule(_def_manager, name, force)
+
+    @registry.tool(
+        name="update_rule",
+        description=(
+            "Update fields on an existing standalone rule. Pass any subset of "
+            "definition, description, enabled, priority, tags. When 'definition' "
+            "is provided it replaces the rule body and is validated with "
+            "RuleDefinitionBody."
+        ),
+    )
+    def _update_rule(
+        name: str,
+        definition: dict[str, Any] | None = None,
+        description: str | None = None,
+        enabled: bool | None = None,
+        priority: int | None = None,
+        tags: list[str] | None = None,
+        project_path: str | None = None,
+        make_template: bool = False,
+    ) -> dict[str, Any]:
+        if _def_manager is None:
+            return {"error": "Rule tools require database connection"}
+        pp = Path(project_path) if project_path else None
+        return update_rule(
+            _def_manager,
+            name,
+            definition=definition,
+            description=description,
+            enabled=enabled,
+            priority=priority,
+            tags=tags,
+            project_path=pp,
+            make_global_template=make_template,
+        )
 
     # ── Variable definition CRUD tools ──
 
