@@ -139,6 +139,8 @@ def setup_internal_registries(
                 sync_manager=sync_manager,
                 task_validator=task_validator,
                 config=_config,
+                llm_service=llm_service,
+                completion_registry=completion_registry,
             )
             manager.add_registry(ops_registry)
             logger.debug("Tasks-ops registry initialized")

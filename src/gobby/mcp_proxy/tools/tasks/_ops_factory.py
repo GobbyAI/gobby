@@ -6,8 +6,8 @@ used by pipelines and occasional manual operations, not daily-driver
 session work.
 
 Tools included:
-- Expansion (6): save/execute/get/validate expansion spec, QA result
-- Affected files (4): set, get, find_overlaps, wire_from_spec
+- Expansion (8): start/get/latest/resume/cancel/validate run, QA result, plan validation
+- Affected files (4): set, get, find_overlaps, wire_from_run
 - GitHub (2): import_github_issues, link_task_to_github_issue
 - Reindex (1): reindex_tasks
 """
@@ -26,6 +26,8 @@ from gobby.tasks.validation import TaskValidator
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.llm.service import LLMService
 
 
 def create_task_ops_registry(
@@ -33,6 +35,8 @@ def create_task_ops_registry(
     sync_manager: TaskSyncManager,
     task_validator: TaskValidator | None = None,
     config: "DaemonConfig | None" = None,
+    llm_service: "LLMService | None" = None,
+    completion_registry: "CompletionEventRegistry | None" = None,
 ) -> InternalToolRegistry:
     """Create a task ops tool registry with cold-path task tools.
 
@@ -51,6 +55,8 @@ def create_task_ops_registry(
         sync_manager=sync_manager,
         task_validator=task_validator,
         config=config,
+        llm_service=llm_service,
+        completion_registry=completion_registry,
     )
 
     registry = InternalToolRegistry(
@@ -58,10 +64,10 @@ def create_task_ops_registry(
         description="Task operations - expansion, affected files, GitHub, reindex",
     )
 
-    # Merge expansion tools (6 tools)
+    # Merge expansion tools
     registry.merge_from(create_expansion_registry(ctx))
 
-    # Merge ops affected files tools (4 tools: set, get, find_overlaps, wire_from_spec)
+    # Merge ops affected files tools (set, get, find_overlaps, wire_from_run)
     registry.merge_from(create_ops_affected_files_registry(ctx))
 
     # Merge GitHub integration tools (2 tools)

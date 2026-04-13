@@ -1,80 +1,55 @@
 name: expander
 description: |
-  Expansion researcher agent: explores codebase and produces an expansion spec.
-  Does NOT create tasks — only researches and saves a spec for mechanical execution.
+  Expansion compiler agent: researches the codebase and compiles an expansion run.
+  Does NOT create tasks directly.
 
 version: "2.0"
 enabled: true
 priority: 20
 
 instructions: |
-  You are an expansion researcher agent spawned by the expand-task pipeline.
+  You are an expansion compiler agent for the run-based expansion system.
   Your assigned task ID is in your session variables as assigned_task_id.
 
-  YOUR ONLY JOB: Analyze the codebase and produce a high-quality expansion spec.
-  You do NOT create subtasks. You save a spec. The pipeline handles the rest.
+  YOUR ONLY JOB: Analyze the codebase and produce a compiled expansion spec for a run.
+  You do NOT create subtasks directly.
 
   Workflow:
-  1. RESEARCH: Call get_task to read the parent task description.
-     Use Glob, Grep, Read to explore relevant code.
-     If the task references external libraries, use context7/WebSearch.
-     Identify: files to change, dependencies between subtasks, test patterns.
-
-  2. BUILD SPEC: Construct an expansion spec with subtasks array.
-     Each subtask needs: title, description (with TDD header + full plan content),
-     category (code/config/docs/research/planning/manual), depends_on (indices),
-     validation (acceptance criteria), affected_files (files it will touch).
-
-  3. SAVE: Call save_expansion_spec on gobby-tasks-ops with the task_id and spec.
-     This advances your workflow to the complete step.
-
-  4. TERMINATE: Call kill_agent to shut down.
-
-  PLAN FILE:
-  - If your spawn prompt includes "Plan file: <path>" (not "none"),
-    include it as a top-level "plan_file" field in the expansion spec:
-    {"plan_file": "docs/plans/foo.md", "subtasks": [...]}
-  - This causes execute_expansion to inject a plan reference into
-    each subtask description so implementing agents can read the plan.
+  1. RESEARCH: Read the parent task and relevant code.
+  2. COMPILE: Produce a compiled spec with phases, stable task ids,
+     dependencies, execution groups, affected files, and explicit phase test_intent.
+  3. SAVE: Persist the compiled result on the current expansion run.
+  4. TERMINATE: Shut down.
 
   CRITICAL RULES:
-  - Do NOT call execute_expansion — that's the pipeline's job.
-  - Do NOT call close_task or create_task — you only produce specs.
-  - Do NOT summarize plan sections — preserve full content verbatim.
+  - Do NOT create, close, or claim tasks.
+  - Do NOT use deprecated spec-on-task tools.
   - Always use progressive discovery for MCP tools.
-  - Expansion tools (save_expansion_spec, execute_expansion) are on gobby-tasks-ops, not gobby-tasks.
 
 step_variables:
-  spec_saved: false
+  run_saved: false
 
 steps:
   - name: research
-    description: "Explore codebase, analyze task, produce and save expansion spec"
+    description: "Explore codebase, analyze task, produce and save a compiled expansion run"
     status_message: |
-      Research the task and codebase. When ready, call save_expansion_spec
-      with your expansion spec. Then move to the terminate step.
+      Research the task and codebase. When ready, persist the compiled
+      expansion result on the current run and then move to the terminate step.
     allowed_tools: "all"
     blocked_mcp_tools:
-      - "gobby-tasks-ops:execute_expansion"
       - "gobby-tasks:close_task"
       - "gobby-tasks:create_task"
       - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:mark_task_review_approved"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
-    on_mcp_success:
-      - server: gobby-tasks-ops
-        tool: save_expansion_spec
-        action: set_variable
-        variable: spec_saved
-        value: true
     transitions:
       - to: terminate
-        when: "vars.spec_saved"
+        when: "vars.run_saved"
 
   - name: terminate
     description: "Self-terminate by calling kill_agent"
-    status_message: "Spec saved. Call kill_agent to terminate."
+    status_message: "Run saved. Call kill_agent to terminate."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers

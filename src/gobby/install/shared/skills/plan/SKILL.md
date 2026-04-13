@@ -285,30 +285,16 @@ phase1 = call_tool("gobby-tasks", "create_task", {
     "parent_task_id": epic["ref"]
 })
 
-# 3. Save expansion spec per phase (only that phase's tasks)
-call_tool("gobby-tasks-ops", "save_expansion_spec", {
+# 3. Start an expansion run per phase (or on the root task when phases are not split manually)
+call_tool("gobby-tasks-expansion", "start_expansion_run", {
     "task_id": phase1["ref"],
-    "spec": {
-        "plan_file": "path/to/plan.md",
-        "subtasks": [
-            {
-                "id": "phase-1-task-1",
-                "title": "Create protocol.py",
-                "description": "Add protocol interfaces for the new backend",
-                "estimated_time": 45,
-                "dependencies": [],
-                "status": "open",
-                "assignee": null,
-                "metadata": {"phase": 1},
-                "tags": ["backend"]
-            }
-        ]
-    }
+    "plan_file": "path/to/plan.md",
+    "auto_apply": true
 })
 
-# 4. Execute expansion per phase with TDD
-call_tool("gobby-tasks-ops", "execute_expansion", {
-    "parent_task_id": phase1["ref"], "tdd": True
+# 4. Inspect the resulting run if needed
+call_tool("gobby-tasks-expansion", "get_latest_expansion_run", {
+    "task_id": phase1["ref"]
 })
 
 # 5. Wire cross-phase dependencies

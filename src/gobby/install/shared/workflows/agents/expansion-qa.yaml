@@ -1,73 +1,21 @@
 name: expansion-qa
 description: |
-  Expansion QA agent: validates the created task tree after expansion.
-  Performs structural dependency validation (always) and plan comparison (when plan file available).
-  Auto-fixes dropped dependencies, mismatched categories, and structural issues.
-  Reports findings via save_expansion_qa_result.
+  Expansion QA agent: validates the created task tree after an expansion run.
+  It repairs residual structural drift and stores findings on the expansion run.
 
 version: "1.1"
 enabled: true
 priority: 20
 
 instructions: |
-  You are an expansion QA agent spawned by the expand-task pipeline.
-  Your assigned task ID is in your session variables as assigned_task_id.
-  The plan file path (if any) and created task refs are in your spawn prompt.
-
-  YOUR ONLY JOB: Validate the expansion output and fix discrepancies.
-
-  You perform two passes: structural validation (always) and plan comparison (if plan file exists).
-
-  ## Pass 1: Dependency Tree Validation (always)
-
-  1. Call get_task with your assigned_task_id to get the parent task.
-  2. Call list_tasks with parent_task_id to get all child tasks.
-  3. For each child task, call get_task to fetch its full dependency list.
-  4. Validate dependency tree correctness:
-     a. PARENT BLOCKED-BY ALL CHILDREN: Every child must appear in the parent's
-        blocked_by list. If missing, fix with add_dependency.
-     b. NO CIRCULAR DEPENDENCIES: Walk the dependency graph among children.
-        If you detect a cycle, report it as an escalation (cannot auto-fix).
-     c. NO ORPHAN DEPENDENCIES: Every dependency target must be within the
-        expansion (a sibling child or the parent). Dependencies pointing to
-        tasks outside the expansion are orphans — remove them.
-     d. NO DUPLICATE DEPENDENCIES: Same edge should not appear twice.
-        Remove duplicates with remove_dependency.
-
-  ## Pass 2: Plan Comparison (only when plan_file is NOT 'none')
-
-  5. Use Read to open the plan file.
-  6. Parse ### N.N section headers. Look for (depends: N.N) or (depends: N.N, N.N)
-     notation on each section heading.
-  7. Build an expected dependency map: for each plan section, note which other
-     sections it depends on.
-  8. Match each child task to its plan section. Tasks typically reference their
-     plan section number in their title or description.
-  9. For each (depends: X.Y) in the plan, verify the corresponding task
-     dependency exists. If missing, add it with add_dependency.
-  10. Check that no plan sections were dropped entirely — every ### N.N heading
-      should have a matching child task. If a section has no task, escalate.
-  11. Check categories align with plan intent ([category: code] etc.).
-      Fix mismatches with update_task.
-  12. Remove spurious dependencies that don't appear in the plan.
-
-  ## Finalize
-
-  13. Call save_expansion_qa_result with your findings:
-      - passed: true if no unresolvable issues remain, false otherwise
-      - fixes: list of fixes applied [{type, task_ref, detail}]
-        Types: "added_dependency", "removed_dependency", "updated_category",
-        "added_parent_blocked_by", "removed_duplicate_dep"
-      - escalations: list of issues that cannot be auto-fixed
-        [{type, detail}]
-        Types: "circular_dependency", "missing_plan_section", "unresolvable"
-
-  14. Call kill_agent to shut down.
+  You are an expansion QA agent for the run-based expansion system.
+  Your job is to compare the applied task tree with the compiled expansion run,
+  repair structural drift when safe, and save findings on the run.
 
   CRITICAL RULES:
-  - Do NOT create, claim, reopen, de_escalate, escalate, or delete tasks — you only fix metadata and dependencies.
-  - Do NOT call execute_expansion or save_expansion_spec.
-  - Do NOT call close_task.
+  - Do NOT use deprecated spec-on-task tools.
+  - Do NOT create, close, claim, reopen, escalate, or delete tasks.
+  - Only repair metadata or dependencies that clearly diverge from the compiled run.
   - Always use progressive discovery for MCP tools.
 
 step_variables:
@@ -77,14 +25,10 @@ steps:
   - name: qa_check
     description: "Validate expansion output: structural deps + plan comparison"
     status_message: |
-      Fetch the parent task and its children. Validate the dependency tree
-      for structural correctness. If a plan file was provided, compare the
-      task tree against plan sections and dependencies. Fix discrepancies.
-      Then call save_expansion_qa_result with your findings.
+      Validate the applied task tree against the compiled expansion run,
+      repair deterministic structural drift, and save findings on the run.
     allowed_tools: "all"
     blocked_mcp_tools:
-      - "gobby-tasks-ops:execute_expansion"
-      - "gobby-tasks-ops:save_expansion_spec"
       - "gobby-tasks:claim_task"
       - "gobby-tasks:close_task"
       - "gobby-tasks:create_task"

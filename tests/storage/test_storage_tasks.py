@@ -507,7 +507,6 @@ class TestLocalTaskManager:
             assignee="me",
             labels=["l1"],
             category="strat",
-            expansion_context="ctx",
             validation_criteria="crit",
             validation_fail_count=2,
             validation_status="valid",
@@ -520,7 +519,6 @@ class TestLocalTaskManager:
         assert updated.assignee == "me"
         assert updated.labels == ["l1"]
         assert updated.category == "strat"
-        assert updated.expansion_context == "ctx"
         assert updated.validation_criteria == "crit"
         assert updated.validation_fail_count == 2
         assert updated.validation_status == "valid"
@@ -1222,7 +1220,6 @@ class TestLocalTaskManager:
             assignee="developer",
             labels=["important"],
             category="Unit tests",
-            expansion_context="More context",
             validation_criteria="All tests pass",
         )
 
@@ -1234,7 +1231,6 @@ class TestLocalTaskManager:
         assert task.assignee == "developer"
         assert task.labels == ["important"]
         assert task.category == "Unit tests"
-        assert task.expansion_context == "More context"
         assert task.validation_criteria == "All tests pass"
         # Validation status should be pending when criteria is set
         assert task.validation_status == "pending"

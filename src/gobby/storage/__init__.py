@@ -2,6 +2,7 @@
 
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.database import LocalDatabase
+from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.migrations import run_migrations
@@ -14,6 +15,7 @@ __all__ = [
     "InterSessionMessageManager",
     "LocalCommunicationsStore",
     "LocalDatabase",
+    "LocalExpansionRunManager",
     "LocalMCPManager",
     "LocalProjectManager",
     "LocalSessionManager",

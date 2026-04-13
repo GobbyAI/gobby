@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 209
+BASELINE_VERSION = 210
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -382,6 +382,56 @@ def _migrate_task_lifecycle_stage(db: LocalDatabase) -> None:
             END
         """)
         tx.execute("CREATE INDEX IF NOT EXISTS idx_tasks_lifecycle_stage ON tasks(lifecycle_stage)")
+
+
+def _migrate_expansion_runs(db: LocalDatabase) -> None:
+    """Create expansion_runs and remove legacy task-attached expansion fields."""
+    with db.transaction() as tx:
+        tx.execute("""
+            CREATE TABLE IF NOT EXISTS expansion_runs (
+                id TEXT PRIMARY KEY,
+                parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                triggering_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN (
+                        'pending', 'running', 'compiled', 'applying',
+                        'completed', 'failed', 'cancelled'
+                    )),
+                input_source TEXT NOT NULL
+                    CHECK(input_source IN ('task', 'plan')),
+                plan_file TEXT,
+                provider TEXT,
+                model TEXT,
+                options_json TEXT,
+                compiled_spec_json TEXT,
+                qa_result_json TEXT,
+                task_id_map_json TEXT,
+                created_task_ids_json TEXT,
+                error TEXT,
+                logs_json TEXT,
+                checkpoints_json TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        tx.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_expansion_runs_parent_task
+            ON expansion_runs(parent_task_id, created_at DESC)
+            """
+        )
+        tx.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_expansion_runs_status
+            ON expansion_runs(status, created_at DESC)
+            """
+        )
+
+    _drop_column_if_exists(db, "tasks", "expansion_context")
+    _drop_column_if_exists(db, "tasks", "expansion_status")
 
 
 def _drop_agent_runs_mode(db: LocalDatabase) -> None:
@@ -939,6 +989,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         209,
         "Add canonical task lifecycle_stage and backfill projected status",
         _migrate_task_lifecycle_stage,
+    ),
+    (
+        210,
+        "Replace task-attached expansion state with expansion_runs table",
+        _migrate_expansion_runs,
     ),
 ]
 

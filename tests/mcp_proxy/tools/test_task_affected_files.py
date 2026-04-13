@@ -1,6 +1,5 @@
 """Tests for task affected files MCP tools."""
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -172,64 +171,51 @@ class TestFindFileOverlaps:
                 assert "error" in result
 
 
-def _make_mock_task(
-    task_id: str = "parent-1",
-    title: str = "Parent",
-    project_id: str = "proj-1",
-    expansion_context: str | None = None,
+def _make_mock_run(
+    compiled_spec: dict | None = None,
+    task_id_map: dict[str, str] | None = None,
 ) -> MagicMock:
-    """Create a mock task object."""
-    task = MagicMock()
-    task.id = task_id
-    task.title = title
-    task.project_id = project_id
-    task.expansion_context = expansion_context
-    return task
+    run = MagicMock()
+    run.compiled_spec = compiled_spec
+    run.task_id_map = task_id_map
+    return run
 
 
-def _make_mock_child(task_id: str, title: str) -> MagicMock:
-    """Create a mock child task."""
-    child = MagicMock()
-    child.id = task_id
-    child.title = title
-    return child
-
-
-class TestWireAffectedFilesFromSpec:
+class TestWireAffectedFilesFromRun:
     def test_wire_success(self, ctx, mock_resolve) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         spec = {
-            "subtasks": [
+            "tasks": [
                 {
+                    "id": "task-1",
                     "title": "Add models",
                     "affected_files": ["src/models.py", "tests/test_models.py"],
                 },
                 {
+                    "id": "task-2",
                     "title": "Add routes",
                     "affected_files": ["src/routes.py"],
                 },
             ]
         }
-        parent = _make_mock_task(expansion_context=json.dumps(spec))
-        ctx.task_manager.get_task.return_value = parent
-        ctx.task_manager.list_tasks.return_value = [
-            _make_mock_child("child-1", "Add models"),
-            _make_mock_child("child-2", "Add routes"),
-        ]
+        run = _make_mock_run(spec, {"task-1": "child-1", "task-2": "child-2"})
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
-        ) as MockMgr:
+        ) as MockMgr, patch(
+            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+        ) as MockRunMgr:
             mock_mgr = MockMgr.return_value
             mock_mgr.set_files.return_value = []
+            MockRunMgr.return_value.get.return_value = run
 
             registry = create_ops_affected_files_registry(ctx)
-            wire_fn = registry.get_tool("wire_affected_files_from_spec")
-            result = wire_fn(parent_task_id="parent-1")
+            wire_fn = registry.get_tool("wire_affected_files_from_run")
+            result = wire_fn(run_id="run-1")
 
             assert result["wired"] == 2
-            assert result["total_subtasks"] == 2
+            assert result["total_tasks"] == 2
             assert result["skipped"] == 0
             assert mock_mgr.set_files.call_count == 2
             mock_mgr.set_files.assert_any_call(
@@ -237,88 +223,83 @@ class TestWireAffectedFilesFromSpec:
             )
             mock_mgr.set_files.assert_any_call("child-2", ["src/routes.py"], "expansion")
 
-    def test_wire_skips_subtasks_without_files(self, ctx, mock_resolve) -> None:
+    def test_wire_skips_tasks_without_files(self, ctx, mock_resolve) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
 
         spec = {
-            "subtasks": [
-                {"title": "Research", "category": "research"},  # no affected_files
-                {"title": "Add code", "affected_files": ["src/code.py"]},
+            "tasks": [
+                {"id": "task-1", "title": "Research", "category": "research"},
+                {"id": "task-2", "title": "Add code", "affected_files": ["src/code.py"]},
             ]
         }
-        parent = _make_mock_task(expansion_context=json.dumps(spec))
-        ctx.task_manager.get_task.return_value = parent
-        ctx.task_manager.list_tasks.return_value = [
-            _make_mock_child("child-1", "Research"),
-            _make_mock_child("child-2", "Add code"),
-        ]
+        run = _make_mock_run(spec, {"task-2": "child-2"})
 
         with patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
-        ) as MockMgr:
+        ) as MockMgr, patch(
+            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+        ) as MockRunMgr:
             mock_mgr = MockMgr.return_value
             mock_mgr.set_files.return_value = []
+            MockRunMgr.return_value.get.return_value = run
 
             registry = create_ops_affected_files_registry(ctx)
-            wire_fn = registry.get_tool("wire_affected_files_from_spec")
-            result = wire_fn(parent_task_id="parent-1")
+            wire_fn = registry.get_tool("wire_affected_files_from_run")
+            result = wire_fn(run_id="run-1")
 
             assert result["wired"] == 1
+            assert result["total_tasks"] == 2
             assert result["skipped"] == 1
             mock_mgr.set_files.assert_called_once_with("child-2", ["src/code.py"], "expansion")
 
-    def test_wire_no_expansion_context(self, ctx, mock_resolve) -> None:
+    def test_wire_errors_when_run_missing(self, ctx, mock_resolve) -> None:
         from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
-
-        parent = _make_mock_task(expansion_context=None)
-        ctx.task_manager.get_task.return_value = parent
-
-        with patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"):
-            registry = create_ops_affected_files_registry(ctx)
-            wire_fn = registry.get_tool("wire_affected_files_from_spec")
-            result = wire_fn(parent_task_id="parent-1")
-
-            assert "error" in result
-            assert "no expansion spec" in result["error"].lower()
-
-    def test_wire_no_children(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
-
-        spec = {"subtasks": [{"title": "Task", "affected_files": ["a.py"]}]}
-        parent = _make_mock_task(expansion_context=json.dumps(spec))
-        ctx.task_manager.get_task.return_value = parent
-        ctx.task_manager.list_tasks.return_value = []
-
-        with patch("gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"):
-            registry = create_ops_affected_files_registry(ctx)
-            wire_fn = registry.get_tool("wire_affected_files_from_spec")
-            result = wire_fn(parent_task_id="parent-1")
-
-            assert "error" in result
-            assert "no child tasks" in result["error"].lower()
-
-    def test_wire_title_mismatch_skipped(self, ctx, mock_resolve) -> None:
-        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
-
-        spec = {
-            "subtasks": [
-                {"title": "Nonexistent title", "affected_files": ["src/a.py"]},
-            ]
-        }
-        parent = _make_mock_task(expansion_context=json.dumps(spec))
-        ctx.task_manager.get_task.return_value = parent
-        ctx.task_manager.list_tasks.return_value = [
-            _make_mock_child("child-1", "Different title"),
-        ]
 
         with patch(
+            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+        ) as MockRunMgr, patch(
             "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
-        ) as MockMgr:
-            mock_mgr = MockMgr.return_value
+        ):
+            MockRunMgr.return_value.get.return_value = None
             registry = create_ops_affected_files_registry(ctx)
-            wire_fn = registry.get_tool("wire_affected_files_from_spec")
-            result = wire_fn(parent_task_id="parent-1")
+            wire_fn = registry.get_tool("wire_affected_files_from_run")
+            result = wire_fn(run_id="run-1")
 
-            assert result["wired"] == 0
-            assert result["skipped"] == 1
-            mock_mgr.set_files.assert_not_called()
+            assert "error" in result
+            assert "not found" in result["error"].lower()
+
+    def test_wire_errors_when_compiled_spec_missing(self, ctx, mock_resolve) -> None:
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
+
+        run = _make_mock_run(compiled_spec=None, task_id_map={"task-1": "child-1"})
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+        ) as MockRunMgr, patch(
+            "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
+        ):
+            MockRunMgr.return_value.get.return_value = run
+            registry = create_ops_affected_files_registry(ctx)
+            wire_fn = registry.get_tool("wire_affected_files_from_run")
+            result = wire_fn(run_id="run-1")
+
+            assert "error" in result
+            assert "no compiled spec" in result["error"].lower()
+
+    def test_wire_errors_when_task_map_missing(self, ctx, mock_resolve) -> None:
+        from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
+
+        run = _make_mock_run(compiled_spec={"tasks": []}, task_id_map=None)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._affected_files.LocalExpansionRunManager"
+        ) as MockRunMgr, patch(
+            "gobby.mcp_proxy.tools.tasks._affected_files.TaskAffectedFileManager"
+        ):
+            MockRunMgr.return_value.get.return_value = run
+            registry = create_ops_affected_files_registry(ctx)
+            wire_fn = registry.get_tool("wire_affected_files_from_run")
+            result = wire_fn(run_id="run-1")
+
+            assert "error" in result
+            assert "no applied task mapping" in result["error"].lower()

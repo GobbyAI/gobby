@@ -468,8 +468,6 @@ class TestClosedStateRoundTrip:
                 closed_commit_sha = 'abc123def456',
                 labels = '["bug", "p0"]',
                 category = 'code',
-                expansion_status = 'completed',
-                expansion_context = 'expanded from epic',
                 github_issue_number = 42,
                 github_pr_number = 99,
                 github_repo = 'owner/repo',
@@ -493,7 +491,6 @@ class TestClosedStateRoundTrip:
         assert data["closed_commit_sha"] == "abc123def456"
         assert data["labels"] == ["bug", "p0"]
         assert data["category"] == "code"
-        assert data["expansion_status"] == "completed"
         assert data["github_issue_number"] == 42
         assert data["github_pr_number"] == 99
         assert data["github_repo"] == "owner/repo"
@@ -522,7 +519,6 @@ class TestClosedStateRoundTrip:
         assert reimported.closed_commit_sha == "abc123def456"
         assert reimported.labels == ["bug", "p0"]
         assert reimported.category == "code"
-        assert reimported.expansion_status == "completed"
         assert reimported.github_issue_number == 42
         assert reimported.github_pr_number == 99
         assert reimported.github_repo == "owner/repo"

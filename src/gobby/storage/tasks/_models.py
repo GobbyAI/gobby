@@ -132,7 +132,6 @@ class Task:
     validation_status: Literal["pending", "valid", "invalid"] | None = None
     validation_feedback: str | None = None
     category: str | None = None
-    expansion_context: str | None = None
     validation_criteria: str | None = None
     validation_fail_count: int = 0
     dispatch_failure_count: int = 0
@@ -152,8 +151,6 @@ class Task:
     # Human-friendly ID fields (task renumbering)
     seq_num: int | None = None
     path_cache: str | None = None
-    # Skill-based expansion status (for new /gobby-expand flow)
-    expansion_status: Literal["none", "pending", "completed"] = "none"
     # Scheduling fields (Gantt chart)
     start_date: str | None = None
     due_date: str | None = None
@@ -223,7 +220,6 @@ class Task:
                 row["validation_feedback"] if "validation_feedback" in keys else None
             ),
             category=row["category"] if "category" in keys else None,
-            expansion_context=row["expansion_context"] if "expansion_context" in keys else None,
             validation_criteria=(
                 row["validation_criteria"] if "validation_criteria" in keys else None
             ),
@@ -248,11 +244,6 @@ class Task:
             linear_team_id=row["linear_team_id"] if "linear_team_id" in keys else None,
             seq_num=row["seq_num"] if "seq_num" in keys else None,
             path_cache=row["path_cache"] if "path_cache" in keys else None,
-            expansion_status=(
-                row["expansion_status"]
-                if "expansion_status" in keys and row["expansion_status"]
-                else "none"
-            ),
             start_date=row["start_date"] if "start_date" in keys else None,
             due_date=row["due_date"] if "due_date" in keys else None,
         )
@@ -288,7 +279,6 @@ class Task:
             "validation_status": self.validation_status,
             "validation_feedback": self.validation_feedback,
             "category": self.category,
-            "expansion_context": self.expansion_context,
             "validation_criteria": self.validation_criteria,
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
@@ -303,7 +293,6 @@ class Task:
             "linear_team_id": self.linear_team_id,
             "seq_num": self.seq_num,
             "path_cache": self.path_cache,
-            "expansion_status": self.expansion_status,
             "start_date": self.start_date,
             "due_date": self.due_date,
             "id": self.id,  # UUID at end for backwards compat

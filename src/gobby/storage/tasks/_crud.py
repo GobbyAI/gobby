@@ -90,7 +90,6 @@ def create_task(
     lifecycle_stage: str | None = None,
     labels: list[str] | None = None,
     category: str | None = None,
-    expansion_context: str | None = None,
     validation_criteria: str | None = None,
     github_issue_number: int | None = None,
     github_pr_number: int | None = None,
@@ -140,11 +139,11 @@ def create_task(
                         created_in_session_id, claimed_by_session_id, lifecycle_stage,
                         priority, task_type, assignee,
                         labels, status, created_at, updated_at,
-                        validation_status, category, expansion_context,
+                        validation_status, category,
                         validation_criteria, validation_fail_count,
                         github_issue_number, github_pr_number, github_repo,
                         linear_issue_id, linear_team_id, seq_num
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -164,7 +163,6 @@ def create_task(
                         now,
                         validation_status,
                         category,
-                        expansion_context,
                         validation_criteria,
                         github_issue_number,
                         github_pr_number,
@@ -311,7 +309,6 @@ def update_task(
     validation_status: Any = UNSET,
     validation_feedback: Any = UNSET,
     category: Any = UNSET,
-    expansion_context: Any = UNSET,
     validation_criteria: Any = UNSET,
     validation_fail_count: Any = UNSET,
     dispatch_failure_count: Any = UNSET,
@@ -322,7 +319,6 @@ def update_task(
     github_repo: Any = UNSET,
     linear_issue_id: Any = UNSET,
     linear_team_id: Any = UNSET,
-    expansion_status: Any = UNSET,
     validation_override_reason: Any = UNSET,
 ) -> bool:
     """Update task fields.
@@ -375,9 +371,6 @@ def update_task(
     if category is not UNSET:
         updates.append("category = ?")
         params.append(category)
-    if expansion_context is not UNSET:
-        updates.append("expansion_context = ?")
-        params.append(expansion_context)
     if validation_criteria is not UNSET:
         updates.append("validation_criteria = ?")
         params.append(validation_criteria)
@@ -402,9 +395,6 @@ def update_task(
     if linear_team_id is not UNSET:
         updates.append("linear_team_id = ?")
         params.append(linear_team_id)
-    if expansion_status is not UNSET:
-        updates.append("expansion_status = ?")
-        params.append(expansion_status)
     if validation_override_reason is not UNSET:
         updates.append("validation_override_reason = ?")
         params.append(validation_override_reason)

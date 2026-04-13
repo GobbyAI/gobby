@@ -187,9 +187,7 @@ class TaskSyncManager:
                         else None
                     ),
                     # Expansion fields
-                    "expansion_status": task.expansion_status,
                     "category": task.category,
-                    "expansion_context": task.expansion_context,
                     # External integrations
                     "github_issue_number": task.github_issue_number,
                     "github_pr_number": task.github_pr_number,
@@ -410,9 +408,7 @@ class TaskSyncManager:
                                 "validation_fail_count": validation_fail_count,
                                 "validation_criteria": validation_criteria,
                                 "validation_override_reason": validation_override_reason,
-                                "expansion_status": data.get("expansion_status", "none"),
                                 "category": data.get("category"),
-                                "expansion_context": data.get("expansion_context"),
                                 "github_issue_number": data.get("github_issue_number"),
                                 "github_pr_number": data.get("github_pr_number"),
                                 "github_repo": data.get("github_repo"),

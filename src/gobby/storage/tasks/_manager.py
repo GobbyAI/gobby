@@ -192,7 +192,6 @@ class LocalTaskManager:
         lifecycle_stage: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
-        expansion_context: str | None = None,
         validation_criteria: str | None = None,
         github_issue_number: int | None = None,
         github_pr_number: int | None = None,
@@ -216,7 +215,6 @@ class LocalTaskManager:
             lifecycle_stage=lifecycle_stage,
             labels=labels,
             category=category,
-            expansion_context=expansion_context,
             validation_criteria=validation_criteria,
             github_issue_number=github_issue_number,
             github_pr_number=github_pr_number,
@@ -296,7 +294,6 @@ class LocalTaskManager:
         validation_status: str | None | Any = UNSET,
         validation_feedback: str | None | Any = UNSET,
         category: str | None | Any = UNSET,
-        expansion_context: str | None | Any = UNSET,
         validation_criteria: str | None | Any = UNSET,
         validation_fail_count: int | None | Any = UNSET,
         dispatch_failure_count: int | None | Any = UNSET,
@@ -307,7 +304,6 @@ class LocalTaskManager:
         github_repo: str | None | Any = UNSET,
         linear_issue_id: str | None | Any = UNSET,
         linear_team_id: str | None | Any = UNSET,
-        expansion_status: str | None | Any = UNSET,
         validation_override_reason: str | None | Any = UNSET,
         **kwargs: Any,
     ) -> Task:
@@ -332,7 +328,6 @@ class LocalTaskManager:
             validation_status=validation_status,
             validation_feedback=validation_feedback,
             category=category,
-            expansion_context=expansion_context,
             validation_criteria=validation_criteria,
             validation_fail_count=validation_fail_count,
             dispatch_failure_count=dispatch_failure_count,
@@ -343,7 +338,6 @@ class LocalTaskManager:
             github_repo=github_repo,
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
-            expansion_status=expansion_status,
             validation_override_reason=validation_override_reason,
         )
 
@@ -729,7 +723,6 @@ class LocalTaskManager:
         assignee: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
-        expansion_context: str | None = None,
         validation_criteria: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -745,7 +738,6 @@ class LocalTaskManager:
             assignee=assignee,
             labels=labels,
             category=category,
-            expansion_context=expansion_context,
             validation_criteria=validation_criteria,
         )
         return {"task": task.to_dict()}

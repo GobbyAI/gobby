@@ -271,7 +271,6 @@ CREATE TABLE tasks (
     validation_feedback TEXT,
     validation_override_reason TEXT,
     category TEXT,
-    expansion_context TEXT,
     validation_criteria TEXT,
     validation_fail_count INTEGER DEFAULT 0,
     dispatch_failure_count INTEGER DEFAULT 0,
@@ -285,7 +284,6 @@ CREATE TABLE tasks (
     linear_team_id TEXT,
     seq_num INTEGER,
     path_cache TEXT,
-    expansion_status TEXT DEFAULT 'none',
     start_date TEXT,
     due_date TEXT,
     created_at TEXT NOT NULL,
@@ -311,6 +309,34 @@ CREATE TABLE task_dependencies (
 );
 CREATE INDEX idx_deps_task ON task_dependencies(task_id);
 CREATE INDEX idx_deps_depends_on ON task_dependencies(depends_on);
+
+CREATE TABLE expansion_runs (
+    id TEXT PRIMARY KEY,
+    parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    triggering_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'running', 'compiled', 'applying', 'completed', 'failed', 'cancelled')),
+    input_source TEXT NOT NULL
+        CHECK(input_source IN ('task', 'plan')),
+    plan_file TEXT,
+    provider TEXT,
+    model TEXT,
+    options_json TEXT,
+    compiled_spec_json TEXT,
+    qa_result_json TEXT,
+    task_id_map_json TEXT,
+    created_task_ids_json TEXT,
+    error TEXT,
+    logs_json TEXT,
+    checkpoints_json TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_expansion_runs_parent_task ON expansion_runs(parent_task_id, created_at DESC);
+CREATE INDEX idx_expansion_runs_status ON expansion_runs(status, created_at DESC);
 
 CREATE TABLE session_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
