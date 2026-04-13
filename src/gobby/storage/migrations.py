@@ -498,7 +498,20 @@ def _migrate_task_lifecycle_stage(db: LocalDatabase) -> None:
 
 
 def _migrate_expansion_runs(db: LocalDatabase) -> None:
-    """Create expansion_runs and remove legacy task-attached expansion fields."""
+    """Create expansion_runs and remove legacy task-attached expansion fields.
+
+    Audit notes:
+    - ``tasks.expansion_context`` shipped in ``v0.2.5`` via the deleted legacy
+      ``expand_task`` flow, but it stored enrichment/context JSON rather than a
+      persisted expansion-run record.
+    - ``tasks.expansion_status`` was introduced later for the replacement
+      skill-based flow, but no tagged release contained that field without the
+      same-day removal of the legacy expansion system.
+
+    Neither field has a lossless one-to-one mapping into ``expansion_runs``, so
+    this migration intentionally creates the new table and drops the task-level
+    legacy columns without synthesizing backfilled run rows.
+    """
     with db.transaction() as tx:
         tx.execute("""
             CREATE TABLE IF NOT EXISTS expansion_runs (

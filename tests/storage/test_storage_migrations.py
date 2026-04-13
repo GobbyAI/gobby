@@ -7,9 +7,11 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import (
     BASELINE_VERSION,
     MIGRATIONS,
+    _migrate_expansion_runs,
     get_current_version,
     run_migrations,
 )
+from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -277,6 +279,48 @@ def test_migration_212_updates_tasks_claimed_session_fk(tmp_path) -> None:
     rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
     claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
     assert claimed_fk["on_delete"] == "SET NULL"
+
+
+def test_migrate_expansion_runs_drops_legacy_task_fields_without_backfill(tmp_path) -> None:
+    """Legacy task-level expansion blobs are dropped instead of mapped to expansion_runs."""
+    db_path = tmp_path / "expansion_runs_audit.db"
+    db = LocalDatabase(db_path)
+    run_migrations(db)
+
+    db.execute(
+        """
+        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'))
+        """,
+        ("proj-1", "test-project", "/tmp/test-project"),
+    )
+    manager = LocalTaskManager(db)
+    task = manager.create_task(project_id="proj-1", title="Legacy expansion task")
+
+    db.execute("ALTER TABLE tasks ADD COLUMN expansion_context TEXT")
+    db.execute("ALTER TABLE tasks ADD COLUMN expansion_status TEXT")
+    db.execute(
+        """
+        UPDATE tasks
+        SET expansion_context = ?, expansion_status = ?
+        WHERE id = ?
+        """,
+        (
+            '{"research_findings":["legacy"],"validation_criteria":"old"}',
+            "completed",
+            task.id,
+        ),
+    )
+
+    _migrate_expansion_runs(db)
+
+    task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
+    assert "expansion_context" not in task_columns
+    assert "expansion_status" not in task_columns
+
+    count_row = db.fetchone("SELECT COUNT(*) AS count FROM expansion_runs")
+    assert count_row is not None
+    assert count_row["count"] == 0
 
 
 def test_migration_208_recovers_when_column_exists_but_version_does_not(tmp_path) -> None:
