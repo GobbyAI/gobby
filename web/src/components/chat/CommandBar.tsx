@@ -99,6 +99,7 @@ export function CommandBar({
           <button
             type="button"
             className="command-bar-session"
+            data-testid="chat-session-selector"
             onClick={onOpenPalette}
             title="Switch session (Cmd+K)"
           >

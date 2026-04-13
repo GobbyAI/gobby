@@ -115,7 +115,7 @@ test.describe("Live Gemini Hi Gobby verification", () => {
     await expect(page.getByText(model.label)).toBeVisible();
     await page.getByText(model.label).click();
 
-    const initialMessageCount = await page.locator(".message-content").count();
+    const initialMessageCount = await page.getByTestId("chat-message-content").count();
     const input = page.getByRole("textbox", { name: /message input/i });
     await input.fill("Hi Gobby");
     await input.press("Enter");
@@ -131,7 +131,7 @@ test.describe("Live Gemini Hi Gobby verification", () => {
 
     await waitForAssistantResponse(request, dbSessionId!);
     await expect
-      .poll(async () => page.locator(".message-content").count(), {
+      .poll(async () => page.getByTestId("chat-message-content").count(), {
         timeout: PROMPT_TIMEOUT_MS,
       })
       .toBeGreaterThan(initialMessageCount + 1);

@@ -166,7 +166,7 @@ async function sendPromptAndWait(
   token: string,
   expectedModel: string,
 ): Promise<{ dbSessionId: string; session: SessionSummary }> {
-  const initialMessageCount = await page.locator(".message-content").count();
+  const initialMessageCount = await page.getByTestId("chat-message-content").count();
   const input = page.getByRole("textbox", { name: /message input/i });
   await input.fill(prompt);
   await input.press("Enter");
@@ -183,7 +183,7 @@ async function sendPromptAndWait(
   const session = await waitForSessionSummary(request, dbSessionId!, expectedModel);
   await waitForAssistantToken(request, dbSessionId!, token);
   await expect
-    .poll(async () => page.locator(".message-content").count(), {
+    .poll(async () => page.getByTestId("chat-message-content").count(), {
       timeout: PROMPT_TIMEOUT_MS,
     })
     .toBeGreaterThan(initialMessageCount + 1);
@@ -237,6 +237,6 @@ test.describe("Live Codex model switch verification", () => {
     );
 
     expect(secondTurn.dbSessionId).toBe(firstTurn.dbSessionId);
-    await expect(page.locator(".command-bar-session")).toContainText(firstTurn.session.ref);
+    await expect(page.getByTestId("chat-session-selector")).toContainText(firstTurn.session.ref);
   });
 });

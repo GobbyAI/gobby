@@ -168,7 +168,7 @@ async function sendPromptAndWait(
   const assistantContent = await waitForAssistantToken(request, dbSessionId!, token);
   await expect(
     page
-      .locator(".message-content")
+      .getByTestId("chat-message-content")
       .filter({ hasText: token || assistantContent.slice(0, 120) })
       .last(),
   ).toBeVisible({
@@ -185,7 +185,7 @@ async function openSessionFromCommandPalette(
   page: Parameters<typeof test>[0]["page"],
   sessionRef: string,
 ): Promise<void> {
-  await page.locator(".command-bar-session").click();
+  await page.getByTestId("chat-session-selector").click();
   const palette = page.getByRole("dialog", { name: "Command palette" });
   await expect(palette).toBeVisible();
   const search = palette.locator("input");
@@ -234,7 +234,7 @@ test.describe("Live Gemini cross-context continuity verification", () => {
         localStorage.removeItem("gobby-selected-provider");
       });
       await secondPage.reload();
-      await expect(secondPage.locator(".command-bar-session")).toContainText("New Chat Session");
+      await expect(secondPage.getByTestId("chat-session-selector")).toContainText("New Chat Session");
 
       await openSessionFromCommandPalette(secondPage, firstTurn.session.ref);
 
@@ -244,10 +244,10 @@ test.describe("Live Gemini cross-context continuity verification", () => {
         { timeout: 15_000 },
       );
 
-      await expect(secondPage.locator(".command-bar-session")).toContainText(firstTurn.session.ref);
+      await expect(secondPage.getByTestId("chat-session-selector")).toContainText(firstTurn.session.ref);
       await expect(
         secondPage
-          .locator(".message-content")
+          .getByTestId("chat-message-content")
           .filter({ hasText: firstToken })
           .last(),
       ).toBeVisible({

@@ -180,7 +180,7 @@ async function sendPromptAndWait(
   const session = await waitForSessionSummary(request, dbSessionId!);
   await waitForAssistantToken(request, dbSessionId!, token);
   await expect(
-    page.locator(".message-content").filter({
+    page.getByTestId("chat-message-content").filter({
       hasText: token,
     }).last(),
   ).toBeVisible({
@@ -201,7 +201,7 @@ async function startNewChat(
   _previousConversationId: string,
 ): Promise<void> {
   await page.locator('button[title="New Chat"]').click();
-  await expect(page.locator(".command-bar-session")).toContainText("New Chat Session", {
+  await expect(page.getByTestId("chat-session-selector")).toContainText("New Chat Session", {
     timeout: 15_000,
   });
 }
@@ -210,7 +210,7 @@ async function swapToSession(
   page: Parameters<typeof test>[0]["page"],
   sessionRef: string,
 ): Promise<void> {
-  await page.locator(".command-bar-session").click();
+  await page.getByTestId("chat-session-selector").click();
   const palette = page.getByRole("dialog", { name: "Command palette" });
   await expect(palette).toBeVisible();
   const search = palette.locator("input");
@@ -252,7 +252,7 @@ test.describe("Live Gemini web chat swap verification", () => {
       `Reply with exactly ${firstToken}.`,
       firstToken,
     );
-    await expect(page.locator(".command-bar-session")).toContainText(firstChat.session.ref);
+    await expect(page.getByTestId("chat-session-selector")).toContainText(firstChat.session.ref);
 
     await startNewChat(page, firstChat.conversationId);
 
@@ -267,7 +267,7 @@ test.describe("Live Gemini web chat swap verification", () => {
     expect(secondChat.dbSessionId).not.toBe(firstChat.dbSessionId);
 
     await swapToSession(page, firstChat.session.ref);
-    await expect(page.locator(".command-bar-session")).toContainText(firstChat.session.ref);
+    await expect(page.getByTestId("chat-session-selector")).toContainText(firstChat.session.ref);
     await expect(page.getByText("Generation failed")).toHaveCount(0);
 
     const followupToken = `live-gemini-followup-${runId}`;
