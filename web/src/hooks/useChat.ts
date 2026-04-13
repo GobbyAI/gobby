@@ -1931,7 +1931,7 @@ export function useChat() {
         })
         .catch(() => {});
     },
-    [bindActiveSession, resetMainChatState],
+    [bindActiveSession, resetMainChatState, setContextUsage],
   );
 
   // Start a new chat conversation, optionally with a specific agent
@@ -2094,7 +2094,7 @@ export function useChat() {
 
       return newConversationId;
     },
-    [bindActiveSession, ensureMainSession, resetMainChatState],
+    [bindActiveSession, ensureMainSession, resetMainChatState, setContextUsage],
   );
 
   // Clear chat history — notifies backend to teardown session, then resets frontend.
@@ -2373,7 +2373,7 @@ export function useChat() {
       setIsThinking(true);
       return true;
     },
-    [],
+    [ensureMainSession],
   );
 
   // Update sendMessageRef with the latest sendMessage callback
@@ -2591,7 +2591,7 @@ export function useChat() {
       .catch((err) => console.error("Failed to fetch session metadata:", err));
     // resolveAgentName is a stable useCallback (its own deps are []) — safe
     // to reference here without re-creating the callback every render.
-  }, [resolveAgentName]);
+  }, [resolveAgentName, setContextUsage]);
 
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {
@@ -2652,7 +2652,7 @@ export function useChat() {
         })
         .catch(() => {});
     }
-  }, []);
+  }, [setContextUsage]);
 
   // Attach to a CLI session (interactive mode with WS subscription)
   const attachToSession = useCallback(
@@ -2684,7 +2684,7 @@ export function useChat() {
         }),
       );
     },
-    [],
+    [setContextUsage],
   );
 
   // Attach to the currently viewed session (button click from view-only mode)
