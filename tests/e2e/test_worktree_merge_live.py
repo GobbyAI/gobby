@@ -425,12 +425,13 @@ class TestWorktreeMergeIntegration:
         assert project_result["status"] in ["success", "already_exists"]
 
         session_external_id = f"wt-task-{uuid.uuid4().hex[:8]}"
-        cli_events.register_session(
+        session_result = cli_events.register_session(
             external_id=session_external_id,
             machine_id="test-machine",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
+        mcp_client.session_id = session_result["id"]
         # Create a task to link
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",

@@ -27,10 +27,10 @@ class TestVoiceWarmup:
 
         mock_stt = MagicMock()
         mock_stt.is_available = True
-        mock_stt._ensure_model = AsyncMock()
+        mock_stt.warmup = AsyncMock()
 
         mock_tts = MagicMock()
-        mock_tts._ensure_model = AsyncMock()
+        mock_tts.warmup = AsyncMock()
 
         mixin._get_stt = MagicMock(return_value=mock_stt)
         mixin._get_tts = MagicMock(return_value=mock_tts)
@@ -46,8 +46,8 @@ class TestVoiceWarmup:
 
         await first_task
 
-        mock_stt._ensure_model.assert_awaited_once()
-        mock_tts._ensure_model.assert_awaited_once()
+        mock_stt.warmup.assert_awaited_once()
+        mock_tts.warmup.assert_awaited_once()
         assert mixin._stt_warmup_status == "ready"
         assert mixin._tts_warmup_status == "ready"
 

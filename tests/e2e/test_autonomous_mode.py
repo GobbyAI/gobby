@@ -151,6 +151,7 @@ class TestAutonomousSpawningGate:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create epic with subtasks
         raw_result = mcp_client.call_tool(
@@ -247,6 +248,7 @@ class TestAutonomousSpawningGate:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create a single task
         raw_result = mcp_client.call_tool(
@@ -331,6 +333,7 @@ class TestAutonomousThrottling:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Set high usage (exceeds 10M token budget)
         usage_result = cli_events.set_session_usage(
@@ -378,6 +381,7 @@ class TestAutonomousThrottling:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Set very high usage
         cli_events.set_session_usage(

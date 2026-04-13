@@ -149,12 +149,13 @@ class TestEpicWithIndependentSubtasks:
         assert project_result["status"] in ["success", "already_exists"]
 
         session_external_id = f"parallel-epic-{uuid.uuid4().hex[:8]}"
-        cli_events.register_session(
+        session_result = cli_events.register_session(
             external_id=session_external_id,
             machine_id="test-machine",
             source="Claude Code",
             cwd=str(daemon_instance.project_dir),
         )
+        mcp_client.session_id = session_result["id"]
         # Create epic
         raw_result = mcp_client.call_tool(
             server_name="gobby-tasks",
@@ -344,6 +345,7 @@ class TestSpawnAgentWithCloneIsolation:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
@@ -402,6 +404,7 @@ class TestParallelTaskProcessing:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Create epic with 3 independent subtasks
         raw_result = mcp_client.call_tool(
@@ -439,7 +442,7 @@ class TestParallelTaskProcessing:
             mcp_client.call_tool(
                 server_name="gobby-tasks",
                 tool_name="claim_task",
-                arguments={"task_id": task_id, "session_id": session_id},
+                arguments={"task_id": task_id},
             )
 
         # Verify all are in_progress
@@ -532,6 +535,7 @@ class TestWorkflowActivation:
             cwd=str(daemon_instance.project_dir),
         )
         session_id = session_result["id"]
+        mcp_client.session_id = session_id
 
         # Get workflow status - should indicate no active workflow
         raw_result = mcp_client.call_tool(

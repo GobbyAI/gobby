@@ -127,7 +127,8 @@ def test_migration_208_recovers_when_column_exists_but_version_does_not(tmp_path
 
     applied = run_migrations(db)
 
-    assert applied == 1
+    # Seeded at 207; baseline now advances through 208, 209, 210.
+    assert applied == EXPECTED_FINAL_VERSION - 207
     assert get_current_version(db) == EXPECTED_FINAL_VERSION
     task_row = db.fetchone(
         "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
@@ -184,7 +185,8 @@ def test_migration_208_backfills_despite_legacy_orphaned_task_foreign_keys(tmp_p
 
     applied = run_migrations(db)
 
-    assert applied == 1
+    # Seeded at 207; baseline now advances through 208, 209, 210.
+    assert applied == EXPECTED_FINAL_VERSION - 207
     task_row = db.fetchone(
         "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
         (task_id,),
