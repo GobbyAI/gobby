@@ -394,7 +394,14 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   // this catches mount and any case where filters/search add or remove rows
   // before the user touches the tree manually.
   useEffect(() => {
-    syncVisibleCount()
+    setArboristVisibleCount(null)
+    const frame = window.requestAnimationFrame(() => {
+      syncVisibleCount()
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+    }
   }, [treeData, syncVisibleCount])
 
   const hasMore = filtered.length > visibleCount
