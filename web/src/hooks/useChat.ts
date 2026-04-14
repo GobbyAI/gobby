@@ -2037,6 +2037,7 @@ export function useChat() {
       ensureMainSession,
       isStreaming,
       resetMainChatState,
+      setSelectedProvider,
     ],
   );
 
