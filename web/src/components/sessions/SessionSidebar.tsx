@@ -1,5 +1,5 @@
 import type { GobbySession, SessionFilters, ProjectInfo } from '../../hooks/useSessions'
-import { getSessionTitleText } from '../../lib/sessionTitle'
+import { getSessionDisplayTitle } from '../../lib/sessionTitle'
 
 interface SessionSidebarProps {
   sessions: GobbySession[]
@@ -203,7 +203,7 @@ function SessionItem({
   onSelect: (session: GobbySession) => void
 }) {
   const isResumable = session.source === 'claude'
-  const title = getSessionTitleText(session.title)
+  const title = getSessionDisplayTitle(session)
 
   return (
     <div

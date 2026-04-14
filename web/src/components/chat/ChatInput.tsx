@@ -69,8 +69,24 @@ function shouldHandleSlashCommandLocally(input: string): boolean {
 }
 
 function formatProviderLabel(provider: string | null | undefined): string {
-  const value = provider || 'claude'
-  return value.charAt(0).toUpperCase() + value.slice(1)
+  const providerLabels: Record<string, string> = {
+    claude: 'Claude',
+    gemini: 'Gemini',
+    codex: 'Codex',
+    openai: 'OpenAI',
+  }
+  const normalized = provider?.toLowerCase() ?? 'claude'
+  const knownLabel = providerLabels[normalized]
+  if (knownLabel) {
+    return knownLabel
+  }
+
+  const rawProvider = provider?.trim()
+  if (!rawProvider) {
+    return providerLabels.claude
+  }
+
+  return rawProvider.charAt(0).toUpperCase() + rawProvider.slice(1)
 }
 
 export function ChatInput({

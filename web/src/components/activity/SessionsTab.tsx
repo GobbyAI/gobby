@@ -254,7 +254,7 @@ export const SessionsTab = memo(function SessionsTab({
       return;
     }
 
-    if (hasFocusedEntry) {
+    if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
       setSelectedSessionId(focusSessionId);
       onFocusHandled?.();
       return;
