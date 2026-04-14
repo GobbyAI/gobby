@@ -252,10 +252,15 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             task, skip_validation, override_justification
         )
 
-        # Get git commit SHA (best-effort, dynamic short format for consistency)
-        from gobby.utils.git import run_git_command
+        # Record the commit that actually closes the task. If the caller passed
+        # an explicit commit, prefer its normalized short SHA over current HEAD.
+        from gobby.utils.git import normalize_commit_sha, run_git_command
 
-        current_commit_sha = run_git_command(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
+        current_commit_sha = (
+            normalize_commit_sha(commit_sha, cwd=cwd)
+            if commit_sha
+            else run_git_command(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
+        )
 
         if route_to_escalation:
             escalation_reason = (

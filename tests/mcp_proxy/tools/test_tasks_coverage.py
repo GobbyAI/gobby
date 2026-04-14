@@ -1479,12 +1479,21 @@ class TestCloseTaskTool:
 
             await registry.call(
                 "close_task",
-                {"task_id": "550e8400-e29b-41d4-a716-446655440000", "commit_sha": "new-commit"},
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "commit_sha": "new-commit",
+                    "changes_summary": "Closed with the explicitly linked commit.",
+                },
             )
 
             # link_commit is called with cwd kwarg for repo-aware commit linking
             call_args = mock_task_manager.link_commit.call_args
             assert call_args[0] == ("550e8400-e29b-41d4-a716-446655440000", "new-commit")
+            assert "cwd" in call_args.kwargs
+
+            close_call = mock_task_manager.close_task.call_args
+            assert close_call[0] == ("550e8400-e29b-41d4-a716-446655440000",)
+            assert close_call.kwargs["closed_commit_sha"] == "new-commit"
 
     @pytest.mark.asyncio
     async def test_close_task_with_skip_validation(self, mock_task_manager, mock_sync_manager):
