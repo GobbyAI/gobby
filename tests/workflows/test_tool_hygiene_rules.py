@@ -156,16 +156,15 @@ class TestTrackPendingMemoryReview:
         assert body.effects[0].variable == "memory_review_completed"
         assert body.effects[0].value is False
 
-    def test_has_when_condition_for_edit_tools(self, db, manager) -> None:
-        """Should fire on Edit, Write, NotebookEdit, or close_task."""
+    def test_has_when_condition_for_canonical_mutation(self, db, manager) -> None:
+        """Should fire for any canonical file mutation."""
         _sync_bundled(db)
 
         row = manager.get_by_name("track-pending-memory-review")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert body.when is not None
-        assert "Edit" in body.when
-        assert "Write" in body.when
+        assert "canonical_repo_mutation" in body.when
 
 
 def _make_bash_event(command: str, source: SessionSource = SessionSource.CLAUDE) -> HookEvent:

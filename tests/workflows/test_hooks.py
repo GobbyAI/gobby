@@ -14,6 +14,7 @@ import concurrent.futures
 import json
 import threading
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -873,6 +874,77 @@ class TestVariablePersistence:
         variables = session_var_manager.get_variables("test-session")
         assert variables.get("task_claimed") is True
         assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
+
+    @pytest.mark.asyncio
+    async def test_codex_schema_lookup_rehydrates_and_injects_transition_skill(
+        self, db
+    ) -> None:
+        """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill injection."""
+        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
+
+        sync_bundled_rules(db, get_bundled_rules_path())
+        db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+
+        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+            assert server == "gobby-skills"
+            assert tool == "get_skill"
+            assert args["name"] == "task-transitions"
+            return {
+                "success": True,
+                "result": {
+                    "success": True,
+                    "skill": {
+                        "name": "task-transitions",
+                        "content": "# Task transitions",
+                    },
+                },
+            }
+
+        rule_engine = RuleEngine(db=db, mcp_dispatcher=mock_dispatcher)
+        handler = WorkflowHookHandler(rule_engine=rule_engine)
+
+        before_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-ext",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                },
+                "item_id": "tool-item-1",
+            },
+            metadata={"_platform_session_id": "test-session"},
+        )
+        after_event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="test-ext",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__get_tool_schema",
+                "item_id": "tool-item-1",
+                "tool_output": {
+                    "success": True,
+                    "tool": {
+                        "name": "close_task",
+                        "description": "Close a task",
+                        "inputSchema": {},
+                    },
+                },
+            },
+            metadata={"_platform_session_id": "test-session"},
+        )
+
+        await handler._evaluate_rules(before_event)
+        response = await handler._evaluate_rules(after_event)
+
+        assert response.decision == "allow"
+        assert response.context is not None
+        assert '<skill name="task-transitions">' in response.context
 
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:

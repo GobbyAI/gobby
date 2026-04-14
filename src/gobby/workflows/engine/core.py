@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 from opentelemetry.trace import Status, StatusCode
 
-from gobby.hooks.event_handlers._tool import EDIT_TOOLS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
@@ -98,6 +97,13 @@ def _clear_edit_write_state(variables: dict[str, Any]) -> None:
     """Clear edit/write pending state and stop-block counter."""
     variables["edit_write_pending"] = False
     variables["edit_write_stop_blocks"] = 0
+
+
+def _is_write_like_event_data(event_data: dict[str, Any]) -> bool:
+    """Return True when normalized event data represents a file mutation."""
+    return bool(event_data.get("canonical_repo_mutation")) or (
+        event_data.get("canonical_tool_kind") == "write"
+    )
 
 
 class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
@@ -195,8 +201,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         variables["consecutive_tool_blocks"] = 0
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
-                    tool_name_lower = event.data.get("tool_name", "").lower()
-                    if tool_name_lower in EDIT_TOOLS:
+                    if _is_write_like_event_data(event.data):
                         variables["edit_write_pending"] = True
 
                 elif is_before_agent:
@@ -253,8 +258,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     if agent_block is not None:
                         variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
-                        tool_name_lower = event.data.get("tool_name", "").lower()
-                        if tool_name_lower in EDIT_TOOLS:
+                        if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
                         if span.is_recording():
                             span.set_attribute("final_decision", agent_block.decision)
@@ -268,8 +272,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
-                        tool_name_lower = event.data.get("tool_name", "").lower()
-                        if tool_name_lower in EDIT_TOOLS:
+                        if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
                         if span.is_recording():
                             span.set_attribute("final_decision", step_block.decision)
@@ -316,7 +319,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         override_decision = "block"
                         override_reason = (
                             "Rule enforced by Gobby: [edit-write-recovery]\n"
-                            "Your last Edit/Write attempt failed. "
+                            "Your last file mutation attempt failed. "
                             "Read the error and retry — do not stop."
                         )
                     else:
@@ -348,8 +351,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             # Don't clear on non-edit success during a parallel failure
                             # — the edit wasn't recovered yet.
                             if variables.get("edit_write_pending"):
-                                after_tool_lower = event.data.get("tool_name", "").lower()
-                                if after_tool_lower in EDIT_TOOLS or not had_pending_failure:
+                                if _is_write_like_event_data(event.data) or not had_pending_failure:
                                     _clear_edit_write_state(variables)
                     # Honour hardcoded override decisions (e.g. tool_block_pending stop gate)
                     # even when no declarative rules are installed for this event.
@@ -397,8 +399,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         # Don't clear on non-edit success during a parallel failure
                         # — the edit wasn't recovered yet.
                         if variables.get("edit_write_pending"):
-                            after_tool_lower = event.data.get("tool_name", "").lower()
-                            if after_tool_lower in EDIT_TOOLS or not had_pending_failure:
+                            if _is_write_like_event_data(event.data) or not had_pending_failure:
                                 _clear_edit_write_state(variables)
 
                 # 5. Evaluate rules in priority order
@@ -476,8 +477,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                                 variables["tool_block_pending"] = True
                                 variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                                 # Blocked edit/write never executed — nothing to recover
-                                tool_name_lower = event.data.get("tool_name", "").lower()
-                                if tool_name_lower in EDIT_TOOLS:
+                                if _is_write_like_event_data(event.data):
                                     _clear_edit_write_state(variables)
 
                     # Record rule evaluation metric

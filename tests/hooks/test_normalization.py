@@ -487,6 +487,7 @@ class TestCanonicalToolMetadata:
 
         assert data["canonical_tool_kind"] == "read"
         assert data["canonical_file_path"] == "/repo/main.py"
+        assert data["canonical_tool_confidence"] == "high"
 
     def test_exec_command_cat_sets_canonical_read_fields(self) -> None:
         data = {
@@ -499,6 +500,7 @@ class TestCanonicalToolMetadata:
         assert data["tool_name"] == "Bash"
         assert data["canonical_tool_kind"] == "read"
         assert data["canonical_file_path"] == "src/app.py"
+        assert data["canonical_file_paths"] == ["src/app.py"]
 
     def test_exec_command_rg_sets_canonical_search_kind(self) -> None:
         data = {
@@ -512,13 +514,71 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "search"
         assert "canonical_file_path" not in data
 
+    def test_exec_command_redirection_sets_canonical_write_fields(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "printf hello > src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_path"] == "src/app.py"
+        assert data["tool_input"]["file_path"] == "src/app.py"
+
+    def test_exec_command_sed_in_place_sets_canonical_write_fields(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "sed -i 's/old/new/' src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_path"] == "src/app.py"
+
     def test_write_tool_sets_canonical_write_fields(self) -> None:
         data = {"tool_name": "Write", "tool_input": {"file_path": "/repo/main.py"}}
 
         normalize_tool_fields(data)
 
         assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "/repo/main.py"
+
+    def test_edit_tool_sets_canonical_write_fields(self) -> None:
+        data = {"tool_name": "Edit", "tool_input": {"file_path": "/repo/main.py"}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_path"] == "/repo/main.py"
+
+    def test_apply_patch_sets_canonical_write_paths(self) -> None:
+        data = {
+            "tool_name": "apply_patch",
+            "tool_input": (
+                "*** Begin Patch\n"
+                "*** Update File: src/main.py\n"
+                "@@\n"
+                "*** Add File: docs/plan.md\n"
+                "+hello\n"
+                "*** End Patch\n"
+            ),
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Write"
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_path"] == "src/main.py"
+        assert data["canonical_file_paths"] == ["src/main.py", "docs/plan.md"]
 
 
 class TestToolErrorDetection:

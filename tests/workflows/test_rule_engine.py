@@ -1567,6 +1567,46 @@ class TestEditWritePending:
         assert variables.get("edit_write_pending") is True
 
     @pytest.mark.asyncio
+    async def test_edit_write_pending_set_for_apply_patch(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Normalized apply_patch should participate in edit-write recovery."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "apply_patch",
+                "tool_input": (
+                    "*** Begin Patch\n"
+                    "*** Update File: src/main.py\n"
+                    "@@\n"
+                    "*** End Patch\n"
+                ),
+            },
+        )
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("edit_write_pending") is True
+
+    @pytest.mark.asyncio
+    async def test_edit_write_pending_set_for_shell_write(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """High-confidence shell writes should participate in edit recovery."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": "printf hi > src/main.py"}},
+        )
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("edit_write_pending") is True
+
+    @pytest.mark.asyncio
     async def test_edit_write_pending_not_set_for_read(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
@@ -1588,6 +1628,30 @@ class TestEditWritePending:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"edit_write_pending": True}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["edit_write_pending"] is False
+
+    @pytest.mark.asyncio
+    async def test_edit_write_pending_cleared_on_apply_patch_success(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Successful normalized apply_patch should clear edit_write_pending."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"edit_write_pending": True}
+        event = _make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "apply_patch",
+                "tool_input": (
+                    "*** Begin Patch\n"
+                    "*** Update File: src/main.py\n"
+                    "@@\n"
+                    "*** End Patch\n"
+                ),
+            },
+        )
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["edit_write_pending"] is False
