@@ -1947,7 +1947,7 @@ export function useChat() {
         })
         .catch(() => {});
     },
-    [bindActiveSession, resetMainChatState, setContextUsage],
+    [bindActiveSession, resetMainChatState, setContextUsage, setSelectedProvider],
   );
 
   // Start a new chat conversation, optionally with a specific agent
@@ -2133,7 +2133,13 @@ export function useChat() {
 
       return newConversationId;
     },
-    [bindActiveSession, ensureMainSession, resetMainChatState, setContextUsage],
+    [
+      bindActiveSession,
+      ensureMainSession,
+      resetMainChatState,
+      setContextUsage,
+      setSelectedProvider,
+    ],
   );
 
   // Clear chat history — notifies backend to teardown session, then resets frontend.
