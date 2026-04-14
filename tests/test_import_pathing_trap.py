@@ -1,7 +1,11 @@
+import os
+from pathlib import Path
+
 import pytest
 
 import gobby.mcp_proxy.stdio
 import gobby.runner
+import gobby.runner_maintenance
 
 pytestmark = pytest.mark.unit
 
@@ -37,3 +41,12 @@ def test_runner_uses_patched_config(protect_production_resources, monkeypatch) -
 
     # Ensure it's using the safe DB
     assert "test-safe.db" in str(runner.database.db_path)
+
+
+def test_fixture_redirects_gobby_home(protect_production_resources) -> None:
+    """Fixture should keep daemon-path helpers out of ~/.gobby."""
+    safe_home = Path(os.environ["GOBBY_HOME"]).resolve()
+    real_home = (Path.home() / ".gobby").resolve()
+
+    assert safe_home != real_home
+    assert gobby.runner_maintenance.get_gobby_home().resolve() == safe_home

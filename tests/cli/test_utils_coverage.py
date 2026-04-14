@@ -15,6 +15,13 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _mock_shutdown_source_writes():
+    """Keep daemon-path coverage tests from creating shutdown markers."""
+    with patch("gobby.runner_maintenance.write_shutdown_source"):
+        yield
+
+
 # --- get_gobby_home ---
 
 
