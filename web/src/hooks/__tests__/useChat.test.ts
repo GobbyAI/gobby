@@ -258,6 +258,63 @@ describe('useChat', () => {
     expect(sentMsg.provider).toBe('gemini')
   })
 
+  it('continueSessionInChat preserves the source session provider when resuming', async () => {
+    mockFetch.mockJsonResponse('/api/sessions/source-session', {
+      session: {
+        id: 'source-session',
+        project_id: 'proj-source',
+        source: 'codex',
+        model: 'gpt-5.4',
+        chat_mode: 'accept_edits',
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        context_window: null,
+      },
+    })
+    mockFetch.mockJsonResponse('/api/sessions/source-session/messages?limit=100', {
+      messages: [],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
+      session: {
+        id: 'resumed-web-chat',
+        source: 'codex',
+        model: 'gpt-5.4',
+        chat_mode: null,
+        seq_num: 77,
+        title: null,
+      },
+    })
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.setSelectedProvider('gemini')
+    })
+
+    await act(async () => {
+      await result.current.continueSessionInChat('source-session', 'proj-source')
+    })
+
+    const sessionCalls = mockFetch.fn.mock.calls.filter(([url]) =>
+      typeof url === 'string' && url.includes('/api/sessions/web-chat'),
+    )
+    expect(sessionCalls.length).toBeGreaterThan(0)
+    const body = JSON.parse(sessionCalls[sessionCalls.length - 1][1].body as string)
+    expect(body.provider).toBe('codex')
+    expect(result.current.selectedProvider).toBe('codex')
+
+    const continueMsg = ws.send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .find((msg) => msg.type === 'continue_in_chat')
+    expect(continueMsg?.provider).toBe('codex')
+    expect(continueMsg?.model).toBe('gpt-5.4')
+  })
+
   it('switchProvider creates a new server-owned session with the requested provider', async () => {
     // After the session identity unification, switchProvider no longer sends
     // set_provider/set_agent via WebSocket. It calls ensureMainSession with
@@ -291,6 +348,44 @@ describe('useChat', () => {
     expect(sessionCalls.length).toBeGreaterThan(0)
     const body = JSON.parse(sessionCalls[sessionCalls.length - 1][1].body as string)
     expect(body.provider).toBe('codex')
+  })
+
+  it('switchConversation syncs the selected provider from the restored web chat session', async () => {
+    mockFetch.mockJsonResponse('/api/chat/db-session-2/messages?limit=100&after_seq=0', {
+      messages: [],
+      max_seq: 5,
+    })
+    mockFetch.mockJsonResponse('/api/sessions/db-session-2', {
+      session: {
+        id: 'db-session-2',
+        seq_num: 202,
+        title: 'Other chat',
+        source: 'codex',
+        session_type: 'web_chat',
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        context_window: null,
+      },
+    })
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.setSelectedProvider('gemini')
+    })
+
+    await act(async () => {
+      result.current.switchConversation('db-session-2')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(result.current.selectedProvider).toBe('codex')
   })
 
   it('sendMessage queues message when WS not connected', async () => {
@@ -769,6 +864,38 @@ describe('useChat', () => {
 
     expect(result.current.proxyDeliveryNotice).toBe(
       'Message queued until the session yields.',
+    )
+  })
+
+  it('keeps paused terminal sessions view-only instead of enabling proxy send mode', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.observeSession?.('sess-paused', 'proxy')
+    })
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-paused',
+        external_id: 'paused-ext',
+        source: 'codex',
+        title: 'Paused terminal',
+        status: 'paused',
+        model: 'gpt-5.4',
+        ref: '#2313',
+        session_type: 'terminal',
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    expect(result.current.sessionInteractionMode).toBe('none')
+    expect(result.current.proxyDeliveryNotice).toBe(
+      'This terminal session is paused. Use Resume Session to continue it in web chat.',
     )
   })
 

@@ -168,6 +168,7 @@ class TestContinueInChatTerminalKill:
         host._pending_modes = {}
         host._pending_worktree_paths = {}
         host._pending_agents = {}
+        host._pending_providers = {}
         return host
 
     @pytest.mark.asyncio
@@ -304,6 +305,86 @@ class TestContinueInChatTerminalKill:
         # DB-driven kill_agent should have been used instead of terminal kill
         mock_kill_agent.assert_called_once()
         mock_kill_terminal.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_continue_in_chat_defaults_to_source_provider_and_normalizes_target_row(self) -> None:
+        """Continuation should preserve the source provider when the client omits it."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.external_id = None
+        source_session.project_id = "proj-1"
+        source_session.transcript_path = None
+        source_session.source = "codex"
+        source_session.terminal_context = None
+
+        target_session = MagicMock()
+        target_session.session_type = "web_chat"
+        target_session.source = "claude"
+        target_session.model = None
+
+        session_manager = MagicMock()
+
+        def get_session(session_id: str):
+            if session_id == "source-uuid":
+                return source_session
+            if session_id == "new-conv":
+                return target_session
+            return None
+
+        session_manager.get = MagicMock(side_effect=get_session)
+        session_manager.update = MagicMock()
+        session_manager.update_parent_session_id = MagicMock()
+
+        mock_chat_session = MagicMock()
+        mock_chat_session.db_session_id = "new-db-id"
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.agent_run_manager = None
+        host._send_error = AsyncMock()
+
+        captured: dict[str, object] = {}
+
+        async def fake_create_chat_session(
+            conv_id,
+            model=None,
+            project_id=None,
+            resume_session_id=None,
+            provider=None,
+        ):
+            captured["conversation_id"] = conv_id
+            captured["provider"] = provider
+            captured["model"] = model
+            captured["project_id"] = project_id
+            captured["resume_session_id"] = resume_session_id
+            return mock_chat_session
+
+        host._create_chat_session = fake_create_chat_session
+
+        with patch(
+            "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await SessionControlMixin._handle_continue_in_chat(
+                host,
+                ws,
+                {
+                    "source_session_id": "source-uuid",
+                    "conversation_id": "new-conv",
+                },
+            )
+
+        assert captured["provider"] == "codex"
+        session_manager.update.assert_any_call("new-conv", source="codex")
+        session_manager.update_parent_session_id.assert_called_once_with(
+            "new-db-id",
+            "source-uuid",
+        )
 
     @pytest.mark.asyncio
     async def test_attach_to_session_returns_extended_metadata(self) -> None:

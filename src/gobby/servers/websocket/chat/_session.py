@@ -277,13 +277,19 @@ class ChatSessionMixin:
             except Exception as e:
                 logger.warning(f"Failed to resolve agent '{agent_name}' for provider check: {e}")
 
-        # Provider precedence: queued UI override > explicit message provider
-        # > existing DB session source > agent definition > default.
+        # Provider precedence: queued UI override > existing DB session source
+        # > explicit message provider > agent definition > default.
+        #
+        # Durable web-chat rows are the authoritative provider binding for an
+        # existing conversation. A stale frontend provider selection should not
+        # silently re-route a restored session onto a different backend.
         pending_providers = getattr(self, "_pending_providers", {})
         pending_provider = pending_providers.pop(session_key, None)
-        effective_provider = pending_provider or provider
+        effective_provider = pending_provider
         if not effective_provider and existing_db_session:
             effective_provider = getattr(existing_db_session, "source", None)
+        if not effective_provider:
+            effective_provider = provider
         if not effective_provider and agent_body:
             effective_provider = getattr(agent_body, "provider", None)
 

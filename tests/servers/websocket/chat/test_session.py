@@ -363,6 +363,44 @@ class TestCreateChatSessionInner:
             mock_inject_skills.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_existing_web_chat_source_wins_over_stale_message_provider(
+        self, mixin: DummyMixin
+    ):
+        existing_db_sess = MagicMock()
+        existing_db_sess.id = "db-existing"
+        existing_db_sess.seq_num = 88
+        existing_db_sess.session_type = "web_chat"
+        existing_db_sess.source = "codex"
+        existing_db_sess.project_id = "proj-1"
+        existing_db_sess.external_id = None
+        existing_db_sess.usage_output_tokens = 0
+        existing_db_sess.chat_mode = None
+        existing_db_sess.approved_tools_json = None
+
+        mock_session = AsyncMock()
+        mock_session.provider = "codex"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = MagicMock()
+        mixin.session_manager.get.return_value = existing_db_sess
+
+        await mixin._create_chat_session_inner("conv-existing", provider="gemini")
+
+        mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
+            provider="codex",
+            conversation_id="conv-existing",
+            model=None,
+        )
+
+    @pytest.mark.asyncio
     async def test_fire_session_end(self, mixin: DummyMixin):
         mixin._fire_lifecycle = AsyncMock()
         await mixin._fire_session_end("conv-end")

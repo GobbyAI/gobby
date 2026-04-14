@@ -109,8 +109,9 @@ async def handle_continue_in_chat(
     sdk_resume_id: str | None = None
 
     source_provider = getattr(source_session, "source", None) if source_session else None
+    effective_provider = target_provider or source_provider
     can_sdk_resume = (
-        not target_provider or not source_provider or target_provider == source_provider
+        not effective_provider or not source_provider or effective_provider == source_provider
     )
 
     # 1. Source session's external_id IS the SDK session ID
@@ -186,6 +187,29 @@ async def handle_continue_in_chat(
                     )
                     sdk_resume_id = None
 
+    # If the client pre-created a web-chat row with a stale provider, correct
+    # it before booting the continuation session so provider restore is
+    # source-authoritative by default.
+    if session_manager and effective_provider:
+        try:
+            target_session = await asyncio.to_thread(session_manager.get, conversation_id)
+            if target_session and getattr(target_session, "session_type", None) == "web_chat":
+                updates: dict[str, Any] = {}
+                if getattr(target_session, "source", None) != effective_provider:
+                    updates["source"] = effective_provider
+                if target_model and getattr(target_session, "model", None) != target_model:
+                    updates["model"] = target_model
+                if updates:
+                    await asyncio.to_thread(
+                        session_manager.update,
+                        conversation_id,
+                        **updates,
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Failed to normalize continuation session metadata for {conversation_id}: {e}"
+            )
+
     # Create chat session with optional SDK resume (check dict first to avoid redundant creation)
     session = mixin._chat_sessions.get(conversation_id)
     if session is None:
@@ -195,7 +219,7 @@ async def handle_continue_in_chat(
                 model=target_model,
                 project_id=project_id,
                 resume_session_id=sdk_resume_id,
-                provider=target_provider,
+                provider=effective_provider,
             )
         except Exception as e:
             logger.error(f"Failed to create continuation session: {e}")

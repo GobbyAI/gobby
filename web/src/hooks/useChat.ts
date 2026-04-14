@@ -16,6 +16,7 @@ import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
+const CHAT_PROVIDERS = new Set(["claude", "gemini", "codex"]);
 
 interface WebSocketMessage {
   type: string;
@@ -131,6 +132,10 @@ function saveDbSessionId(id: string | null): void {
   } else {
     localStorage.removeItem(DB_SESSION_ID_KEY);
   }
+}
+
+function isChatProvider(value: unknown): value is string {
+  return typeof value === "string" && CHAT_PROVIDERS.has(value);
 }
 
 interface CreatedWebChatSession {
@@ -1387,17 +1392,25 @@ export function useChat() {
           setViewingSessionId(sid);
           setViewingSessionMeta(meta);
           const requestedMode = pendingSessionInteractionModeRef.current;
+          const proxyCapable =
+            meta.sessionType === "terminal" && meta.status === "active";
           const nextMode =
-            requestedMode === "proxy" && meta.sessionType !== "terminal"
+            requestedMode === "proxy" && !proxyCapable
               ? "none"
               : requestedMode;
           setSessionInteractionMode(nextMode);
           if (nextMode === "proxy") {
             setAttachedSessionId(sid);
             setAttachedSessionMeta(meta);
+            setProxyDeliveryNotice(null);
           } else {
             setAttachedSessionId(null);
             setAttachedSessionMeta(null);
+            setProxyDeliveryNotice(
+              requestedMode === "proxy" && meta.sessionType === "terminal"
+                ? "This terminal session is paused. Use Resume Session to continue it in web chat."
+                : null,
+            );
           }
           // Map initial messages into chat format with proper tool call grouping
           const msgs = (result.messages as ApiMessage[]) || [];
@@ -1890,6 +1903,9 @@ export function useChat() {
         .then((data) => {
           const s = data?.session;
           if (!s || conversationIdRef.current !== id) return;
+          if (isChatProvider(s.source)) {
+            setSelectedProvider(s.source);
+          }
           if (s.title) setSessionTitle(s.title);
           if (s.seq_num != null) setSessionRef(`#${s.seq_num}`);
           if (
@@ -2016,10 +2032,40 @@ export function useChat() {
       setSessionInteractionMode("none");
       setProxyDeliveryNotice(null);
 
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      let sourceSession: Record<string, unknown> | null = null;
+      try {
+        const sessionRes = await fetch(
+          `${baseUrl}/api/sessions/${sourceDbSessionId}`,
+        );
+        if (sessionRes.ok) {
+          const sessionData = await sessionRes.json();
+          sourceSession = (sessionData?.session as Record<string, unknown>) ?? null;
+        }
+      } catch {
+        sourceSession = null;
+      }
+
+      const continuationProvider =
+        options?.provider ??
+        (isChatProvider(sourceSession?.source) ? sourceSession.source : null) ??
+        selectedProviderRef.current;
+      const continuationModel =
+        options?.model ??
+        (typeof sourceSession?.model === "string" ? sourceSession.model : null);
+
+      if (continuationProvider) {
+        setSelectedProvider(continuationProvider);
+      }
+
       const newConversationId = await ensureMainSession({
-        projectId: projectId ?? projectIdRef.current,
-        provider: options?.provider ?? selectedProviderRef.current,
-        model: options?.model ?? null,
+        projectId:
+          projectId ??
+          (typeof sourceSession?.project_id === "string"
+            ? sourceSession.project_id
+            : projectIdRef.current),
+        provider: continuationProvider,
+        model: continuationModel,
         forceNew: true,
       });
       if (!newConversationId) {
@@ -2027,7 +2073,6 @@ export function useChat() {
       }
 
       // Fetch source session's messages for display
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       try {
         const res = await fetch(
           `${baseUrl}/api/sessions/${sourceDbSessionId}/messages?limit=100`,
@@ -2044,38 +2089,28 @@ export function useChat() {
       }
 
       // Hydrate context usage and chat mode from source session
-      try {
-        const sessionRes = await fetch(
-          `${baseUrl}/api/sessions/${sourceDbSessionId}`,
-        );
-        if (sessionRes.ok) {
-          const sessionData = await sessionRes.json();
-          const s = sessionData?.session;
-          if (
-            s &&
-            (s.usage_input_tokens > 0 ||
-              s.usage_output_tokens > 0 ||
-              s.context_window)
-          ) {
-            const totalIn = s.usage_input_tokens ?? 0;
-            const cacheRead = s.usage_cache_read_tokens ?? 0;
-            const cacheCreation = s.usage_cache_creation_tokens ?? 0;
-            setContextUsage({
-              totalInputTokens: totalIn,
-              outputTokens: s.usage_output_tokens ?? 0,
-              contextWindow: s.context_window ?? null,
-              uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-              cacheReadTokens: cacheRead,
-              cacheCreationTokens: cacheCreation,
-            });
-          }
-          // Restore chat mode from source session
-          if (s?.chat_mode) {
-            onModeChangedRef.current?.(s.chat_mode as ChatMode);
-          }
-        }
-      } catch {
-        // Best-effort — don't block continuation
+      const s = sourceSession;
+      if (
+        s &&
+        (((s.usage_input_tokens as number | undefined) ?? 0) > 0 ||
+          ((s.usage_output_tokens as number | undefined) ?? 0) > 0 ||
+          s.context_window)
+      ) {
+        const totalIn = (s.usage_input_tokens as number | undefined) ?? 0;
+        const cacheRead = (s.usage_cache_read_tokens as number | undefined) ?? 0;
+        const cacheCreation =
+          (s.usage_cache_creation_tokens as number | undefined) ?? 0;
+        setContextUsage({
+          totalInputTokens: totalIn,
+          outputTokens: (s.usage_output_tokens as number | undefined) ?? 0,
+          contextWindow: (s.context_window as number | null | undefined) ?? null,
+          uncachedInputTokens: totalIn - cacheRead - cacheCreation,
+          cacheReadTokens: cacheRead,
+          cacheCreationTokens: cacheCreation,
+        });
+      }
+      if (s?.chat_mode) {
+        onModeChangedRef.current?.(s.chat_mode as ChatMode);
       }
 
       // Tell backend to prepare the continuation session
@@ -2085,9 +2120,13 @@ export function useChat() {
             type: "continue_in_chat",
             conversation_id: newConversationId,
             source_session_id: sourceDbSessionId,
-            project_id: projectId,
-            provider: options?.provider,
-            model: options?.model,
+            project_id:
+              projectId ??
+              (typeof sourceSession?.project_id === "string"
+                ? sourceSession.project_id
+                : undefined),
+            provider: continuationProvider,
+            model: continuationModel,
           }),
         );
       }
