@@ -236,6 +236,21 @@ describe("SessionsTab", () => {
       sessionType: "web_chat",
       agentRunId: "run-auto-203",
     });
+    expect(screen.getByText(/Watching #203: Other Web Chat/)).toBeTruthy();
+  });
+
+  it("keeps the watched pane open when the selected session is clicked again", async () => {
+    render(<SessionsTab chatSessionId="web-current" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#201: Terminal Session")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("#201: Terminal Session"));
+    expect(screen.getByText(/Watching #201: Terminal Session/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText("#201: Terminal Session"));
+    expect(screen.getByText(/Watching #201: Terminal Session/)).toBeTruthy();
   });
 
   it("shows parser mismatch empty state for unparseable transcripts", async () => {

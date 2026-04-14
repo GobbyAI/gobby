@@ -179,13 +179,15 @@ export function ChatPage({
         return;
       }
 
+      if (!target.agentRunId && chat.continueSessionInChat) {
+        void chat.continueSessionInChat(target.sessionId, projectId ?? undefined);
+        return;
+      }
+
       chat.viewSession?.(target.sessionId);
-      chat.observeSession?.(
-        target.sessionId,
-        target.agentRunId ? "observe" : "proxy",
-      );
+      chat.observeSession?.(target.sessionId, "observe");
     },
-    [chat, conversations, handleUnwatch, parkCurrentSession],
+    [chat, conversations, handleUnwatch, parkCurrentSession, projectId],
   );
 
   const handleAutonomousDetach = useCallback(() => {
@@ -495,14 +497,6 @@ export function ChatPage({
             viewingMeta?.title ??
             activeTitle
           }
-          viewingMeta={viewingMeta}
-          isAttached={!!chat.attachedSessionId}
-          sessionInteractionMode={chat.sessionInteractionMode}
-          isAutonomousSession={isAutonomousSession}
-          onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
-          onDetach={
-            isAutonomousSession ? handleAutonomousDetach : chat.clearViewingSession
-          }
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
@@ -552,10 +546,16 @@ export function ChatPage({
             />
           </div>
 
-          {isAutonomousSession && viewingMeta && (
+          {viewingMeta && (
             <AgentStatusBar
               viewingMeta={viewingMeta}
               interactionMode={chat.sessionInteractionMode ?? "none"}
+              isAttached={!!chat.attachedSessionId}
+              isAutonomousSession={isAutonomousSession}
+              onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
+              onDetach={
+                isAutonomousSession ? handleAutonomousDetach : chat.clearViewingSession
+              }
             />
           )}
 

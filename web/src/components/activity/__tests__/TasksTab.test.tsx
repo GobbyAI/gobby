@@ -36,8 +36,8 @@ function renderNodes(nodes: TaskTreeNode[]): React.ReactNode {
 }
 
 vi.mock('react-arborist', () => ({
-  Tree: ({ data }: { data: TaskTreeNode[] }) => (
-    <div data-testid="task-tree">{renderNodes(data)}</div>
+  Tree: ({ data, height }: { data: TaskTreeNode[]; height?: number }) => (
+    <div data-testid="task-tree" data-height={height ?? ''}>{renderNodes(data)}</div>
   ),
 }))
 
@@ -134,10 +134,61 @@ describe('TasksTab', () => {
 
     expect(screen.queryByText('Open task 10')).toBeNull()
     expect(screen.queryByText('Closed task')).toBeNull()
+    expect(screen.getByTestId('task-tree')).toHaveAttribute('data-height', '300')
 
     fireEvent.click(screen.getByText('Load more'))
 
     expect(screen.getByText('Open task 10')).toBeTruthy()
+  })
+
+  it('renders canonical state tasks and groups the filter menu by lifecycle and status', async () => {
+    mockFetch.resetRoutes()
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      tasks: [
+        {
+          id: 'task-needs-review',
+          ref: '#601',
+          title: 'Canonical needs review task',
+          priority: 2,
+          task_type: 'task',
+          parent_task_id: null,
+          created_at: '2026-04-13T00:00:00Z',
+          updated_at: '2026-04-13T00:00:00Z',
+          seq_num: 601,
+          path_cache: '601',
+          project_id: 'proj-1',
+          state: {
+            owner_session_id: 'session-1',
+            lifecycle_stage: 'needs_review',
+            is_claimed: true,
+            is_closed: false,
+            is_escalated: false,
+            is_blocked: false,
+            is_merge_ready: false,
+            closed_at: null,
+            closed_reason: null,
+            closed_in_session_id: null,
+            closed_commit_sha: null,
+            escalated_at: null,
+            escalation_reason: null,
+          },
+        },
+      ],
+    })
+
+    render(<TasksTab projectId="proj-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Canonical needs review task')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getByTitle('Filter by task state'))
+
+    expect(screen.getByText('Lifecycle')).toBeTruthy()
+    expect(screen.getByText('Status')).toBeTruthy()
+    expect(screen.getByText('Needs Review')).toBeTruthy()
+    expect(screen.getByText('Merge Ready')).toBeTruthy()
+    expect(screen.getByText('Closed')).toBeTruthy()
   })
 
   it('adds a new task when a task_created WebSocket event fires', async () => {

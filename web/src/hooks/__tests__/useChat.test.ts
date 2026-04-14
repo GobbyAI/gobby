@@ -546,6 +546,16 @@ describe('useChat', () => {
   })
 
   it('startNewChat clears messages and generates new ID', async () => {
+    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
+      session: {
+        id: 'new-chat-session',
+        source: 'claude',
+        model: null,
+        chat_mode: null,
+        seq_num: 88,
+        title: null,
+      },
+    })
     await loadModule()
     const { result } = renderHook(() => useChat())
 
@@ -561,6 +571,91 @@ describe('useChat', () => {
 
     expect(result.current.messages).toHaveLength(0)
     expect(result.current.conversationId).not.toBe(oldId)
+  })
+
+  it('startNewChat clears viewed-session chrome and queued proxy notices', async () => {
+    mockFetch.mockJsonResponse('/api/sessions/sess-proxy/messages?limit=100&offset=0', {
+      messages: [],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-proxy', {
+      session: {
+        id: 'sess-proxy',
+        seq_num: 2315,
+        source: 'claude',
+        title: 'Proxy session',
+        status: 'active',
+        model: 'sonnet',
+        external_id: 'proxy-ext',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: 'terminal',
+      },
+    })
+    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
+      session: {
+        id: 'new-chat-session',
+        source: 'claude',
+        model: null,
+        chat_mode: null,
+        seq_num: 89,
+        title: null,
+      },
+    })
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await act(async () => {
+      result.current.viewSession('sess-proxy')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    act(() => {
+      result.current.observeSession?.('sess-proxy', 'proxy')
+    })
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-proxy',
+        external_id: 'proxy-ext',
+        source: 'claude',
+        title: 'Proxy session',
+        status: 'active',
+        model: 'sonnet',
+        ref: '#2315',
+        session_type: 'terminal',
+        messages: [],
+        total_count: 0,
+      })
+      ws.simulateMessage({
+        type: 'send_to_cli_session_result',
+        session_id: 'sess-proxy',
+        delivered: false,
+        delivery_method: 'hook_piggyback',
+      })
+    })
+
+    expect(result.current.viewingSessionId).toBe('sess-proxy')
+    expect(result.current.proxyDeliveryNotice).toBe(
+      'Message queued until the session yields.',
+    )
+
+    act(() => result.current.startNewChat())
+
+    expect(result.current.viewingSessionId).toBeNull()
+    expect(result.current.viewingSessionMeta).toBeNull()
+    expect(result.current.attachedSessionId).toBeNull()
+    expect(result.current.sessionInteractionMode).toBe('none')
+    expect(result.current.proxyDeliveryNotice).toBeNull()
   })
 
   it('handles voice_transcription messages', async () => {

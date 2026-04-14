@@ -24,7 +24,7 @@ function getBaseUrl(): string {
 export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesTabProps) {
   const [executions, setExecutions] = useState<PipelineExecution[]>([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<'running' | 'all' | 'completed' | 'failed'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'running'>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topHeight, setTopHeight] = useState(40)
   const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)
@@ -126,10 +126,10 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
           className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
         >
-          <option value="running">Running</option>
           <option value="all">All</option>
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
+          <option value="running">Running</option>
         </select>
         <span className="text-xs text-muted-foreground ml-auto">
           {executions.length} execution{executions.length !== 1 ? 's' : ''}

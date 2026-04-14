@@ -16,6 +16,8 @@ from gobby.sessions.transcripts.base import (
 
 logger = logging.getLogger(__name__)
 
+_INTERNAL_CONTENT_TYPES = {"hook_prompt"}
+
 
 @dataclass
 class ToolResult:
@@ -223,6 +225,9 @@ def render_incremental(
     state = pending_state
 
     for msg in new_messages:
+        if msg.content_type in _INTERNAL_CONTENT_TYPES:
+            continue
+
         # 1. Classify role and detect hook feedback
         role = msg.role
         if _is_hook_feedback(msg):

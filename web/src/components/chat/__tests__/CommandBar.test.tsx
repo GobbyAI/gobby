@@ -4,24 +4,11 @@ import { render, screen } from "@testing-library/react";
 import { CommandBar } from "../CommandBar";
 
 describe("CommandBar", () => {
-  it("does not render attach for viewed web chat sessions", () => {
+  it("renders the active viewed-session title in the selector without inline session controls", () => {
     render(
       <CommandBar
         sessionRef="#42"
         title="Viewed web chat"
-        viewingMeta={{
-          ref: "#42",
-          source: "claude",
-          title: "Viewed web chat",
-          status: "paused",
-          model: "sonnet",
-          externalId: "web-ext",
-          sessionType: "web_chat",
-        }}
-        isAttached={false}
-        sessionInteractionMode="none"
-        onAttach={undefined}
-        onDetach={vi.fn()}
         onOpenPalette={vi.fn()}
         onOpenActiveSessions={vi.fn()}
         onNewChat={vi.fn()}
@@ -31,27 +18,19 @@ describe("CommandBar", () => {
       />,
     );
 
+    expect(screen.getByTestId("chat-session-selector")).toHaveTextContent("#42");
+    expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
+      "Viewed web chat",
+    );
     expect(screen.queryByText("Attach")).toBeNull();
+    expect(screen.queryByText("Detach")).toBeNull();
   });
 
-  it("renders attach for viewed terminal sessions", () => {
+  it("renders the default title for a fresh chat", () => {
     render(
       <CommandBar
-        sessionRef="#43"
-        title="Viewed terminal"
-        viewingMeta={{
-          ref: "#43",
-          source: "claude",
-          title: "Viewed terminal",
-          status: "active",
-          model: "sonnet",
-          externalId: "term-ext",
-          sessionType: "terminal",
-        }}
-        isAttached={false}
-        sessionInteractionMode="observe"
-        onAttach={vi.fn()}
-        onDetach={vi.fn()}
+        sessionRef={null}
+        title={null}
         onOpenPalette={vi.fn()}
         onOpenActiveSessions={vi.fn()}
         onNewChat={vi.fn()}
@@ -61,6 +40,8 @@ describe("CommandBar", () => {
       />,
     );
 
-    expect(screen.getByText("Attach")).toBeTruthy();
+    expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
+      "New Chat Session",
+    );
   });
 });

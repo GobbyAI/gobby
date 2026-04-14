@@ -496,71 +496,82 @@ export function ChatInput({
           </div>
         )}
 
-        {/* Toolbar */}
-        <div className="flex items-center gap-1 mb-2">
-          {onModeChange && (
-            <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
-          )}
-          <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
-            <PaperclipIcon />
-          </Button>
-          {canSelectModel && (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setPickerOpen(true)}
-                disabled={providerButtonDisabled}
-                title={pickerLabel}
-                aria-label={pickerLabel}
-              >
-                <SourceIcon source={provider || 'claude'} size={16} />
-              </Button>
-              <ProviderPicker
-                open={pickerOpen}
-                onClose={() => setPickerOpen(false)}
-                currentProvider={provider ?? null}
-                currentModel={currentModel}
-                availableProviders={pickerProviders}
-                onModelChange={onModelChange ?? (() => {})}
-                onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
-                onSwitchProvider={onSwitchProvider}
-                onSelect={onProviderSelectionChange}
-                hasMessages={hasMessages}
-              />
-            </>
-          )}
-          {onAgentChange && agentName && agentDefinitions.length > 0 && (
-            <ActiveAgentIndicator
-              agentName={agentName}
-              onAgentChange={onAgentChange}
-              definitions={agentDefinitions}
-              globalDefs={agentGlobalDefs}
-              projectDefs={agentProjectDefs}
-              showScopeToggle={agentShowScopeToggle}
-              hasGlobal={agentHasGlobal}
-              hasProject={agentHasProject}
-            />
-          )}
-          <div className="flex items-center gap-2 ml-auto">
-          {onWorktreeChange && (
-            <BranchIndicator
-              currentBranch={currentBranch ?? null}
-              worktreePath={worktreePath ?? null}
-              projectId={projectId ?? null}
-              onWorktreeChange={onWorktreeChange}
-            />
-          )}
-          <ContextUsageIndicator
-            totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-            outputTokens={contextUsage?.outputTokens ?? 0}
-            contextWindow={contextUsage?.contextWindow ?? null}
-            uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-            cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-            cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-          />
+        <div className="chat-input-meta">
+          <div
+            className="chat-input-notice-slot"
+            aria-live="polite"
+          >
+            {proxyDeliveryNotice ? (
+              <div className="chat-input-notice">{proxyDeliveryNotice}</div>
+            ) : null}
           </div>
-          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
+
+          {/* Toolbar */}
+          <div className="flex items-center gap-1 mb-2">
+            {onModeChange && (
+              <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
+            )}
+            <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
+              <PaperclipIcon />
+            </Button>
+            {canSelectModel && (
+              <>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setPickerOpen(true)}
+                  disabled={providerButtonDisabled}
+                  title={pickerLabel}
+                  aria-label={pickerLabel}
+                >
+                  <SourceIcon source={provider || 'claude'} size={16} />
+                </Button>
+                <ProviderPicker
+                  open={pickerOpen}
+                  onClose={() => setPickerOpen(false)}
+                  currentProvider={provider ?? null}
+                  currentModel={currentModel}
+                  availableProviders={pickerProviders}
+                  onModelChange={onModelChange ?? (() => {})}
+                  onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
+                  onSwitchProvider={onSwitchProvider}
+                  onSelect={onProviderSelectionChange}
+                  hasMessages={hasMessages}
+                />
+              </>
+            )}
+            {onAgentChange && agentName && agentDefinitions.length > 0 && (
+              <ActiveAgentIndicator
+                agentName={agentName}
+                onAgentChange={onAgentChange}
+                definitions={agentDefinitions}
+                globalDefs={agentGlobalDefs}
+                projectDefs={agentProjectDefs}
+                showScopeToggle={agentShowScopeToggle}
+                hasGlobal={agentHasGlobal}
+                hasProject={agentHasProject}
+              />
+            )}
+            <div className="flex items-center gap-2 ml-auto">
+            {onWorktreeChange && (
+              <BranchIndicator
+                currentBranch={currentBranch ?? null}
+                worktreePath={worktreePath ?? null}
+                projectId={projectId ?? null}
+                onWorktreeChange={onWorktreeChange}
+              />
+            )}
+            <ContextUsageIndicator
+              totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+              outputTokens={contextUsage?.outputTokens ?? 0}
+              contextWindow={contextUsage?.contextWindow ?? null}
+              uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+              cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+              cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+            />
+            </div>
+            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
+          </div>
         </div>
 
         {/* File previews */}
@@ -641,9 +652,6 @@ export function ChatInput({
             </div>
           )}
         </div>
-        {proxyDeliveryNotice && (
-          <div className="chat-input-notice">{proxyDeliveryNotice}</div>
-        )}
       </div>
     </div>
   )

@@ -293,7 +293,7 @@ export const SessionsTab = memo(function SessionsTab({
   }, [chatMessages.length]);
 
   const handleSelect = useCallback((id: string) => {
-    setSelectedSessionId((prev) => (prev === id ? null : id));
+    setSelectedSessionId(id);
   }, []);
 
   const selectedEntry = useMemo(
@@ -514,7 +514,8 @@ export const SessionsTab = memo(function SessionsTab({
             <div className="flex flex-none items-center gap-3">
               {selectedEntry && onSwapSession && (
                 <button
-                  className="text-xs text-accent hover:text-foreground"
+                  type="button"
+                  className="session-pane-action session-pane-action--primary"
                   onClick={() => {
                     if (selectedSessionId) {
                       onSwapSession({
@@ -522,7 +523,6 @@ export const SessionsTab = memo(function SessionsTab({
                         sessionType: selectedEntry.sessionType ?? null,
                         agentRunId: selectedEntry.agentRunId ?? null,
                       });
-                      setSelectedSessionId(null);
                     }
                   }}
                 >
@@ -530,7 +530,8 @@ export const SessionsTab = memo(function SessionsTab({
                 </button>
               )}
               <button
-                className="text-xs text-muted-foreground hover:text-foreground"
+                type="button"
+                className="session-pane-action"
                 onClick={() => {
                   if (selectedSessionId && watchingSessionIds?.has(selectedSessionId)) {
                     onUnwatch?.(selectedSessionId);

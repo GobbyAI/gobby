@@ -63,7 +63,7 @@ export const TASK_BUCKET_ORDER: TaskBucket[] = [
 export const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
   ready: 'Ready',
   in_progress: 'In Progress',
-  review: 'Review',
+  review: 'Needs Review',
   blocked: 'Blocked',
   merge_ready: 'Merge Ready',
   closed: 'Closed',

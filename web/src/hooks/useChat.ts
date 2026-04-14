@@ -833,6 +833,36 @@ export function useChat() {
     saveConversationId(nextId);
   }, []);
 
+  const clearSessionObservationState = useCallback(
+    ({ preserveViewing = false }: { preserveViewing?: boolean } = {}) => {
+      if (observedSessionIdRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "detach_from_session",
+            session_id: observedSessionIdRef.current,
+          }),
+        );
+      }
+      if (!preserveViewing) {
+        viewingSessionIdRef.current = null;
+        viewingSessionMetaRef.current = null;
+        setViewingSessionId(null);
+        setViewingSessionMeta(null);
+      }
+      observedSessionIdRef.current = null;
+      observedSessionMetaRef.current = null;
+      attachedSessionIdRef.current = null;
+      attachedSessionMetaRef.current = null;
+      sessionInteractionModeRef.current = "none";
+      setObservedSessionId(null);
+      setAttachedSessionId(null);
+      setAttachedSessionMeta(null);
+      setSessionInteractionMode("none");
+      setProxyDeliveryNotice(null);
+    },
+    [],
+  );
+
   const resetMainChatState = useCallback(() => {
     lastSeqRef.current = 0;
     activeRequestIdRef.current = null;
@@ -1874,6 +1904,7 @@ export function useChat() {
         return;
       }
 
+      clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(id);
       setConversationSwitchKey((k) => k + 1);
@@ -1947,7 +1978,13 @@ export function useChat() {
         })
         .catch(() => {});
     },
-    [bindActiveSession, resetMainChatState, setContextUsage, setSelectedProvider],
+    [
+      bindActiveSession,
+      clearSessionObservationState,
+      resetMainChatState,
+      setContextUsage,
+      setSelectedProvider,
+    ],
   );
 
   // Start a new chat conversation, optionally with a specific agent
@@ -1955,6 +1992,7 @@ export function useChat() {
     (agentName?: string) => {
       const effectiveAgent = agentName || "default-web-chat";
       setActiveAgent(effectiveAgent);
+      clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
@@ -1964,7 +2002,12 @@ export function useChat() {
         forceNew: true,
       });
     },
-    [bindActiveSession, ensureMainSession, resetMainChatState],
+    [
+      bindActiveSession,
+      clearSessionObservationState,
+      ensureMainSession,
+      resetMainChatState,
+    ],
   );
 
   // Switch provider by starting a new server-owned web-chat session.
@@ -1978,6 +2021,7 @@ export function useChat() {
           }),
         );
       }
+      clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
@@ -1987,7 +2031,13 @@ export function useChat() {
         forceNew: true,
       });
     },
-    [bindActiveSession, ensureMainSession, isStreaming, resetMainChatState],
+    [
+      bindActiveSession,
+      clearSessionObservationState,
+      ensureMainSession,
+      isStreaming,
+      resetMainChatState,
+    ],
   );
 
   // Resume a CLI session (e.g., Claude) — sets the conversation ID
@@ -2020,17 +2070,10 @@ export function useChat() {
       projectId?: string,
       options?: { provider?: string | null; model?: string | null },
     ): Promise<string> => {
+      clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
-      setViewingSessionId(null);
-      setViewingSessionMeta(null);
-      setObservedSessionId(null);
-      observedSessionMetaRef.current = null;
-      setAttachedSessionId(null);
-      setAttachedSessionMeta(null);
-      setSessionInteractionMode("none");
-      setProxyDeliveryNotice(null);
 
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       let sourceSession: Record<string, unknown> | null = null;
@@ -2135,6 +2178,7 @@ export function useChat() {
     },
     [
       bindActiveSession,
+      clearSessionObservationState,
       ensureMainSession,
       resetMainChatState,
       setContextUsage,

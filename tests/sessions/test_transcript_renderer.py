@@ -185,6 +185,19 @@ def test_render_transcript_unknown_block_type():
     assert block.raw == {"some": "raw"}
 
 
+def test_render_transcript_suppresses_hook_prompt_blocks():
+    msgs = [
+        make_msg(0, "assistant", "internal", content_type="hook_prompt"),
+        make_msg(1, "assistant", "Visible output"),
+    ]
+
+    rendered = render_transcript(msgs)
+
+    assert len(rendered) == 1
+    assert rendered[0].content == "Visible output"
+    assert [block.type for block in rendered[0].content_blocks] == ["text"]
+
+
 def test_render_transcript_tool_reference():
     msgs = [
         make_msg(0, "assistant", "mcp__server__tool", content_type="tool_reference"),

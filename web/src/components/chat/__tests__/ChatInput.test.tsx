@@ -109,6 +109,24 @@ describe('ChatInput', () => {
     expect(textarea).toHaveAttribute('aria-label', 'Message input — streaming')
   })
 
+  it('renders the proxy delivery notice above the toolbar row', () => {
+    const { container } = render(
+      <ChatInput
+        {...defaultProps}
+        onModeChange={vi.fn()}
+        proxyDeliveryNotice="Message queued until the session yields."
+      />,
+    )
+
+    const notice = screen.getByText('Message queued until the session yields.')
+    const toolbar = screen.getByTestId('mode-selector').parentElement
+
+    expect(notice).toBeTruthy()
+    expect(toolbar).toBeTruthy()
+    expect(container.querySelector('.chat-input-notice-slot')?.contains(notice)).toBe(true)
+    expect(toolbar?.previousElementSibling).toContainElement(notice)
+  })
+
   it('calls onSend when Enter is pressed', async () => {
     const onSend = vi.fn()
     render(<ChatInput {...defaultProps} onSend={onSend} />)

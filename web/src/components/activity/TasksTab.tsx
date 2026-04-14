@@ -40,9 +40,11 @@ interface TreeNode {
 // Constants
 // =============================================================================
 
-const ALL_BUCKETS: TaskBucket[] = ['ready', 'in_progress', 'review', 'blocked', 'merge_ready', 'closed']
-const DEFAULT_FILTERS = new Set<TaskBucket>(['ready', 'in_progress', 'review', 'merge_ready', 'blocked'])
+const LIFECYCLE_BUCKETS: TaskBucket[] = ['ready', 'in_progress', 'review', 'merge_ready']
+const STATUS_BUCKETS: TaskBucket[] = ['blocked', 'closed']
+const DEFAULT_FILTERS = new Set<TaskBucket>([...LIFECYCLE_BUCKETS, 'blocked'])
 const INITIAL_TASK_LIMIT = 10
+const TASK_ROW_HEIGHT = 30
 
 const STATUS_DOT_COLORS = TASK_BUCKET_COLORS
 
@@ -147,24 +149,36 @@ function FilterDropdown({
   onToggle: (status: TaskBucket) => void
   onClose: () => void
 }) {
+  const filterGroups: Array<{ label: string; buckets: TaskBucket[] }> = [
+    { label: 'Lifecycle', buckets: LIFECYCLE_BUCKETS },
+    { label: 'Status', buckets: STATUS_BUCKETS },
+  ]
+
   return (
     <>
       <div className="fixed inset-0 z-[99]" onClick={onClose} />
       <div className="absolute top-full right-2 z-[100] bg-secondary border border-border rounded-md shadow-lg p-1.5 flex flex-col gap-0.5 min-w-[10rem]">
-        {ALL_BUCKETS.map((status) => (
-          <label key={status} className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50 capitalize">
-            <input
-              type="checkbox"
-              className="w-3 h-3"
-              checked={filters.has(status)}
-              onChange={() => onToggle(status)}
-            />
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ backgroundColor: STATUS_DOT_COLORS[status] ?? '#737373' }}
-            />
-            <span>{TASK_BUCKET_LABELS[status]}</span>
-          </label>
+        {filterGroups.map((group) => (
+          <div key={group.label} className="flex flex-col gap-0.5 py-0.5">
+            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+              {group.label}
+            </div>
+            {group.buckets.map((status) => (
+              <label key={status} className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50">
+                <input
+                  type="checkbox"
+                  className="w-3 h-3"
+                  checked={filters.has(status)}
+                  onChange={() => onToggle(status)}
+                />
+                <span
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ backgroundColor: STATUS_DOT_COLORS[status] ?? '#737373' }}
+                />
+                <span>{TASK_BUCKET_LABELS[status]}</span>
+              </label>
+            ))}
+          </div>
         ))}
       </div>
     </>
@@ -338,8 +352,9 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
         const bucket = getTaskBucket(t)
         if (!statusFilters.has(bucket)) return false
         if (bucket !== 'closed') return true
-        const closedAt = (t as GobbyTaskDetail).closed_at
-        return !closedAt || now - new Date(closedAt).getTime() < DAY_MS
+        const closedAt = getCanonicalTaskState(t).closed_at
+        if (!closedAt) return false
+        return now - new Date(closedAt).getTime() < DAY_MS
       })
       .sort((a, b) => {
         const pa = a.priority ?? 3
@@ -367,6 +382,12 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   }, [filtered, tasks, visibleCount])
 
   const hasMore = filtered.length > visibleCount
+  const visibleTreeRowCount = useMemo(() => countVisibleNodes(treeData), [treeData])
+  const unconstrainedTreeHeight = visibleTreeRowCount * TASK_ROW_HEIGHT
+  const treeViewportHeight =
+    selectedTaskId
+      ? undefined
+      : Math.max(TASK_ROW_HEIGHT, Math.min(treeHeight, unconstrainedTreeHeight))
 
   if (loading) {
     return <div className="activity-tab-empty"><p>Loading tasks...</p></div>
@@ -418,8 +439,8 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
               data={treeData}
               openByDefault={true}
               width="100%"
-              height={selectedTaskId ? undefined : treeHeight}
-              rowHeight={30}
+              height={treeViewportHeight}
+              rowHeight={TASK_ROW_HEIGHT}
               indent={16}
               searchTerm={search}
               searchMatch={searchMatch}
@@ -525,4 +546,8 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
       </div>
     </div>
   )
+}
+
+function countVisibleNodes(nodes: TreeNode[]): number {
+  return nodes.reduce((count, node) => count + 1 + countVisibleNodes(node.children), 0)
 }

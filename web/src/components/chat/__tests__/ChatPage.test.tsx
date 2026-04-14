@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { ChatState, ConversationState, VoiceProps } from "../../../types/chat";
 import { ChatPage } from "../ChatPage";
@@ -26,11 +26,22 @@ vi.mock("../MessageList", async () => {
 });
 
 vi.mock("../ChatInput", () => ({
-  ChatInput: () => <div data-testid="chat-input" />,
+  ChatInput: ({ proxyDeliveryNotice, disabled }: { proxyDeliveryNotice?: string | null; disabled?: boolean }) => (
+    <div data-testid="chat-input">
+      <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
+      <span data-testid="chat-input-notice">{proxyDeliveryNotice ?? ""}</span>
+    </div>
+  ),
 }));
 
 vi.mock("../CommandBar", () => ({
-  CommandBar: () => <div data-testid="command-bar" />,
+  CommandBar: ({ onNewChat }: { onNewChat: () => void }) => (
+    <div data-testid="command-bar">
+      <button type="button" data-testid="new-chat-button" onClick={onNewChat}>
+        New Chat
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("../CommandPalette", () => ({
@@ -42,7 +53,40 @@ vi.mock("../ActiveSessionsModal", () => ({
 }));
 
 vi.mock("../../activity/ActivityPanel", () => ({
-  ActivityPanel: () => null,
+  ActivityPanel: ({
+    onSwapSession,
+  }: {
+    onSwapSession?: (target: { sessionId: string; sessionType: "terminal" | "web_chat" | null; agentRunId: string | null }) => void
+  }) => (
+    <div data-testid="activity-panel">
+      <button
+        type="button"
+        data-testid="swap-terminal-session"
+        onClick={() =>
+          onSwapSession?.({
+            sessionId: "terminal-2",
+            sessionType: "terminal",
+            agentRunId: null,
+          })
+        }
+      >
+        Swap Terminal
+      </button>
+      <button
+        type="button"
+        data-testid="swap-autonomous-session"
+        onClick={() =>
+          onSwapSession?.({
+            sessionId: "terminal-auto",
+            sessionType: "terminal",
+            agentRunId: "run-auto",
+          })
+        }
+      >
+        Swap Autonomous
+      </button>
+    </div>
+  ),
 }));
 
 vi.mock("../VoiceStatusBar", () => ({
@@ -50,7 +94,11 @@ vi.mock("../VoiceStatusBar", () => ({
 }));
 
 vi.mock("../AgentStatusBar", () => ({
-  AgentStatusBar: () => null,
+  AgentStatusBar: ({ viewingMeta }: { viewingMeta: { title?: string | null; source: string } }) => (
+    <div data-testid="agent-status-bar">
+      {viewingMeta.title ?? viewingMeta.source}
+    </div>
+  ),
 }));
 
 vi.mock("../../../hooks/useIsMobile", () => ({
@@ -134,6 +182,14 @@ function createChat(overrides: Partial<ChatState> = {}): ChatState {
     provider: "claude",
     dbSessionId: "db-session-1",
     conversationSwitchKey: 1,
+    continueSessionInChat: vi.fn(async () => "continued-session"),
+    viewSession: vi.fn(),
+    observeSession: vi.fn(),
+    clearViewingSession: vi.fn(),
+    onAttachToViewed: vi.fn(),
+    attachedSessionId: null,
+    sessionInteractionMode: "none",
+    proxyDeliveryNotice: null,
     ...overrides,
   } as ChatState;
 }
@@ -145,6 +201,7 @@ function createConversations(): ConversationState {
     onNewChat: vi.fn(),
     onSelectSession: vi.fn(),
     agents: [],
+    onNavigateToAgent: vi.fn(),
   };
 }
 
@@ -229,5 +286,87 @@ describe("ChatPage", () => {
     );
 
     expect(scrollToBottomSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the viewed-session status strip above the chat input", async () => {
+    render(
+      <ChatPage
+        chat={createChat({
+          viewingSessionMeta: {
+            ref: "#51",
+            source: "claude",
+            title: "Observed Terminal",
+            status: "active",
+            model: "sonnet",
+            externalId: "term-51",
+            sessionType: "terminal",
+          },
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-status-bar")).toHaveTextContent(
+        "Observed Terminal",
+      );
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+    });
+  });
+
+  it("continues non-autonomous terminal swaps directly in web chat", async () => {
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+    const viewSession = vi.fn();
+    const observeSession = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({
+          continueSessionInChat,
+          viewSession,
+          observeSession,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+        projectId="proj-1"
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("swap-terminal-session"));
+    });
+
+    await waitFor(() => {
+      expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1");
+    });
+    expect(viewSession).not.toHaveBeenCalled();
+    expect(observeSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps autonomous terminal swaps in observe mode", async () => {
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+    const viewSession = vi.fn();
+    const observeSession = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({
+          continueSessionInChat,
+          viewSession,
+          observeSession,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("swap-autonomous-session"));
+    });
+
+    expect(continueSessionInChat).not.toHaveBeenCalled();
+    expect(viewSession).toHaveBeenCalledWith("terminal-auto");
+    expect(observeSession).toHaveBeenCalledWith("terminal-auto", "observe");
   });
 });
