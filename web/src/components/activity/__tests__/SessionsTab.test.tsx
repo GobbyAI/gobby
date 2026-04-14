@@ -283,4 +283,20 @@ describe("SessionsTab", () => {
       expect(screen.getByText("Session has no transcript")).toBeTruthy();
     });
   });
+
+  it("only handles focus once when the focused session is already selected", async () => {
+    const onFocusHandled = vi.fn();
+
+    render(
+      <SessionsTab
+        focusSessionId="terminal-1"
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#201: Terminal Session")).toBeTruthy();
+      expect(onFocusHandled).toHaveBeenCalledTimes(1);
+    });
+  });
 });

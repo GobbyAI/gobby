@@ -119,7 +119,7 @@ describe('ChatInput', () => {
     )
 
     const notice = screen.getByText('Message queued until the session yields.')
-    const toolbar = screen.getByTestId('mode-selector').parentElement
+    const toolbar = container.querySelector('.chat-input-toolbar')
 
     expect(notice).toBeTruthy()
     expect(toolbar).toBeTruthy()
@@ -346,6 +346,21 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByLabelText('Select model')).toBeTruthy()
+  })
+
+  it('formats known provider labels with canonical casing', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        provider="openai"
+        availableProviders={['openai']}
+        currentModel="local"
+        onModelChange={vi.fn()}
+        onSwitchProvider={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('OpenAI local')).toBeTruthy()
   })
 
   it('forwards non-local slash commands in proxy mode', async () => {
