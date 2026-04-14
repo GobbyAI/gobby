@@ -263,6 +263,7 @@ export default function App() {
     conversationId,
     conversationSwitchKey,
     sessionRef,
+    sessionTitle,
     dbSessionId,
     currentBranch,
     worktreePath,
@@ -294,6 +295,7 @@ export default function App() {
     addSystemMessage,
     viewSession,
     clearViewingSession,
+    mainSessionMeta,
     observeSession,
     viewingSessionId,
     viewingSessionMeta,
@@ -872,13 +874,22 @@ export default function App() {
     setOnModeChanged(updateChatMode);
   }, [updateChatMode, setOnModeChanged]);
 
-  // Restore persisted mode on conversation switch (DB value > user default > plan).
-  // Keyed on conversationSwitchKey (not conversationId) so that SDK session ID
-  // adoption — which changes conversationId but is the same logical conversation
-  // — does NOT reset the user's mode back to the default.
+  const handleStartNewChat = useCallback(
+    (agentName?: string) => {
+      updateChatMode(settings.defaultChatMode);
+      startNewChat(agentName);
+    },
+    [settings.defaultChatMode, startNewChat, updateChatMode],
+  );
+
+  // Restore persisted mode only when we have an active durable web-chat session.
+  // Drafts are seeded by handleStartNewChat; observed sessions sync mode through
+  // useChat's authoritative session metadata and mode_changed events.
   useEffect(() => {
     if (sessionsHook.isLoading) return;
+    if (!dbSessionId) return;
     const session = webChatSessions.find((s) => s.id === dbSessionId);
+    if (!session) return;
     const restoredMode =
       (session?.chat_mode as ChatMode | null) || settings.defaultChatMode;
     updateChatMode(restoredMode);
@@ -1185,6 +1196,7 @@ export default function App() {
                 chat={{
                   messages,
                   sessionRef,
+                  sessionTitle,
                   currentBranch,
                   worktreePath,
                   isStreaming,
@@ -1219,6 +1231,7 @@ export default function App() {
                   continueSessionInChat,
                   viewSession,
                   clearViewingSession,
+                  mainSessionMeta,
                   viewingSessionId,
                   viewingSessionMeta,
                   observeSession,
@@ -1240,7 +1253,7 @@ export default function App() {
                   sessions: webChatSessions,
                   activeSessionId: dbSessionId,
                   deletingIds: sessionsHook.deletingIds,
-                  onNewChat: startNewChat,
+                  onNewChat: handleStartNewChat,
                   onSelectSession: handleSelectConversation,
                   onDeleteSession: handleDeleteConversation,
                   onRenameSession: sessionsHook.renameSession,

@@ -74,9 +74,29 @@ export function ChatPage({
   const activeSession = conversations.sessions.find(
     (s) => s.id === conversations.activeSessionId,
   );
-  const activeTitle = activeSession?.title ?? null;
+  const mainSessionMeta =
+    chat.mainSessionMeta ??
+    (activeSession
+      ? {
+          ref: activeSession.seq_num != null ? `#${activeSession.seq_num}` : null,
+          source: activeSession.source,
+          title: activeSession.title ?? null,
+          status: activeSession.status,
+          model: activeSession.model ?? null,
+          externalId: activeSession.external_id,
+          chatMode: activeSession.chat_mode ?? null,
+          gitBranch: activeSession.git_branch ?? null,
+          contextWindow: null,
+          agentRunId: activeSession.agent_run_id ?? null,
+          workflowName: null,
+          agentName: null,
+          sessionType: "web_chat" as const,
+        }
+      : null);
+  const activeTitle = chat.sessionTitle ?? mainSessionMeta?.title ?? null;
   const effectiveSessionRef =
     chat.sessionRef ??
+    mainSessionMeta?.ref ??
     (activeSession?.seq_num != null ? `#${activeSession.seq_num}` : null);
 
   const {
@@ -137,7 +157,7 @@ export function ChatPage({
 
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
-      const currentSessionId = chat.viewingSessionId ?? chat.dbSessionId;
+      const currentSessionId = chat.dbSessionId;
       if (
         !currentSessionId ||
         chat.messages.length === 0 ||
@@ -202,11 +222,11 @@ export function ChatPage({
       : "Observing autonomous session"
     : null;
   const effectiveInputProvider = isSwappedTerminal
-    ? viewingMeta?.source ?? chat.provider
-    : chat.provider;
+    ? viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider
+    : mainSessionMeta?.source ?? chat.provider;
   const effectiveInputModel = isSwappedTerminal
-    ? viewingMeta?.model ?? currentModel
-    : currentModel;
+    ? viewingMeta?.model ?? mainSessionMeta?.model ?? currentModel
+    : mainSessionMeta?.model ?? currentModel;
 
   const handleSwappedSessionProviderSelection = useCallback(
     async (provider: string, model: string) => {

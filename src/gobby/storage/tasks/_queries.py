@@ -65,6 +65,8 @@ def list_tasks(
     title_like: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    sort_by: str = "hierarchy",
+    sort_order: str = "asc",
 ) -> list[Task]:
     """List tasks with filtering.
 
@@ -86,6 +88,9 @@ def list_tasks(
         title_like: Filter by title (partial match)
         limit: Maximum tasks to return
         offset: Pagination offset
+        sort_by: Ordering strategy. "hierarchy" preserves parent/child ordering;
+            "updated_at" and "created_at" sort chronologically.
+        sort_order: "asc" or "desc" for non-hierarchical sorts.
 
     Results are ordered hierarchically: parents appear before their children,
     with siblings sorted by priority ASC, then created_at ASC.
@@ -137,15 +142,30 @@ def list_tasks(
         query += " AND title LIKE ?"
         params.append(f"%{title_like}%")
 
-    # Fetch with base ordering, then apply hierarchical sort in Python
-    query += " ORDER BY priority ASC, created_at ASC LIMIT ? OFFSET ?"
+    valid_sorts = {
+        "hierarchy": "priority ASC, created_at ASC",
+        "updated_at": "updated_at",
+        "created_at": "created_at",
+        "priority": "priority",
+    }
+    order_clause = valid_sorts.get(sort_by, valid_sorts["hierarchy"])
+    direction = "DESC" if sort_order.lower() == "desc" else "ASC"
+    if sort_by == "hierarchy":
+        query += f" ORDER BY {order_clause} LIMIT ? OFFSET ?"
+    else:
+        query += (
+            f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC"
+            " LIMIT ? OFFSET ?"
+        )
     params.extend([limit, offset])
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
     hydrate_task_blocking_state(db, tasks)
 
-    return order_tasks_hierarchically(tasks)
+    if sort_by == "hierarchy":
+        return order_tasks_hierarchically(tasks)
+    return tasks
 
 
 def list_ready_tasks(

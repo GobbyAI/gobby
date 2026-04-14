@@ -141,6 +141,48 @@ class TestCanUseTool:
         assert isinstance(result, PermissionResultDeny)
         assert result.message == "No go"
 
+    @pytest.mark.asyncio
+    async def test_safe_mcp_proxy_discovery_skips_tool_approval_in_plan_mode(
+        self, session: ChatSession
+    ) -> None:
+        """Registry discovery should stay available even when approval policy is ask."""
+        session.chat_mode = "plan"
+        session._plan_approved = True
+        config = MagicMock()
+        config.enabled = True
+        config.default_policy = "ask"
+        config.policies = []
+        session._tool_approval_config = config
+
+        result = await session._can_use_tool(
+            "mcp__gobby__list_mcp_servers",
+            {},
+            ToolPermissionContext(),
+        )
+
+        assert isinstance(result, PermissionResultAllow)
+
+    @pytest.mark.asyncio
+    async def test_safe_canvas_calls_skip_tool_approval(self, session: ChatSession) -> None:
+        """Canvas UI tools should be usable without prompting for approval."""
+        session.chat_mode = "normal"
+        config = MagicMock()
+        config.enabled = True
+        config.default_policy = "ask"
+        config.policies = []
+        session._tool_approval_config = config
+
+        result = await session._can_use_tool(
+            "mcp__gobby__call_tool",
+            {
+                "server_name": "gobby-canvas",
+                "tool_name": "render_surface",
+            },
+            ToolPermissionContext(),
+        )
+
+        assert isinstance(result, PermissionResultAllow)
+
 
 class TestNeedsToolApproval:
     def test_bypass_mode(self, session: ChatSession) -> None:
@@ -203,6 +245,9 @@ class TestDangerousPatterns:
     def test_is_write_mcp_call(self, session: ChatSession) -> None:
         assert not session._is_write_mcp_call({"server_name": "x", "tool_name": "read_file"})
         assert not session._is_write_mcp_call({"server_name": "x", "tool_name": "list_dirs"})
+        assert not session._is_write_mcp_call(
+            {"server_name": "gobby-canvas", "tool_name": "render_surface"}
+        )
         assert session._is_write_mcp_call({"server_name": "x", "tool_name": "create_file"})
         assert session._is_write_mcp_call({})  # No tool name -> True by default
 

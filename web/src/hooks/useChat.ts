@@ -138,13 +138,17 @@ function isChatProvider(value: unknown): value is string {
   return typeof value === "string" && CHAT_PROVIDERS.has(value);
 }
 
-interface CreatedWebChatSession {
+interface CreatedWebChatSession extends Record<string, unknown> {
   id: string;
   source: string;
   model: string | null;
   chat_mode: string | null;
   seq_num: number | null;
   title: string | null;
+  status?: string | null;
+  external_id?: string | null;
+  git_branch?: string | null;
+  context_window?: number | null;
 }
 
 async function createWebChatSession(params?: {
@@ -152,6 +156,7 @@ async function createWebChatSession(params?: {
   provider?: string | null;
   model?: string | null;
   chatMode?: ChatMode | null;
+  title?: string | null;
 }): Promise<CreatedWebChatSession> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
   const response = await fetch(`${baseUrl}/api/sessions/web-chat`, {
@@ -162,6 +167,7 @@ async function createWebChatSession(params?: {
       provider: params?.provider ?? null,
       model: params?.model ?? null,
       chat_mode: params?.chatMode ?? null,
+      title: params?.title ?? null,
     }),
   });
 
@@ -171,6 +177,101 @@ async function createWebChatSession(params?: {
 
   const data = await response.json();
   return data.session as CreatedWebChatSession;
+}
+
+function computeContextUsageFromSessionData(session: Record<string, unknown> | null): {
+  totalInputTokens: number;
+  outputTokens: number;
+  contextWindow: number | null;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+} {
+  const totalInputTokens =
+    typeof session?.usage_input_tokens === "number" ? session.usage_input_tokens : 0;
+  const outputTokens =
+    typeof session?.usage_output_tokens === "number" ? session.usage_output_tokens : 0;
+  const cacheReadTokens =
+    typeof session?.usage_cache_read_tokens === "number"
+      ? session.usage_cache_read_tokens
+      : 0;
+  const cacheCreationTokens =
+    typeof session?.usage_cache_creation_tokens === "number"
+      ? session.usage_cache_creation_tokens
+      : 0;
+  const contextWindow =
+    typeof session?.context_window === "number" ? session.context_window : null;
+
+  return {
+    totalInputTokens,
+    outputTokens,
+    contextWindow,
+    uncachedInputTokens: Math.max(
+      0,
+      totalInputTokens - cacheReadTokens - cacheCreationTokens,
+    ),
+    cacheReadTokens,
+    cacheCreationTokens,
+  };
+}
+
+function hasSessionUsage(session: Record<string, unknown> | null): boolean {
+  if (!session) return false;
+  return (
+    (typeof session.usage_input_tokens === "number" &&
+      session.usage_input_tokens > 0) ||
+    (typeof session.usage_output_tokens === "number" &&
+      session.usage_output_tokens > 0) ||
+    typeof session.context_window === "number"
+  );
+}
+
+function toSessionObservationMeta(
+  session: Record<string, unknown> | null,
+  overrides?: Partial<SessionObservationMeta>,
+): SessionObservationMeta | null {
+  if (!session) return null;
+  return {
+    ref:
+      overrides?.ref ??
+      (typeof session.seq_num === "number" ? `#${session.seq_num}` : null),
+    source:
+      overrides?.source ??
+      (typeof session.source === "string" ? session.source : "unknown"),
+    title:
+      overrides?.title ??
+      (typeof session.title === "string" ? session.title : null),
+    status:
+      overrides?.status ??
+      (typeof session.status === "string" ? session.status : "unknown"),
+    model:
+      overrides?.model ??
+      (typeof session.model === "string" ? session.model : null),
+    externalId:
+      overrides?.externalId ??
+      (typeof session.external_id === "string" ? session.external_id : ""),
+    chatMode:
+      overrides?.chatMode ??
+      (typeof session.chat_mode === "string" ? session.chat_mode : null),
+    gitBranch:
+      overrides?.gitBranch ??
+      (typeof session.git_branch === "string" ? session.git_branch : null),
+    contextWindow:
+      overrides?.contextWindow ??
+      (typeof session.context_window === "number" ? session.context_window : null),
+    agentRunId:
+      overrides?.agentRunId ??
+      (typeof session.agent_run_id === "string" ? session.agent_run_id : null),
+    workflowName:
+      overrides?.workflowName ??
+      (typeof session.workflow_name === "string" ? session.workflow_name : null),
+    agentName:
+      overrides?.agentName ??
+      (typeof session.agent_name === "string" ? session.agent_name : null),
+    sessionType:
+      overrides?.sessionType ??
+      ((session.session_type as "terminal" | "web_chat" | null | undefined) ?? null),
+  };
 }
 
 interface ApiMessage {
@@ -651,6 +752,8 @@ export function useChat() {
 
   // Session title — stored from switchConversation to survive filtered list race
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  const [mainSessionMeta, setMainSessionMeta] =
+    useState<SessionObservationMeta | null>(null);
 
   // LLM provider selection (null = server default), persisted to localStorage
   const [selectedProvider, setSelectedProviderRaw] = useState<string | null>(
@@ -833,6 +936,33 @@ export function useChat() {
     saveConversationId(nextId);
   }, []);
 
+  const applyMainSessionMeta = useCallback(
+    (session: Record<string, unknown> | null) => {
+      const nextMeta = toSessionObservationMeta(session, {
+        sessionType: "web_chat",
+      });
+      setMainSessionMeta(nextMeta);
+      setSessionTitle(nextMeta?.title ?? null);
+      if (nextMeta?.ref) {
+        setSessionRef(nextMeta.ref);
+      }
+      if (nextMeta && isChatProvider(nextMeta.source)) {
+        setSelectedProvider(nextMeta.source);
+      }
+      if (nextMeta?.chatMode) {
+        const restored = nextMeta.chatMode as ChatMode;
+        if (restored !== currentModeRef.current) {
+          currentModeRef.current = restored;
+          onModeChangedRef.current?.(restored);
+        }
+      }
+      if (hasSessionUsage(session)) {
+        setContextUsage(computeContextUsageFromSessionData(session));
+      }
+    },
+    [setSelectedProvider],
+  );
+
   const clearSessionObservationState = useCallback(
     ({ preserveViewing = false }: { preserveViewing?: boolean } = {}) => {
       if (observedSessionIdRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
@@ -870,6 +1000,7 @@ export function useChat() {
     setIsThinking(false);
     setSessionRef(null);
     setSessionTitle(null);
+    setMainSessionMeta(null);
     setCurrentBranch(null);
     setWorktreePath(null);
     setCanvasSurfaces(new Map());
@@ -894,6 +1025,7 @@ export function useChat() {
       provider?: string | null;
       model?: string | null;
       chatMode?: ChatMode | null;
+      title?: string | null;
       forceNew?: boolean;
     }): Promise<string | null> => {
       if (!options?.forceNew && dbSessionIdRef.current) {
@@ -908,13 +1040,11 @@ export function useChat() {
         provider: options?.provider ?? selectedProviderRef.current,
         model: options?.model ?? null,
         chatMode: options?.chatMode ?? currentModeRef.current,
+        title: options?.title ?? null,
       })
         .then((session) => {
           bindActiveSession(session.id);
-          if (session.seq_num != null) {
-            setSessionRef(`#${session.seq_num}`);
-          }
-          setSessionTitle(session.title ?? null);
+          applyMainSessionMeta(session as Record<string, unknown>);
           if (
             wsRef.current?.readyState === WebSocket.OPEN &&
             activeAgentRef.current
@@ -940,7 +1070,7 @@ export function useChat() {
       creatingSessionIdRef.current = pending;
       return await pending;
     },
-    [bindActiveSession],
+    [applyMainSessionMeta, bindActiveSession],
   );
 
   useEffect(() => {
@@ -1060,7 +1190,10 @@ export function useChat() {
               }) => ({
                 id: m.id,
                 role: m.role as "user" | "assistant" | "system",
-                content: [{ type: "text" as const, content: m.content }],
+                content: m.content,
+                contentBlocks: m.content
+                  ? [{ type: "text" as const, content: m.content }]
+                  : [],
                 toolCalls: m.tool_calls ?? [],
                 timestamp: new Date(m.created_at),
               }),
@@ -1310,7 +1443,38 @@ export function useChat() {
           if (agentName) setActiveAgent(agentName);
         } else if (data.type === "session_continued") {
           const continued = data as Record<string, unknown>;
-          setDbSessionId((continued.db_session_id as string) ?? null);
+          const nextDbSessionId = (continued.db_session_id as string) ?? null;
+          setDbSessionId(nextDbSessionId);
+          dbSessionIdRef.current = nextDbSessionId;
+          saveDbSessionId(nextDbSessionId);
+          const continuedMeta = toSessionObservationMeta(continued, {
+            ref: sessionRef,
+            status: "active",
+            sessionType: "web_chat",
+          });
+          if (continuedMeta) {
+            setMainSessionMeta(continuedMeta);
+            setSessionTitle(continuedMeta.title ?? null);
+            if (continuedMeta.source && isChatProvider(continuedMeta.source)) {
+              setSelectedProvider(continuedMeta.source);
+            }
+            if (continuedMeta.chatMode) {
+              const restored = continuedMeta.chatMode as ChatMode;
+              currentModeRef.current = restored;
+              onModeChangedRef.current?.(restored);
+            }
+          }
+          if (nextDbSessionId) {
+            const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+            fetch(`${baseUrl}/api/sessions/${nextDbSessionId}`)
+              .then((res) => (res.ok ? res.json() : null))
+              .then((payload) => {
+                const session = payload?.session;
+                if (!session || dbSessionIdRef.current !== nextDbSessionId) return;
+                applyMainSessionMeta(session);
+              })
+              .catch(() => {});
+          }
           console.log("Session continued:", data);
         } else if (data.type === "connection_established") {
           const serverConversations = (data.conversation_ids as string[]) || [];
@@ -1401,22 +1565,23 @@ export function useChat() {
         } else if (data.type === "attach_to_session_result") {
           const result = data as Record<string, unknown>;
           const sid = result.session_id as string;
-          const meta: SessionObservationMeta = {
-            ref: (result.ref as string) ?? null,
-            source: (result.source as string) ?? "unknown",
-            title: (result.title as string) ?? null,
-            status: (result.status as string) ?? "unknown",
-            model: (result.model as string) ?? null,
-            externalId: (result.external_id as string) ?? "",
-            chatMode: (result.chat_mode as string) ?? null,
-            gitBranch: (result.git_branch as string) ?? null,
-            contextWindow: (result.context_window as number) ?? null,
-            agentRunId: (result.agent_run_id as string) ?? null,
-            workflowName: (result.workflow_name as string) ?? null,
-            agentName: (result.agent_name as string) ?? null,
-            sessionType:
-              ((result.session_type as "terminal" | "web_chat" | null) ?? null),
-          };
+          const meta =
+            toSessionObservationMeta(result) ??
+            ({
+              ref: null,
+              source: "unknown",
+              title: null,
+              status: "unknown",
+              model: null,
+              externalId: "",
+              chatMode: null,
+              gitBranch: null,
+              contextWindow: null,
+              agentRunId: null,
+              workflowName: null,
+              agentName: null,
+              sessionType: null,
+            } satisfies SessionObservationMeta);
           setObservedSessionId(sid);
           observedSessionMetaRef.current = meta;
           // Also set viewing state (attached implies viewing)
@@ -1467,6 +1632,9 @@ export function useChat() {
           setIsStreaming(false);
           setIsThinking(false);
           setSessionRef((result.ref as string) ?? null);
+          if (hasSessionUsage(result)) {
+            setContextUsage(computeContextUsageFromSessionData(result));
+          }
           // Do NOT set dbSessionId here. Under the unified session identity
           // model, dbSessionId mirrors the user's main chat conversation id,
           // not an observed/attached session. Observed state lives on
@@ -1557,7 +1725,7 @@ export function useChat() {
     };
     // resolveAgentName is a stable useCallback (its own deps are []) — safe
     // to reference here without re-creating connect every render.
-  }, [resolveAgentName]);
+  }, [applyMainSessionMeta, resolveAgentName]);
 
   // Handle streaming chat chunks
   const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
@@ -1935,34 +2103,9 @@ export function useChat() {
         .then((data) => {
           const s = data?.session;
           if (!s || conversationIdRef.current !== id) return;
-          if (isChatProvider(s.source)) {
-            setSelectedProvider(s.source);
-          }
-          if (s.title) setSessionTitle(s.title);
-          if (s.seq_num != null) setSessionRef(`#${s.seq_num}`);
-          if (
-            s.usage_input_tokens > 0 ||
-            s.usage_output_tokens > 0 ||
-            s.context_window
-          ) {
-            const totalIn = s.usage_input_tokens ?? 0;
-            const cacheRead = s.usage_cache_read_tokens ?? 0;
-            const cacheCreation = s.usage_cache_creation_tokens ?? 0;
-            setContextUsage({
-              totalInputTokens: totalIn,
-              outputTokens: s.usage_output_tokens ?? 0,
-              contextWindow: s.context_window ?? null,
-              uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-              cacheReadTokens: cacheRead,
-              cacheCreationTokens: cacheCreation,
-            });
-          }
+          applyMainSessionMeta(s);
           if (s.chat_mode) {
             const restored = s.chat_mode as ChatMode;
-            if (restored !== currentModeRef.current) {
-              currentModeRef.current = restored;
-              onModeChangedRef.current?.(restored);
-            }
             if (
               wsRef.current?.readyState === WebSocket.OPEN &&
               Date.now() - lastServerModeTimestampRef.current > 2000
@@ -1980,11 +2123,10 @@ export function useChat() {
         .catch(() => {});
     },
     [
+      applyMainSessionMeta,
       bindActiveSession,
       clearSessionObservationState,
       resetMainChatState,
-      setContextUsage,
-      setSelectedProvider,
     ],
   );
 
@@ -2122,6 +2264,8 @@ export function useChat() {
         provider: continuationProvider,
         model: continuationModel,
         chatMode: sourceChatMode,
+        title:
+          typeof sourceSession?.title === "string" ? sourceSession.title : null,
         forceNew: true,
       });
       if (!newConversationId) {
@@ -2146,24 +2290,8 @@ export function useChat() {
 
       // Hydrate context usage and chat mode from source session
       const s = sourceSession;
-      if (
-        s &&
-        (((s.usage_input_tokens as number | undefined) ?? 0) > 0 ||
-          ((s.usage_output_tokens as number | undefined) ?? 0) > 0 ||
-          s.context_window)
-      ) {
-        const totalIn = (s.usage_input_tokens as number | undefined) ?? 0;
-        const cacheRead = (s.usage_cache_read_tokens as number | undefined) ?? 0;
-        const cacheCreation =
-          (s.usage_cache_creation_tokens as number | undefined) ?? 0;
-        setContextUsage({
-          totalInputTokens: totalIn,
-          outputTokens: (s.usage_output_tokens as number | undefined) ?? 0,
-          contextWindow: (s.context_window as number | null | undefined) ?? null,
-          uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-          cacheReadTokens: cacheRead,
-          cacheCreationTokens: cacheCreation,
-        });
+      if (hasSessionUsage(s)) {
+        setContextUsage(computeContextUsageFromSessionData(s));
       }
       // chat_mode was already propagated above, before ensureMainSession.
 
@@ -2715,16 +2843,38 @@ export function useChat() {
     setViewingSessionId(null);
     setViewingSessionMeta(null);
     setMessages([]);
-    setSessionRef(null);
     setProxyDeliveryNotice(null);
-    setContextUsage({
-      totalInputTokens: 0,
-      outputTokens: 0,
-      contextWindow: null,
-      uncachedInputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-    });
+
+    if (mainSessionMeta) {
+      setSessionRef(mainSessionMeta.ref);
+      setSessionTitle(mainSessionMeta.title ?? null);
+      if (mainSessionMeta.contextWindow) {
+        setContextUsage((prev) => ({
+          ...prev,
+          contextWindow: mainSessionMeta.contextWindow ?? null,
+        }));
+      } else {
+        setContextUsage({
+          totalInputTokens: 0,
+          outputTokens: 0,
+          contextWindow: null,
+          uncachedInputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        });
+      }
+    } else {
+      setSessionRef(null);
+      setSessionTitle(null);
+      setContextUsage({
+        totalInputTokens: 0,
+        outputTokens: 0,
+        contextWindow: null,
+        uncachedInputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      });
+    }
 
     // Restore previous conversation messages and chat mode from DB
     const prevDbSid = loadDbSessionId();
@@ -2752,7 +2902,7 @@ export function useChat() {
         })
         .catch(() => {});
     }
-  }, [setContextUsage]);
+  }, [mainSessionMeta, setContextUsage]);
 
   // Attach to a CLI session (interactive mode with WS subscription)
   const attachToSession = useCallback(
@@ -2848,7 +2998,10 @@ export function useChat() {
             }) => ({
               id: m.id,
               role: m.role as "user" | "assistant" | "system",
-              content: [{ type: "text" as const, content: m.content }],
+              content: m.content,
+              contentBlocks: m.content
+                ? [{ type: "text" as const, content: m.content }]
+                : [],
               toolCalls: m.tool_calls ?? [],
               timestamp: new Date(m.created_at),
             }),
@@ -2956,6 +3109,7 @@ export function useChat() {
     addSystemMessage,
     viewSession,
     clearViewingSession,
+    mainSessionMeta,
     viewingSessionId,
     viewingSessionMeta,
     observeSession: attachToSession,

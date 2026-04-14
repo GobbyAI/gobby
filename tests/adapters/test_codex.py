@@ -967,6 +967,27 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.data["turn_id"] == "turn-1"
         assert hook_event.data["status"] == "inProgress"
 
+    def test_turn_started_preserves_prompt_when_available(self) -> None:
+        """Translate turn/started with prompt text for broadcaster compatibility."""
+        adapter = CodexAdapter()
+
+        native_event = {
+            "method": "turn/started",
+            "params": {
+                "threadId": "thr-789",
+                "prompt": "list_mcp_servers",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "inProgress",
+                },
+            },
+        }
+
+        hook_event = adapter.translate_to_hook_event(native_event)
+
+        assert hook_event is not None
+        assert hook_event.data["prompt"] == "list_mcp_servers"
+
     def test_turn_completed(self) -> None:
         """Translate turn/completed to AFTER_AGENT."""
         adapter = CodexAdapter()
@@ -1045,6 +1066,33 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.data["mcp_server"] == "gobby"
         assert hook_event.data["mcp_tool"] == "get_tool_schema"
         assert hook_event.data["tool_output"] == {"success": True}
+
+    def test_item_completed_mcp_tool_derives_name_from_server_and_tool(self) -> None:
+        """mcpToolCall completions without name should still normalize tool identity."""
+        adapter = CodexAdapter()
+
+        native_event = {
+            "method": "item/completed",
+            "params": {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-mcp-2",
+                    "type": "mcpToolCall",
+                    "server": "gobby",
+                    "tool": "list_mcp_servers",
+                    "status": "completed",
+                    "arguments": {},
+                    "result": {"content": []},
+                },
+            },
+        }
+
+        hook_event = adapter.translate_to_hook_event(native_event)
+
+        assert hook_event is not None
+        assert hook_event.data["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert hook_event.data["mcp_server"] == "gobby"
+        assert hook_event.data["mcp_tool"] == "list_mcp_servers"
 
     def test_item_completed_non_tool(self) -> None:
         """item/completed for non-tool items returns None."""
@@ -1186,6 +1234,35 @@ class TestCodexAdapterTranslateApprovalEvent:
         assert hook_event.metadata["approval_method"] == "item/mcpToolCall/requestApproval"
         assert hook_event.metadata["original_tool_name"] == "mcp__gobby__get_tool_schema"
         assert hook_event.metadata["normalized_tool_name"] == "mcp__gobby__get_tool_schema"
+
+    def test_mcp_elicitation_request_approval(self) -> None:
+        """Translate MCP elicitation approvals into BEFORE_TOOL hook events."""
+        adapter = CodexAdapter()
+
+        hook_event = adapter._translate_approval_event(
+            "mcpServer/elicitation/request",
+            {
+                "threadId": "thr-mcp",
+                "turnId": "turn-1",
+                "serverName": "gobby",
+                "mode": "form",
+                "message": 'Allow the gobby MCP server to run tool "list_mcp_servers"?',
+                "requestedSchema": {"type": "object", "properties": {}},
+                "_meta": {
+                    "codex_approval_kind": "mcp_tool_call",
+                    "tool_params": {},
+                },
+            },
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.session_id == "thr-mcp"
+        assert hook_event.data["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert hook_event.data["tool_input"] == {}
+        assert hook_event.data["mcp_server"] == "gobby"
+        assert hook_event.data["mcp_tool"] == "list_mcp_servers"
+        assert hook_event.metadata["approval_method"] == "mcpServer/elicitation/request"
 
     def test_unknown_approval_method(self) -> None:
         """Unknown approval method returns None."""
@@ -2205,6 +2282,109 @@ class TestCodexClientApprovalRequestDetection:
         assert received["params"]["arguments"]["tool_name"] == "claim_task"
 
     @pytest.mark.asyncio
+    async def test_detects_mcp_elicitation_request(self) -> None:
+        """Reader routes MCP elicitation requests to the approval handler."""
+        client = CodexAppServerClient()
+        received: dict = {}
+
+        async def handler(method: str, params: dict) -> dict:
+            received["method"] = method
+            received["params"] = params
+            return {"action": "accept", "content": None, "_meta": None}
+
+        client.register_approval_handler(handler)
+
+        approval_msg = {
+            "jsonrpc": "2.0",
+            "id": 101,
+            "method": "mcpServer/elicitation/request",
+            "params": {
+                "threadId": "thr-mcp",
+                "turnId": "turn-1",
+                "serverName": "gobby",
+                "mode": "form",
+                "message": 'Allow the gobby MCP server to run tool "list_mcp_servers"?',
+                "requestedSchema": {"type": "object", "properties": {}},
+                "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_params": {}},
+            },
+        }
+
+        mock_process = MagicMock()
+        lines = [json.dumps(approval_msg) + "\n"]
+        read_idx = 0
+
+        def mock_readline():
+            nonlocal read_idx
+            if read_idx < len(lines):
+                line = lines[read_idx]
+                read_idx += 1
+                return line
+            return ""
+
+        mock_process.stdout.readline = mock_readline
+        mock_process.poll.return_value = 0
+        mock_process.stdin.write = MagicMock()
+        mock_process.stdin.flush = MagicMock()
+
+        client._process = mock_process
+        client._state = CodexConnectionState.CONNECTED
+
+        reader_task = asyncio.create_task(client._read_loop())
+        await asyncio.wait_for(reader_task, timeout=2.0)
+
+        assert received["method"] == "mcpServer/elicitation/request"
+        assert received["params"]["serverName"] == "gobby"
+        assert received["params"]["_meta"]["codex_approval_kind"] == "mcp_tool_call"
+
+    @pytest.mark.asyncio
+    async def test_turn_started_notification_is_enriched_with_prompt(self) -> None:
+        """turn/started notifications should carry the original prompt when available."""
+        client = CodexAppServerClient()
+        received: dict = {}
+
+        def handler(method: str, params: dict) -> None:
+            received["method"] = method
+            received["params"] = params
+
+        client.add_notification_handler("turn/started", handler)
+        client._pending_turn_prompts_by_thread["thr-1"] = "hello world"
+
+        notification_msg = {
+            "jsonrpc": "2.0",
+            "method": "turn/started",
+            "params": {
+                "threadId": "thr-1",
+                "turn": {"id": "turn-1", "status": "inProgress"},
+            },
+        }
+
+        mock_process = MagicMock()
+        lines = [json.dumps(notification_msg) + "\n"]
+        read_idx = 0
+
+        def mock_readline():
+            nonlocal read_idx
+            if read_idx < len(lines):
+                line = lines[read_idx]
+                read_idx += 1
+                return line
+            return ""
+
+        mock_process.stdout.readline = mock_readline
+        mock_process.poll.return_value = 0
+        mock_process.stdin.write = MagicMock()
+        mock_process.stdin.flush = MagicMock()
+
+        client._process = mock_process
+        client._state = CodexConnectionState.CONNECTED
+
+        reader_task = asyncio.create_task(client._read_loop())
+        await asyncio.wait_for(reader_task, timeout=2.0)
+
+        assert received["method"] == "turn/started"
+        assert received["params"]["prompt"] == "hello world"
+
+    @pytest.mark.asyncio
     async def test_distinguishes_approval_from_response(self) -> None:
         """Incoming requests (id+method) don't interfere with pending response futures."""
         client = CodexAppServerClient()
@@ -2552,6 +2732,69 @@ class TestCodexAdapterApprovalHandling:
         result = await adapter.handle_approval_request(
             "unknown/requestApproval",
             {"threadId": "thr-1"},
+        )
+
+        assert result == {"decision": "accept"}
+        mock_hm.handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_auto_accepts_safe_mcp_proxy_discovery(self) -> None:
+        """Safe MCP proxy discovery should bypass Codex approval hooks."""
+        mock_hm = MagicMock()
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thr-mcp-safe",
+                "itemId": "item-mcp-safe",
+                "name": "mcp__gobby__list_mcp_servers",
+                "arguments": {},
+            },
+        )
+
+        assert result == {"decision": "accept"}
+        mock_hm.handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_auto_accepts_safe_mcp_elicitation(self) -> None:
+        """Safe MCP elicitation prompts should bypass Codex approval hooks."""
+        mock_hm = MagicMock()
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "mcpServer/elicitation/request",
+            {
+                "threadId": "thr-mcp-safe",
+                "turnId": "turn-1",
+                "serverName": "gobby",
+                "mode": "form",
+                "message": 'Allow the gobby MCP server to run tool "list_mcp_servers"?',
+                "requestedSchema": {"type": "object", "properties": {}},
+                "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_params": {}},
+            },
+        )
+
+        assert result == {"action": "accept", "content": None, "_meta": None}
+        mock_hm.handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_auto_accepts_safe_canvas_calls(self) -> None:
+        """UI-only canvas tools should bypass Codex approval hooks."""
+        mock_hm = MagicMock()
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thr-canvas-safe",
+                "itemId": "item-canvas-safe",
+                "name": "mcp__gobby__call_tool",
+                "arguments": {
+                    "server_name": "gobby-canvas",
+                    "tool_name": "render_surface",
+                },
+            },
         )
 
         assert result == {"decision": "accept"}
@@ -3158,7 +3401,7 @@ class TestCodexWorkflowEnforcementIntegration:
 
     @pytest.mark.asyncio
     async def test_full_chain_allowed_mcp_call(self) -> None:
-        """Full chain: Codex MCP approval → HookEvent → allow → accept."""
+        """Full chain: non-safe Codex MCP approval → HookEvent → allow → accept."""
         mock_hm = MagicMock()
         mock_hm.handle.return_value = HookResponse(decision="allow")
         adapter = CodexAdapter(hook_manager=mock_hm)
@@ -3168,20 +3411,56 @@ class TestCodexWorkflowEnforcementIntegration:
             {
                 "threadId": "thr-mcp",
                 "itemId": "item-mcp",
-                "name": "mcp__gobby__get_tool_schema",
+                "name": "mcp__gobby__call_tool",
                 "arguments": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
             },
         )
 
         hook_event = mock_hm.handle.call_args[0][0]
         assert hook_event.event_type == HookEventType.BEFORE_TOOL
-        assert hook_event.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert hook_event.data["tool_name"] == "mcp__gobby__call_tool"
         assert hook_event.data["tool_input"] == {
             "server_name": "gobby-tasks",
             "tool_name": "claim_task",
         }
-        assert hook_event.data["mcp_server"] == "gobby"
-        assert hook_event.data["mcp_tool"] == "get_tool_schema"
+        assert hook_event.data["mcp_server"] == "gobby-tasks"
+        assert hook_event.data["mcp_tool"] == "claim_task"
         assert hook_event.source == SessionSource.CODEX
 
         assert result == {"decision": "accept"}
+
+    @pytest.mark.asyncio
+    async def test_full_chain_allowed_mcp_elicitation(self) -> None:
+        """Full chain: Codex MCP elicitation → HookEvent → allow → accept."""
+        mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(decision="allow")
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "mcpServer/elicitation/request",
+            {
+                "threadId": "thr-mcp",
+                "turnId": "turn-1",
+                "serverName": "gobby",
+                "mode": "form",
+                "message": 'Allow the gobby MCP server to run tool "call_tool"?',
+                "requestedSchema": {"type": "object", "properties": {}},
+                "_meta": {
+                    "codex_approval_kind": "mcp_tool_call",
+                    "tool_params": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+                },
+            },
+        )
+
+        hook_event = mock_hm.handle.call_args[0][0]
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.data["tool_name"] == "mcp__gobby__call_tool"
+        assert hook_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+        }
+        assert hook_event.data["mcp_server"] == "gobby-tasks"
+        assert hook_event.data["mcp_tool"] == "claim_task"
+        assert hook_event.source == SessionSource.CODEX
+
+        assert result == {"action": "accept", "content": None, "_meta": None}

@@ -27,6 +27,16 @@ def _is_terminal_session(session: Any) -> bool:
     return getattr(session, "session_type", None) == "terminal"
 
 
+def _as_str(value: Any) -> str | None:
+    """Return a JSON-safe string or None."""
+    return value if isinstance(value, str) else None
+
+
+def _as_int(value: Any, default: int | None = None) -> int | None:
+    """Return a JSON-safe int or the provided default."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
 async def _resolve_agent_name_for_session(
     mixin: SessionControlMixin,
     session_id: str,
@@ -108,8 +118,13 @@ async def handle_continue_in_chat(
     # --- Resolve SDK session ID for native resume ---
     sdk_resume_id: str | None = None
 
-    source_provider = getattr(source_session, "source", None) if source_session else None
+    source_provider = _as_str(getattr(source_session, "source", None)) if source_session else None
     effective_provider = target_provider or source_provider
+    source_title = _as_str(getattr(source_session, "title", None)) if source_session else None
+    source_chat_mode = (
+        _as_str(getattr(source_session, "chat_mode", None)) if source_session else None
+    )
+    source_model = _as_str(getattr(source_session, "model", None)) if source_session else None
     can_sdk_resume = (
         not effective_provider or not source_provider or effective_provider == source_provider
     )
@@ -199,6 +214,10 @@ async def handle_continue_in_chat(
                     updates["source"] = effective_provider
                 if target_model and getattr(target_session, "model", None) != target_model:
                     updates["model"] = target_model
+                if source_title and getattr(target_session, "title", None) != source_title:
+                    updates["title"] = source_title
+                if source_chat_mode and getattr(target_session, "chat_mode", None) != source_chat_mode:
+                    updates["chat_mode"] = source_chat_mode
                 if updates:
                     await asyncio.to_thread(
                         session_manager.update,
@@ -221,6 +240,18 @@ async def handle_continue_in_chat(
                 resume_session_id=sdk_resume_id,
                 provider=effective_provider,
             )
+            if session_manager and session.db_session_id and (source_title or source_chat_mode):
+                updates: dict[str, Any] = {}
+                if source_title:
+                    updates["title"] = source_title
+                if source_chat_mode:
+                    updates["chat_mode"] = source_chat_mode
+                if updates:
+                    await asyncio.to_thread(
+                        session_manager.update,
+                        session.db_session_id,
+                        **updates,
+                    )
         except Exception as e:
             logger.error(f"Failed to create continuation session: {e}")
             await mixin._send_error(websocket, f"Failed to create session: {e}")
@@ -248,6 +279,10 @@ async def handle_continue_in_chat(
                 "source_session_id": source_session_id,
                 "db_session_id": session.db_session_id,
                 "resumed": bool(sdk_resume_id),
+                "title": source_title,
+                "source": effective_provider,
+                "model": target_model or source_model,
+                "chat_mode": source_chat_mode,
             }
         )
     )
@@ -342,8 +377,8 @@ async def handle_attach_to_session(
         )
         return
 
-    workflow_name = getattr(session, "workflow_name", None)
-    agent_run_id = getattr(session, "agent_run_id", None)
+    workflow_name = _as_str(getattr(session, "workflow_name", None))
+    agent_run_id = _as_str(getattr(session, "agent_run_id", None))
     agent_name = await _resolve_agent_name_for_session(
         mixin,
         session_id,
@@ -367,25 +402,36 @@ async def handle_attach_to_session(
         metadata["attached_session_id"] = session_id
 
     # Send response with initial messages and session metadata
-    ref = f"#{session.seq_num}" if getattr(session, "seq_num", None) else None
+    seq_num = _as_int(getattr(session, "seq_num", None))
+    ref = f"#{seq_num}" if seq_num is not None else None
     await websocket.send(
         json.dumps(
             {
                 "type": "attach_to_session_result",
                 "session_id": session_id,
-                "external_id": session.external_id,
-                "source": getattr(session, "source", "unknown"),
-                "title": getattr(session, "title", None),
-                "status": getattr(session, "status", "unknown"),
-                "model": getattr(session, "model", None),
+                "external_id": _as_str(getattr(session, "external_id", None)),
+                "source": _as_str(getattr(session, "source", None)) or "unknown",
+                "title": _as_str(getattr(session, "title", None)),
+                "status": _as_str(getattr(session, "status", None)) or "unknown",
+                "model": _as_str(getattr(session, "model", None)),
                 "ref": ref,
-                "chat_mode": getattr(session, "chat_mode", None),
-                "git_branch": getattr(session, "git_branch", None),
-                "context_window": getattr(session, "context_window", None),
-                "session_type": getattr(session, "session_type", None),
+                "chat_mode": _as_str(getattr(session, "chat_mode", None)),
+                "git_branch": _as_str(getattr(session, "git_branch", None)),
+                "context_window": _as_int(getattr(session, "context_window", None)),
+                "session_type": _as_str(getattr(session, "session_type", None)),
                 "workflow_name": workflow_name,
                 "agent_run_id": agent_run_id,
                 "agent_name": agent_name,
+                "usage_input_tokens": _as_int(getattr(session, "usage_input_tokens", 0), 0),
+                "usage_output_tokens": _as_int(getattr(session, "usage_output_tokens", 0), 0),
+                "usage_cache_read_tokens": _as_int(
+                    getattr(session, "usage_cache_read_tokens", 0),
+                    0,
+                ),
+                "usage_cache_creation_tokens": _as_int(
+                    getattr(session, "usage_cache_creation_tokens", 0),
+                    0,
+                ),
                 "messages": messages,
                 "total_count": total_count,
             }

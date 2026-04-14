@@ -100,6 +100,12 @@ describe('useTasks', () => {
     expect(mockFetch.fn).toHaveBeenCalledWith(
       expect.stringContaining('limit=500'),
     )
+    expect(mockFetch.fn).toHaveBeenCalledWith(
+      expect.stringContaining('sort_by=updated_at'),
+    )
+    expect(mockFetch.fn).toHaveBeenCalledWith(
+      expect.stringContaining('sort_order=desc'),
+    )
   })
 
   it('re-fetches when filters change', async () => {

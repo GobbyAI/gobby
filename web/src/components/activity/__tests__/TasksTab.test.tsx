@@ -194,6 +194,43 @@ describe('TasksTab', () => {
     expect(screen.getByText('Closed')).toBeTruthy()
   })
 
+  it('shows a filtered empty state when tasks exist but none match the default filters', async () => {
+    mockFetch.resetRoutes()
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      tasks: [
+        {
+          id: 'task-closed-only',
+          ref: '#777',
+          title: 'Closed only task',
+          status: 'closed',
+          priority: 2,
+          task_type: 'task',
+          parent_task_id: null,
+          created_at: '2026-04-13T00:00:00Z',
+          updated_at: '2026-04-13T00:00:00Z',
+          seq_num: 777,
+          path_cache: '777',
+          requires_user_review: false,
+          assignee: null,
+          agent_name: null,
+          sequence_order: null,
+          start_date: null,
+          due_date: null,
+          project_id: 'proj-1',
+        },
+      ],
+    })
+
+    render(<TasksTab projectId="proj-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('No tasks match filters')).toBeTruthy()
+      expect(
+        screen.getByText('Tasks exist, but none match the current task-state filters.'),
+      ).toBeTruthy()
+    })
+  })
+
   it('adds a new task when a task_created WebSocket event fires', async () => {
     render(<TasksTab projectId="proj-1" />)
 

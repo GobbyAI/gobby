@@ -196,6 +196,11 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         search: str | None = Query(None, description="Search by title"),
         limit: int = Query(50, description="Maximum results"),
         offset: int = Query(0, description="Pagination offset"),
+        sort_by: str = Query(
+            "hierarchy",
+            description="Sort order: hierarchy, updated_at, created_at, or priority",
+        ),
+        sort_order: str = Query("asc", description="Sort direction: asc or desc"),
     ) -> dict[str, Any]:
         """List tasks with optional filters and status distribution stats."""
         try:
@@ -222,6 +227,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 title_like=search,
                 limit=limit,
                 offset=offset,
+                sort_by=sort_by,
+                sort_order=sort_order,
             )
             status_counts = server.task_manager.count_by_status(project_id=resolved_project)
             total = server.task_manager.count_tasks(project_id=resolved_project)

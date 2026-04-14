@@ -256,6 +256,22 @@ describe("SessionsTab", () => {
     expect(screen.getByText(/Watching #201: Terminal Session/)).toBeTruthy();
   });
 
+  it("clears the watched pane when the selected session becomes the main chat without a parked replacement", async () => {
+    const { rerender } = render(
+      <SessionsTab focusSessionId="web-other" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Watching #203: Other Web Chat/)).toBeTruthy();
+    });
+
+    rerender(<SessionsTab chatSessionId="web-other" />);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Watching /)).toBeNull();
+    });
+  });
+
   it("shows parser mismatch empty state for unparseable transcripts", async () => {
     mockUseSessionDetail.mockReturnValue({
       messages: [],

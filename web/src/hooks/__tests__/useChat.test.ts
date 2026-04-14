@@ -5,7 +5,7 @@
  * 2. Key hook behaviors: conversation ID management, message state
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { createMockWebSocket, type MockWebSocketInstance } from '../../test/mocks/websocket'
 import { createMockFetch, type MockFetchInstance } from '../../test/mocks/fetch'
 
@@ -79,6 +79,34 @@ describe('useChat', () => {
 
     expect(mockWs.instances).toHaveLength(1)
     expect(mockWs.instances[0].url).toContain('/ws')
+  })
+
+  it('restores persisted chat messages as string content on mount', async () => {
+    mockFetch.mockJsonResponse('/api/chat/test-conversation-id/messages', {
+      messages: [
+        {
+          id: 'restored-1',
+          role: 'assistant',
+          content: 'Restored output',
+          tool_calls: [],
+          seq: 1,
+          created_at: '2026-04-14T00:00:00Z',
+        },
+      ],
+      max_seq: 1,
+    })
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(1)
+      expect(result.current.messages[0].content).toBe('Restored output')
+      expect(result.current.messages[0].contentBlocks?.[0]).toEqual({
+        type: 'text',
+        content: 'Restored output',
+      })
+    })
   })
 
   it('sets isConnected when WS opens', async () => {
@@ -1058,6 +1086,58 @@ describe('useChat', () => {
     expect(modeChanged).toHaveBeenCalledWith('bypass')
   })
 
+  it('hydrates resumed main-session metadata from session_continued', async () => {
+    mockFetch.mockJsonResponse('/api/sessions/db-session-continued', {
+      session: {
+        id: 'db-session-continued',
+        seq_num: 88,
+        title: 'Continued Session',
+        source: 'codex',
+        model: 'gpt-5.4',
+        chat_mode: 'accept_edits',
+        status: 'active',
+        usage_input_tokens: 320,
+        usage_output_tokens: 40,
+        usage_cache_read_tokens: 120,
+        usage_cache_creation_tokens: 50,
+        context_window: 200000,
+      },
+    })
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    const modeChanged = vi.fn()
+    act(() => result.current.setOnModeChanged(modeChanged))
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'session_continued',
+        conversation_id: result.current.conversationId,
+        db_session_id: 'db-session-continued',
+        source_session_id: 'source-session',
+        title: 'Continued Session',
+        source: 'codex',
+        model: 'gpt-5.4',
+        chat_mode: 'accept_edits',
+      })
+    })
+
+    await waitFor(() => {
+      expect(result.current.dbSessionId).toBe('db-session-continued')
+      expect(result.current.sessionTitle).toBe('Continued Session')
+      expect(result.current.selectedProvider).toBe('codex')
+      expect(result.current.mainSessionMeta?.title).toBe('Continued Session')
+      expect(result.current.mainSessionMeta?.model).toBe('gpt-5.4')
+      expect(result.current.contextUsage.totalInputTokens).toBe(320)
+      expect(result.current.contextUsage.contextWindow).toBe(200000)
+    })
+
+    expect(modeChanged).toHaveBeenCalledWith('accept_edits')
+  })
+
   it('handles plan_pending_approval messages', async () => {
     await loadModule()
     const { result } = renderHook(() => useChat())
@@ -1106,6 +1186,50 @@ describe('useChat', () => {
 
     expect(result.current.contextUsage.totalInputTokens).toBeGreaterThan(0)
     expect(result.current.contextUsage.contextWindow).toBe(200000)
+  })
+
+  it('hydrates context usage from attach_to_session_result without changing the main chat id', async () => {
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.observeSession?.('sess-proxy', 'proxy')
+    })
+
+    act(() => {
+      ws.simulateMessage({
+        type: 'attach_to_session_result',
+        session_id: 'sess-proxy',
+        external_id: 'proxy-ext',
+        source: 'codex',
+        title: 'Proxy Session',
+        status: 'active',
+        model: 'gpt-5.4',
+        ref: '#300',
+        session_type: 'terminal',
+        usage_input_tokens: 250,
+        usage_output_tokens: 30,
+        usage_cache_read_tokens: 90,
+        usage_cache_creation_tokens: 20,
+        context_window: 200000,
+        messages: [],
+        total_count: 0,
+      })
+    })
+
+    expect(result.current.dbSessionId).toBe('test-conversation-id')
+    expect(result.current.viewingSessionId).toBe('sess-proxy')
+    expect(result.current.attachedSessionId).toBe('sess-proxy')
+    expect(result.current.contextUsage).toMatchObject({
+      totalInputTokens: 250,
+      outputTokens: 30,
+      cacheReadTokens: 90,
+      cacheCreationTokens: 20,
+      uncachedInputTokens: 140,
+      contextWindow: 200000,
+    })
   })
 
   it('sends set_project message on connect if projectIdRef is set', async () => {

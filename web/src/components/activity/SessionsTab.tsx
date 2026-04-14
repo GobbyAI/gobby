@@ -114,6 +114,7 @@ export const SessionsTab = memo(function SessionsTab({
   const [modalMode, setModalMode] = useState<InteractionMode | null>(null);
   const [modalEntry, setModalEntry] = useState<SessionEntry | null>(null);
   const initialSelectionAppliedRef = useRef(false);
+  const selectionClearedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // No-op artifact context for MessageItem rendering
@@ -145,9 +146,7 @@ export const SessionsTab = memo(function SessionsTab({
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
       const isWatchable = (s: GobbySession) =>
-        s.source !== "pipeline" &&
-        s.source !== "cron" &&
-        s.id !== chatSessionId;
+        s.source !== "pipeline" && s.source !== "cron";
       const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
       const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
       setActivitySessions([...active, ...paused]);
@@ -224,9 +223,9 @@ export const SessionsTab = memo(function SessionsTab({
 
     // Filter out entries being expired
     return [...agentEntries, ...sessionEntries].filter(
-      (e) => !expiringIds.has(e.id),
+      (e) => !expiringIds.has(e.id) && e.id !== chatSessionId,
     );
-  }, [agents, activitySessions, expiringIds]);
+  }, [agents, activitySessions, chatSessionId, expiringIds]);
 
   // Seed the watching pane once on load, keep it stable, and only fall back
   // when the selected entry disappears or the list becomes empty.
@@ -236,6 +235,7 @@ export const SessionsTab = memo(function SessionsTab({
     }
 
     if (entries.length === 0) {
+      selectionClearedRef.current = false;
       if (selectedSessionId !== null) {
         setSelectedSessionId(null);
       }
@@ -247,6 +247,7 @@ export const SessionsTab = memo(function SessionsTab({
 
     if (!initialSelectionAppliedRef.current) {
       initialSelectionAppliedRef.current = true;
+      selectionClearedRef.current = false;
       setSelectedSessionId(hasFocusedEntry ? focusSessionId : entries[0].id);
       if (hasFocusedEntry) {
         onFocusHandled?.();
@@ -255,21 +256,38 @@ export const SessionsTab = memo(function SessionsTab({
     }
 
     if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
+      selectionClearedRef.current = false;
       setSelectedSessionId(focusSessionId);
       onFocusHandled?.();
       return;
     }
 
     if (!selectedSessionId) {
+      if (selectionClearedRef.current) {
+        return;
+      }
       setSelectedSessionId(entries[0].id);
       return;
     }
 
     const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
     if (!stillPresent) {
+      if (selectedSessionId === chatSessionId && !hasFocusedEntry) {
+        selectionClearedRef.current = true;
+        setSelectedSessionId(null);
+        return;
+      }
+      selectionClearedRef.current = false;
       setSelectedSessionId(entries[0].id);
     }
-  }, [entries, focusSessionId, loading, onFocusHandled, selectedSessionId]);
+  }, [
+    chatSessionId,
+    entries,
+    focusSessionId,
+    loading,
+    onFocusHandled,
+    selectedSessionId,
+  ]);
 
   // Fetch selected session messages
   const { messages, isLoading, transcriptStatus } =
@@ -314,6 +332,7 @@ export const SessionsTab = memo(function SessionsTab({
   }, [chatMessages.length]);
 
   const handleSelect = useCallback((id: string) => {
+    selectionClearedRef.current = false;
     setSelectedSessionId(id);
   }, []);
 

@@ -228,6 +228,8 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     const params = new URLSearchParams()
     if (projectId) params.set('project_id', projectId)
     params.set('limit', '500')
+    params.set('sort_by', 'updated_at')
+    params.set('sort_order', 'desc')
     fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : { tasks: [] }))
       .then((data) => setTasks(data.tasks ?? []))
@@ -459,6 +461,11 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
         {filtered.length === 0 ? (
           <div className="activity-tab-empty">
             <p>No tasks match filters</p>
+            {tasks.length > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Tasks exist, but none match the current task-state filters.
+              </p>
+            )}
           </div>
         ) : (
           <>

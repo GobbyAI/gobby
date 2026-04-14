@@ -168,6 +168,7 @@ export interface SwappedSessionTarget {
 export interface ChatState {
   messages: ChatMessage[];
   sessionRef: string | null;
+  sessionTitle?: string | null;
   currentBranch: string | null;
   worktreePath: string | null;
   isStreaming: boolean;
@@ -222,6 +223,7 @@ export interface ChatState {
   conversationSwitchKey?: number;
   viewSession?: (sessionId: string) => void;
   clearViewingSession?: () => void;
+  mainSessionMeta?: SessionObservationMeta | null;
   viewingSessionId?: string | null;
   viewingSessionMeta?: SessionObservationMeta | null;
   attachedSessionId?: string | null;
