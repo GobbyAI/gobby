@@ -313,6 +313,13 @@ describe("ChatPage", () => {
       );
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
     });
+
+    const statusBar = screen.getByTestId("agent-status-bar");
+    const chatInput = screen.getByTestId("chat-input");
+    expect(
+      statusBar.compareDocumentPosition(chatInput) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("continues non-autonomous terminal swaps directly in web chat", async () => {

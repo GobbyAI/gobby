@@ -363,7 +363,10 @@ def _visual_width(text: str) -> int:
 
 
 def _truncate_to_width(text: str, width: int) -> str:
-    """Left-truncate a string to fit a visual width, appending an ellipsis if cut."""
+    """Truncate a string from the right to fit a visual width, appending an ellipsis if cut.
+
+    Edge cases: returns "" for width <= 0; returns "…" for width == 1.
+    """
     if width <= 0:
         return ""
     if _visual_width(text) <= width:

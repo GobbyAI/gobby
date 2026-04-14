@@ -129,8 +129,8 @@ def register_message_routes(
                     "session_source": None,
                     "detected_source": None,
                     "source_mismatch": False,
-                    "raw_record_count": 0,
-                    "parsed_message_count": 0,
+                    "raw_record_count": None,
+                    "parsed_message_count": None,
                 }
 
             transcript_path = _session_attr(session, "transcript_path")
@@ -141,6 +141,9 @@ def register_message_routes(
             archive_path = archive_dir / f"{external_id}.jsonl.gz" if external_id else None
             archive_exists = bool(archive_path and archive_path.is_file())
 
+            # Without a transcript_reader we can't inspect contents — report
+            # "uninspected" rather than lying "empty" when a transcript exists
+            # on disk. Counts are left as None for the same reason.
             result: dict[str, Any] = {
                 "session_id": session_id,
                 "live_exists": live_exists,
@@ -150,12 +153,14 @@ def register_message_routes(
                 else "archive_only"
                 if archive_exists
                 else "missing",
-                "content_state": "empty" if (live_exists or archive_exists) else "missing",
+                "content_state": "uninspected"
+                if (live_exists or archive_exists)
+                else "missing",
                 "session_source": _session_attr(session, "source"),
                 "detected_source": None,
                 "source_mismatch": False,
-                "raw_record_count": 0,
-                "parsed_message_count": 0,
+                "raw_record_count": None,
+                "parsed_message_count": None,
             }
             if archive_exists and archive_path is not None:
                 result["compressed_size"] = archive_path.stat().st_size
@@ -174,11 +179,16 @@ def register_message_routes(
             from fastapi.responses import Response
 
             sm = get_session_manager()
-            session = sm.get_session(session_id)
+            session = _get_session_record(sm, session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            transcript_path = _session_attr(session, "transcript_path")
+            external_id = _session_attr(session, "external_id")
 
             # Try original JSONL path first
-            if session and session.transcript_path and os.path.isfile(session.transcript_path):
-                with open(session.transcript_path, "rb") as f:
+            if transcript_path and os.path.isfile(transcript_path):
+                with open(transcript_path, "rb") as f:
                     raw = f.read()
                 return Response(
                     content=raw,
@@ -187,8 +197,8 @@ def register_message_routes(
                 )
 
             # Fall back to gzip archive
-            if session and session.external_id:
-                archive_path = get_archive_dir() / f"{session.external_id}.jsonl.gz"
+            if external_id:
+                archive_path = get_archive_dir() / f"{external_id}.jsonl.gz"
                 if archive_path.is_file():
                     with gzip.open(archive_path, "rb") as f:
                         raw = f.read()
@@ -212,23 +222,27 @@ def register_message_routes(
         """Restore a transcript from archive to disk for CLI resume."""
         try:
             sm = get_session_manager()
-            session = sm.get_session(session_id)
-            if not session or not session.external_id or not session.transcript_path:
+            session = _get_session_record(sm, session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            external_id = _session_attr(session, "external_id")
+            transcript_path = _session_attr(session, "transcript_path")
+            if not external_id or not transcript_path:
                 raise HTTPException(
                     status_code=404,
-                    detail="Session not found or missing external_id/transcript_path",
+                    detail="Session missing external_id/transcript_path",
                 )
-            restored = restore_transcript(session.external_id, session.transcript_path)
+            restored = restore_transcript(external_id, transcript_path)
             if not restored:
                 raise HTTPException(
                     status_code=404,
                     detail="No transcript archive found or original still exists",
                 )
-            size = os.path.getsize(session.transcript_path)
+            size = os.path.getsize(transcript_path)
             return {
                 "status": "restored",
                 "session_id": session_id,
-                "path": session.transcript_path,
+                "path": transcript_path,
                 "size": size,
             }
         except HTTPException:

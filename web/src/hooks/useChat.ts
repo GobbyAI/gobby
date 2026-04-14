@@ -893,6 +893,7 @@ export function useChat() {
       projectId?: string | null;
       provider?: string | null;
       model?: string | null;
+      chatMode?: ChatMode | null;
       forceNew?: boolean;
     }): Promise<string | null> => {
       if (!options?.forceNew && dbSessionIdRef.current) {
@@ -906,7 +907,7 @@ export function useChat() {
         projectId: options?.projectId ?? projectIdRef.current,
         provider: options?.provider ?? selectedProviderRef.current,
         model: options?.model ?? null,
-        chatMode: currentModeRef.current,
+        chatMode: options?.chatMode ?? currentModeRef.current,
       })
         .then((session) => {
           bindActiveSession(session.id);
@@ -2096,9 +2097,20 @@ export function useChat() {
       const continuationModel =
         options?.model ??
         (typeof sourceSession?.model === "string" ? sourceSession.model : null);
+      // Propagate the source session's chat mode into the new continuation
+      // session BEFORE calling ensureMainSession — otherwise the server-side
+      // session is created with whatever local mode happened to be active.
+      const sourceChatMode =
+        typeof sourceSession?.chat_mode === "string"
+          ? (sourceSession.chat_mode as ChatMode)
+          : null;
 
       if (continuationProvider) {
         setSelectedProvider(continuationProvider);
+      }
+      if (sourceChatMode) {
+        currentModeRef.current = sourceChatMode;
+        onModeChangedRef.current?.(sourceChatMode);
       }
 
       const newConversationId = await ensureMainSession({
@@ -2109,6 +2121,7 @@ export function useChat() {
             : projectIdRef.current),
         provider: continuationProvider,
         model: continuationModel,
+        chatMode: sourceChatMode,
         forceNew: true,
       });
       if (!newConversationId) {
@@ -2152,9 +2165,7 @@ export function useChat() {
           cacheCreationTokens: cacheCreation,
         });
       }
-      if (s?.chat_mode) {
-        onModeChangedRef.current?.(s.chat_mode as ChatMode);
-      }
+      // chat_mode was already propagated above, before ensureMainSession.
 
       // Tell backend to prepare the continuation session
       if (wsRef.current?.readyState === WebSocket.OPEN) {

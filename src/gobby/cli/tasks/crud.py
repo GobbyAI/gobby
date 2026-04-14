@@ -212,7 +212,16 @@ def list_tasks(
     if effective_group_by is None and project_id is None:
         effective_group_by = "project"
 
-    prefixes = compute_tree_prefixes(display_tasks, primary_ids)
+    # Tree prefixes are precomputed against the global display order. When
+    # grouping by lifecycle, children can land in a different bucket than
+    # their parent, leaving glyphs pointing at rows that aren't adjacent.
+    # Skip the prefixes in that case so the tree doesn't render misleading
+    # connectors.
+    prefixes = (
+        compute_tree_prefixes(display_tasks, primary_ids)
+        if effective_group_by != "lifecycle"
+        else None
+    )
     click.echo(f"Found {len(tasks_list)} {label}:")
     rendered = format_task_list(
         display_tasks,

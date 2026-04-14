@@ -40,7 +40,7 @@ The MCP tools for expansion live in `src/gobby/mcp_proxy/tools/tasks/_expansion.
 
 ## Validation Flow
 
-``` 
+```text
 validate_task() called
   → Gather commit diffs linked to task
   → Send to LLM with validation_criteria

@@ -554,7 +554,11 @@ export function ChatPage({
               isAutonomousSession={isAutonomousSession}
               onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
               onDetach={
-                isAutonomousSession ? handleAutonomousDetach : chat.clearViewingSession
+                isAutonomousSession
+                  ? handleAutonomousDetach
+                  : chat.attachedSessionId
+                    ? chat.onDetachFromSession
+                    : chat.clearViewingSession
               }
             />
           )}

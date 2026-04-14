@@ -38,6 +38,9 @@ _APPLY_PATCH_FILE_RE = _re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$")
 _APPLY_PATCH_MOVE_RE = _re.compile(r"^\*\*\* Move to: (.+)$")
 _SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<"})
 
+# Characters that strongly imply an inline sed/awk script rather than a file path.
+_SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
+
 
 def is_shell_tool(tool_name: Any) -> bool:
     """Return True when ``tool_name`` represents shell command execution."""
@@ -183,6 +186,22 @@ def _shell_positional_args(parts: list[str]) -> list[str]:
     ]
 
 
+def _looks_file_like(candidate: str) -> bool:
+    """Return True when ``candidate`` looks like a file path, not an inline script.
+
+    Used to gate sed/awk's last positional arg so we don't classify an inline
+    script (``'s/foo/bar/'``, ``'{print $1}'``) as a file that was read.
+    """
+    if not candidate or any(ch in candidate for ch in _SCRIPT_LIKE_CHARS):
+        return False
+    # Must carry a path separator or an extension-like dot that isn't a leading/solo dot.
+    if "/" in candidate:
+        return True
+    if "." in candidate and candidate not in {".", ".."}:
+        return True
+    return False
+
+
 def _normalize_shell_tool_metadata(command: str) -> tuple[str | None, str | None]:
     """Infer canonical kind/path from simple shell read and search commands."""
     try:
@@ -206,8 +225,9 @@ def _normalize_shell_tool_metadata(command: str) -> tuple[str | None, str | None
         return "read", None
 
     if cmd in {"sed", "awk"} and len(parts) >= 2:
-        candidate = parts[-1]
-        if candidate and candidate not in _SHELL_CONTROL_TOKENS and not candidate.startswith("-"):
+        positional = _shell_positional_args(parts)
+        candidate = positional[-1] if positional else None
+        if candidate and _looks_file_like(candidate):
             return "read", candidate
         return "read", None
 

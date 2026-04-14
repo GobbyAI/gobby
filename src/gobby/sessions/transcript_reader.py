@@ -450,42 +450,65 @@ class TranscriptReader:
         raw_record_count = 0
         parsed_message_count = 0
         detected_source: str | None = None
+        parse_failed = False
 
         if live_exists and transcript_path:
             if _is_json_session_file(transcript_path):
-                data = await asyncio.to_thread(self._read_json_file, transcript_path)
-                raw_record_count = len(data.get("messages", [])) if isinstance(data, dict) else 0
-                effective_source, detected_source = _resolve_effective_source(
-                    session,
-                    transcript_path=transcript_path,
-                    data=data,
-                    session_id=session_id,
-                )
-                parsed_message_count = len(
-                    _parse_json_session(data, effective_source, session_id=session_id)
-                )
+                try:
+                    data = await asyncio.to_thread(self._read_json_file, transcript_path)
+                    raw_record_count = (
+                        len(data.get("messages", [])) if isinstance(data, dict) else 0
+                    )
+                    effective_source, detected_source = _resolve_effective_source(
+                        session,
+                        transcript_path=transcript_path,
+                        data=data,
+                        session_id=session_id,
+                    )
+                    parsed_message_count = len(
+                        _parse_json_session(data, effective_source, session_id=session_id)
+                    )
+                except (json.JSONDecodeError, ValueError, OSError) as e:
+                    logger.warning(
+                        f"Failed to parse JSON transcript for session {session_id}: {e}"
+                    )
+                    parse_failed = True
             else:
-                lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
+                try:
+                    lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
+                    raw_record_count = _count_nonempty_lines(lines)
+                    effective_source, detected_source = _resolve_effective_source(
+                        session,
+                        transcript_path=transcript_path,
+                        lines=lines,
+                        session_id=session_id,
+                    )
+                    parsed_message_count = len(
+                        _parse_lines(lines, effective_source, session_id=session_id)
+                    )
+                except (json.JSONDecodeError, ValueError, OSError) as e:
+                    logger.warning(
+                        f"Failed to parse JSONL transcript for session {session_id}: {e}"
+                    )
+                    parse_failed = True
+        elif archive_exists and archive_path is not None:
+            try:
+                lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
                 raw_record_count = _count_nonempty_lines(lines)
-                effective_source, detected_source = _resolve_effective_source(
+                # Pass transcript_path=None so a stale live path can't override
+                # content sniffing of the archive we actually decompressed.
+                _, detected_source = _resolve_effective_source(
                     session,
-                    transcript_path=transcript_path,
+                    transcript_path=None,
                     lines=lines,
                     session_id=session_id,
                 )
                 parsed_message_count = len(
-                    _parse_lines(lines, effective_source, session_id=session_id)
+                    await self._get_parsed_messages_from_archive(session_id)
                 )
-        elif archive_exists and archive_path is not None:
-            lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
-            raw_record_count = _count_nonempty_lines(lines)
-            _, detected_source = _resolve_effective_source(
-                session,
-                transcript_path=getattr(session, "transcript_path", None),
-                lines=lines,
-                session_id=session_id,
-            )
-            parsed_message_count = len(await self._get_parsed_messages_from_archive(session_id))
+            except (json.JSONDecodeError, ValueError, OSError, gzip.BadGzipFile) as e:
+                logger.warning(f"Failed to read archive for session {session_id}: {e}")
+                parse_failed = True
 
         availability = "missing"
         if live_exists:
@@ -495,7 +518,9 @@ class TranscriptReader:
 
         content_state = "missing"
         if availability != "missing":
-            if parsed_message_count > 0:
+            if parse_failed:
+                content_state = "unparseable"
+            elif parsed_message_count > 0:
                 content_state = "messages"
             elif raw_record_count > 0 and detected_source is None:
                 content_state = "unparseable"
@@ -532,9 +557,11 @@ class TranscriptReader:
 
         try:
             lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+            # Prefer content-sniffing over any stale live transcript path so
+            # an incorrect session.transcript_path can't mislabel the source.
             source, _ = _resolve_effective_source(
                 session,
-                transcript_path=getattr(session, "transcript_path", None),
+                transcript_path=None,
                 lines=lines,
                 session_id=session_id,
             )
@@ -653,9 +680,10 @@ class TranscriptReader:
 
         try:
             lines = await asyncio.to_thread(_decompress_archive, str(archive_path))
+            # Content-sniff first; ignore any stale session.transcript_path here.
             source, _ = _resolve_effective_source(
                 session,
-                transcript_path=getattr(session, "transcript_path", None),
+                transcript_path=None,
                 lines=lines,
                 session_id=session_id,
             )

@@ -1,5 +1,5 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Tree, type NodeRendererProps } from 'react-arborist'
+import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { Markdown } from '../chat/Markdown'
 import { useNow } from '../../hooks/useNow'
@@ -202,6 +202,15 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   const [detailLoading, setDetailLoading] = useState(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [treeHeight, setTreeHeight] = useState(300)
+  const treeRef = useRef<TreeApi<TreeNode> | null>(null)
+  // Visible row count, sourced from react-arborist's TreeApi.visibleNodes
+  // so it tracks user collapse/expand state. Initialized lazily once the
+  // tree mounts; updated on every onToggle.
+  const [arboristVisibleCount, setArboristVisibleCount] = useState<number | null>(null)
+  const syncVisibleCount = useCallback(() => {
+    const n = treeRef.current?.visibleNodes?.length
+    setArboristVisibleCount(typeof n === 'number' ? n : null)
+  }, [])
 
   // Fetch tasks, then apply canonical bucket filters client-side.
   const abortRef = useRef<AbortController | null>(null)
@@ -381,8 +390,19 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     return buildTree(visibleTasks)
   }, [filtered, tasks, visibleCount])
 
+  // Resync the visible row count whenever the tree's data shape changes —
+  // this catches mount and any case where filters/search add or remove rows
+  // before the user touches the tree manually.
+  useEffect(() => {
+    syncVisibleCount()
+  }, [treeData, syncVisibleCount])
+
   const hasMore = filtered.length > visibleCount
-  const visibleTreeRowCount = useMemo(() => countVisibleNodes(treeData), [treeData])
+  const fallbackVisibleCount = useMemo(() => countVisibleNodes(treeData), [treeData])
+  // Prefer the authoritative count from the TreeApi when the tree has
+  // mounted; otherwise use the recursive fallback so initial render still
+  // gets a sensible viewport height.
+  const visibleTreeRowCount = arboristVisibleCount ?? fallbackVisibleCount
   const unconstrainedTreeHeight = visibleTreeRowCount * TASK_ROW_HEIGHT
   const treeViewportHeight =
     selectedTaskId
@@ -436,6 +456,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
         ) : (
           <>
             <Tree<TreeNode>
+              ref={treeRef}
               data={treeData}
               openByDefault={true}
               width="100%"
@@ -445,6 +466,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
               searchTerm={search}
               searchMatch={searchMatch}
               onActivate={(node) => setSelectedTaskId(node.data.task.id)}
+              onToggle={syncVisibleCount}
               disableDrag
               disableDrop
             >
