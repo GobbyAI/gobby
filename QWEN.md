@@ -12,6 +12,7 @@ Gobby is a **local-first daemon and workflow control plane for AI coding tools**
 - "Built with Gobby" — most of the codebase was written by AI agents using Gobby's own task system
 
 **Core subsystems:**
+
 | Module | Purpose |
 |---|---|
 | `cli/` | Click-based CLI commands (~25 subcommands) |
