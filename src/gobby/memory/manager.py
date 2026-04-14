@@ -490,6 +490,20 @@ class MemoryManager:
         return merged[:limit]
 
     @staticmethod
+    def _rrf_scores(
+        *ranked_lists: list[str],
+        k: int = 60,
+    ) -> dict[str, float]:
+        """Compute Reciprocal Rank Fusion scores for one or more ranked lists."""
+        scores: dict[str, float] = {}
+
+        for ranked in ranked_lists:
+            for rank, mid in enumerate(ranked):
+                scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
+
+        return scores
+
+    @staticmethod
     def _rrf_merge(
         *ranked_lists: list[str],
         k: int = 60,
@@ -507,12 +521,7 @@ class MemoryManager:
         Returns:
             Merged list of memory IDs sorted by RRF score (descending)
         """
-        scores: dict[str, float] = {}
-
-        for ranked in ranked_lists:
-            for rank, mid in enumerate(ranked):
-                scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
-
+        scores = MemoryManager._rrf_scores(*ranked_lists, k=k)
         return sorted(scores, key=lambda mid: scores[mid], reverse=True)
 
     async def search_memories(
@@ -554,6 +563,82 @@ class MemoryManager:
             query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = getattr(self.config, "temporal_decay_half_life_days", 30.0)
             effective_min_score = min_score if min_score is not None else 0.0
+
+            def build_results(
+                *,
+                merged_ids: list[str],
+                ranking_score_map: dict[str, float],
+                qdrant_score_map: dict[str, float],
+                qdrant_set: set[str],
+                fts_set: set[str],
+                graph_set: set[str] | None = None,
+                rrf_applied: bool = False,
+            ) -> list[Memory]:
+                scored: list[tuple[Memory, float, float | None]] = []
+
+                for memory_id in merged_ids:
+                    try:
+                        mem = self.storage.get_memory(memory_id)
+                    except ValueError:
+                        continue
+
+                    if project_id and mem.project_id and mem.project_id != project_id:
+                        continue
+                    if memory_type and mem.memory_type != memory_type:
+                        continue
+                    if tags_all and not all(t in (mem.tags or []) for t in tags_all):
+                        continue
+                    if tags_any and not any(t in (mem.tags or []) for t in tags_any):
+                        continue
+                    if tags_none and any(t in (mem.tags or []) for t in tags_none):
+                        continue
+
+                    raw_semantic_score = qdrant_score_map.get(memory_id)
+                    decay_factor: float | None = None
+                    similarity: float | None = None
+                    if raw_semantic_score is not None:
+                        similarity = raw_semantic_score
+                        if mem.source_type == "user":
+                            similarity *= _USER_SOURCE_BOOST
+                        decay_factor = temporal_decay(mem.updated_at, half_life)
+                        similarity *= decay_factor
+
+                    if effective_min_score > 0 and (
+                        similarity is None or similarity < effective_min_score
+                    ):
+                        continue
+
+                    sources = []
+                    if memory_id in qdrant_set:
+                        sources.append("semantic")
+                    if graph_set and memory_id in graph_set:
+                        sources.append("graph")
+                    if memory_id in fts_set:
+                        sources.append("fts5")
+
+                    mem.search_via = "|".join(sources) or "unknown"
+                    mem.raw_semantic_score = raw_semantic_score
+                    mem.temporal_decay_factor = decay_factor
+                    mem.similarity = similarity
+                    mem.ranking_score = ranking_score_map.get(memory_id, 0.0)
+                    if rrf_applied:
+                        mem.ranking_mode = "rrf"
+                    elif raw_semantic_score is not None:
+                        mem.ranking_mode = "semantic_only"
+                    else:
+                        mem.ranking_mode = "nonsemantic_fallback"
+
+                    scored.append((mem, mem.ranking_score, similarity))
+
+                scored.sort(
+                    key=lambda item: (
+                        item[2] is not None,
+                        item[2] if item[2] is not None else float("-inf"),
+                        item[1],
+                    ),
+                    reverse=True,
+                )
+                return [mem for mem, _, _ in scored[:limit]]
 
             # Build filters for VectorStore
             filters: dict[str, Any] = {}
@@ -607,75 +692,42 @@ class MemoryManager:
                 else:
                     fts_ranked = fts_result
 
-                # Pre-filter Qdrant results by minimum score threshold
-                if effective_min_score > 0:
-                    qdrant_results = [
-                        (mid, score)
-                        for mid, score in qdrant_results
-                        if score >= effective_min_score
-                    ]
-
-                # Build Qdrant ranked list (by score)
+                qdrant_score_map = dict(qdrant_results)
                 qdrant_ranked = [mid for mid, _ in qdrant_results]
 
-                # Merge all sources via RRF
                 rrf_lists = [rl for rl in (qdrant_ranked, graph_ranked, fts_ranked) if rl]
                 if len(rrf_lists) > 1:
-                    merged_ids = self._rrf_merge(*rrf_lists, k=rrf_k)
+                    ranking_score_map = self._rrf_scores(*rrf_lists, k=rrf_k)
+                    merged_ids = sorted(
+                        ranking_score_map,
+                        key=lambda memory_id: ranking_score_map[memory_id],
+                        reverse=True,
+                    )
+                    rrf_applied = True
                 elif rrf_lists:
                     merged_ids = rrf_lists[0]
+                    rrf_applied = False
+                    if qdrant_ranked:
+                        ranking_score_map = qdrant_score_map.copy()
+                    else:
+                        ranking_score_map = self._rrf_scores(merged_ids, k=rrf_k)
                 else:
                     merged_ids = []
+                    rrf_applied = False
+                    ranking_score_map = {}
 
-                # Lookup sets for provenance tracking
                 qdrant_set = set(qdrant_ranked)
                 graph_set = set(graph_ranked)
                 fts_set = set(fts_ranked)
-
-                # Resolve memories and apply filters
-                scored: list[tuple[Memory, float]] = []
-                for rank, memory_id in enumerate(merged_ids):
-                    try:
-                        mem = self.storage.get_memory(memory_id)
-                    except ValueError:
-                        continue
-                    # Defense-in-depth: skip cross-project memories that leaked through graph
-                    if project_id and mem.project_id and mem.project_id != project_id:
-                        continue
-                    if memory_type and mem.memory_type != memory_type:
-                        continue
-                    if tags_all and not all(t in (mem.tags or []) for t in tags_all):
-                        continue
-                    if tags_any and not any(t in (mem.tags or []) for t in tags_any):
-                        continue
-                    if tags_none and any(t in (mem.tags or []) for t in tags_none):
-                        continue
-
-                    # Use RRF rank as primary ordering; apply user source boost to break ties
-                    base_score = 1.0 / (rank + 1)
-                    in_qdrant = memory_id in qdrant_set
-                    in_graph = memory_id in graph_set
-                    in_fts = memory_id in fts_set
-                    sources = []
-                    if in_qdrant:
-                        sources.append("semantic")
-                    if in_graph:
-                        sources.append("graph")
-                    if in_fts:
-                        sources.append("fts5")
-                    via = "|".join(sources) or "unknown"
-                    if mem.source_type == "user":
-                        base_score *= _USER_SOURCE_BOOST
-                        via += "*user_boost"
-                    base_score *= temporal_decay(mem.updated_at, half_life)
-                    via += "*temporal_decay"
-                    mem.search_via = via
-                    scored.append((mem, base_score))
-
-                scored.sort(key=lambda x: x[1], reverse=True)
-                for mem, score in scored[:limit]:
-                    mem.similarity = score
-                memories = [mem for mem, _ in scored[:limit]]
+                memories = build_results(
+                    merged_ids=merged_ids,
+                    ranking_score_map=ranking_score_map,
+                    qdrant_score_map=qdrant_score_map,
+                    qdrant_set=qdrant_set,
+                    fts_set=fts_set,
+                    graph_set=graph_set,
+                    rrf_applied=rrf_applied,
+                )
             else:
                 # Qdrant + FTS5 path (no graph search)
                 rrf_k = getattr(self.config, "neo4j_rrf_k", 60)
@@ -703,70 +755,40 @@ class MemoryManager:
                 else:
                     fts_ranked = fts_result
 
-                # Pre-filter Qdrant by min score
-                if effective_min_score > 0:
-                    qdrant_results = [
-                        (mid, score)
-                        for mid, score in qdrant_results
-                        if score >= effective_min_score
-                    ]
-
                 qdrant_ranked = [mid for mid, _ in qdrant_results]
                 qdrant_score_map = dict(qdrant_results)
                 fts_set = set(fts_ranked)
                 qdrant_set = set(qdrant_ranked)
-                use_rrf = bool(qdrant_ranked and fts_ranked)
 
-                # Merge via RRF when both sources return results;
-                # otherwise use the single source directly
-                if use_rrf:
-                    merged_ids = self._rrf_merge(qdrant_ranked, fts_ranked, k=rrf_k)
+                if qdrant_ranked and fts_ranked:
+                    ranking_score_map = self._rrf_scores(qdrant_ranked, fts_ranked, k=rrf_k)
+                    merged_ids = sorted(
+                        ranking_score_map,
+                        key=lambda memory_id: ranking_score_map[memory_id],
+                        reverse=True,
+                    )
+                    rrf_applied = True
                 elif qdrant_ranked:
                     merged_ids = qdrant_ranked
+                    ranking_score_map = qdrant_score_map.copy()
+                    rrf_applied = False
                 elif fts_ranked:
                     merged_ids = fts_ranked
+                    ranking_score_map = self._rrf_scores(fts_ranked, k=rrf_k)
+                    rrf_applied = False
                 else:
                     merged_ids = []
+                    ranking_score_map = {}
+                    rrf_applied = False
 
-                scored = []
-                for rank, memory_id in enumerate(merged_ids):
-                    try:
-                        mem = self.storage.get_memory(memory_id)
-                    except ValueError:
-                        continue
-                    if memory_type and mem.memory_type != memory_type:
-                        continue
-                    if tags_all and not all(t in (mem.tags or []) for t in tags_all):
-                        continue
-                    if tags_any and not any(t in (mem.tags or []) for t in tags_any):
-                        continue
-                    if tags_none and any(t in (mem.tags or []) for t in tags_none):
-                        continue
-
-                    # Use cosine similarity when Qdrant is the sole source
-                    # (preserves score-based ranking); use RRF rank otherwise
-                    if use_rrf:
-                        base_score = 1.0 / (rank + 1)
-                    else:
-                        base_score = qdrant_score_map.get(memory_id, 1.0 / (rank + 1))
-                    sources = []
-                    if memory_id in qdrant_set:
-                        sources.append("semantic")
-                    if memory_id in fts_set:
-                        sources.append("fts5")
-                    via = "|".join(sources) or "unknown"
-                    if mem.source_type == "user":
-                        base_score *= _USER_SOURCE_BOOST
-                        via += "*user_boost"
-                    base_score *= temporal_decay(mem.updated_at, half_life)
-                    via += "*temporal_decay"
-                    mem.search_via = via
-                    scored.append((mem, base_score))
-
-                scored.sort(key=lambda x: x[1], reverse=True)
-                for mem, s in scored[:limit]:
-                    mem.similarity = s
-                memories = [mem for mem, _ in scored[:limit]]
+                memories = build_results(
+                    merged_ids=merged_ids,
+                    ranking_score_map=ranking_score_map,
+                    qdrant_score_map=qdrant_score_map,
+                    qdrant_set=qdrant_set,
+                    fts_set=fts_set,
+                    rrf_applied=rrf_applied,
+                )
         else:
             # No query or no VectorStore — try FTS5 keyword search if we
             # have a query, otherwise fall back to recency-ordered SQLite list.

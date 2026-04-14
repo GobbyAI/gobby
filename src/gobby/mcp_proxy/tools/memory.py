@@ -169,22 +169,20 @@ def create_memory_registry(
         Args:
             query: Search query string
             limit: Maximum number of memories to return
-            min_score: Minimum similarity score (0.0-1.0). Memories below this are excluded.
+            min_score: Optional minimum semantic similarity score (0.0-1.0).
             tags_all: Memory must have ALL of these tags
             tags_any: Memory must have at least ONE of these tags
             tags_none: Memory must have NONE of these tags
         """
         try:
-            effective_min_score = (
-                min_score if min_score > 0 else memory_manager.config.min_recall_score
-            )
+            effective_min_score = min_score if min_score > 0 else 0.0
 
             # Fetch extra candidates so we can report diagnostics when
             # nothing passes the threshold.
             candidates = await memory_manager.search_memories(
                 query=query,
                 project_id=get_current_project_id(),
-                limit=limit * 2,
+                limit=limit * 2 if effective_min_score > 0 else limit,
                 min_score=None,  # no threshold — filter below
                 tags_all=tags_all,
                 tags_any=tags_any,
@@ -196,9 +194,10 @@ def create_memory_registry(
             below_count = 0
             max_score_seen = 0.0
             for m in candidates:
-                score = getattr(m, "similarity", None) or 0.0
-                max_score_seen = max(max_score_seen, score)
-                if effective_min_score > 0 and score < effective_min_score:
+                similarity = getattr(m, "similarity", None)
+                threshold_score = similarity or 0.0
+                max_score_seen = max(max_score_seen, threshold_score)
+                if effective_min_score > 0 and threshold_score < effective_min_score:
                     below_count += 1
                     continue
                 if len(above) < limit:
@@ -209,8 +208,12 @@ def create_memory_registry(
                             "type": m.memory_type,
                             "created_at": m.created_at,
                             "tags": m.tags,
-                            "similarity": score,
+                            "similarity": similarity,
                             "search_via": getattr(m, "search_via", None),
+                            "ranking_score": getattr(m, "ranking_score", None),
+                            "raw_semantic_score": getattr(m, "raw_semantic_score", None),
+                            "temporal_decay_factor": getattr(m, "temporal_decay_factor", None),
+                            "ranking_mode": getattr(m, "ranking_mode", None),
                         }
                     )
 

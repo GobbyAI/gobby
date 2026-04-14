@@ -535,6 +535,40 @@ class TestTemporalDecayIntegration:
     """Integration tests for temporal decay in search_memories."""
 
     @pytest.mark.asyncio
+    async def test_graph_enabled_path_keeps_qdrant_similarity(self) -> None:
+        """Graph-enabled search should preserve the real Qdrant score for semantic hits."""
+        llm_service = MagicMock()
+        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+
+        vs = AsyncMock()
+        embed_fn = AsyncMock(return_value=[0.1])
+
+        manager = _make_manager(
+            neo4j_url="http://localhost:7474",
+            llm_service=llm_service,
+            vector_store=vs,
+            embed_fn=embed_fn,
+        )
+        object.__setattr__(manager.config, "temporal_decay_half_life_days", 0.0)
+
+        vs.search = AsyncMock(return_value=[("mem-1", 0.675)])
+        manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._fts5_ranked = AsyncMock(return_value=[])
+
+        mem = _mock_memory("mem-1", "content")
+        mem.source_type = "agent"
+        manager.storage.get_memory = MagicMock(return_value=mem)
+
+        result = await manager.search_memories(query="test", limit=10)
+
+        assert len(result) == 1
+        assert result[0].similarity == pytest.approx(0.675)
+        assert result[0].ranking_score == pytest.approx(0.675)
+        assert result[0].search_via == "semantic"
+        assert result[0].ranking_mode == "semantic_only"
+
+    @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_graph_path(self) -> None:
         """In graph-augmented search, an older memory should rank below a recent one."""
         llm_service = MagicMock()
@@ -573,6 +607,30 @@ class TestTemporalDecayIntegration:
         result_ids = [m.id for m in result]
         assert result_ids[0] == "mem-recent"
         assert result_ids[1] == "mem-old"
+
+    @pytest.mark.asyncio
+    async def test_min_score_applies_after_temporal_decay(self) -> None:
+        """min_score filters on final semantic similarity after temporal decay."""
+        vs = AsyncMock()
+        embed_fn = AsyncMock(return_value=[0.1])
+
+        manager = _make_manager(
+            vector_store=vs,
+            embed_fn=embed_fn,
+        )
+        object.__setattr__(manager.config, "temporal_decay_half_life_days", 30.0)
+
+        now = datetime.now(UTC)
+        old = now - timedelta(days=90)
+        vs.search = AsyncMock(return_value=[("mem-old", 0.9)])
+
+        mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
+        mem_old.source_type = "agent"
+        manager.storage.get_memory = MagicMock(return_value=mem_old)
+
+        result = await manager.search_memories(query="test", limit=10, min_score=0.3)
+
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_qdrant_only(self) -> None:

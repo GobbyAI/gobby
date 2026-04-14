@@ -139,6 +139,7 @@ class TestMemoryRecallOnPrompt:
         assert body.effects[0].type == "mcp_call"
         assert body.effects[0].server == "gobby-memory"
         assert body.effects[0].tool == "search_memories"
+        assert body.effects[0].arguments["min_score"] == 0.7
 
     def test_not_background(self, db, manager) -> None:
         """Recall must block to inject context."""
