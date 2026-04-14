@@ -153,9 +153,7 @@ def register_message_routes(
                 else "archive_only"
                 if archive_exists
                 else "missing",
-                "content_state": "uninspected"
-                if (live_exists or archive_exists)
-                else "missing",
+                "content_state": "uninspected" if (live_exists or archive_exists) else "missing",
                 "session_source": _session_attr(session, "source"),
                 "detected_source": None,
                 "source_mismatch": False,

@@ -435,10 +435,7 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     if canonical_file_paths and "canonical_file_path" not in metadata:
         metadata["canonical_file_path"] = canonical_file_paths[0]
 
-    if (
-        metadata.get("canonical_tool_kind") == "write"
-        and "canonical_repo_mutation" not in metadata
-    ):
+    if metadata.get("canonical_tool_kind") == "write" and "canonical_repo_mutation" not in metadata:
         metadata["canonical_repo_mutation"] = True
 
     if canonical_file_paths:

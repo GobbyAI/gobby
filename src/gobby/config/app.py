@@ -754,6 +754,7 @@ _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
     "backup_count": "backup_count",
 }
 
+
 def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Migrate legacy config keys that were renamed or removed.
 

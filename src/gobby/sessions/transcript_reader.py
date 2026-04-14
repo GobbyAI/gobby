@@ -469,9 +469,7 @@ class TranscriptReader:
                         _parse_json_session(data, effective_source, session_id=session_id)
                     )
                 except (json.JSONDecodeError, ValueError, OSError) as e:
-                    logger.warning(
-                        f"Failed to parse JSON transcript for session {session_id}: {e}"
-                    )
+                    logger.warning(f"Failed to parse JSON transcript for session {session_id}: {e}")
                     parse_failed = True
             else:
                 try:
@@ -503,9 +501,7 @@ class TranscriptReader:
                     lines=lines,
                     session_id=session_id,
                 )
-                parsed_message_count = len(
-                    await self._get_parsed_messages_from_archive(session_id)
-                )
+                parsed_message_count = len(await self._get_parsed_messages_from_archive(session_id))
             except (json.JSONDecodeError, ValueError, OSError, gzip.BadGzipFile) as e:
                 logger.warning(f"Failed to read archive for session {session_id}: {e}")
                 parse_failed = True
