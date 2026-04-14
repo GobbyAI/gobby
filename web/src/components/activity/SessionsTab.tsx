@@ -3,10 +3,10 @@ import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { SourceIcon } from "../shared/SourceIcon";
 import type { GobbySession } from "../../hooks/useSessions";
 import { useSessionDetail } from "../../hooks/useSessionDetail";
-import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { MessageItem } from "../chat/MessageItem";
 import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
+import { getSessionTitleText } from "../../lib/sessionTitle";
 import {
   SessionInteractionModal,
   type InteractionMode,
@@ -29,8 +29,6 @@ interface SessionsTabProps {
   isMobile?: boolean;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
-  watchingSessionIds?: Set<string>;
-  onUnwatch?: (sessionId: string) => void;
   onSwapSession?: (target: SwappedSessionTarget) => void;
 }
 
@@ -99,11 +97,8 @@ export const SessionsTab = memo(function SessionsTab({
   onKillAgent,
   onExpireSession,
   chatSessionId,
-  isMobile = false,
   focusSessionId,
   onFocusHandled,
-  watchingSessionIds,
-  onUnwatch,
   onSwapSession,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
@@ -118,8 +113,8 @@ export const SessionsTab = memo(function SessionsTab({
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
   const [modalMode, setModalMode] = useState<InteractionMode | null>(null);
   const [modalEntry, setModalEntry] = useState<SessionEntry | null>(null);
+  const initialSelectionAppliedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { confirm, ConfirmDialogElement } = useConfirmDialog();
 
   // No-op artifact context for MessageItem rendering
   const noopArtifactCtx = useMemo(
@@ -190,8 +185,9 @@ export const SessionsTab = memo(function SessionsTab({
         id: a.session_id ?? a.run_id,
         type: "agent" as const,
         label:
-          matchedSession?.title ??
-          (a.mode === "agent"
+          matchedSession
+            ? getSessionTitleText(matchedSession.title)
+            : (a.mode === "agent"
             ? `Agent ${a.run_id.slice(0, 8)}`
             : `Session ${a.run_id.slice(0, 8)}`),
         provider: a.provider,
@@ -212,7 +208,7 @@ export const SessionsTab = memo(function SessionsTab({
         return {
           id: s.id,
           type: "cli" as const,
-          label: s.title ?? `CLI ${s.ref}`,
+          label: getSessionTitleText(s.title),
           provider: s.source ?? "unknown",
           status: (s.status === "paused" ? "paused" : "active") as
             | "active"
@@ -232,23 +228,48 @@ export const SessionsTab = memo(function SessionsTab({
     );
   }, [agents, activitySessions, expiringIds]);
 
-  // Auto-close watching view when the selected session disappears from the list
+  // Seed the watching pane once on load, keep it stable, and only fall back
+  // when the selected entry disappears or the list becomes empty.
   useEffect(() => {
-    if (selectedSessionId && !loading) {
-      const stillPresent = entries.some((e) => e.id === selectedSessionId);
-      if (!stillPresent) {
+    if (loading) {
+      return;
+    }
+
+    if (entries.length === 0) {
+      if (selectedSessionId !== null) {
         setSelectedSessionId(null);
       }
+      return;
     }
-  }, [entries, selectedSessionId, loading]);
 
-  // Programmatic focus: select a session when requested from outside
-  useEffect(() => {
-    if (focusSessionId && !loading) {
+    const hasFocusedEntry =
+      focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
+
+    if (!initialSelectionAppliedRef.current) {
+      initialSelectionAppliedRef.current = true;
+      setSelectedSessionId(hasFocusedEntry ? focusSessionId : entries[0].id);
+      if (hasFocusedEntry) {
+        onFocusHandled?.();
+      }
+      return;
+    }
+
+    if (hasFocusedEntry) {
       setSelectedSessionId(focusSessionId);
       onFocusHandled?.();
+      return;
     }
-  }, [focusSessionId, loading, onFocusHandled]);
+
+    if (!selectedSessionId) {
+      setSelectedSessionId(entries[0].id);
+      return;
+    }
+
+    const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
+    if (!stillPresent) {
+      setSelectedSessionId(entries[0].id);
+    }
+  }, [entries, focusSessionId, loading, onFocusHandled, selectedSessionId]);
 
   // Fetch selected session messages
   const { messages, isLoading, transcriptStatus } =
@@ -312,36 +333,15 @@ export const SessionsTab = memo(function SessionsTab({
   }, [transcriptStatus]);
 
   const handleExpire = useCallback(
-    async (entry: SessionEntry) => {
-      const confirmed = await confirm({
-        title: "Expire session",
-        description:
-          entry.type === "agent"
-            ? "This will cancel the agent and terminate its session."
-            : "This will expire the session and kill any associated terminal.",
-        confirmLabel: "Expire",
-        destructive: true,
-      });
-      if (!confirmed) return;
+    (entry: SessionEntry) => {
       setExpiringIds((prev) => new Set(prev).add(entry.id));
-      setSelectedSessionId((prev) => (prev === entry.id ? null : prev));
       if (entry.type === "agent" && entry.runId) {
         onKillAgent?.(entry.runId);
       } else {
         onExpireSession?.(entry.id);
       }
     },
-    [onKillAgent, onExpireSession, confirm],
-  );
-
-  // Context menu handlers
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, entry: SessionEntry) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setCtxMenu({ x: e.clientX, y: e.clientY, entry });
-    },
-    [],
+    [onKillAgent, onExpireSession],
   );
 
   const handleMenuButtonClick = useCallback(
@@ -407,7 +407,6 @@ export const SessionsTab = memo(function SessionsTab({
 
   return (
     <div className="flex flex-col h-full">
-      {ConfirmDialogElement}
       {/* Session list */}
       <div
         className={`overflow-y-auto ${selectedSessionId ? "border-b border-border" : "flex-1"}`}
@@ -425,7 +424,6 @@ export const SessionsTab = memo(function SessionsTab({
               key={`${entry.type}-${entry.id}`}
               className={`session-entry${isSelected ? " session-entry--active" : ""}${isPaused ? " session-entry--paused" : ""}`}
               onClick={() => handleSelect(entry.id)}
-              onContextMenu={(e) => handleContextMenu(e, entry)}
             >
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <SourceIcon source={entry.provider} size={14} />
@@ -435,47 +433,23 @@ export const SessionsTab = memo(function SessionsTab({
               </div>
               <div className="flex items-center gap-1.5">
                 {renderBadges(entry)}
-                {isMobile ? (
-                  <button
-                    className="session-more-btn"
-                    onClick={(e) => handleMenuButtonClick(e, entry)}
-                    title="Session actions"
+                <button
+                  className="session-more-btn"
+                  onClick={(e) => handleMenuButtonClick(e, entry)}
+                  title="Session actions"
+                  aria-label="Session actions"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
                   >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <circle cx="12" cy="5" r="2" />
-                      <circle cx="12" cy="12" r="2" />
-                      <circle cx="12" cy="19" r="2" />
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    className="session-expire-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleExpire(entry);
-                    }}
-                    title="Expire session"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
-                )}
+                    <circle cx="12" cy="5" r="2" />
+                    <circle cx="12" cy="12" r="2" />
+                    <circle cx="12" cy="19" r="2" />
+                  </svg>
+                </button>
               </div>
             </div>
           );
@@ -515,7 +489,7 @@ export const SessionsTab = memo(function SessionsTab({
               {selectedEntry && onSwapSession && (
                 <button
                   type="button"
-                  className="session-pane-action session-pane-action--primary"
+                  className="session-pane-action"
                   onClick={() => {
                     if (selectedSessionId) {
                       onSwapSession({
@@ -529,18 +503,6 @@ export const SessionsTab = memo(function SessionsTab({
                   Swap
                 </button>
               )}
-              <button
-                type="button"
-                className="session-pane-action"
-                onClick={() => {
-                  if (selectedSessionId && watchingSessionIds?.has(selectedSessionId)) {
-                    onUnwatch?.(selectedSessionId);
-                  }
-                  setSelectedSessionId(null);
-                }}
-              >
-                Close
-              </button>
             </div>
           </div>
 

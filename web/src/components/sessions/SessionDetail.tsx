@@ -8,6 +8,7 @@ import { SessionTranscript } from './SessionTranscript'
 import { SessionLineage } from './SessionLineage'
 import { ConfirmDialog } from '../chat/ui/ConfirmDialog'
 import { DURATION_INVALID, formatDuration, formatTokens } from '../../utils/formatTime'
+import { getSessionTitleText } from '../../lib/sessionTitle'
 
 interface SessionDetailProps {
   session: GobbySession
@@ -62,7 +63,7 @@ export function SessionDetail({
   allSessions,
   onSelectSession,
 }: SessionDetailProps) {
-  const title = session.title || `Session #${session.ref}`
+  const title = getSessionTitleText(session.title)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [editValue, setEditValue] = useState('')
   const saveOnBlurRef = useRef(true)

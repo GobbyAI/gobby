@@ -234,7 +234,7 @@ test.describe("Live Gemini cross-context continuity verification", () => {
         localStorage.removeItem("gobby-selected-provider");
       });
       await secondPage.reload();
-      await expect(secondPage.getByTestId("chat-session-selector")).toContainText("New Chat Session");
+      await expect(secondPage.getByTestId("chat-session-selector")).toContainText("New Session");
 
       await openSessionFromCommandPalette(secondPage, firstTurn.session.ref);
 

@@ -1997,21 +1997,12 @@ export function useChat() {
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
-      void ensureMainSession({
-        projectId: projectIdRef.current,
-        provider: selectedProviderRef.current,
-        forceNew: true,
-      });
     },
-    [
-      bindActiveSession,
-      clearSessionObservationState,
-      ensureMainSession,
-      resetMainChatState,
-    ],
+    [bindActiveSession, clearSessionObservationState, resetMainChatState],
   );
 
-  // Switch provider by starting a new server-owned web-chat session.
+  // Switch provider. Existing conversations fork to a new server-owned session;
+  // a blank draft stays local until the first user send.
   const switchProvider = useCallback(
     (newProvider: string) => {
       if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
@@ -2026,6 +2017,14 @@ export function useChat() {
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
+
+      // Keep fresh-chat provider changes local until the first user send
+      // actually creates the backing web chat session.
+      if (!dbSessionIdRef.current && messagesRef.current.length === 0) {
+        setSelectedProvider(newProvider);
+        return;
+      }
+
       void ensureMainSession({
         projectId: projectIdRef.current,
         provider: newProvider,

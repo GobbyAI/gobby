@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { GobbySession } from '../../hooks/useSessions'
 import { SourceIcon } from '../shared/SourceIcon'
 import { formatRelativeTime } from '../../utils/formatTime'
+import { getSessionTitleText } from '../../lib/sessionTitle'
 
 function getModelBadge(model: string): string {
   const parts = model.split('-')
@@ -24,7 +25,7 @@ export function MobileSessionDrawer({
   const [isOpen, setIsOpen] = useState(false)
 
   const selectedSession = sessions.find(s => s.id === selectedSessionId)
-  const activeTitle = selectedSession?.title || 'Sessions'
+  const activeTitle = selectedSession ? getSessionTitleText(selectedSession.title) : 'Sessions'
 
   return (
     <div className={`mobile-chat-drawer ${isOpen ? '' : 'collapsed'}`}>
@@ -55,7 +56,7 @@ export function MobileSessionDrawer({
 
           <div className="mobile-chat-drawer-list">
             {sessions.map((session) => {
-              const title = session.title || `Untitled #${session.ref}`
+              const title = getSessionTitleText(session.title)
               const isSelected = session.id === selectedSessionId
 
               return (

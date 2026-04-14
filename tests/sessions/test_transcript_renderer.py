@@ -150,6 +150,32 @@ def test_render_transcript_strips_search_quality_reflection_tags():
     assert rendered[0].content == "Result: thinking... done"
 
 
+def test_render_transcript_strips_permissions_instructions_tags():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<permissions instructions>Filesystem sandboxing defines which files can be read or written.</permissions instructions>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "Filesystem sandboxing defines which files can be read or written."
+
+
+def test_render_transcript_strips_collaboration_mode_tags():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<collaboration_mode>Collaboration Mode: Default</collaboration_mode>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "Collaboration Mode: Default"
+
+
 def test_render_incremental_returns_completed_turns():
     state = RenderState()
 

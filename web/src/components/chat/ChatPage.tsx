@@ -135,18 +135,6 @@ export function ChatPage({
     setFocusSessionId(null);
   }, []);
 
-  // Watching: parked web chats stay selected in Sessions tab after starting a new chat
-  const [watchingSessionIds, setWatchingSessionIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const handleUnwatch = useCallback((sessionId: string) => {
-    setWatchingSessionIds((prev) => {
-      const next = new Set(prev);
-      next.delete(sessionId);
-      return next;
-    });
-  }, []);
-
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
       const currentSessionId = chat.viewingSessionId ?? chat.dbSessionId;
@@ -157,7 +145,6 @@ export function ChatPage({
       ) {
         return;
       }
-      setWatchingSessionIds((prev) => new Set(prev).add(currentSessionId));
       setFocusSessionId(currentSessionId);
       showTab("sessions");
     },
@@ -167,7 +154,6 @@ export function ChatPage({
   const handleSwapSession = useCallback(
     (target: SwappedSessionTarget) => {
       parkCurrentSession(target.sessionId);
-      handleUnwatch(target.sessionId);
 
       if (target.sessionType === "web_chat") {
         const targetSession = conversations.sessions.find(
@@ -176,18 +162,19 @@ export function ChatPage({
         if (targetSession) {
           conversations.onSelectSession(targetSession);
         }
-        return;
-      }
-
-      if (!target.agentRunId && chat.continueSessionInChat) {
-        void chat.continueSessionInChat(target.sessionId, projectId ?? undefined);
+        if (isMobile) {
+          setIsPinned(false);
+        }
         return;
       }
 
       chat.viewSession?.(target.sessionId);
       chat.observeSession?.(target.sessionId, "observe");
+      if (isMobile) {
+        setIsPinned(false);
+      }
     },
-    [chat, conversations, handleUnwatch, parkCurrentSession, projectId],
+    [chat, conversations, isMobile, parkCurrentSession, setIsPinned],
   );
 
   const handleAutonomousDetach = useCallback(() => {
@@ -650,8 +637,6 @@ export function ChatPage({
         chatSessionId={chat.dbSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
-        watchingSessionIds={watchingSessionIds}
-        onUnwatchSession={handleUnwatch}
         onSwapSession={handleSwapSession}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}

@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
+import { getSessionTitleText } from '../../lib/sessionTitle'
 
 interface RunningAgent {
   run_id: string
@@ -62,7 +63,7 @@ export function CommandBar({
             <span className="command-bar-ref">{sessionRef}</span>
           )}
           <span className="command-bar-title">
-            {title ?? 'New Chat Session'}
+            {getSessionTitleText(title)}
           </span>
           <span className="command-bar-caret">&#9662;</span>
         </button>

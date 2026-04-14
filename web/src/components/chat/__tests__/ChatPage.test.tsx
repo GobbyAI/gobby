@@ -315,14 +315,19 @@ describe("ChatPage", () => {
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
+    const messageList = screen.getByTestId("message-list");
     const chatInput = screen.getByTestId("chat-input");
+    expect(
+      messageList.compareDocumentPosition(statusBar) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(
       statusBar.compareDocumentPosition(chatInput) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
-  it("continues non-autonomous terminal swaps directly in web chat", async () => {
+  it("keeps non-autonomous terminal swaps in observe mode", async () => {
     const continueSessionInChat = vi.fn(async () => "continued-session");
     const viewSession = vi.fn();
     const observeSession = vi.fn();
@@ -344,11 +349,9 @@ describe("ChatPage", () => {
       fireEvent.click(screen.getByTestId("swap-terminal-session"));
     });
 
-    await waitFor(() => {
-      expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1");
-    });
-    expect(viewSession).not.toHaveBeenCalled();
-    expect(observeSession).not.toHaveBeenCalled();
+    expect(continueSessionInChat).not.toHaveBeenCalled();
+    expect(viewSession).toHaveBeenCalledWith("terminal-2");
+    expect(observeSession).toHaveBeenCalledWith("terminal-2", "observe");
   });
 
   it("keeps autonomous terminal swaps in observe mode", async () => {

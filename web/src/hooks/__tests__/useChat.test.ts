@@ -315,7 +315,7 @@ describe('useChat', () => {
     expect(continueMsg?.model).toBe('gpt-5.4')
   })
 
-  it('switchProvider creates a new server-owned session with the requested provider', async () => {
+  it('switchProvider creates a new server-owned session with the requested provider for an existing chat', async () => {
     // After the session identity unification, switchProvider no longer sends
     // set_provider/set_agent via WebSocket. It calls ensureMainSession with
     // forceNew=true and the provider, which POSTs to /api/sessions/web-chat.
@@ -336,6 +336,10 @@ describe('useChat', () => {
 
     const ws = mockWs.instances[0]
     act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.sendMessage('Existing message')
+    })
 
     act(() => {
       result.current.switchProvider('codex')
@@ -545,17 +549,7 @@ describe('useChat', () => {
     expect(result.current.isStreaming).toBe(false)
   })
 
-  it('startNewChat clears messages and generates new ID', async () => {
-    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
-      session: {
-        id: 'new-chat-session',
-        source: 'claude',
-        model: null,
-        chat_mode: null,
-        seq_num: 88,
-        title: null,
-      },
-    })
+  it('startNewChat clears messages without creating a session', async () => {
     await loadModule()
     const { result } = renderHook(() => useChat())
 
@@ -571,6 +565,12 @@ describe('useChat', () => {
 
     expect(result.current.messages).toHaveLength(0)
     expect(result.current.conversationId).not.toBe(oldId)
+    expect(result.current.dbSessionId).toBeNull()
+
+    const sessionCalls = mockFetch.fn.mock.calls.filter(([url]) =>
+      typeof url === 'string' && url.includes('/api/sessions/web-chat'),
+    )
+    expect(sessionCalls).toHaveLength(0)
   })
 
   it('startNewChat clears viewed-session chrome and queued proxy notices', async () => {
@@ -596,17 +596,6 @@ describe('useChat', () => {
         session_type: 'terminal',
       },
     })
-    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
-      session: {
-        id: 'new-chat-session',
-        source: 'claude',
-        model: null,
-        chat_mode: null,
-        seq_num: 89,
-        title: null,
-      },
-    })
-
     await loadModule()
     const { result } = renderHook(() => useChat())
     const ws = mockWs.instances[0]
@@ -656,6 +645,29 @@ describe('useChat', () => {
     expect(result.current.attachedSessionId).toBeNull()
     expect(result.current.sessionInteractionMode).toBe('none')
     expect(result.current.proxyDeliveryNotice).toBeNull()
+    expect(result.current.dbSessionId).toBeNull()
+  })
+
+  it('switchProvider keeps a blank draft local until first send', async () => {
+    localStorage.clear()
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    act(() => {
+      result.current.switchProvider('codex')
+    })
+
+    expect(result.current.selectedProvider).toBe('codex')
+    expect(result.current.dbSessionId).toBeNull()
+
+    const sessionCalls = mockFetch.fn.mock.calls.filter(([url]) =>
+      typeof url === 'string' && url.includes('/api/sessions/web-chat'),
+    )
+    expect(sessionCalls).toHaveLength(0)
   })
 
   it('handles voice_transcription messages', async () => {

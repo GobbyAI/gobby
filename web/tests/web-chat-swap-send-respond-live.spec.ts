@@ -201,7 +201,7 @@ async function startNewChat(
   _previousConversationId: string,
 ): Promise<void> {
   await page.locator('button[title="New Chat"]').click();
-  await expect(page.getByTestId("chat-session-selector")).toContainText("New Chat Session", {
+  await expect(page.getByTestId("chat-session-selector")).toContainText("New Session", {
     timeout: 15_000,
   });
 }

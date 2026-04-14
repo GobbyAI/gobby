@@ -68,6 +68,11 @@ function shouldHandleSlashCommandLocally(input: string): boolean {
   return LOCAL_ONLY_SLASH_COMMANDS.has(topLevelCommand)
 }
 
+function formatProviderLabel(provider: string | null | undefined): string {
+  const value = provider || 'claude'
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
 export function ChatInput({
   onSend,
   onStop,
@@ -287,6 +292,7 @@ export function ChatInput({
     : canSwitchProvider
       ? 'Select provider and model'
       : 'Select model'
+  const providerSummary = `${formatProviderLabel(provider)} ${currentModel}`
 
   type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
 
@@ -498,7 +504,7 @@ export function ChatInput({
 
         <div className="chat-input-meta">
           <div
-            className="chat-input-notice-slot"
+            className={`chat-input-notice-slot${proxyDeliveryNotice ? ' has-notice' : ''}`}
             aria-live="polite"
           >
             {proxyDeliveryNotice ? (
@@ -506,69 +512,41 @@ export function ChatInput({
             ) : null}
           </div>
 
-          {/* Toolbar */}
-          <div className="flex items-center gap-1 mb-2">
-            {onModeChange && (
-              <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
-            )}
-            <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
-              <PaperclipIcon />
-            </Button>
-            {canSelectModel && (
-              <>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setPickerOpen(true)}
-                  disabled={providerButtonDisabled}
-                  title={pickerLabel}
-                  aria-label={pickerLabel}
-                >
-                  <SourceIcon source={provider || 'claude'} size={16} />
-                </Button>
-                <ProviderPicker
-                  open={pickerOpen}
-                  onClose={() => setPickerOpen(false)}
-                  currentProvider={provider ?? null}
-                  currentModel={currentModel}
-                  availableProviders={pickerProviders}
-                  onModelChange={onModelChange ?? (() => {})}
-                  onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
-                  onSwitchProvider={onSwitchProvider}
-                  onSelect={onProviderSelectionChange}
-                  hasMessages={hasMessages}
+          <div className="chat-input-toolbar">
+            <div className="chat-input-toolbar__left">
+              <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
+                <PaperclipIcon />
+              </Button>
+              {onAgentChange && agentName && agentDefinitions.length > 0 && (
+                <ActiveAgentIndicator
+                  agentName={agentName}
+                  onAgentChange={onAgentChange}
+                  definitions={agentDefinitions}
+                  globalDefs={agentGlobalDefs}
+                  projectDefs={agentProjectDefs}
+                  showScopeToggle={agentShowScopeToggle}
+                  hasGlobal={agentHasGlobal}
+                  hasProject={agentHasProject}
                 />
-              </>
-            )}
-            {onAgentChange && agentName && agentDefinitions.length > 0 && (
-              <ActiveAgentIndicator
-                agentName={agentName}
-                onAgentChange={onAgentChange}
-                definitions={agentDefinitions}
-                globalDefs={agentGlobalDefs}
-                projectDefs={agentProjectDefs}
-                showScopeToggle={agentShowScopeToggle}
-                hasGlobal={agentHasGlobal}
-                hasProject={agentHasProject}
+              )}
+            </div>
+            <div className="chat-input-toolbar__right">
+              {onWorktreeChange && (
+                <BranchIndicator
+                  currentBranch={currentBranch ?? null}
+                  worktreePath={worktreePath ?? null}
+                  projectId={projectId ?? null}
+                  onWorktreeChange={onWorktreeChange}
+                />
+              )}
+              <ContextUsageIndicator
+                totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+                outputTokens={contextUsage?.outputTokens ?? 0}
+                contextWindow={contextUsage?.contextWindow ?? null}
+                uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+                cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+                cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
               />
-            )}
-            <div className="flex items-center gap-2 ml-auto">
-            {onWorktreeChange && (
-              <BranchIndicator
-                currentBranch={currentBranch ?? null}
-                worktreePath={worktreePath ?? null}
-                projectId={projectId ?? null}
-                onWorktreeChange={onWorktreeChange}
-              />
-            )}
-            <ContextUsageIndicator
-              totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-              outputTokens={contextUsage?.outputTokens ?? 0}
-              contextWindow={contextUsage?.contextWindow ?? null}
-              uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-              cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-              cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-            />
             </div>
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
           </div>
@@ -640,6 +618,45 @@ export function ChatInput({
               </button>
             </div>
           </div>
+
+          {(onModeChange || canSelectModel) && (
+            <div className="chat-input-controls">
+              {onModeChange && (
+                <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
+              )}
+              {canSelectModel && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="chat-input-provider"
+                    onClick={() => setPickerOpen(true)}
+                    disabled={providerButtonDisabled}
+                    title={pickerLabel}
+                    aria-label={pickerLabel}
+                  >
+                    <SourceIcon source={provider || 'claude'} size={14} />
+                    <span className="chat-input-provider__text">{providerSummary}</span>
+                    <span className="chat-input-provider__caret" aria-hidden="true">
+                      ▾
+                    </span>
+                  </Button>
+                  <ProviderPicker
+                    open={pickerOpen}
+                    onClose={() => setPickerOpen(false)}
+                    currentProvider={provider ?? null}
+                    currentModel={currentModel}
+                    availableProviders={pickerProviders}
+                    onModelChange={onModelChange ?? (() => {})}
+                    onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
+                    onSwitchProvider={onSwitchProvider}
+                    onSelect={onProviderSelectionChange}
+                    hasMessages={hasMessages}
+                  />
+                </>
+              )}
+            </div>
+          )}
           {showObserveOverlay && (
             <div className="chat-input-overlay">
               <button

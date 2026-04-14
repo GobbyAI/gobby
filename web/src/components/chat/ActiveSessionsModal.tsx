@@ -8,6 +8,7 @@ import {
 import type { GobbySession } from '../../hooks/useSessions'
 import { useNow } from '../../hooks/useNow'
 import { PROVIDER_COLORS, SOURCE_COLORS } from '../shared/sourceTheme'
+import { getSessionTitleText } from '../../lib/sessionTitle'
 
 interface RunningAgent {
   run_id: string
@@ -156,7 +157,7 @@ function CliSessionCard({
   onView?: () => void
 }) {
   const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null
-  const titleText = session.title || session.ref || 'CLI Session'
+  const titleText = getSessionTitleText(session.title)
   const displayTitle = seqLabel ? `${seqLabel}: ${titleText}` : titleText
   const color = SOURCE_COLORS[session.source] ?? SOURCE_COLORS.unknown
 

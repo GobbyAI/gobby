@@ -1,6 +1,7 @@
 import type { GobbySession } from "../../hooks/useSessions";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import { formatRelativeTime } from "../../utils/formatTime";
+import { getSessionTitleText } from "../../lib/sessionTitle";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { AgentPickerDropdown } from "./AgentPickerDropdown";
 import { PROVIDER_COLORS, SOURCE_COLORS } from "../shared/sourceTheme";
@@ -149,7 +150,7 @@ export function ConversationPicker({
               )}
               {filtered.map((session) => {
                 const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
-                const titleText = session.title || `Chat ${session.ref}`;
+                const titleText = getSessionTitleText(session.title);
                 const title = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
                 const isActive = session.id === activeSessionId && !viewingSessionId;
                 const isDeleting = deletingIds?.has(session.id) ?? false;
@@ -305,7 +306,7 @@ export function ConversationPicker({
                 : cliSessions.slice(0, Math.max(0, TERMINAL_INITIAL_LIMIT - agents.length))
               ).map((session) => {
                 const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null;
-                const titleText = session.title || session.ref || "CLI Session";
+                const titleText = getSessionTitleText(session.title);
                 const title = seqLabel ? `${seqLabel}: ${titleText}` : titleText;
                 const isViewing = session.id === viewingSessionId;
                 const isPaused = session.status === "paused";

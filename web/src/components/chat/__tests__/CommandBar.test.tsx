@@ -41,7 +41,7 @@ describe("CommandBar", () => {
     );
 
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
-      "New Chat Session",
+      "New Session",
     );
   });
 });

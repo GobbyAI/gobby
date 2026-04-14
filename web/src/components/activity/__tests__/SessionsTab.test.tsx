@@ -203,6 +203,7 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("#201: Terminal Session")).toBeTruthy();
       expect(screen.getByText("#203: Other Web Chat")).toBeTruthy();
+      expect(screen.getByText(/Watching #201: Terminal Session/)).toBeTruthy();
     });
 
     expect(screen.queryByText("#202: Current Web Chat")).toBeNull();
@@ -211,6 +212,8 @@ describe("SessionsTab", () => {
 
     expect(screen.getAllByText(/^tmux$/i)).toHaveLength(1);
     expect(screen.getAllByText(/^web$/i)).toHaveLength(1);
+    expect(screen.getAllByLabelText("Session actions")).toHaveLength(2);
+    expect(screen.queryByText("Close")).toBeNull();
   });
 
   it("shows agent badge and lets a watched session swap into the main chat", async () => {
