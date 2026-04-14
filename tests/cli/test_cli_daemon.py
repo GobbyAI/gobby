@@ -1126,10 +1126,7 @@ class TestStatusCommand:
         mock_fetch_status.return_value = {}
         mock_psutil_process.side_effect = psutil.NoSuchProcess(pid=12345)
 
-        with (
-            runner.isolated_filesystem(temp_dir=str(temp_dir)),
-            patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
-        ):
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -1138,7 +1135,8 @@ class TestStatusCommand:
             pid_file = gobby_dir / "gobby.pid"
             pid_file.write_text(str(os.getpid()))
 
-            result = runner.invoke(cli, ["status"])
+            with patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir):
+                result = runner.invoke(cli, ["status"])
 
             # Should still work, just without uptime info
             assert result.exit_code == 0
@@ -1420,10 +1418,7 @@ class TestEdgeCases:
         mock_proc.create_time.return_value = time.time() - 7200  # 2 hours ago
         mock_psutil_process.return_value = mock_proc
 
-        with (
-            runner.isolated_filesystem(temp_dir=str(temp_dir)),
-            patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
-        ):
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -1431,7 +1426,8 @@ class TestEdgeCases:
             pid_file = gobby_dir / "gobby.pid"
             pid_file.write_text(str(os.getpid()))
 
-            result = runner.invoke(cli, ["status"])
+            with patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir):
+                result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
             mock_fetch_status.assert_called_once_with(mock_daemon_config.daemon_port, timeout=3.0)

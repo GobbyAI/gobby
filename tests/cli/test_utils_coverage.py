@@ -16,8 +16,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _mock_shutdown_source_writes():
+def _mock_shutdown_source_writes(request: pytest.FixtureRequest):
     """Keep daemon-path coverage tests from creating shutdown markers."""
+    if request.node.name == "test_stop_daemon_writes_shutdown_source_inside_safe_gobby_home":
+        yield
+        return
     with patch("gobby.runner_maintenance.write_shutdown_source"):
         yield
 
@@ -1276,6 +1279,53 @@ def test_stop_daemon_graceful_shutdown(tmp_path: Path) -> None:
         result = stop_daemon(quiet=False)
     assert result is True
     mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+
+
+def test_stop_daemon_writes_shutdown_source_inside_safe_gobby_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real shutdown provenance writes must stay inside the fixture-provided Gobby home."""
+    from gobby.cli.utils import stop_daemon
+
+    home_root = tmp_path / "home"
+    home_root.mkdir()
+    monkeypatch.setenv("HOME", str(home_root))
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
+
+    safe_home = Path(os.environ["GOBBY_HOME"])
+    shutdown_marker = safe_home / "shutdown_source.json"
+    shutdown_marker.unlink(missing_ok=True)
+
+    expanded_home_marker = Path(os.path.expanduser("~/.gobby/shutdown_source.json"))
+    assert expanded_home_marker == home_root / ".gobby" / "shutdown_source.json"
+    assert not expanded_home_marker.exists()
+
+    pid_file = safe_home / "gobby.pid"
+    pid_file.write_text("12345")
+
+    mock_proc = MagicMock()
+    mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+
+    alive_calls = iter([True, True, False])
+
+    with (
+        patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
+        patch("gobby.cli.utils.stop_ui_server"),
+        patch("gobby.cli.utils._is_process_alive", side_effect=lambda pid: next(alive_calls)),
+        patch("gobby.cli.utils.psutil.Process", return_value=mock_proc),
+        patch("gobby.cli.utils.os.kill"),
+        patch("gobby.cli.utils.time.sleep"),
+        patch("gobby.cli.utils.click.echo"),
+        patch(
+            "gobby.cli.installers.service.get_service_status",
+            return_value={"installed": False, "running": False},
+        ),
+    ):
+        result = stop_daemon(quiet=False)
+
+    assert result is True
+    assert shutdown_marker.exists()
+    assert not expanded_home_marker.exists()
 
 
 def test_stop_daemon_force_kill_after_timeout(tmp_path: Path) -> None:
