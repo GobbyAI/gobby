@@ -1,4 +1,4 @@
-import type React from 'react'
+import React, { forwardRef } from 'react'
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, act } from '@testing-library/react'
 import { TasksTab } from '../TasksTab'
@@ -36,9 +36,12 @@ function renderNodes(nodes: TaskTreeNode[]): React.ReactNode {
 }
 
 vi.mock('react-arborist', () => ({
-  Tree: ({ data, height }: { data: TaskTreeNode[]; height?: number }) => (
-    <div data-testid="task-tree" data-height={height ?? ''}>{renderNodes(data)}</div>
-  ),
+  Tree: forwardRef(function TreeMock(
+    { data, height }: { data: TaskTreeNode[]; height?: number },
+    _ref: React.ForwardedRef<unknown>,
+  ) {
+    return <div data-testid="task-tree" data-height={height ?? ''}>{renderNodes(data)}</div>
+  }),
 }))
 
 vi.mock('../../chat/artifacts/ResizeHandle', () => ({
