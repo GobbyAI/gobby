@@ -2735,22 +2735,15 @@ export function useChat() {
   // Attach to the currently viewed session (button click from view-only mode)
   const attachToViewed = useCallback(() => {
     const sid = viewingSessionIdRef.current;
-    if (sid) {
-      const viewedMeta = viewingSessionMetaRef.current;
-      if (viewedMeta?.sessionType && viewedMeta.sessionType !== "terminal") {
-        return;
-      }
-      if (observedSessionIdRef.current === sid) {
-        setAttachedSessionId(sid);
-        setAttachedSessionMeta(
-          observedSessionMetaRef.current ?? viewingSessionMetaRef.current,
-        );
-        setSessionInteractionMode("proxy");
-        return;
-      }
-      attachToSession(sid, "proxy");
+    if (!sid) {
+      return;
     }
-  }, [attachToSession]);
+    const viewedMeta = viewingSessionMetaRef.current;
+    if (viewedMeta?.sessionType && viewedMeta.sessionType !== "terminal") {
+      return;
+    }
+    void continueSessionInChat(sid);
+  }, [continueSessionInChat]);
 
   // Disable proxy mode but keep the live observation subscription.
   const detachFromSession = useCallback(() => {

@@ -70,6 +70,7 @@ export function ChatPage({
   onViewAgent,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
+  const lastAutoScrolledLoadRef = useRef<string | null>(null);
   const activeSession = conversations.sessions.find(
     (s) => s.id === conversations.activeSessionId,
   );
@@ -310,6 +311,32 @@ export function ChatPage({
   useEffect(() => {
     clearArtifacts();
   }, [chat.conversationSwitchKey, clearArtifacts]);
+
+  useEffect(() => {
+    if (chat.isLoadingMessages || chat.messages.length === 0) {
+      return;
+    }
+
+    const loadKey = [
+      chat.conversationSwitchKey ?? 0,
+      chat.viewingSessionId ?? chat.dbSessionId ?? "main-chat",
+    ].join(":");
+    if (lastAutoScrolledLoadRef.current === loadKey) {
+      return;
+    }
+    lastAutoScrolledLoadRef.current = loadKey;
+
+    const frameId = requestAnimationFrame(() => {
+      messageListRef.current?.scrollToBottom();
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [
+    chat.conversationSwitchKey,
+    chat.dbSessionId,
+    chat.isLoadingMessages,
+    chat.messages.length,
+    chat.viewingSessionId,
+  ]);
 
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {

@@ -674,6 +674,9 @@ describe('useChat', () => {
     mockFetch.mockJsonResponse('/api/sessions/sess-auto/messages?limit=100&offset=0', {
       messages: [],
     })
+    mockFetch.mockJsonResponse('/api/sessions/sess-auto/messages?limit=100', {
+      messages: [],
+    })
     mockFetch.mockJsonResponse('/api/sessions/sess-auto', {
       session: {
         id: 'sess-auto',
@@ -697,6 +700,16 @@ describe('useChat', () => {
     })
     mockFetch.mockJsonResponse('/api/agents/runs/run-auto-1', {
       run: { agent_name: 'code-reviewer', workflow_name: 'release-checks' },
+    })
+    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
+      session: {
+        id: 'resumed-auto-session',
+        source: 'claude',
+        model: 'sonnet',
+        chat_mode: 'accept_edits',
+        seq_num: 2312,
+        title: 'Autonomous session',
+      },
     })
 
     const { result } = renderHook(() => useChat())
@@ -735,12 +748,27 @@ describe('useChat', () => {
     expect(result.current.sessionInteractionMode).toBe('observe')
     expect(result.current.attachedSessionId).toBeNull()
 
-    act(() => {
+    await act(async () => {
       result.current.attachToViewed?.()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
     })
 
-    expect(result.current.sessionInteractionMode).toBe('proxy')
-    expect(result.current.attachedSessionId).toBe('sess-auto')
+    expect(result.current.sessionInteractionMode).toBe('none')
+    expect(result.current.attachedSessionId).toBeNull()
+    expect(result.current.viewingSessionId).toBeNull()
+    expect(result.current.selectedProvider).toBe('claude')
+
+    const continueMsg = ws.send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .find((msg) => msg.type === 'continue_in_chat')
+    expect(continueMsg).toMatchObject({
+      type: 'continue_in_chat',
+      source_session_id: 'sess-auto',
+      provider: 'claude',
+      model: 'sonnet',
+    })
   })
 
   it('does not attach viewed web chat sessions into proxy mode', async () => {
@@ -829,6 +857,10 @@ describe('useChat', () => {
     act(() => ws.simulateOpen())
 
     act(() => {
+      result.current.observeSession?.('sess-proxy', 'proxy')
+    })
+
+    act(() => {
       ws.simulateMessage({
         type: 'attach_to_session_result',
         session_id: 'sess-proxy',
@@ -845,7 +877,6 @@ describe('useChat', () => {
     })
 
     act(() => {
-      result.current.attachToViewed?.()
       result.current.sendMessage('/plan')
     })
 
