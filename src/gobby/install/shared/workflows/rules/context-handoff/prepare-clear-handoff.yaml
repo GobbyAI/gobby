@@ -3,7 +3,7 @@ tags: [context-handoff, context, handoff, lifecycle, gobby, default]
 rules:
   prepare-clear-handoff:
     description: "Set handoff source when /clear or /exit detected"
-    event: before_agent
+    event: turn_start
     enabled: true
     priority: 5
     when: "event.data.get('prompt', '').strip().lower() in ('/clear', '/exit')"

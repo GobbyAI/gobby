@@ -150,12 +150,13 @@ Some variables are managed by the rule engine itself, not by declarative rules:
 
 | Variable | Auto-behavior |
 |----------|--------------|
-| `stop_attempts` | Incremented on every `stop` event, reset to 0 on `before_agent` |
+| `stop_attempts` | Incremented on every `turn_end`, reset to 0 on `turn_start` |
 | `consecutive_tool_blocks` | Incremented when same blocked tool is retried, reset on different tool |
 | `tool_block_pending` | Set `true` on tool failure, cleared on tool success |
 | `_last_blocked_tool` | Tracks which tool was last blocked |
 | `force_allow_stop` | Set `true` on catastrophic failures (rate limit, billing) |
-| `errors_resolved` | Reset to `false` on `before_agent` |
+
+`errors_resolved` is not auto-reset by the rule engine.
 
 ---
 
@@ -297,7 +298,7 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `claimed_tasks` | `{}` | dict | Map of claimed task UUIDs to refs (`{uuid: '#N'}`) |
 | `require_task_before_edit` | `true` | bool | Enforce task-before-edit gate |
 | `require_commit_before_close` | `true` | bool | Enforce commit-before-close gate |
-| `stop_attempts` | `0` | int | Consecutive stop attempts (auto-managed) |
+| `stop_attempts` | `0` | int | Consecutive turn-end attempts (auto-managed) |
 | `max_stop_attempts` | `8` | int | Threshold before escape hatch allows stop |
 | `mode_level` | `2` | int | Autonomy level (0=plan, 1=accept_edits, 2=full auto) |
 | `chat_mode` | `"bypass"` | string | Chat mode setting |

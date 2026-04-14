@@ -73,23 +73,26 @@ each effect can also have its own `when`.
 
 ## Events
 
-Rules can target both raw hook events and the semantic `turn_end` event.
+Rules should usually target semantic workflow events first. Raw normalized hook
+events remain available as escape hatches when you need provider-specific
+timing.
 
 ### Common Events
 
 | Event | When it fires |
 | --- | --- |
 | `session_start` | Session bootstrap, resume, clear, or compaction re-entry |
-| `before_agent` | Before the next model/agent turn is prepared |
+| `turn_start` | Semantic start-of-turn boundary across Claude, Codex, and Gemini |
+| `turn_end` | Semantic end-of-turn boundary across Claude, Codex, and Gemini |
 | `before_tool` | Before a native tool or MCP tool runs |
 | `after_tool` | After a tool call finishes |
-| `turn_end` | Semantic end-of-turn event for stop/after-agent flows |
 | `session_end` | Session teardown |
 
-### Additional Runtime Events
+### Raw Escape-Hatch Events
 
 | Event | When it fires |
 | --- | --- |
+| `before_agent` | Raw pre-turn hook |
 | `after_agent` | Raw post-turn hook |
 | `stop` | Raw stop hook |
 | `pre_compact` | Before context compaction |
@@ -100,6 +103,12 @@ Rules can target both raw hook events and the semantic `turn_end` event.
 | `subagent_stop` | Child agent stops |
 | `permission_request` | A permission/approval request is being evaluated |
 | `notification` | A notification-style event is emitted |
+
+### About `turn_start`
+
+`turn_start` is the portability event you usually want for prompt-entry,
+turn-start context injection, and reset logic. The engine emits it alongside
+the raw `before_agent` hook.
 
 ### About `turn_end`
 

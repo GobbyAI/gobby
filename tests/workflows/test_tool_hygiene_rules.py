@@ -1,8 +1,4 @@
-"""Tests for tool-hygiene.yaml rules.
-
-Verifies require-uv blocks naked python/pip and track-pending-memory-review
-sets a variable after file edits.
-"""
+"""Tests for bundled tool-hygiene rules."""
 
 from __future__ import annotations
 
@@ -45,13 +41,14 @@ def _sync_bundled(db):
 class TestToolHygieneSync:
     """Test that tool-hygiene.yaml syncs correctly."""
 
-    def test_bundled_file_syncs_both_rules(self, db, manager) -> None:
-        """Both tool-hygiene rules should sync to workflow_definitions."""
+    def test_bundled_file_syncs_target_rules(self, db, manager) -> None:
+        """Key tool-hygiene rules should sync to workflow_definitions."""
         _sync_bundled(db)
 
         rules = manager.list_all(workflow_type="rule")
         rule_names = {r.name for r in rules}
 
+        assert "block-escaped-quotes" in rule_names
         assert "require-uv" in rule_names
         assert "track-pending-memory-review" in rule_names
 
@@ -61,7 +58,7 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"require-uv", "track-pending-memory-review"}:
+            if row.name in {"block-escaped-quotes", "require-uv", "track-pending-memory-review"}:
                 body = json.loads(row.definition_json)
                 assert body.get("group") == "tool-hygiene", f"{row.name} missing group"
 
@@ -71,10 +68,33 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"require-uv", "track-pending-memory-review"}:
+            if row.name in {"block-escaped-quotes", "require-uv", "track-pending-memory-review"}:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 effect_types = {e.type for e in body.resolved_effects}
                 assert effect_types <= {"block", "set_variable", "rewrite_input", "inject_context"}
+
+
+class TestBlockEscapedQuotesRule:
+    """Verify block-escaped-quotes uses the grouped rule schema."""
+
+    def test_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-escaped-quotes")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.effects[0].type == "block"
+
+    def test_reason_mentions_escaped_quotes(self, db, manager) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-escaped-quotes")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.effects[0].reason is not None
+        assert "escaped quotes" in body.effects[0].reason.lower()
 
 
 class TestRequireUvRule:

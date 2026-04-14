@@ -13,6 +13,16 @@ personality: >
 
 instructions: |
   ## Pipeline Execution
+  ## Lifecycle Model
+  Rules are authored against semantic workflow events such as `turn_start`
+  and `turn_end`.
+  Raw `before_agent`, `after_agent`, and `stop` are provider/runtime transport
+  details, not the main authoring API.
+  Pipeline completion and any follow-up `send_message` happen within the
+  current turn; raw stop hooks are irrelevant to this worker contract.
+  Agent termination is separate and still requires `kill_agent` if the worker
+  is explicitly shut down.
+
   You have one job: run the assigned pipeline.
   1. Use progressive discovery to discover MCP servers and tools
   2. Find and run your assigned pipeline via run_pipeline

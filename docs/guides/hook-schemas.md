@@ -1,10 +1,15 @@
 # Hook Schemas
 
-This document describes the hook event types, payloads, and response formats supported by Gobby across all CLI integrations.
+This document is the native hook transport reference. It describes the
+provider-specific hook names, payloads, and response formats supported by
+Gobby across all CLI integrations.
 
 ## Overview
 
-Gobby uses a unified internal event model (`HookEvent`) that normalizes hooks from multiple AI CLIs:
+Gobby uses a unified internal event model (`HookEvent`) that normalizes hooks
+from multiple AI CLIs. Rule authors should usually work with semantic workflow
+events such as `turn_start` and `turn_end`; native hook names are primarily for
+transport adapters and tools such as `call_hook`.
 
 | CLI | Hook Format | Session ID Field | Integration |
 |-----|-------------|------------------|-------------|
@@ -16,25 +21,47 @@ Gobby uses a unified internal event model (`HookEvent`) that normalizes hooks fr
 
 ## Event Types
 
-### Unified Event Types
+### Native To Workflow Mapping
 
-| Internal Type | Claude Code | Gemini CLI | Codex CLI |
-|--------------|-------------|------------|-----------|
-| `SESSION_START` | `session-start` | `SessionStart` | `thread/started` |
-| `SESSION_END` | `session-end` | `SessionEnd` | `thread/archive` |
-| `BEFORE_AGENT` | `user-prompt-submit` | `BeforeAgent` | `turn/started` |
-| `AFTER_AGENT` | - | `AfterAgent` | `turn/completed` |
-| `STOP` | `stop` | - | - | `stop` |
-| `BEFORE_TOOL` | `pre-tool-use` | `BeforeTool` | `item/*/requestApproval` | `pre-tool-use` |
-| `AFTER_TOOL` | `post-tool-use` | `AfterTool` | `item/completed` | `post-tool-use` |
-| `BEFORE_TOOL_SELECTION` | - | `BeforeToolSelection` | - | - |
-| `BEFORE_MODEL` | - | `BeforeModel` | - | - |
-| `AFTER_MODEL` | - | `AfterModel` | - | - |
-| `PRE_COMPACT` | `pre-compact` | `PreCompress` | - | `pre-compact` |
-| `SUBAGENT_START` | `subagent-start` | - | - | `subagent-start` |
-| `SUBAGENT_STOP` | `subagent-stop` | - | - | `subagent-stop` |
-| `PERMISSION_REQUEST` | `permission-request` | - | - | `permission-request` |
-| `NOTIFICATION` | `notification` | `Notification` | - | `notification` |
+#### Claude Code
+
+| Native Hook | Raw Workflow Event | Semantic Workflow Event |
+| --- | --- | --- |
+| `session-start` | `session_start` | `session_start` |
+| `session-end` | `session_end` | `session_end` |
+| `user-prompt-submit` | `before_agent` | `turn_start` |
+| `pre-tool-use` | `before_tool` | `before_tool` |
+| `post-tool-use` | `after_tool` | `after_tool` |
+| `pre-compact` | `pre_compact` | `pre_compact` |
+| `stop` | `stop` | `turn_end` |
+| `notification` | `notification` | `notification` |
+
+#### Codex
+
+| Native Hook | Raw Workflow Event | Semantic Workflow Event |
+| --- | --- | --- |
+| `thread/started` | `session_start` | `session_start` |
+| `thread/archive` | `session_end` | `session_end` |
+| `turn/started` | `before_agent` | `turn_start` |
+| `turn/completed` | `after_agent` | `turn_end` |
+| `item/*/requestApproval` | `before_tool` | `before_tool` |
+| `item/completed` | `after_tool` | `after_tool` |
+
+#### Gemini
+
+| Native Hook | Raw Workflow Event | Semantic Workflow Event |
+| --- | --- | --- |
+| `SessionStart` | `session_start` | `session_start` |
+| `SessionEnd` | `session_end` | `session_end` |
+| `BeforeAgent` | `before_agent` | `turn_start` |
+| `AfterAgent` | `after_agent` | `turn_end` |
+| `BeforeTool` | `before_tool` | `before_tool` |
+| `AfterTool` | `after_tool` | `after_tool` |
+| `BeforeToolSelection` | `before_tool_selection` | raw only |
+| `BeforeModel` | `before_model` | raw only |
+| `AfterModel` | `after_model` | raw only |
+| `PreCompress` | `pre_compact` | `pre_compact` |
+| `Notification` | `notification` | `notification` |
 
 ---
 
@@ -759,4 +786,3 @@ await client.start()
 
 # Events are automatically forwarded to HookManager
 ```
-

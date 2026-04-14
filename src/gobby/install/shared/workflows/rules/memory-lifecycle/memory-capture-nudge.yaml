@@ -3,7 +3,7 @@ tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 rules:
   memory-capture-nudge:
     description: "Nudge agent to save user preferences or facts as memories (once per session)"
-    event: before_agent
+    event: turn_start
     enabled: true
     priority: 50
     when: "not variables.get('memory_nudge_fired') and len((event.data.get('prompt') or '').strip()) >= 10 and not (event.data.get('prompt') or '').strip().startswith('/')"

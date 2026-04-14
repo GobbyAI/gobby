@@ -35,6 +35,12 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
 
+_TURN_START_EVENT_VALUES = frozenset(
+    {
+        HookEventType.BEFORE_AGENT.value,
+    }
+)
+
 _TURN_END_EVENT_VALUES = frozenset(
     {
         HookEventType.AFTER_AGENT.value,
@@ -67,6 +73,10 @@ def _event_value(event_type: HookEventType | str) -> str:
     return str(event_type)
 
 
+def _is_turn_start_event(event_type: HookEventType | str) -> bool:
+    return _event_value(event_type) in _TURN_START_EVENT_VALUES
+
+
 def _is_turn_end_event(event_type: HookEventType | str) -> bool:
     return _event_value(event_type) in _TURN_END_EVENT_VALUES
 
@@ -75,6 +85,9 @@ def _resolve_rule_events(event_type: HookEventType | str) -> list[RuleTriggerEve
     """Resolve an incoming hook event into rule trigger events."""
     resolved: list[RuleTriggerEvent] = []
     raw_value = _event_value(event_type)
+
+    if _is_turn_start_event(raw_value):
+        resolved.append(RuleTriggerEvent.TURN_START)
 
     if _is_turn_end_event(raw_value):
         resolved.append(RuleTriggerEvent.TURN_END)
@@ -160,7 +173,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 raw_event_value = _event_value(event.event_type)
                 is_before_tool = raw_event_value == HookEventType.BEFORE_TOOL.value
                 is_after_tool = raw_event_value == HookEventType.AFTER_TOOL.value
-                is_before_agent = raw_event_value == HookEventType.BEFORE_AGENT.value
+                is_turn_start = RuleTriggerEvent.TURN_START in resolved_rule_events
                 is_turn_end = RuleTriggerEvent.TURN_END in resolved_rule_events
 
                 # Check global enforcement toggle
@@ -169,7 +182,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     return HookResponse(decision="allow")
 
                 # Collect mcp_call effects from hardcoded rules and DB rules.
-                # Initialized early so hardcoded BEFORE_AGENT rules can append.
+                # Initialized early so hardcoded turn-start rules can append.
                 mcp_calls: list[dict[str, Any]] = []
 
                 # Auto-track consecutive tool blocks (universal safety — not configurable)
@@ -204,7 +217,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     if _is_write_like_event_data(event.data):
                         variables["edit_write_pending"] = True
 
-                elif is_before_agent:
+                elif is_turn_start:
                     variables["consecutive_tool_blocks"] = 0
                     variables["_last_blocked_tool"] = ""
                     variables["tool_block_pending"] = False

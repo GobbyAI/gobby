@@ -30,6 +30,7 @@ CONTEXT_HANDOFF_RULES = {
     "inject-previous-session-summary",
     "inject-compact-handoff",
     "inject-task-context-on-start",
+    "prepare-clear-handoff",
     "preserve-context-on-compact",
 }
 
@@ -215,6 +216,33 @@ class TestInjectTaskContextOnStart:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "resume" in body.when
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# prepare-clear-handoff
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestPrepareClearHandoff:
+    """Prepare clear/exit handoff on turn_start."""
+
+    def test_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("prepare-clear-handoff")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert body.effects[0].type == "set_variable"
+        assert body.effects[0].variable == "handoff_source"
+        assert body.effects[0].value == "clear"
+
+    def test_has_clear_and_exit_when_condition(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("prepare-clear-handoff")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "/clear" in body.when
+        assert "/exit" in body.when
 
 
 # ═══════════════════════════════════════════════════════════════════════

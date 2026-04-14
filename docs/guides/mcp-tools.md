@@ -245,6 +245,10 @@ Search for tools using semantic similarity.
 Trigger session hooks for external integrations that are not using a native
 Gobby hook adapter.
 
+Use native hook names here, not semantic workflow event names. For example,
+pass `SessionStart`, `stop`, or `user-prompt-submit` depending on the source;
+do not pass `turn_start` or `turn_end`.
+
 | Parameter | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
 

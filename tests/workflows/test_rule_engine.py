@@ -1196,8 +1196,8 @@ class TestConsecutiveToolBlocks:
         assert variables["consecutive_tool_blocks"] == 0
 
     @pytest.mark.asyncio
-    async def test_counter_resets_on_before_agent(self, db: LocalDatabase) -> None:
-        """Counter should reset to 0 on BEFORE_AGENT (new turn = fresh start)."""
+    async def test_counter_resets_on_turn_start_boundary(self, db: LocalDatabase) -> None:
+        """Counter should reset to 0 on the semantic turn_start boundary."""
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"consecutive_tool_blocks": 5}
@@ -2231,8 +2231,8 @@ class TestStopAttempts:
             assert variables["stop_attempts"] == i + 1
 
     @pytest.mark.asyncio
-    async def test_stop_attempts_resets_on_before_agent(self, db: LocalDatabase) -> None:
-        """stop_attempts should reset on BEFORE_AGENT."""
+    async def test_stop_attempts_resets_on_turn_start_boundary(self, db: LocalDatabase) -> None:
+        """stop_attempts should reset on the semantic turn_start boundary."""
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"stop_attempts": 5}
 
@@ -2289,6 +2289,54 @@ class TestUnmappedEventType:
 
 
 class TestTurnEndResolution:
+    @pytest.mark.asyncio
+    async def test_before_agent_resolves_to_raw_and_semantic_start(
+        self, db: LocalDatabase, manager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "raw-before-agent",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_AGENT,
+                effects=[RuleEffect(type="set_variable", variable="raw_start", value=True)],
+            ),
+        )
+        _insert_rule(
+            manager,
+            "semantic-turn-start",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_START,
+                effects=[RuleEffect(type="set_variable", variable="semantic_start", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.BEFORE_AGENT)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["raw_start"] is True
+        assert variables["semantic_start"] is True
+
+    @pytest.mark.asyncio
+    async def test_turn_start_rule_fires_for_before_agent(
+        self, db: LocalDatabase, manager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "turn-start-before-agent",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_START,
+                effects=[RuleEffect(type="set_variable", variable="matched_start", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {"stop_attempts": 5}
+        event = _make_event(HookEventType.BEFORE_AGENT)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["matched_start"] is True
+        assert variables["stop_attempts"] == 0
+
     @pytest.mark.asyncio
     async def test_turn_end_rule_fires_for_stop(self, db: LocalDatabase, manager) -> None:
         _insert_rule(

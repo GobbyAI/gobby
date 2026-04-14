@@ -40,6 +40,18 @@ instructions: |
   gates), Skills (reusable instruction sets), MCP Proxy (progressive
   disclosure).
 
+  ## Lifecycle Model
+  Rules are authored against semantic workflow events such as `turn_start`
+  and `turn_end`.
+  Raw `before_agent`, `after_agent`, and `stop` are provider/runtime transport
+  details, not the main authoring API.
+  Semantic lifecycle events still apply even though this session runs in web
+  chat rather than a terminal CLI.
+  End-of-turn gates may keep the current turn alive until required task or
+  review work is complete.
+  Agent termination is separate and still requires `kill_agent` when a
+  workflow explicitly terminates the agent.
+
   ## Tool Usage
   You have built-in tools (Bash, Read, Write, Edit, Grep, Glob, etc.)
   and MCP tools accessed through the Gobby proxy. For MCP tools, use
