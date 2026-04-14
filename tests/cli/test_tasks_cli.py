@@ -143,15 +143,18 @@ class TestListTasksCommand:
         mock_claimed.return_value = set()
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = [mock_task]
+        mock_manager.db.fetchall.return_value = []
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(cli, ["tasks", "list"])
 
         assert result.exit_code == 0
         assert "Found 1 tasks" in result.output
-        assert "LIFECYCLE" in result.output
-        assert "OWNER" in result.output
-        assert "#1" in result.output  # Shows seq_num instead of full task ID
+        # New compact layout: lifecycle letter "O" (open), priority emoji,
+        # task ref, and title. No more LIFECYCLE/OWNER column headers.
+        assert "#1" in result.output
+        assert "Test Task" in result.output
+        assert "🟡" in result.output  # priority 2 → yellow
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
@@ -1425,13 +1428,22 @@ class TestFormatTaskRow:
         assert "├── " in result
 
     def test_format_task_row_claimed(self, mock_task: MagicMock) -> None:
-        """Test task row for claimed task."""
+        """Test task row for claimed task.
+
+        format_task_row is the single-row primitive and intentionally does
+        not render the session column (that lives in format_task_list which
+        batches session lookups). Being in claimed_task_ids still resolves
+        the row without crashing and leaves the task ref + title intact.
+        """
         from gobby.cli.tasks._utils import format_task_row
 
         result = format_task_row(mock_task, claimed_task_ids={"gt-abc123"})
 
-        # Claimed open tasks show a different icon
-        assert "◐" in result
+        assert "#1" in result
+        assert "Test Task" in result
+        # Open/claimed tasks keep the "O" lifecycle letter — claim state
+        # surfaces as a session column in format_task_list instead.
+        assert "O" in result
 
 
 # ==============================================================================
@@ -1727,28 +1739,32 @@ class TestUtilsHelpers:
     """Additional tests for _utils.py helpers."""
 
     def test_format_task_row_different_statuses(self, mock_task: MagicMock) -> None:
-        """Test format_task_row with different task statuses."""
+        """Test format_task_row with different task statuses.
+
+        Under the compact layout each lifecycle/flag condition maps to a
+        single letter — O/P/R/A/C for lifecycle, B/E/M for flags.
+        """
         from gobby.cli.tasks._utils import format_task_row
 
-        # Test in_progress status
+        # Test in_progress status → "P"
         mock_task.status = "in_progress"
         result = format_task_row(mock_task)
-        assert "●" in result
+        assert "P" in result
 
-        # Test closed status
+        # Test closed status → "C" (rendered dim)
         mock_task.status = "closed"
         result = format_task_row(mock_task)
-        assert "✓" in result
+        assert "C" in result
 
-        # Test blocked status
+        # Test blocked status → "B" flag letter
         mock_task.status = "blocked"
         result = format_task_row(mock_task)
-        assert "⊗" in result
+        assert "B" in result
 
-        # Test escalated status
+        # Test escalated status → "E" flag letter
         mock_task.status = "escalated"
         result = format_task_row(mock_task)
-        assert "⚠" in result
+        assert "E" in result
 
     def test_format_task_row_different_priorities(self, mock_task: MagicMock) -> None:
         """Test format_task_row with different priorities."""
@@ -1783,6 +1799,202 @@ class TestFormatTaskHeader:
 
         assert "#" in result  # Column header changed from ID to #
         assert "TITLE" in result
+
+
+class TestFormatTaskList:
+    """Tests for the compact multi-row format_task_list renderer."""
+
+    @staticmethod
+    def _make_task(
+        *,
+        seq_num: int,
+        title: str,
+        status: str = "open",
+        priority: int = 2,
+        owner: str | None = None,
+        escalated: bool = False,
+        merge_ready: bool = False,
+        project_id: str = "proj-123",
+    ) -> MagicMock:
+        task = MagicMock()
+        task.id = f"gt-{seq_num:05d}"
+        task.seq_num = seq_num
+        task.title = title
+        task.status = status
+        task.priority = priority
+        task.task_type = "task"
+        task.project_id = project_id
+        task.parent_task_id = None
+        task.assignee = owner
+        task.claimed_by_session_id = owner
+        task.lifecycle_stage = None
+        task.closed_at = None
+        task.closed_reason = None
+        task.closed_in_session_id = None
+        task.closed_commit_sha = None
+        task.escalated_at = "2026-01-01T00:00:00Z" if escalated else None
+        task.escalation_reason = "stuck" if escalated else None
+        task.blocked_by = set()
+        task.active_blocked_by = {"other"} if status == "blocked" else set()
+        task.labels = None
+        task.validation_criteria = None
+        task.validation_fail_count = 0
+        task.category = None
+        task.updated_at = "2026-04-13T00:00:00Z"
+        task.merge_commit_sha = "abc" if merge_ready else None
+        task.is_merge_ready = merge_ready
+        return task
+
+    @staticmethod
+    def _strip_ansi(text: str) -> str:
+        import re
+
+        return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+    def test_empty_list_returns_empty(self) -> None:
+        from gobby.cli.tasks._utils import format_task_list
+
+        mock_db = MagicMock()
+        result = format_task_list([], db=mock_db)
+        assert result == ""
+
+    def test_open_only_suppresses_session_column(self) -> None:
+        """All-open list with nothing claimed → no session column at all."""
+        from gobby.cli.tasks._utils import format_task_list
+
+        tasks = [
+            self._make_task(seq_num=1, title="first task"),
+            self._make_task(seq_num=2, title="second task"),
+        ]
+        mock_db = MagicMock()
+        mock_db.fetchall.return_value = []
+
+        rendered = format_task_list(tasks, db=mock_db, term_width=120)
+        plain = self._strip_ansi(rendered)
+
+        assert "#1" in plain
+        assert "first task" in plain
+        assert "#2" in plain
+        assert "second task" in plain
+        # Single-letter lifecycle — every row is open
+        assert "O" in plain
+        # No session refs should appear
+        assert "#100" not in plain
+
+    def test_blocked_flag_renders_letter(self) -> None:
+        from gobby.cli.tasks._utils import format_task_list
+
+        task = self._make_task(seq_num=42, title="blocked work", status="blocked")
+        mock_db = MagicMock()
+        mock_db.fetchall.return_value = []
+
+        rendered = format_task_list([task], db=mock_db, term_width=120)
+        plain = self._strip_ansi(rendered)
+
+        assert "#42" in plain
+        # Flag letter B should appear somewhere in the prefix before #42
+        prefix = plain.split("#42", 1)[0]
+        assert "B" in prefix
+
+    def test_session_column_aligns_claimed_and_unclaimed_rows(self) -> None:
+        """Claimed + unclaimed rows in one render: #session column aligns."""
+        from gobby.cli.tasks._utils import format_task_list
+
+        claimed = self._make_task(seq_num=100, title="claimed work", owner="sess-owner-uuid")
+        unclaimed = self._make_task(seq_num=101, title="unclaimed work")
+        mock_db = MagicMock()
+        mock_db.fetchall.return_value = [
+            {"id": "sess-owner-uuid", "seq_num": 2572},
+        ]
+
+        rendered = format_task_list([claimed, unclaimed], db=mock_db, term_width=120)
+        plain_lines = [self._strip_ansi(line) for line in rendered.split("\n")]
+
+        # Session ref appears only on the claimed row, and is a seq_num (#2572)
+        assert "#2572" in plain_lines[0]
+        assert "#2572" not in plain_lines[1]
+        # Both lines are the same length — the session column is reserved on
+        # both rows so #NNNN aligns vertically. rstrip() would collapse the
+        # blank padding on the unclaimed row, so we don't rstrip here.
+        assert len(plain_lines[0]) == len(plain_lines[1])
+
+    def test_orphaned_session_falls_back_to_uuid_prefix(self) -> None:
+        """If the session row is missing, the owner UUID prefix is shown."""
+        from gobby.cli.tasks._utils import format_task_list
+
+        task = self._make_task(seq_num=7, title="orphan work", owner="orphaned-session-uuid")
+        mock_db = MagicMock()
+        mock_db.fetchall.return_value = []  # lookup returns nothing
+
+        rendered = format_task_list([task], db=mock_db, term_width=120)
+        plain = self._strip_ansi(rendered)
+
+        # Fallback is the first 8 chars of the owner UUID
+        assert "orphaned" in plain
+
+    def test_title_truncates_to_terminal_width(self) -> None:
+        from gobby.cli.tasks._utils import format_task_list
+
+        task = self._make_task(seq_num=1, title="this title is quite long and should be truncated")
+        mock_db = MagicMock()
+        mock_db.fetchall.return_value = []
+
+        rendered = format_task_list([task], db=mock_db, term_width=40)
+        plain = self._strip_ansi(rendered)
+
+        # An ellipsis must appear when the title is clipped
+        assert "…" in plain
+        # And the full original title must NOT be there in one piece
+        assert "truncated" not in plain
+
+    def test_group_by_lifecycle_emits_headers(self) -> None:
+        from gobby.cli.tasks._utils import format_task_list
+
+        open_task = self._make_task(seq_num=1, title="new work", status="open")
+        progress_task = self._make_task(seq_num=2, title="active work", status="in_progress")
+        mock_db = MagicMock()
+        mock_db.fetchall.return_value = []
+
+        rendered = format_task_list(
+            [open_task, progress_task],
+            db=mock_db,
+            group_by="lifecycle",
+            term_width=120,
+        )
+        plain = self._strip_ansi(rendered)
+
+        assert "open (1)" in plain
+        assert "in_progress (1)" in plain
+        assert "#1" in plain
+        assert "#2" in plain
+
+    def test_group_by_project_resolves_names(self) -> None:
+        from gobby.cli.tasks._utils import format_task_list
+
+        task_a = self._make_task(seq_num=1, title="gobby work", project_id="proj-a")
+        task_b = self._make_task(seq_num=2, title="other work", project_id="proj-b")
+
+        mock_db = MagicMock()
+
+        def fake_fetchall(sql: str, params: tuple) -> list:
+            if "FROM sessions" in sql:
+                return []
+            if "FROM projects" in sql:
+                return [
+                    {"id": "proj-a", "name": "gobby"},
+                    {"id": "proj-b", "name": "other-repo"},
+                ]
+            return []
+
+        mock_db.fetchall.side_effect = fake_fetchall
+
+        rendered = format_task_list(
+            [task_a, task_b], db=mock_db, group_by="project", term_width=120
+        )
+        plain = self._strip_ansi(rendered)
+
+        assert "gobby (1)" in plain
+        assert "other-repo (1)" in plain
 
 
 # ==============================================================================
