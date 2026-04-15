@@ -8,15 +8,97 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0]
+## [0.3.7]
 
-### Behavioral changes
+### Features
 
-- **Memory recall threshold raised**: `memory-recall-on-prompt.yaml` bumps
-  `min_score` from `0.6` to `0.7`. Lower-confidence memories that were
-  previously returned on prompt will now be filtered out. If you relied on
-  the old threshold, edit the installed rule row in `workflow_definitions`
-  (or ship a local override rule) to restore `min_score: 0.6`.
+#### First-class Qwen provider
+
+Qwen joins Claude, Gemini, and Codex as a fully supported CLI under the unified adapter layer — installer, hook adapter, workflow rule parity, and QWEN.md project documentation all ship together.
+
+- Add first-class Qwen provider support (#11781)
+- Resolve Qwen install lint issues (#11781)
+- Add QWEN.md project documentation and development guide
+- Align Codex workflow rule parity so Qwen, Codex, Claude, and Gemini all hit the same gates (#11744)
+
+#### Hook normalization v2
+
+The hook event pipeline has been squash-merged onto a single normalized shape. Provider-specific `before_agent` / `after_agent` / `stop` transports now land in semantic workflow events (`turn_start`, `turn_end`) with identical fields across Claude, Gemini, Codex, and Qwen.
+
+- Squash merge hook normalization v2 into the release line (#11776)
+- Squash merge memory scoring update that rides on the normalized pipeline (#11775)
+- Clarify hook ownership plan and session labels (#11750)
+
+#### Impeccable skill and steering commands
+
+- Vendor the Impeccable design skill in the shared skill set so it ships with every install (#11790)
+- Vendor 17 Impeccable steering commands as references (#11792)
+- Co-locate the Impeccable upgrade script alongside the vendored assets (#11793)
+
+#### Web chat controls and tmux handoff
+
+- Split web chat model controls into provider + model pickers for faster switching (#11795)
+- Split swapped tmux watch/attach/resume into discrete actions so observed sessions can be picked up cleanly (#11798)
+- Compact task list with letter codes and a session column (#11738)
+
+### Fixes
+
+#### Web chat
+
+- Restore chat swap and activity panel behavior after session handoff (#11741)
+- Preserve session identity when resuming a web chat (#11761)
+- Restore viewed terminal sessions in web chat (#11739)
+- Enable Claude reasoning in web chat (#11797)
+- Stabilize web chat session state across rapid transitions (#11771)
+- Resolve Drawbridge web chat session regressions (#11747)
+- Clear `useChat` hook dependency warnings across web chat callbacks (#11728, #11747, #11782)
+- Move mode selector above the chat input and keep chat controls inline on mobile (#11795, #11796)
+- Make the Codex logo theme-aware in the web UI (#11785)
+- Polish observed session UI, simplify observe bar actions, and tighten context validation (#11768, #11791)
+
+#### Sessions, tmux, and resume
+
+- Resume tmux sessions in place instead of recreating the pane (#11786)
+- Track the tmux socket path for session liveness so dead sessions are detected (#11800)
+- Preserve provider when resuming a session (#11736)
+- Repair transcript recovery and session activity state after reconnect (#11735)
+- Let the digest own session title synthesis so resumed sessions get stable titles (#11737)
+- Kill child processes cleanly on daemon shutdown (#11778)
+
+#### Tasks, workflows, and memory
+
+- Defer `TasksTab` visible count sync to avoid Kanban churn (#11746)
+- Sync KanbanBoard test to the "Needs Review" column label (#11773)
+- Use the linked commit when closing tasks (#11742)
+- Resolve HTTP task session reference mismatches (#11780)
+- Soften the `context7` rule prompt from mandatory to conditional (#11779)
+- Resolve mypy type errors in `memories.py` and `session_observe.py` (#11777)
+
+#### Tooling, tests, and packaging
+
+- Silence vitest warnings on Node 25 (#11804)
+- Resolve 6 pytest failures from stale mocks and shutdown timing (#11802)
+- Silence bandit B310 and `nosec` parse warnings (#11803)
+- Fix ruff format drift (#11801)
+- Isolate tests from `~/.gobby` so the suite no longer touches real user state (#11740)
+- Cover gobby home isolation with a regression test (#11740)
+- Cover session UI regressions and command bar selector styling (#11750, #11791)
+- Forward ref in the `TasksTab` arborist mock and satisfy resume-handoff lint gates (#11746, #11736)
+- Eliminate async webhook test warning (#11735)
+- Bump pytest to 9.0.3 and vite to 6.4.2 (#11727)
+
+### Refactors
+
+- Reformat MCP tool name validation and SQL query string concatenation for readability
+- Remove dead 0.4.0 cleanup remnants (#11734)
+
+### Documentation
+
+- Add the hook normalization v2 and hook immutability RTK design plans (#11745, #11748)
+- Consolidate rust migration planning docs (#11784, #11787)
+- Save the ollama embedding compat plan (#11789)
+- Prefer `close_task` with `commit_sha` in task-flow docs (#11749)
+- Land CodeRabbit triage rounds across the release branch (#11794, #11799, #11743)
 
 ## [0.3.6]
 
