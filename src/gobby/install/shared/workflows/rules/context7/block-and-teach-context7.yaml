@@ -15,9 +15,11 @@ rules:
     effects:
       - type: block
         reason: >
-          Before writing code, check context7 for up-to-date library documentation.
-          Use the context7 MCP server to look up docs for any libraries or frameworks
-          used in this file. This prevents hallucinated APIs and outdated patterns.
+          One-time nudge: if this edit touches third-party library APIs or an unfamiliar
+          framework surface, use context7 to check the current docs before writing.
+          For internal changes (type annotations, refactors, stdlib usage, pure logic
+          fixes), you can proceed without checking — context7 is only valuable at
+          external library boundaries.
           See the context7 skill injected below for usage.
       - type: mcp_call
         server: gobby-skills
