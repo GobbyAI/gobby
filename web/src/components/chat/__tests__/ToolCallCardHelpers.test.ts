@@ -4,6 +4,8 @@ import { classifyTool } from '../../../types/chat'
 import {
   buildChainSummary,
   computeLineDiff,
+  extractResultContent,
+  extractResultMetadata,
   formatToolName,
   getToolDisplayName,
   getLanguageFromPath,
@@ -265,6 +267,55 @@ describe('getToolSummary', () => {
       arguments: {},
     })
     expect(getToolSummary(call)).toBeNull()
+  })
+})
+
+describe('extractResultContent', () => {
+  it('flattens MCP proxy envelopes to a single success object', () => {
+    const result = {
+      content: {
+        success: true,
+        result: { success: true },
+        response_time_ms: 42,
+      },
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      success: true,
+      response_time_ms: 42,
+    })
+  })
+
+  it('parses and flattens stringified MCP proxy envelopes', () => {
+    const result = {
+      content: '{"success":true,"result":{"task_id":"#11820"},"response_time_ms":42}',
+      content_type: 'text',
+      truncated: false,
+      metadata: { source: 'mcp' },
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      task_id: '#11820',
+      response_time_ms: 42,
+    })
+    expect(extractResultMetadata(result)).toEqual({
+      source: 'mcp',
+      response_time_ms: 42,
+    })
+  })
+
+  it('leaves non-envelope results untouched', () => {
+    const payload = { success: true, result: { success: true } }
+    const result = {
+      content: payload,
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual(payload)
+    expect(extractResultMetadata(result)).toBeUndefined()
   })
 })
 

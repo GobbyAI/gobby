@@ -68,16 +68,71 @@ function isTypedResult(result: unknown): result is ToolResult {
   return 'content' in obj && 'content_type' in obj
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function tryParseJsonValue(value: string): unknown {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function normalizeDisplayResult(
+  content: unknown,
+  metadata?: Record<string, unknown>,
+): { content: unknown; metadata?: Record<string, unknown> } {
+  const parsedContent = typeof content === 'string' ? tryParseJsonValue(content) : content
+  if (
+    !isRecord(parsedContent) ||
+    typeof parsedContent.success !== 'boolean' ||
+    typeof parsedContent.response_time_ms !== 'number'
+  ) {
+    return { content, metadata }
+  }
+
+  const mergedMetadata = { ...(metadata ?? {}) }
+  if (mergedMetadata.response_time_ms == null) {
+    mergedMetadata.response_time_ms = parsedContent.response_time_ms
+  }
+
+  const innerContent = 'result' in parsedContent
+    ? parsedContent.result
+    : {
+        success: parsedContent.success,
+        error: parsedContent.error,
+      }
+
+  if (isRecord(innerContent) && mergedMetadata.response_time_ms != null) {
+    return {
+      content: innerContent.response_time_ms == null
+        ? { ...innerContent, response_time_ms: mergedMetadata.response_time_ms }
+        : innerContent,
+      metadata: mergedMetadata,
+    }
+  }
+
+  return {
+    content: innerContent,
+    metadata: mergedMetadata,
+  }
+}
+
 export function extractResultContent(result: unknown): unknown {
-  if (isTypedResult(result)) return result.content
-  return result
+  if (!isTypedResult(result)) return normalizeDisplayResult(result).content
+  return normalizeDisplayResult(result.content, result.metadata).content
 }
 
 export function extractResultMetadata(
   result: unknown,
 ): Record<string, unknown> | undefined {
-  if (isTypedResult(result)) return result.metadata
-  return undefined
+  if (!isTypedResult(result)) return normalizeDisplayResult(result).metadata
+  return normalizeDisplayResult(result.content, result.metadata).metadata
 }
 
 export function getToolSummary(call: ToolCall): string | null {

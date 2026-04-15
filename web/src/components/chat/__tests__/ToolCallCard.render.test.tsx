@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { fireEvent } from '@testing-library/react'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
 import { renderWithProviders, screen } from '../../../test/helpers'
@@ -51,5 +52,34 @@ describe('ToolCallCard rendering', () => {
 
     expect(screen.getByText('2 tool calls')).toBeInTheDocument()
     expect(screen.getByText('2 Bash')).toBeInTheDocument()
+  })
+
+  it('flattens MCP proxy wrappers in rendered tool results', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'call_tool',
+            result: {
+              content: {
+                success: true,
+                result: { success: true },
+                response_time_ms: 42,
+              },
+              content_type: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByText('call_tool'))
+
+    const code = container.querySelector('code')?.textContent ?? ''
+    expect(code).toContain('"success": true')
+    expect(code).toContain('"response_time_ms": 42')
+    expect(code).not.toContain('"result":')
   })
 })
