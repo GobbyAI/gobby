@@ -195,12 +195,15 @@ describe('ChatInput', () => {
   })
 
   it('renders mode selector when onModeChange provided', () => {
-    render(
+    const { container } = render(
       <ChatInput {...defaultProps} onModeChange={vi.fn()} mode="accept_edits" />,
     )
 
     expect(screen.getByTestId('mode-selector')).toBeTruthy()
     expect(screen.getByText('accept_edits')).toBeTruthy()
+
+    const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
+    expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
   })
 
   it('shows a mic button in PTT mode with empty input', () => {

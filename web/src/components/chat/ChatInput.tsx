@@ -627,6 +627,9 @@ export function ChatInput({
 
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
+              {onModeChange && (
+                <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
+              )}
               <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
                 <PaperclipIcon />
               </Button>
@@ -744,96 +747,91 @@ export function ChatInput({
             </div>
           </div>
 
-          {(onModeChange || canSelectModel) && (
+          {canSelectModel && (
             <div className="chat-input-controls">
-              {onModeChange && (
-                <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
-              )}
-              {canSelectModel && (
-                <div className="chat-input-model-controls">
-                  <Select
-                    value={effectiveProvider}
-                    onValueChange={handleProviderSelect}
-                    disabled={selectionDisabled}
+              <div className="chat-input-model-controls">
+                <Select
+                  value={effectiveProvider}
+                  onValueChange={handleProviderSelect}
+                  disabled={selectionDisabled}
+                >
+                  <SelectTrigger
+                    className="chat-input-select chat-input-select--provider !w-auto"
+                    aria-label="Select provider and model"
+                    title={providerPickerDisabledReason ?? 'Select provider'}
                   >
-                    <SelectTrigger
-                      className="chat-input-select chat-input-select--provider !w-auto"
-                      aria-label="Select provider and model"
-                      title={providerPickerDisabledReason ?? 'Select provider'}
-                    >
-                      <div className="chat-input-select__value">
-                        <SourceIcon source={effectiveProvider} size={14} />
-                        <span className="chat-input-select__text">
-                          {getProviderDisplayName(effectiveProvider)}
+                    <div className="chat-input-select__value">
+                      <SourceIcon source={effectiveProvider} size={14} />
+                      <span className="chat-input-select__text">
+                        {getProviderDisplayName(effectiveProvider)}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent side="top" className="chat-input-select__content">
+                    {orderedProviders.map((candidateProvider) => (
+                      <SelectItem key={candidateProvider} value={candidateProvider}>
+                        <span className="chat-input-select__item">
+                          <SourceIcon source={candidateProvider} size={14} />
+                          <span>{getProviderDisplayName(candidateProvider)}</span>
                         </span>
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent side="top" className="chat-input-select__content">
-                      {orderedProviders.map((candidateProvider) => (
-                        <SelectItem key={candidateProvider} value={candidateProvider}>
-                          <span className="chat-input-select__item">
-                            <SourceIcon source={candidateProvider} size={14} />
-                            <span>{getProviderDisplayName(candidateProvider)}</span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-                  <Select
-                    value={resolvedModelValue}
-                    onValueChange={handleModelSelect}
-                    disabled={selectionDisabled}
+                <Select
+                  value={resolvedModelValue}
+                  onValueChange={handleModelSelect}
+                  disabled={selectionDisabled}
+                >
+                  <SelectTrigger
+                    className="chat-input-select chat-input-select--model !w-auto"
+                    aria-label="Select model"
+                    title={providerPickerDisabledReason ?? 'Select model'}
                   >
-                    <SelectTrigger
-                      className="chat-input-select chat-input-select--model !w-auto"
-                      aria-label="Select model"
-                      title={providerPickerDisabledReason ?? 'Select model'}
-                    >
-                      <div className="chat-input-select__value">
-                        <span className="chat-input-select__text">
-                          {getModelLabel(providerModelCatalog, effectiveProvider, resolvedModelValue)}
-                        </span>
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent side="top" className="chat-input-select__content">
-                      {modelOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <div className="chat-input-select__value">
+                      <span className="chat-input-select__text">
+                        {getModelLabel(providerModelCatalog, effectiveProvider, resolvedModelValue)}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent side="top" className="chat-input-select__content">
+                    {modelOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-                  <Select
-                    value={resolvedReasoning}
-                    onValueChange={handleReasoningSelect}
-                    disabled={
-                      selectionDisabled ||
-                      (reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled))
-                    }
+                <Select
+                  value={resolvedReasoning}
+                  onValueChange={handleReasoningSelect}
+                  disabled={
+                    selectionDisabled ||
+                    (reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled))
+                  }
+                >
+                  <SelectTrigger
+                    className="chat-input-select chat-input-select--reasoning !w-auto"
+                    aria-label="Select reasoning effort"
+                    title={providerPickerDisabledReason ?? 'Select reasoning effort'}
                   >
-                    <SelectTrigger
-                      className="chat-input-select chat-input-select--reasoning !w-auto"
-                      aria-label="Select reasoning effort"
-                      title={providerPickerDisabledReason ?? 'Select reasoning effort'}
-                    >
-                      <div className="chat-input-select__value">
-                        <span className="chat-input-select__text">
-                          {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
-                        </span>
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent side="top" className="chat-input-select__content">
-                      {reasoningOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                    <div className="chat-input-select__value">
+                      <span className="chat-input-select__text">
+                        {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent side="top" className="chat-input-select__content">
+                    {reasoningOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           )}
           {showObserveOverlay && (
