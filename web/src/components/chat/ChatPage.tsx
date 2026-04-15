@@ -168,7 +168,7 @@ export function ChatPage({
       setFocusSessionId(currentSessionId);
       showTab("sessions");
     },
-    [chat.dbSessionId, chat.messages.length, chat.viewingSessionId, showTab],
+    [chat.dbSessionId, chat.messages.length, showTab],
   );
 
   const handleSwapSession = useCallback(

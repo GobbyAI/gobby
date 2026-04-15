@@ -754,6 +754,10 @@ export function useChat() {
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [mainSessionMeta, setMainSessionMeta] =
     useState<SessionObservationMeta | null>(null);
+  const sessionRefRef = useRef<string | null>(sessionRef);
+  useEffect(() => {
+    sessionRefRef.current = sessionRef;
+  }, [sessionRef]);
 
   // LLM provider selection (null = server default), persisted to localStorage
   const [selectedProvider, setSelectedProviderRaw] = useState<string | null>(
@@ -1448,7 +1452,7 @@ export function useChat() {
           dbSessionIdRef.current = nextDbSessionId;
           saveDbSessionId(nextDbSessionId);
           const continuedMeta = toSessionObservationMeta(continued, {
-            ref: sessionRef,
+            ref: sessionRefRef.current,
             status: "active",
             sessionType: "web_chat",
           });
@@ -1725,7 +1729,7 @@ export function useChat() {
     };
     // resolveAgentName is a stable useCallback (its own deps are []) — safe
     // to reference here without re-creating connect every render.
-  }, [applyMainSessionMeta, resolveAgentName]);
+  }, [applyMainSessionMeta, resolveAgentName, setSelectedProvider]);
 
   // Handle streaming chat chunks
   const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
