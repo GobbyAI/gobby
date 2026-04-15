@@ -25,6 +25,13 @@ class TmuxConfig(BaseModel):
         default="gobby",
         description="Isolated tmux socket name (passed as -L <socket_name>).",
     )
+    socket_path: str | None = Field(
+        default=None,
+        description=(
+            "Exact tmux socket path (passed as -S <socket_path>). "
+            "When set, this takes precedence over socket_name."
+        ),
+    )
     config_file: str | None = Field(
         default=None,
         description="Optional tmux config file (passed as -f <path>).",

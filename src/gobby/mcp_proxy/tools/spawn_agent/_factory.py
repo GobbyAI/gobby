@@ -177,7 +177,7 @@ def create_spawn_agent_registry(
             clone_id: Existing clone ID to reuse
             worktree_id: Existing worktree ID to reuse
             workflow: Workflow/pipeline to use
-            provider: AI provider (claude/gemini/codex)
+            provider: AI provider (claude/gemini/qwen/codex)
             model: Model to use
             timeout: Timeout in seconds
             max_turns: Maximum conversation turns

@@ -31,7 +31,7 @@ _PLAN_MODE_BLOCKED_TOOLS: frozenset[str] = frozenset({"Edit", "Write", "Notebook
 
 # Bash commands that perform write/destructive operations (blocked in plan mode).
 # Read-only commands (ls, cat, grep, git status/log/diff, find, head, tail) pass through.
-_PLAN_FILE_PATTERN = re.compile(r"^(?:.*[/\\])?\.(?:claude|gobby|gemini|codex)[/\\].*\.md$")
+_PLAN_FILE_PATTERN = re.compile(r"^(?:.*[/\\])?\.(?:claude|gobby|gemini|qwen|codex)[/\\].*\.md$")
 
 _BASH_WRITE_PATTERNS = re.compile(
     r"(?:^|[;&|]\s*)(?:"

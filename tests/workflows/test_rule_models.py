@@ -14,14 +14,15 @@ pytestmark = pytest.mark.unit
 
 
 class TestRuleTriggerEvent:
-    def test_enum_exposes_raw_hook_events_and_turn_end(self) -> None:
+    def test_enum_exposes_raw_hook_events_and_semantic_turn_boundaries(self) -> None:
         from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert len(RuleTriggerEvent) == 16
+        assert len(RuleTriggerEvent) == 17
 
     def test_enum_values(self) -> None:
         from gobby.workflows.definitions import RuleTriggerEvent
 
+        assert RuleTriggerEvent.TURN_START == "turn_start"
         assert RuleTriggerEvent.TURN_END == "turn_end"
         assert RuleTriggerEvent.BEFORE_TOOL == "before_tool"
         assert RuleTriggerEvent.AFTER_TOOL == "after_tool"
@@ -51,6 +52,7 @@ class TestRuleTriggerEvent:
 
         assert RuleTriggerEvent("before_tool") == RuleTriggerEvent.BEFORE_TOOL
         assert RuleTriggerEvent("stop") == RuleTriggerEvent.STOP
+        assert RuleTriggerEvent("turn_start") == RuleTriggerEvent.TURN_START
         assert RuleTriggerEvent("turn_end") == RuleTriggerEvent.TURN_END
 
     def test_enum_invalid_value(self) -> None:
@@ -438,6 +440,16 @@ class TestRuleDefinitionBody:
         )
 
         assert body.event == RuleTriggerEvent.TURN_END
+
+    def test_turn_start_event_rule(self) -> None:
+        from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+
+        body = RuleDefinitionBody(
+            event=RuleTriggerEvent.TURN_START,
+            effects=[RuleEffect(type="inject_context", template="New turn.")],
+        )
+
+        assert body.event == RuleTriggerEvent.TURN_START
 
     def test_required_fields(self) -> None:
         """event and effects are required."""

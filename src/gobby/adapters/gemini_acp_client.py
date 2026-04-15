@@ -1,8 +1,8 @@
-"""Gemini ACP (Agent Communication Protocol) client.
+"""ACP (Agent Communication Protocol) client for Gemini-compatible CLIs.
 
-Wraps `gemini --acp` subprocess, communicating over JSON-RPC 2.0 via stdio.
-Normalizes Gemini's NDJSON stream events into structured dicts that
-Gemini web-chat wrappers convert to ChatEvent instances.
+Wraps a Gemini-compatible CLI subprocess running ``--acp`` and communicates
+over JSON-RPC 2.0 via stdio. Normalizes NDJSON stream events into structured
+dicts that web-chat wrappers convert to ChatEvent instances.
 
 Protocol lifecycle:
   1. initialize  →  handshake with protocol version and client info
@@ -85,7 +85,7 @@ def _extract_session_id(payload: Any) -> str | None:
 
 @dataclass
 class StreamEvent:
-    """A normalized event from the Gemini ACP stream.
+    """A normalized event from the provider ACP stream.
 
     Attributes:
         event_type: One of "init", "content_delta", "result", "error".
@@ -97,7 +97,7 @@ class StreamEvent:
 
 
 class GeminiACPClient:
-    """Client for the Gemini CLI's ACP (Agent Communication Protocol) mode.
+    """Client for a Gemini-compatible CLI's ACP mode.
 
     Launches ``gemini --acp`` as a subprocess and communicates via JSON-RPC 2.0
     over stdin/stdout. The protocol requires an initialize handshake followed
@@ -119,13 +119,18 @@ class GeminiACPClient:
         cwd: str | None = None,
         request_timeout: float = DEFAULT_ACP_REQUEST_TIMEOUT_SECONDS,
         prompt_timeout: float | None = None,
+        cli_name: str = "gemini",
+        display_name: str = "Gemini",
+        prompt_timeout_env: str = ACP_PROMPT_TIMEOUT_ENV,
     ) -> None:
         self._cli_path = cli_path
         self._cwd = cwd
         self._request_timeout = request_timeout
+        self._cli_name = cli_name
+        self._display_name = display_name
         self._prompt_timeout = _resolve_timeout(
             prompt_timeout,
-            env_name=ACP_PROMPT_TIMEOUT_ENV,
+            env_name=prompt_timeout_env,
             default=DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
         )
         self._process: asyncio.subprocess.Process | None = None
@@ -157,29 +162,29 @@ class GeminiACPClient:
         auto_session: bool = True,
         cwd: str | None = None,
     ) -> None:
-        """Launch ``gemini --acp``, perform initialize handshake, and create/resume session.
+        """Launch ``<cli> --acp``, perform initialize handshake, and create/resume session.
 
         Args:
             session_id: Optional session ID to resume a previous conversation.
-            model: Optional model override to apply to the Gemini CLI subprocess.
+            model: Optional model override to apply to the CLI subprocess.
 
         Raises:
-            FileNotFoundError: If the Gemini CLI binary cannot be found.
+            FileNotFoundError: If the CLI binary cannot be found.
             RuntimeError: If the client is already started or handshake fails.
         """
         if self._started:
-            raise RuntimeError("GeminiACPClient already started")
+            raise RuntimeError(f"{self._display_name}ACPClient already started")
 
-        path = self._cli_path or shutil.which("gemini")
+        path = self._cli_path or shutil.which(self._cli_name)
         if not path:
-            raise FileNotFoundError("Gemini CLI not found in PATH")
+            raise FileNotFoundError(f"{self._display_name} CLI not found in PATH")
 
         cmd = [path, "--acp"]
         if model:
             cmd.extend(["--model", model])
 
         env = os.environ.copy()
-        # Prevent inherited Gemini hooks from registering nested daemon sessions.
+        # Prevent inherited CLI hooks from registering nested daemon sessions.
         env["GOBBY_HOOKS_DISABLED"] = "1"
 
         self._process = await asyncio.create_subprocess_exec(
@@ -191,7 +196,7 @@ class GeminiACPClient:
             env=env,
         )
         self._started = True
-        logger.debug(f"GeminiACPClient started (pid={self._process.pid})")
+        logger.debug("%s ACP client started (pid=%s)", self._display_name, self._process.pid)
 
         # Perform initialize handshake
         init_result = await self._send_request(
@@ -227,6 +232,7 @@ class GeminiACPClient:
         *,
         model: str | None = None,
         cwd: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Create a new ACP session on an already-started shared backend."""
         session_params = {
@@ -235,6 +241,8 @@ class GeminiACPClient:
         }
         if model:
             session_params["model"] = model
+        if reasoning_effort:
+            session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/new", session_params)
         self._session_info = result if isinstance(result, dict) else {}
         self._session_id = _extract_session_id(self._session_info)
@@ -246,6 +254,7 @@ class GeminiACPClient:
         *,
         model: str | None = None,
         cwd: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Load an existing ACP session on an already-started shared backend."""
         session_params = {
@@ -255,6 +264,8 @@ class GeminiACPClient:
         }
         if model:
             session_params["model"] = model
+        if reasoning_effort:
+            session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/load", session_params)
         self._session_info = result if isinstance(result, dict) else {}
         self._session_id = _extract_session_id(self._session_info) or session_id
@@ -340,6 +351,7 @@ class GeminiACPClient:
         *,
         session_id: str | None = None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send a prompt and yield normalized stream events.
 
@@ -356,17 +368,21 @@ class GeminiACPClient:
             RuntimeError: If the client is not started or the process has died.
         """
         if not self._started or not self._process:
-            raise RuntimeError("GeminiACPClient not started. Call start() first.")
+            raise RuntimeError(f"{self._display_name}ACPClient not started. Call start() first.")
 
         if self._process.returncode is not None:
-            raise RuntimeError(f"Gemini ACP process has exited (code={self._process.returncode})")
+            raise RuntimeError(
+                f"{self._display_name} ACP process has exited (code={self._process.returncode})"
+            )
 
         assert self._process.stdin is not None
         assert self._process.stdout is not None
 
         target_session_id = session_id or self._session_id
         if not target_session_id:
-            raise RuntimeError("GeminiACPClient missing session ID for session/prompt")
+            raise RuntimeError(
+                f"{self._display_name}ACPClient missing session ID for session/prompt"
+            )
 
         # Acquire manually (not `async with`) because the lock must remain held
         # across the `yield` points of this async generator. Released in finally.
@@ -383,11 +399,13 @@ class GeminiACPClient:
             }
             if model:
                 request["params"]["model"] = model
+            if reasoning_effort:
+                request["params"]["reasoningEffort"] = reasoning_effort
 
             request_line = json.dumps(request) + "\n"
             self._process.stdin.write(request_line.encode())
             await self._process.stdin.drain()
-            logger.debug(f"Sent prompt to Gemini ACP: {message[:80]!r}")
+            logger.debug("Sent prompt to %s ACP: %r", self._display_name, message[:80])
 
             async for event in self._read_stream():
                 yield event
@@ -422,7 +440,7 @@ class GeminiACPClient:
 
             if not line:
                 # EOF -- process may have exited
-                logger.debug("Gemini ACP stdout EOF")
+                logger.debug("%s ACP stdout EOF", self._display_name)
                 return
 
             line_str = line.decode().strip()
@@ -432,7 +450,7 @@ class GeminiACPClient:
             try:
                 data = json.loads(line_str)
             except json.JSONDecodeError:
-                logger.warning(f"Non-JSON line from Gemini ACP: {line_str[:200]}")
+                logger.warning("Non-JSON line from %s ACP: %s", self._display_name, line_str[:200])
                 continue
 
             # JSON-RPC response (has "id") = end of turn
@@ -465,7 +483,8 @@ class GeminiACPClient:
     def _normalize_notification(raw: dict[str, Any]) -> StreamEvent:
         """Normalize a JSON-RPC notification to a StreamEvent.
 
-        Gemini ACP sends notifications with a "method" field and "params" payload.
+        Gemini-compatible ACP streams send notifications with a "method" field and
+        "params" payload.
         Also handles legacy raw-event format (with "type" field) for compatibility.
 
         Args:
@@ -567,7 +586,7 @@ class GeminiACPClient:
     def _normalize_legacy_event(raw: dict[str, Any]) -> StreamEvent:
         """Normalize a legacy raw-event format (type-based) to StreamEvent.
 
-        Kept for backward compatibility with older Gemini CLI versions.
+        Kept for backward compatibility with older Gemini-compatible CLI versions.
         """
         event_type = raw.get("type", "unknown")
 
@@ -655,16 +674,19 @@ class GeminiACPClient:
                 try:
                     await asyncio.wait_for(self._process.wait(), timeout=5.0)
                 except TimeoutError:
-                    logger.warning("Gemini ACP process did not exit after terminate, killing")
+                    logger.warning(
+                        "%s ACP process did not exit after terminate, killing",
+                        self._display_name,
+                    )
                     self._process.kill()
                     await self._process.wait()
         except ProcessLookupError:
             pass  # Already gone
         except Exception as e:
-            logger.debug(f"GeminiACPClient stop error (expected): {e}")
+            logger.debug("%sACPClient stop error (expected): %s", self._display_name, e)
         finally:
             self._process = None
             self._started = False
             self._session_id = None
             self._session_info = {}
-            logger.debug("GeminiACPClient stopped")
+            logger.debug("%s ACP client stopped", self._display_name)

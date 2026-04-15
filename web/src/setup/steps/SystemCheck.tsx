@@ -17,11 +17,19 @@ const INSTALL_HINTS: Record<string, string> = {
   node: "https://nodejs.org or brew install node",
   uv: "curl -LsSf https://astral.sh/uv/install.sh | sh",
   claude: "npm install -g @anthropic-ai/claude-code",
-  tmux: process.platform === "darwin" ? "brew install tmux" : "sudo apt install tmux",
+  qwen: "npm install -g @qwen-code/qwen-code",
+  tmux:
+    process.platform === "darwin"
+      ? "brew install tmux"
+      : "sudo apt install tmux",
   clawhub: "npm install -g clawhub",
 };
 
-export function SystemCheck({ state: _state, setState, onNext }: StepProps): React.ReactElement {
+export function SystemCheck({
+  state: _state,
+  setState,
+  onNext,
+}: StepProps): React.ReactElement {
   const [scanning, setScanning] = useState(true);
   const [tools, setTools] = useState<ToolRow[]>([]);
   const [missingRequired, setMissingRequired] = useState<string[]>([]);
@@ -72,12 +80,11 @@ export function SystemCheck({ state: _state, setState, onNext }: StepProps): Rea
       <Box flexDirection="column">
         <ToolTable tools={tools} />
         <Box marginTop={1} flexDirection="column">
-          <StatusMessage level="warning">
-            Missing required tools:
-          </StatusMessage>
+          <StatusMessage level="warning">Missing required tools:</StatusMessage>
           {missingRequired.map((t) => (
             <Text key={t}>
-              {"  "}{t}: <Text dimColor>{INSTALL_HINTS[t] || ""}</Text>
+              {"  "}
+              {t}: <Text dimColor>{INSTALL_HINTS[t] || ""}</Text>
             </Text>
           ))}
         </Box>
@@ -110,9 +117,7 @@ export function SystemCheck({ state: _state, setState, onNext }: StepProps): Rea
     <Box flexDirection="column">
       <ToolTable tools={tools} />
       <Box marginTop={1}>
-        <StatusMessage level="success">
-          All required tools found.
-        </StatusMessage>
+        <StatusMessage level="success">All required tools found.</StatusMessage>
       </Box>
       <Box marginTop={1}>
         <SelectInput

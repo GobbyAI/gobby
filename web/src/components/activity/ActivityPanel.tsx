@@ -157,8 +157,6 @@ interface ActivityPanelProps {
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusSessionHandled?: () => void;
-  watchingSessionIds?: Set<string>;
-  onUnwatchSession?: (sessionId: string) => void;
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   isMobile?: boolean;
 }
@@ -191,8 +189,6 @@ export function ActivityPanel({
   chatSessionId,
   focusSessionId,
   onFocusSessionHandled,
-  watchingSessionIds,
-  onUnwatchSession,
   onSwapSession,
   isMobile = false,
 }: ActivityPanelProps) {
@@ -223,8 +219,6 @@ export function ActivityPanel({
             chatSessionId={chatSessionId ?? undefined}
             focusSessionId={focusSessionId}
             onFocusHandled={onFocusSessionHandled}
-            watchingSessionIds={watchingSessionIds}
-            onUnwatch={onUnwatchSession}
             onSwapSession={onSwapSession}
             isMobile={useOverlay}
           />

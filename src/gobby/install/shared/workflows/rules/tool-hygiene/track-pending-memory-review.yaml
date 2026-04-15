@@ -6,7 +6,7 @@ rules:
     event: after_tool
     enabled: true
     priority: 90
-    when: "event.data.get('tool_name') in ['Edit', 'Write', 'NotebookEdit']"
+    when: "event.data.get('canonical_repo_mutation')"
     effects:
       - type: set_variable
         variable: memory_review_completed

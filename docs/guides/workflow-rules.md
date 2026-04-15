@@ -48,6 +48,19 @@ Why:
 
 Use raw `stop` or `after_agent` only when you truly need the distinction.
 
+## Prefer `turn_start` For Start-Of-Turn Policy
+
+If a rule is intended to run when a new turn begins, prefer `turn_start` over
+the raw `before_agent` hook.
+
+Why:
+
+- `turn_start` is the cross-CLI semantic start-of-turn event.
+- The rule engine emits it alongside the raw pre-turn hook.
+- One rule then covers Claude, Codex, and Gemini prompt-entry consistently.
+
+Use raw `before_agent` only when you truly need provider-specific detail.
+
 ## Hard-Coded Engine Behaviors
 
 Some safety behaviors live in the rule engine itself rather than YAML.
@@ -78,9 +91,9 @@ attempt is allowed unconditionally.
 `stop_attempts` is incremented automatically on `turn_end`, before configurable
 stop-gate rules run.
 
-### Before-Agent Reset
+### Turn-Start Reset
 
-On `before_agent`, the engine resets transient stop-cycle state such as:
+On `turn_start`, the engine resets transient stop-cycle state such as:
 
 - `consecutive_tool_blocks`
 - `_last_blocked_tool`

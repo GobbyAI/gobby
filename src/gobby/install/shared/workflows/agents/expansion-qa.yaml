@@ -12,6 +12,12 @@ instructions: |
   Your job is to compare the applied task tree with the compiled expansion run,
   repair structural drift when safe, and save findings on the run.
 
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required run state is saved.
+  - The terminate step is explicit shutdown after saving QA results, not stop-hook completion.
+
   CRITICAL RULES:
   - Do NOT use deprecated spec-on-task tools.
   - Do NOT create, close, claim, reopen, escalate, or delete tasks.

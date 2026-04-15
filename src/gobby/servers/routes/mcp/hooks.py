@@ -187,11 +187,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
             from gobby.adapters.gemini import GeminiAdapter
+            from gobby.adapters.qwen import QwenAdapter
 
             if source == "claude":
                 adapter: BaseAdapter = ClaudeCodeAdapter(hook_manager=hook_manager)
             elif source == "gemini":
                 adapter = GeminiAdapter(hook_manager=hook_manager)
+            elif source == "qwen":
+                adapter = QwenAdapter(hook_manager=hook_manager)
             elif source == "codex":
                 # Always use CodexHooksAdapter for HTTP hook requests from
                 # hook_dispatcher.py.  app.state.codex_adapter is the
@@ -205,7 +208,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported source: {source}. Supported: claude, gemini, codex",
+                    detail=f"Unsupported source: {source}. Supported: claude, gemini, qwen, codex",
                 )
 
             # Execute hook via adapter

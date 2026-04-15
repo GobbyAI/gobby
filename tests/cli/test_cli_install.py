@@ -16,6 +16,7 @@ from gobby.cli.install import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
     _is_gemini_cli_installed,
+    _is_qwen_cli_installed,
     install,
     uninstall,
 )
@@ -34,6 +35,13 @@ def _mock_ext_services_and_prompts():
             return_value={"stored": 0, "already_configured": 0, "env_found": 0},
         ),
     ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _mock_qwen_detector() -> None:
+    """Keep Qwen detection deterministic unless a test overrides it."""
+    with patch("gobby.cli.install._is_qwen_cli_installed", return_value=False):
         yield
 
 
@@ -134,6 +142,19 @@ class TestCLIDetectionFunctions:
         assert _is_gemini_cli_installed() is False
 
     @patch("shutil.which")
+    def test_is_qwen_cli_installed_true(self, mock_which: MagicMock) -> None:
+        """Test Qwen CLI detection when installed."""
+        mock_which.return_value = "/usr/local/bin/qwen"
+        assert _is_qwen_cli_installed() is True
+        mock_which.assert_called_once_with("qwen")
+
+    @patch("shutil.which")
+    def test_is_qwen_cli_installed_false(self, mock_which: MagicMock) -> None:
+        """Test Qwen CLI detection when not installed."""
+        mock_which.return_value = None
+        assert _is_qwen_cli_installed() is False
+
+    @patch("shutil.which")
     def test_is_codex_cli_installed_true(self, mock_which: MagicMock) -> None:
         """Test Codex CLI detection when installed."""
         mock_which.return_value = "/usr/local/bin/codex"
@@ -162,6 +183,7 @@ class TestInstallCommand:
         assert "Install Gobby hooks" in result.output
         assert "--claude" in result.output
         assert "--gemini" in result.output
+        assert "--qwen" in result.output
         assert "--codex" in result.output
         assert "--hooks" in result.output
         assert "--all" in result.output
@@ -192,6 +214,7 @@ class TestInstallCommand:
         assert "No supported AI coding CLIs detected" in result.output
         assert "Claude Code" in result.output
         assert "Gemini CLI" in result.output
+        assert "Qwen CLI" in result.output
         assert "Codex CLI" in result.output
 
     @patch("gobby.cli.install._ensure_daemon_config")
@@ -275,6 +298,39 @@ class TestInstallCommand:
         assert "Installed 1 plugins" in result.output
         assert "MCP server already configured" in result.output
         mock_install_gemini.assert_called_once()
+
+    @patch("gobby.cli.install._ensure_daemon_config")
+    @patch("gobby.cli.install.install_qwen")
+    @patch("gobby.cli.load_config")
+    def test_install_qwen_only_flag(
+        self,
+        mock_load_config: MagicMock,
+        mock_install_qwen: MagicMock,
+        mock_ensure_config: MagicMock,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Test install with --qwen flag only."""
+        mock_load_config.return_value = MagicMock()
+        mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
+        mock_install_qwen.return_value = {
+            "success": True,
+            "hooks_installed": ["SessionStart"],
+            "workflows_installed": [],
+            "commands_installed": ["qwen-cmd"],
+            "plugins_installed": ["plugin1"],
+            "mcp_configured": True,
+        }
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            result = runner.invoke(cli, ["install", "--qwen"])
+
+        assert result.exit_code == 0
+        assert "Qwen CLI" in result.output
+        assert "Installed 1 hooks" in result.output
+        assert "Installed 1 skills/commands" in result.output
+        assert "Installed 1 plugins" in result.output
+        mock_install_qwen.assert_called_once()
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_codex")
@@ -720,6 +776,7 @@ class TestUninstallCommand:
         assert "Uninstall Gobby hooks" in result.output
         assert "--claude" in result.output
         assert "--gemini" in result.output
+        assert "--qwen" in result.output
         assert "--codex" in result.output
         assert "--all" in result.output
         assert "--yes" in result.output or "-y" in result.output
@@ -830,6 +887,34 @@ class TestUninstallCommand:
         assert "Codex" in result.output
         assert "Removed 1 files" in result.output
         mock_uninstall_codex.assert_called_once()
+
+    @patch("gobby.cli.install.uninstall_qwen")
+    @patch("gobby.cli.load_config")
+    def test_uninstall_qwen_only_flag(
+        self,
+        mock_load_config: MagicMock,
+        mock_uninstall_qwen: MagicMock,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Test uninstall with --qwen flag only."""
+        mock_load_config.return_value = MagicMock()
+        mock_uninstall_qwen.return_value = {
+            "success": True,
+            "hooks_removed": ["SessionStart"],
+            "files_removed": ["hook_dispatcher.py"],
+        }
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            Path(".qwen").mkdir()
+            Path(".qwen/settings.json").write_text("{}")
+
+            result = runner.invoke(cli, ["uninstall", "--qwen", "--yes"])
+
+        assert result.exit_code == 0
+        assert "Qwen CLI" in result.output
+        assert "Removed 1 hooks" in result.output
+        mock_uninstall_qwen.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_claude")
     @patch("gobby.cli.load_config")

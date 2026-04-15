@@ -239,8 +239,16 @@ def uninstall_gemini(project_path: Path) -> dict[str, Any]:
     copy2(settings_file, backup_file)
 
     # Remove hooks from settings.json
-    with open(settings_file) as f:
-        settings = json.load(f)
+    try:
+        with open(settings_file) as f:
+            settings = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "Could not parse %s (%s); treating as empty and continuing uninstall",
+            settings_file,
+            e,
+        )
+        settings = {}
 
     if "hooks" in settings:
         hook_types = [

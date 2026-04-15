@@ -3,7 +3,7 @@ Protocol definition for polymorphic chat sessions.
 
 ChatSession (Claude SDK) implements this protocol, allowing the
 WebSocket layer to work polymorphically with future session types
-(e.g. CLIChatSession) without isinstance checks.
+(e.g. managed provider-backed sessions) without isinstance checks.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ class ChatSessionProtocol(Protocol):
     resume_session_id: str | None
     last_activity: datetime
     provider: str
+    reasoning_effort: str | None
 
     # Lifecycle callbacks
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None

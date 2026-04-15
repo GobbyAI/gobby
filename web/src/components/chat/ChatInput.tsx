@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ContextUsage } from '../../types/chat'
+import type { QueuedFile, ChatMode, ContextUsage, ChatSendOptions } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
@@ -9,14 +9,31 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { ProviderPicker } from './ProviderPicker'
+import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/Select'
 import { SourceIcon } from '../shared/SourceIcon'
+import {
+  AUTO_REASONING_EFFORT,
+  getModelLabel,
+  getModelsForProvider,
+  getOrderedProviders,
+  getPreferredModelForProvider,
+  getPreferredReasoningEffort,
+  getProviderDisplayName,
+  getReasoningOptionsForModel,
+  type ProviderModelEntry,
+} from '../../lib/providerModels'
 
 interface ChatInputProps {
-  onSend: (message: string, files?: QueuedFile[]) => void
+  onSend: (
+    message: string,
+    files?: QueuedFile[],
+    options?: ChatSendOptions,
+  ) => void
   onStop?: () => void
   isStreaming?: boolean
   disabled?: boolean
+  disabledPlaceholder?: string
+  disabledAriaLabel?: string
   viewingSession?: boolean
   onInputChange?: (value: string) => void
   paletteItems?: PaletteItem[]
@@ -46,12 +63,22 @@ interface ChatInputProps {
   onScrollToBottom?: () => void
   provider?: string | null
   availableProviders?: string[]
+  providerModelCatalog?: ProviderModelEntry[]
   currentModel?: string
+  currentReasoning?: string
   onModelChange?: (model: string) => void
+  onReasoningChange?: (effort: string) => void
   onProviderChange?: (provider: string | null) => void
-  onSwitchProvider?: (provider: string) => void
+  onSwitchProvider?: (
+    provider: string,
+    options?: { model?: string | null; reasoningEffort?: string | null },
+  ) => void
   hasMessages?: boolean
-  onProviderSelectionChange?: (provider: string, model: string) => void
+  onProviderSelectionChange?: (
+    provider: string,
+    model: string,
+    reasoningEffort: string | null,
+  ) => void
   providerPickerDisabledReason?: string | null
   proxySlashMode?: boolean
   showObserveOverlay?: boolean
@@ -73,6 +100,8 @@ export function ChatInput({
   onStop,
   isStreaming = false,
   disabled = false,
+  disabledPlaceholder,
+  disabledAriaLabel,
   viewingSession = false,
   onInputChange,
   paletteItems = [],
@@ -102,11 +131,13 @@ export function ChatInput({
   onScrollToBottom,
   provider,
   availableProviders = [],
+  providerModelCatalog = [],
   currentModel = 'opus',
+  currentReasoning = AUTO_REASONING_EFFORT,
   onModelChange,
+  onReasoningChange,
   onProviderChange,
   onSwitchProvider,
-  hasMessages = false,
   onProviderSelectionChange,
   providerPickerDisabledReason = null,
   proxySlashMode = false,
@@ -116,7 +147,6 @@ export function ChatInput({
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
-  const [pickerOpen, setPickerOpen] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -182,12 +212,14 @@ export function ChatInput({
     const trimmed = input.trim()
     const hasFiles = queuedFiles.length > 0
     if ((trimmed || hasFiles) && !disabled) {
-      onSend(trimmed, hasFiles ? queuedFiles : undefined)
+      onSend(trimmed, hasFiles ? queuedFiles : undefined, {
+        reasoningEffort: currentReasoning,
+      })
       setInput('')
       setQueuedFiles([])
       onScrollToBottom?.()
     }
-  }, [input, disabled, onSend, queuedFiles, onScrollToBottom])
+  }, [currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
 
   const handleChange = useCallback((value: string) => {
     setInput(value)
@@ -278,15 +310,92 @@ export function ChatInput({
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
-  const pickerProviders = availableProviders.length > 0 ? availableProviders : [provider ?? 'claude']
+  const effectiveProvider = provider ?? 'claude'
+  const pickerProviders =
+    availableProviders.length > 0 ? availableProviders : [effectiveProvider]
+  const orderedProviders = getOrderedProviders(pickerProviders)
+  const visibleModels = getModelsForProvider(providerModelCatalog, effectiveProvider)
+  const modelOptions =
+    visibleModels.length > 0
+      ? visibleModels
+      : [{ value: currentModel || 'default', label: getModelLabel(providerModelCatalog, effectiveProvider, currentModel) }]
+  const resolvedModelValue = currentModel || modelOptions[0]?.value || 'default'
+  const reasoningOptions = getReasoningOptionsForModel(
+    providerModelCatalog,
+    effectiveProvider,
+    resolvedModelValue,
+  )
+  const resolvedReasoning =
+    currentReasoning ||
+    getPreferredReasoningEffort(
+        providerModelCatalog,
+        effectiveProvider,
+        resolvedModelValue,
+        AUTO_REASONING_EFFORT,
+      )
   const canSelectModel = Boolean(onModelChange)
-  const canSwitchProvider = pickerProviders.length >= 2 && Boolean(onSwitchProvider)
-  const providerButtonDisabled = disabled || Boolean(providerPickerDisabledReason)
-  const pickerLabel = providerPickerDisabledReason
-    ? providerPickerDisabledReason
-    : canSwitchProvider
-      ? 'Select provider and model'
-      : 'Select model'
+  const selectionDisabled = disabled || Boolean(providerPickerDisabledReason)
+
+  const applySelection = useCallback(
+    (nextProvider: string, nextModel: string, nextReasoning: string) => {
+      if (onProviderSelectionChange) {
+        onProviderSelectionChange(nextProvider, nextModel, nextReasoning)
+        return
+      }
+
+      const providerChanged = nextProvider !== effectiveProvider
+      if (providerChanged) {
+        onProviderChange?.(nextProvider)
+      }
+      onModelChange?.(nextModel)
+      onReasoningChange?.(nextReasoning)
+      if (providerChanged) {
+        onSwitchProvider?.(nextProvider, {
+          model: nextModel,
+          reasoningEffort: nextReasoning,
+        })
+      }
+    },
+    [
+      effectiveProvider,
+      onModelChange,
+      onProviderChange,
+      onProviderSelectionChange,
+      onReasoningChange,
+      onSwitchProvider,
+    ],
+  )
+
+  const handleProviderSelect = (nextProvider: string) => {
+    const nextModel =
+      getPreferredModelForProvider(providerModelCatalog, nextProvider, null) ??
+      resolvedModelValue ??
+      'default'
+    const nextReasoning = getPreferredReasoningEffort(
+      providerModelCatalog,
+      nextProvider,
+      nextModel,
+      null,
+    )
+    applySelection(nextProvider, nextModel, nextReasoning)
+  }
+
+  const handleModelSelect = useCallback(
+    (nextModel: string) => {
+      const nextReasoning = getPreferredReasoningEffort(
+        providerModelCatalog,
+        effectiveProvider,
+        nextModel,
+        resolvedReasoning,
+      )
+      applySelection(effectiveProvider, nextModel, nextReasoning)
+    },
+    [applySelection, effectiveProvider, providerModelCatalog, resolvedReasoning],
+  )
+
+  const handleReasoningSelect = (nextReasoning: string) => {
+    applySelection(effectiveProvider, resolvedModelValue, nextReasoning)
+  }
 
   type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
 
@@ -430,6 +539,16 @@ export function ChatInput({
         : primaryButtonKind === 'mic-recording'
           ? 'Push to talk recording'
           : 'Start push to talk'
+  const disabledInputPlaceholder =
+    disabledPlaceholder ??
+    (viewingSession
+      ? 'Read-only while watching this session...'
+      : 'Message input unavailable...')
+  const disabledInputAriaLabel =
+    disabledAriaLabel ??
+    (viewingSession
+      ? 'Message input — watching read only'
+      : 'Message input — unavailable')
 
   const primaryButtonClassName = cn(
     'inline-flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
@@ -496,71 +615,57 @@ export function ChatInput({
           </div>
         )}
 
-        {/* Toolbar */}
-        <div className="flex items-center gap-1 mb-2">
-          {onModeChange && (
-            <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
-          )}
-          <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
-            <PaperclipIcon />
-          </Button>
-          {canSelectModel && (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => setPickerOpen(true)}
-                disabled={providerButtonDisabled}
-                title={pickerLabel}
-                aria-label={pickerLabel}
-              >
-                <SourceIcon source={provider || 'claude'} size={16} />
-              </Button>
-              <ProviderPicker
-                open={pickerOpen}
-                onClose={() => setPickerOpen(false)}
-                currentProvider={provider ?? null}
-                currentModel={currentModel}
-                availableProviders={pickerProviders}
-                onModelChange={onModelChange ?? (() => {})}
-                onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
-                onSwitchProvider={onSwitchProvider}
-                onSelect={onProviderSelectionChange}
-                hasMessages={hasMessages}
-              />
-            </>
-          )}
-          {onAgentChange && agentName && agentDefinitions.length > 0 && (
-            <ActiveAgentIndicator
-              agentName={agentName}
-              onAgentChange={onAgentChange}
-              definitions={agentDefinitions}
-              globalDefs={agentGlobalDefs}
-              projectDefs={agentProjectDefs}
-              showScopeToggle={agentShowScopeToggle}
-              hasGlobal={agentHasGlobal}
-              hasProject={agentHasProject}
-            />
-          )}
-          <div className="flex items-center gap-2 ml-auto">
-          {onWorktreeChange && (
-            <BranchIndicator
-              currentBranch={currentBranch ?? null}
-              worktreePath={worktreePath ?? null}
-              projectId={projectId ?? null}
-              onWorktreeChange={onWorktreeChange}
-            />
-          )}
-          <ContextUsageIndicator
-            totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-            outputTokens={contextUsage?.outputTokens ?? 0}
-            contextWindow={contextUsage?.contextWindow ?? null}
-            uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-            cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-            cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-          />
+        <div className="chat-input-meta">
+          <div
+            className={`chat-input-notice-slot${proxyDeliveryNotice ? ' has-notice' : ''}`}
+            aria-live="polite"
+          >
+            {proxyDeliveryNotice ? (
+              <div className="chat-input-notice">{proxyDeliveryNotice}</div>
+            ) : null}
           </div>
-          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
+
+          <div className="chat-input-toolbar">
+            <div className="chat-input-toolbar__left">
+              {onModeChange && (
+                <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
+              )}
+              <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
+                <PaperclipIcon />
+              </Button>
+              {onAgentChange && agentName && agentDefinitions.length > 0 && (
+                <ActiveAgentIndicator
+                  agentName={agentName}
+                  onAgentChange={onAgentChange}
+                  definitions={agentDefinitions}
+                  globalDefs={agentGlobalDefs}
+                  projectDefs={agentProjectDefs}
+                  showScopeToggle={agentShowScopeToggle}
+                  hasGlobal={agentHasGlobal}
+                  hasProject={agentHasProject}
+                />
+              )}
+            </div>
+            <div className="chat-input-toolbar__right">
+              {onWorktreeChange && (
+                <BranchIndicator
+                  currentBranch={currentBranch ?? null}
+                  worktreePath={worktreePath ?? null}
+                  projectId={projectId ?? null}
+                  onWorktreeChange={onWorktreeChange}
+                />
+              )}
+              <ContextUsageIndicator
+                totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+                outputTokens={contextUsage?.outputTokens ?? 0}
+                contextWindow={contextUsage?.contextWindow ?? null}
+                uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+                cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+                cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+              />
+            </div>
+            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
+          </div>
         </div>
 
         {/* File previews */}
@@ -596,8 +701,20 @@ export function ChatInput({
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={viewingSession ? 'Attach to send messages...' : disabled ? 'Connecting...' : isStreaming ? 'Interrupt...' : 'Message or /command...'}
-              aria-label={disabled ? 'Message input — connecting' : isStreaming ? 'Message input — streaming' : 'Message input'}
+              placeholder={
+                disabled
+                  ? disabledInputPlaceholder
+                  : isStreaming
+                    ? 'Interrupt...'
+                    : 'Message or /command...'
+              }
+              aria-label={
+                disabled
+                  ? disabledInputAriaLabel
+                  : isStreaming
+                    ? 'Message input — streaming'
+                    : 'Message input'
+              }
               disabled={disabled}
               rows={1}
               autoComplete="off"
@@ -629,6 +746,94 @@ export function ChatInput({
               </button>
             </div>
           </div>
+
+          {canSelectModel && (
+            <div className="chat-input-controls">
+              <div className="chat-input-model-controls">
+                <Select
+                  value={effectiveProvider}
+                  onValueChange={handleProviderSelect}
+                  disabled={selectionDisabled}
+                >
+                  <SelectTrigger
+                    className="chat-input-select chat-input-select--provider !w-auto"
+                    aria-label="Select provider and model"
+                    title={providerPickerDisabledReason ?? 'Select provider'}
+                  >
+                    <div className="chat-input-select__value">
+                      <SourceIcon source={effectiveProvider} size={14} />
+                      <span className="chat-input-select__text">
+                        {getProviderDisplayName(effectiveProvider)}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent side="top" className="chat-input-select__content">
+                    {orderedProviders.map((candidateProvider) => (
+                      <SelectItem key={candidateProvider} value={candidateProvider}>
+                        <span className="chat-input-select__item">
+                          <SourceIcon source={candidateProvider} size={14} />
+                          <span>{getProviderDisplayName(candidateProvider)}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={resolvedModelValue}
+                  onValueChange={handleModelSelect}
+                  disabled={selectionDisabled}
+                >
+                  <SelectTrigger
+                    className="chat-input-select chat-input-select--model !w-auto"
+                    aria-label="Select model"
+                    title={providerPickerDisabledReason ?? 'Select model'}
+                  >
+                    <div className="chat-input-select__value">
+                      <span className="chat-input-select__text">
+                        {getModelLabel(providerModelCatalog, effectiveProvider, resolvedModelValue)}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent side="top" className="chat-input-select__content">
+                    {modelOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={resolvedReasoning}
+                  onValueChange={handleReasoningSelect}
+                  disabled={
+                    selectionDisabled ||
+                    (reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled))
+                  }
+                >
+                  <SelectTrigger
+                    className="chat-input-select chat-input-select--reasoning !w-auto"
+                    aria-label="Select reasoning effort"
+                    title={providerPickerDisabledReason ?? 'Select reasoning effort'}
+                  >
+                    <div className="chat-input-select__value">
+                      <span className="chat-input-select__text">
+                        {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
+                      </span>
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent side="top" className="chat-input-select__content">
+                    {reasoningOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
           {showObserveOverlay && (
             <div className="chat-input-overlay">
               <button
@@ -641,9 +846,6 @@ export function ChatInput({
             </div>
           )}
         </div>
-        {proxyDeliveryNotice && (
-          <div className="chat-input-notice">{proxyDeliveryNotice}</div>
-        )}
       </div>
     </div>
   )

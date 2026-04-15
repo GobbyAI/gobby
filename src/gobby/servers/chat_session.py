@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Literal, cast
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -74,6 +74,8 @@ from gobby.servers.chat_session_helpers import (
 from gobby.servers.chat_session_permissions import ChatSessionPermissionsMixin
 
 logger = logging.getLogger(__name__)
+ClaudeReasoningEffort = Literal["low", "medium", "high", "max"]
+_CLAUDE_REASONING_EFFORTS = frozenset({"low", "medium", "high", "max"})
 
 
 @dataclass
@@ -97,6 +99,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _connected: bool = field(default=False, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _model: str | None = field(default=None, repr=False)
+    reasoning_effort: str | None = field(default=None, repr=False)
     _pending_question: dict[str, Any] | None = field(default=None, repr=False)
     _pending_answer_event: asyncio.Event | None = field(default=None, repr=False)
     _pending_answers: dict[str, str] | None = field(default=None, repr=False)
@@ -132,6 +135,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     resume_session_id: str | None = field(default=None, repr=False)
     _session_manager_ref: Any | None = field(default=None, repr=False)
     _transcript_path_captured: bool = field(default=False, repr=False)
+    _active_reasoning_effort: str | None = field(default=None, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
@@ -195,6 +199,19 @@ class ChatSession(ChatSessionPermissionsMixin):
             f"ChatSession {self.conversation_id} using configured local model: {resolved_model}"
         )
         return resolved_model
+
+    def _resolve_reasoning_effort(self) -> ClaudeReasoningEffort | None:
+        normalized = (self.reasoning_effort or "").strip().lower()
+        if normalized in _CLAUDE_REASONING_EFFORTS:
+            return cast(ClaudeReasoningEffort, normalized)
+        return None
+
+    async def _reconnect_for_reasoning_effort_change(self) -> None:
+        resume_target = self.sdk_session_id or self.resume_session_id
+        current_model = self._model
+        await self.stop()
+        self.resume_session_id = resume_target
+        await self.start(model=current_model)
 
     async def start(self, model: str | None = None) -> None:
         """Connect the ClaudeSDKClient with configured options."""
@@ -264,10 +281,12 @@ class ChatSession(ChatSessionPermissionsMixin):
                     f"{local_llm.endpoint}"
                 )
 
+        resolved_effort = self._resolve_reasoning_effort()
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=None,
             model=resolved_model,
+            effort=resolved_effort,
             permission_mode=self._to_sdk_permission_mode(self.chat_mode),
             allowed_tools=["mcp__gobby__*"],
             can_use_tool=self._can_use_tool,
@@ -297,6 +316,7 @@ class ChatSession(ChatSessionPermissionsMixin):
         self._client = ClaudeSDKClient(options=options)
         await self._client.connect()
         self._connected = True
+        self._active_reasoning_effort = resolved_effort
         self.last_activity = datetime.now(UTC)
         logger.debug(f"ChatSession {self.conversation_id} started")
 
@@ -588,6 +608,8 @@ class ChatSession(ChatSessionPermissionsMixin):
 
         async with self._lock:
             self.last_activity = datetime.now(UTC)
+            if self._resolve_reasoning_effort() != self._active_reasoning_effort:
+                await self._reconnect_for_reasoning_effort_change()
 
             if isinstance(content, list):
                 # SDK streaming mode expects the transport protocol format:
@@ -823,6 +845,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             finally:
                 self._client = None
                 self._connected = False
+                self._active_reasoning_effort = None
                 logger.debug(f"ChatSession {self.conversation_id} stopped")
 
     @property

@@ -73,6 +73,14 @@ body {
   touch-action: manipulation;
 }
 
+.source-icon-codex {
+  color: #fff;
+}
+
+[data-theme="light"] .source-icon-codex {
+  color: var(--text-primary);
+}
+
 .app {
   display: flex;
   flex-direction: column;

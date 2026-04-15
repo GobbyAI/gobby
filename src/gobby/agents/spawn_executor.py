@@ -104,6 +104,8 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """
     if request.provider == "gemini":
         return await _spawn_gemini_terminal(request)
+    elif request.provider == "qwen":
+        return await _spawn_qwen_terminal(request)
     elif request.provider == "codex":
         return await _spawn_codex_terminal(request)
     return await _spawn_claude_terminal(request)
@@ -333,6 +335,109 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         terminal_type=terminal_result.terminal_type,
         tmux_session_name=terminal_result.tmux_session_name,
         message=f"Gemini agent spawned in terminal with session {gobby_session_id}",
+    )
+
+
+async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
+    """
+    Spawn Qwen agent in terminal with direct spawn (no preflight).
+
+    Session linkage approach:
+    1. Pre-create Gobby session with parent linkage (no external_id yet)
+    2. Pass GOBBY_SESSION_ID and other env vars to the terminal
+    3. Qwen's hook dispatcher reads env vars and includes in SessionStart
+    4. Daemon updates external_id when SessionStart fires with Qwen's native session_id
+
+    This avoids the preflight+resume approach which failed because Qwen
+    doesn't persist sessions when terminated.
+    """
+    if request.session_manager is None:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error="session_manager is required for Qwen spawn",
+        )
+
+    spawn_context = prepare_terminal_spawn(
+        session_manager=cast("ChildSessionManager", request.session_manager),
+        parent_session_id=request.parent_session_id,
+        project_id=request.project_id,
+        machine_id=request.machine_id or "unknown",
+        source="qwen",
+        workflow_name=request.workflow,
+        initial_variables=request.initial_variables,
+        prompt=request.prompt,
+        max_agent_depth=request.max_agent_depth,
+        git_branch=request.branch_name,
+        agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
+        claimed_session_id=request.claimed_session_id,
+        title=request.title,
+        agent_name=request.agent_name,
+        timeout_seconds=request.timeout_seconds,
+    )
+
+    gobby_session_id = spawn_context.session_id
+
+    cmd, _cmd_env = build_cli_command(
+        cli="qwen",
+        prompt=request.prompt,
+        auto_approve=True,
+        model=request.model,
+    )
+
+    sandbox_args: list[str] = []
+    sandbox_env: dict[str, str] = {}
+    if request.sandbox_config and request.sandbox_config.enabled:
+        resolver = GeminiSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=request.sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, sandbox_env = resolver.resolve(request.sandbox_config, paths)
+        cmd.extend(sandbox_args)
+
+    env = spawn_context.env_vars.copy()
+    if sandbox_env:
+        env.update(sandbox_env)
+
+    if request.api_base:
+        env["QWEN_API_BASE"] = request.api_base
+    if request.api_token:
+        env["QWEN_API_KEY"] = request.api_token
+
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    pre_approve_directory("qwen", request.cwd)
+
+    terminal_spawner = TmuxSpawner()
+    terminal_result = terminal_spawner.spawn(
+        command=cmd,
+        cwd=request.cwd,
+        env=env,
+    )
+
+    if not terminal_result.success:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=gobby_session_id,
+            status="failed",
+            error=terminal_result.error or terminal_result.message,
+        )
+
+    return SpawnResult(
+        success=True,
+        run_id=spawn_context.agent_run_id,
+        child_session_id=gobby_session_id,
+        status="pending",
+        pid=terminal_result.pid,
+        terminal_type=terminal_result.terminal_type,
+        tmux_session_name=terminal_result.tmux_session_name,
+        message=f"Qwen agent spawned in terminal with session {gobby_session_id}",
     )
 
 

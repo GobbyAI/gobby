@@ -27,14 +27,14 @@ def client() -> TestClient:
 class TestProviderRoutes:
     """Tests for GET /api/providers."""
 
-    def test_list_providers_returns_all_three(self, client: TestClient) -> None:
-        """Endpoint returns claude, gemini, and codex entries."""
+    def test_list_providers_returns_all_four(self, client: TestClient) -> None:
+        """Endpoint returns claude, gemini, qwen, and codex entries."""
         response = client.get("/api/providers")
         assert response.status_code == 200
         data = response.json()
         assert "providers" in data
         names = [p["name"] for p in data["providers"]]
-        assert names == ["claude", "gemini", "codex"]
+        assert names == ["claude", "gemini", "qwen", "codex"]
 
     def test_provider_available_when_binary_found(self, client: TestClient) -> None:
         """Provider is marked available when shutil.which finds the binary."""
@@ -47,6 +47,8 @@ class TestProviderRoutes:
             assert providers["claude"]["path"] == "/usr/bin/claude"
             assert providers["gemini"]["available"] is False
             assert providers["gemini"]["path"] is None
+            assert providers["qwen"]["available"] is False
+            assert providers["qwen"]["path"] is None
             assert providers["codex"]["available"] is False
             assert providers["codex"]["path"] is None
 
@@ -64,6 +66,7 @@ class TestProviderRoutes:
         paths = {
             "claude": "/usr/local/bin/claude",
             "gemini": "/usr/local/bin/gemini",
+            "qwen": "/usr/local/bin/qwen",
             "codex": "/usr/local/bin/codex",
         }
         with patch(
@@ -106,17 +109,20 @@ class TestProviderModelsRoute:
     """Tests for GET /api/providers/models."""
 
     def test_returns_all_providers_with_models(self, client: TestClient) -> None:
-        """Endpoint returns claude, gemini, and codex with model lists."""
+        """Endpoint returns claude, gemini, qwen, and codex with model lists."""
         response = client.get("/api/providers/models")
         assert response.status_code == 200
         data = response.json()
         assert "providers" in data
         providers = {p["provider"]: p for p in data["providers"]}
-        assert set(providers.keys()) == {"claude", "gemini", "codex"}
+        assert set(providers.keys()) == {"claude", "gemini", "qwen", "codex"}
 
         # Claude should have opus, sonnet, haiku
         claude_values = [m["value"] for m in providers["claude"]["models"]]
         assert claude_values == ["opus", "sonnet", "haiku"]
+        assert providers["claude"]["models"][0]["reasoning"] == {
+            "supported_efforts": ["low", "medium", "high", "max"]
+        }
 
         # Gemini should expose the hardcoded web-chat defaults
         gemini = providers["gemini"]["models"]
@@ -125,6 +131,10 @@ class TestProviderModelsRoute:
             "gemini-3-flash-preview",
         ]
         assert [m["label"] for m in gemini] == ["pro-3.1", "flash-3"]
+
+        # Qwen intentionally owns its provider slot even before a static model catalog exists
+        qwen = providers["qwen"]["models"]
+        assert qwen == []
 
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
         codex = providers["codex"]["models"]
@@ -155,6 +165,7 @@ class TestProviderModelsRoute:
             providers = {p["provider"]: p for p in response.json()["providers"]}
             assert providers["claude"]["available"] is True
             assert providers["gemini"]["available"] is False
+            assert providers["qwen"]["available"] is False
             assert providers["codex"]["available"] is False
 
     def test_models_route_uses_runtime_health_for_backend_failures(self) -> None:
@@ -207,6 +218,7 @@ class TestProviderModelsRoute:
         providers = {p["provider"]: p for p in response.json()["providers"]}
         assert providers["claude"]["models"][0]["value"] == "claude-model"
         assert providers["gemini"]["models"][0]["value"] == "gemini-model"
+        assert providers["qwen"]["models"][0]["value"] == "qwen-model"
         assert providers["codex"]["models"][0]["value"] == "codex-model"
         assert providers["codex"]["source"] == "live"
 

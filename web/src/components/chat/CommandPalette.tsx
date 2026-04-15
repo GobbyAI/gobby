@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import type { GobbySession } from '../../hooks/useSessions'
 import { useNow } from '../../hooks/useNow'
 import { formatRelativeTime } from '../../utils/formatTime'
+import { getSessionTitleText } from '../../lib/sessionTitle'
 
 export interface CommandPaletteAction {
   id: string
@@ -312,7 +313,7 @@ function SessionItem({
   onHover: () => void
 }) {
   const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null
-  const titleText = session.title || `Chat ${session.ref}`
+  const titleText = getSessionTitleText(session.title)
 
   return (
     <div

@@ -9,10 +9,10 @@ rules:
     when: >
       variables.get('require_task_before_edit')
       and not variables.get('task_claimed')
+      and event.data.get('canonical_repo_mutation')
       and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))
     effects:
       - type: block
-        tools: [Edit, Write, NotebookEdit]
         reason: |
           You must create or claim a task before editing files.
           - create_task(title, category, claim=True)

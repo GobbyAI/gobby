@@ -4,16 +4,18 @@ Shared utilities for task CLI commands.
 
 import json
 import logging
+import shutil
 import sys
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import click
 from wcwidth import wcswidth
 
 from gobby.config.app import load_config
-from gobby.storage.database import LocalDatabase
+from gobby.storage.database import DatabaseProtocol, LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.sync.tasks import TaskSyncManager
@@ -311,32 +313,95 @@ def compute_tree_prefixes(
     return prefixes
 
 
-# Column widths for task table
-COL_STATUS = 1  # Status icon
+# Column widths for compact task table
 COL_PRIORITY = 2  # Priority emoji (2 visual chars)
-COL_ID = 6  # #N format (e.g., #1234)
-COL_LIFECYCLE = 15
-COL_OWNER = 10
-COL_FLAGS = 18
+COL_STATUS_LETTER = 1  # Single-letter lifecycle code
+COL_FLAGS = 3  # Up to 3 flag letters (B/E/M)
+COL_ID_MIN = 6  # #N format minimum (e.g., #1234)
+COL_SESSION_MIN = 6  # #N format minimum for session refs
+PREFIX_W = COL_PRIORITY + COL_STATUS_LETTER + COL_FLAGS  # 6 visual cols before #id
+_DIM_ANSI = "\033[2m"
+_RESET_ANSI = "\033[0m"
+
+# Lifecycle stage -> single-letter code (O/P/R/A/C)
+_LIFECYCLE_LETTER: dict[str, str] = {
+    "open": "O",
+    "in_progress": "P",
+    "needs_review": "R",
+    "review_approved": "A",
+    "closed": "C",
+}
+
+# Priority level -> emoji (2 visual cols)
+_PRIORITY_ICON: dict[int, str] = {
+    0: "🟣",  # Critical
+    1: "🔴",  # High
+    2: "🟡",  # Medium
+    3: "🔵",  # Low
+    4: "⚪",  # Backlog
+}
 
 
-def format_task_row(
+@dataclass(frozen=True)
+class _RenderedRow:
+    """A task row with all display fields resolved but not yet padded."""
+
+    priority_icon: str
+    lifecycle_letter: str
+    flags_letters: str
+    task_ref: str
+    title: str
+    session_ref: str | None
+    tree_prefix: str
+    is_muted: bool
+
+
+def _visual_width(text: str) -> int:
+    """Visual width of a string accounting for emoji/CJK, with a safe fallback."""
+    width = wcswidth(text)
+    return width if width >= 0 else len(text)
+
+
+def _truncate_to_width(text: str, width: int) -> str:
+    """Truncate a string from the right to fit a visual width, appending an ellipsis if cut.
+
+    Edge cases: returns "" for width <= 0; returns "…" for width == 1.
+    """
+    if width <= 0:
+        return ""
+    if _visual_width(text) <= width:
+        return text
+    if width == 1:
+        return "…"
+    ellipsis = "…"
+    out = ""
+    used = 0
+    for ch in text:
+        ch_w = _visual_width(ch)
+        if used + ch_w > width - 1:
+            break
+        out += ch
+        used += ch_w
+    return out + ellipsis
+
+
+def _build_rendered_row(
     task: Task,
+    *,
     tree_prefix: str = "",
     is_primary: bool = True,
     muted: bool = False,
     claimed_task_ids: set[str] | None = None,
-) -> str:
-    """Format a task for list output.
+    session_ref_map: dict[str, str] | None = None,
+) -> _RenderedRow:
+    """Resolve the display fields for a single task row.
 
-    Args:
-        task: The task to format
-        tree_prefix: Tree-style prefix (e.g., "├── ", "│   └── ")
-        is_primary: If False, task is an ancestor shown for context (muted style)
-        muted: Explicit muted flag (overrides is_primary)
-        claimed_task_ids: Set of task IDs claimed by active sessions
+    ``session_ref_map`` is an optional pre-resolved ``owner_session_id -> '#N'``
+    lookup produced by :func:`_resolve_session_refs`. When provided, the row's
+    session column is populated from the map; otherwise it's left unresolved
+    (the caller can suppress or fall back to an assignee prefix).
     """
-    show_muted = muted or not is_primary
+    is_muted = muted or not is_primary
     state = serialize_task_state(task)
     is_claimed = state["is_claimed"] or (
         claimed_task_ids is not None and task.id in claimed_task_ids
@@ -350,79 +415,348 @@ def format_task_row(
     closed = state["is_closed"]
     merge_ready = state["is_merge_ready"]
 
-    # Status icons:
-    # ○ = open, unclaimed
-    # ◐ = open, claimed by active session
-    # ● = in_progress
-    # ✓ = closed
-    # ⊗ = blocked
-    # ⚠ = escalated
+    lifecycle_letter = _LIFECYCLE_LETTER.get(lifecycle_display, "?")
     if closed:
-        status_icon = "✓"
-    elif escalated:
-        status_icon = "⚠"
-    elif blocked:
-        status_icon = "⊗"
-    elif lifecycle_display == "open" and is_claimed:
-        status_icon = "◐"  # Open but claimed by active session
-    else:
-        status_icon = {
-            "open": "○",
-            "in_progress": "●",
-            "needs_review": "◌",
-            "review_approved": "◆",
-        }.get(lifecycle_display, "?")
+        lifecycle_letter = "C"
 
-    priority_icon = {
-        0: "🟣",  # Critical
-        1: "🔴",  # High
-        2: "🟡",  # Medium
-        3: "🔵",  # Low
-        4: "⚪",  # Backlog
-    }.get(task.priority, "⚪")
-
-    # Build row with proper visual width padding
-    status_col = pad_to_width(status_icon, COL_STATUS)
-    priority_col = pad_to_width(priority_icon, COL_PRIORITY)
-    # Use #N format for display (seq_num), fallback to short UUID prefix
-    task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-    id_col = pad_to_width(task_ref, COL_ID)
-    lifecycle_col = pad_to_width(lifecycle_display, COL_LIFECYCLE)
-    owner_col = pad_to_width(owner_session_id[:8] if owner_session_id else "-", COL_OWNER)
-
-    flags: list[str] = []
+    flags = ""
     if blocked:
-        flags.append("blocked")
+        flags += "B"
     if escalated:
-        flags.append("escalated")
+        flags += "E"
     if merge_ready:
-        flags.append("merge-ready")
-    if closed:
-        flags.append("closed")
-    flags_col = pad_to_width(",".join(flags) if flags else "-", COL_FLAGS)
+        flags += "M"
 
-    title = task.title
-    if show_muted:
-        # Use dim ANSI escape for muted ancestors
-        # \033[2m = dim, \033[0m = reset
-        title = f"\033[2m{task.title}\033[0m"
+    priority_icon = _PRIORITY_ICON.get(getattr(task, "priority", 4), "⚪")
+    task_ref = f"#{task.seq_num}" if getattr(task, "seq_num", None) else task.id[:8]
 
-    return (
-        f"{status_col} {priority_col} {id_col} {lifecycle_col} "
-        f"{owner_col} {flags_col} {tree_prefix}{title}"
+    session_ref: str | None = None
+    if owner_session_id:
+        if session_ref_map and owner_session_id in session_ref_map:
+            session_ref = session_ref_map[owner_session_id]
+        else:
+            # Fallback: first 8 chars of UUID prefixed so it's obvious it's not a seq_num
+            session_ref = owner_session_id[:8]
+
+    # Closed tasks render dim alongside ancestors
+    row_is_muted = is_muted or closed
+
+    return _RenderedRow(
+        priority_icon=priority_icon,
+        lifecycle_letter=lifecycle_letter,
+        flags_letters=flags,
+        task_ref=task_ref,
+        title=task.title,
+        session_ref=session_ref,
+        tree_prefix=tree_prefix,
+        is_muted=row_is_muted,
     )
 
 
-def format_task_header() -> str:
-    """Return header row for task list."""
-    status_col = pad_to_width("", COL_STATUS)
-    priority_col = pad_to_width("", COL_PRIORITY)
-    id_col = pad_to_width("#", COL_ID)
-    lifecycle_col = pad_to_width("LIFECYCLE", COL_LIFECYCLE)
-    owner_col = pad_to_width("OWNER", COL_OWNER)
-    flags_col = pad_to_width("FLAGS", COL_FLAGS)
+def _render_row(
+    row: _RenderedRow,
+    *,
+    id_w: int,
+    title_w: int,
+    session_w: int,
+) -> str:
+    """Render a single prepared row to its final string form.
 
-    return f"{status_col} {priority_col} {id_col} {lifecycle_col} {owner_col} {flags_col} TITLE"
+    All widths are resolved up front by :func:`format_task_list` so the session
+    column lines up across every row in a block — that's what makes it a column
+    instead of a trailing suffix.
+    """
+    pri = pad_to_width(row.priority_icon, COL_PRIORITY)
+    stat = pad_to_width(row.lifecycle_letter, COL_STATUS_LETTER)
+    flags = pad_to_width(row.flags_letters, COL_FLAGS)
+    id_col = pad_to_width(row.task_ref, id_w)
+
+    title_text = f"{row.tree_prefix}{row.title}"
+    title_text = _truncate_to_width(title_text, title_w)
+    title_col = pad_to_width(title_text, title_w)
+
+    core = f"{pri}{stat}{flags} {id_col}  {title_col}"
+
+    if session_w > 0:
+        if row.session_ref:
+            session_text = pad_to_width(row.session_ref, session_w)
+            # Dim the session ref so it doesn't compete with the title
+            session_col = f"{_DIM_ANSI}{session_text}{_RESET_ANSI}"
+        else:
+            session_col = " " * session_w
+        core = f"{core}  {session_col}"
+
+    if row.is_muted:
+        # Dim the whole row for ancestors / closed tasks; session dim is already applied
+        return f"{_DIM_ANSI}{core}{_RESET_ANSI}"
+    return core
+
+
+def _get_term_width(default: int = 100) -> int:
+    """Return the current terminal width (columns)."""
+    try:
+        return shutil.get_terminal_size(fallback=(default, 24)).columns
+    except (OSError, ValueError):
+        return default
+
+
+def _resolve_session_refs(
+    session_ids: set[str], db: DatabaseProtocol | None = None
+) -> dict[str, str]:
+    """Batch-resolve ``session_id`` UUIDs to their ``#seq_num`` refs.
+
+    Returns a map ``{uuid: "#N"}``. Missing rows are omitted (callers fall back
+    to an 8-char UUID prefix).
+    """
+    if not session_ids:
+        return {}
+    owner_db: DatabaseProtocol = db or LocalDatabase()
+    try:
+        placeholders = ",".join("?" * len(session_ids))
+        rows = owner_db.fetchall(
+            f"SELECT id, seq_num FROM sessions WHERE id IN ({placeholders})",
+            tuple(session_ids),
+        )
+        return {row["id"]: f"#{row['seq_num']}" for row in rows if row["seq_num"] is not None}
+    except Exception as e:
+        logger.debug(f"Failed to batch-resolve session refs: {e}")
+        return {}
+    finally:
+        if db is None:
+            owner_db.close()
+
+
+def _resolve_project_names(
+    project_ids: set[str], db: DatabaseProtocol | None = None
+) -> dict[str, str]:
+    """Batch-resolve ``project_id`` UUIDs to project names."""
+    if not project_ids:
+        return {}
+    owner_db: DatabaseProtocol = db or LocalDatabase()
+    try:
+        placeholders = ",".join("?" * len(project_ids))
+        rows = owner_db.fetchall(
+            f"SELECT id, name FROM projects WHERE id IN ({placeholders})",
+            tuple(project_ids),
+        )
+        return {row["id"]: row["name"] for row in rows}
+    except Exception as e:
+        logger.debug(f"Failed to batch-resolve project names: {e}")
+        return {}
+    finally:
+        if db is None:
+            owner_db.close()
+
+
+def format_task_row(
+    task: Task,
+    tree_prefix: str = "",
+    is_primary: bool = True,
+    muted: bool = False,
+    claimed_task_ids: set[str] | None = None,
+) -> str:
+    """Format a single task for list output (compact layout, no session column).
+
+    This is the single-row primitive used by callers that render one task at a
+    time (dependency trees, blocked-task details). For multi-row renders,
+    prefer :func:`format_task_list` — it computes column widths across all rows
+    and attaches the session column when any row is claimed.
+
+    Args:
+        task: The task to format
+        tree_prefix: Tree-style prefix (e.g., "├── ", "│   └── ")
+        is_primary: If False, task is an ancestor shown for context (muted)
+        muted: Explicit muted flag (overrides is_primary)
+        claimed_task_ids: Set of task IDs claimed by active sessions
+    """
+    row = _build_rendered_row(
+        task,
+        tree_prefix=tree_prefix,
+        is_primary=is_primary,
+        muted=muted,
+        claimed_task_ids=claimed_task_ids,
+    )
+    id_w = max(COL_ID_MIN, _visual_width(row.task_ref))
+    title_text = f"{row.tree_prefix}{row.title}"
+    title_w = max(1, _visual_width(title_text))
+    return _render_row(row, id_w=id_w, title_w=title_w, session_w=0)
+
+
+def format_task_header() -> str:
+    """Return a compact header row.
+
+    Kept for compatibility with single-table callers and tests. The new
+    :func:`format_task_list` renderer does not emit a header in compact mode.
+    """
+    pri = pad_to_width("", COL_PRIORITY)
+    stat = pad_to_width("", COL_STATUS_LETTER)
+    flags = pad_to_width("", COL_FLAGS)
+    id_col = pad_to_width("#", COL_ID_MIN)
+    return f"{pri}{stat}{flags} {id_col}  TITLE"
+
+
+def format_task_list(
+    tasks: list[Task],
+    *,
+    claimed_task_ids: set[str] | None = None,
+    primary_ids: set[str] | None = None,
+    tree_prefixes: dict[str, tuple[str, bool]] | None = None,
+    group_by: str | None = None,
+    term_width: int | None = None,
+    db: DatabaseProtocol | None = None,
+) -> str:
+    """Render a list of tasks as one compact block.
+
+    Columns:
+        ``[pri][status][flags] #id  title  #session``
+
+    The session column is present iff at least one row has an owner. Column
+    widths are computed once across all rows so the session column is a true
+    column (fixed x-position), not a trailing suffix.
+
+    Args:
+        tasks: Tasks in the render order the caller wants.
+        claimed_task_ids: Task IDs claimed by active sessions (for owner hint).
+        primary_ids: If given, tasks not in this set are rendered as muted
+            ancestors. If omitted, every task is primary.
+        tree_prefixes: Precomputed ``task_id -> (prefix, is_primary)`` from
+            :func:`compute_tree_prefixes`. When omitted, no tree prefix is used.
+        group_by: ``"project"``, ``"lifecycle"``, or ``None``.
+        term_width: Terminal width override (for tests). Defaults to the live
+            terminal size.
+        db: Optional database handle for batch lookups. A fresh
+            :class:`LocalDatabase` is opened (and closed) if not supplied.
+
+    Returns:
+        A newline-joined block, ready to pass to :func:`click.echo`.
+    """
+    if not tasks:
+        return ""
+
+    tw = term_width if term_width is not None else _get_term_width()
+
+    # First pass: resolve session refs (one query) and project names (one query
+    # when grouping by project).
+    session_ids: set[str] = set()
+    project_ids: set[str] = set()
+    for task in tasks:
+        state = serialize_task_state(task)
+        is_claimed = state["is_claimed"] or (
+            claimed_task_ids is not None and task.id in claimed_task_ids
+        )
+        owner = state["owner_session_id"] or (
+            getattr(task, "assignee", None) if is_claimed else None
+        )
+        if owner:
+            session_ids.add(owner)
+        if group_by == "project":
+            pid = getattr(task, "project_id", None)
+            if pid:
+                project_ids.add(pid)
+
+    owner_db: DatabaseProtocol = db or LocalDatabase()
+    try:
+        session_ref_map = _resolve_session_refs(session_ids, db=owner_db)
+        project_name_map: dict[str, str] = {}
+        if group_by == "project":
+            project_name_map = _resolve_project_names(project_ids, db=owner_db)
+    finally:
+        if db is None:
+            owner_db.close()
+
+    # Second pass: build rendered rows
+    rendered: list[_RenderedRow] = []
+    for task in tasks:
+        prefix_info = (tree_prefixes or {}).get(task.id, ("", True))
+        tree_prefix, is_primary_from_tree = prefix_info
+        is_primary = (primary_ids is None or task.id in primary_ids) and is_primary_from_tree
+        row = _build_rendered_row(
+            task,
+            tree_prefix=tree_prefix,
+            is_primary=is_primary,
+            claimed_task_ids=claimed_task_ids,
+            session_ref_map=session_ref_map,
+        )
+        rendered.append(row)
+
+    # Widths computed once across every row in the block
+    id_w = max(COL_ID_MIN, *(_visual_width(r.task_ref) for r in rendered))
+    has_session_col = any(r.session_ref for r in rendered)
+    session_w = (
+        max(COL_SESSION_MIN, *(_visual_width(r.session_ref or "") for r in rendered))
+        if has_session_col
+        else 0
+    )
+
+    # Separator budget matches the template in _render_row:
+    #   "{pri}{stat}{flags} {id}  {title}" → 3 spaces of separators (1 + 2)
+    #   optional trailing "  {session}"    → +2 more when a session column fits
+    separators = 3 + (2 if has_session_col else 0)
+    safety_margin = 1  # avoid wrapping at the terminal edge
+    title_w = max(1, tw - PREFIX_W - id_w - session_w - separators - safety_margin)
+
+    # Grouping — compute groups keyed by group_by or None for ungrouped.
+    def _project_key(t: Task, _r: _RenderedRow) -> str:
+        return project_name_map.get(getattr(t, "project_id", "") or "", "(no project)")
+
+    def _lifecycle_key(t: Task, _r: _RenderedRow) -> str:
+        state = serialize_task_state(t)
+        if state["is_closed"]:
+            return "closed"
+        return str(state["lifecycle_stage"] or "open")
+
+    def _null_key(_t: Task, _r: _RenderedRow) -> str:
+        return ""
+
+    group_key: Callable[[Task, _RenderedRow], str]
+    if group_by == "project":
+        group_key = _project_key
+    elif group_by == "lifecycle":
+        group_key = _lifecycle_key
+    else:
+        group_key = _null_key
+
+    groups: dict[str, list[tuple[Task, _RenderedRow]]] = {}
+    group_order: list[str] = []
+    for task, row in zip(tasks, rendered, strict=True):
+        key = group_key(task, row)
+        if key not in groups:
+            groups[key] = []
+            group_order.append(key)
+        groups[key].append((task, row))
+
+    # When grouping by project and no explicit order, sort groups by the
+    # most-recently-updated task in each group (descending).
+    if group_by == "project":
+
+        def _group_recency(key: str) -> Any:
+            rows = groups[key]
+            return max(
+                (getattr(t, "updated_at", "") for t, _ in rows),
+                default="",
+            )
+
+        group_order.sort(key=_group_recency, reverse=True)
+
+    lines: list[str] = []
+    for idx, key in enumerate(group_order):
+        rows_in_group = groups[key]
+        if group_by is not None:
+            if idx > 0:
+                lines.append("")
+            header = f"{key} ({len(rows_in_group)})"
+            lines.append(f"{_DIM_ANSI}{header}{_RESET_ANSI}")
+        for _task, row in rows_in_group:
+            lines.append(
+                _render_row(
+                    row,
+                    id_w=id_w,
+                    title_w=title_w,
+                    session_w=session_w,
+                )
+            )
+
+    return "\n".join(lines)
 
 
 def resolve_task_id(

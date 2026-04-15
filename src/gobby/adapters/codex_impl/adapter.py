@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -97,6 +98,7 @@ class CodexAdapter(BaseAdapter):
         "item/commandExecution/requestApproval": HookEventType.BEFORE_TOOL,
         "item/fileChange/requestApproval": HookEventType.BEFORE_TOOL,
         "item/mcpToolCall/requestApproval": HookEventType.BEFORE_TOOL,
+        "mcpServer/elicitation/request": HookEventType.BEFORE_TOOL,
         # Completed items map to AFTER_TOOL
         "item/completed": HookEventType.AFTER_TOOL,
     }
@@ -123,6 +125,27 @@ class CodexAdapter(BaseAdapter):
         "GrepTool": "Grep",
     }
 
+    # Safe MCP registry discovery calls should never be blocked behind
+    # Codex approval prompts in web chat. They only inspect the proxy.
+    SAFE_MCP_PROXY_TOOLS: set[str] = {
+        "mcp__gobby__list_mcp_servers",
+        "mcp__gobby__list_tools",
+        "mcp__gobby__get_tool_schema",
+        "mcp__gobby__recommend_tools",
+        "mcp__gobby__search_tools",
+    }
+
+    # UI-only canvas calls are safe because they only present/update
+    # browser surfaces; they do not mutate repo or system state.
+    SAFE_CANVAS_CALL_TOOLS: set[str] = {
+        "render_surface",
+        "update_surface",
+        "close_canvas",
+        "wait_for_interaction",
+        "canvas_present",
+        "show_file",
+    }
+
     # Item types that represent tool operations
     TOOL_ITEM_TYPES = {"commandExecution", "fileChange", "mcpToolCall"}
 
@@ -145,6 +168,40 @@ class CodexAdapter(BaseAdapter):
         self._codex_client: CodexAppServerClient | None = None
         self._attached = False
         self._machine_id: str | None = None
+
+    @staticmethod
+    def _compose_mcp_tool_name(server_name: str, tool_name: str) -> str:
+        """Return the canonical MCP tool name used by shared hook logic."""
+        return f"mcp__{server_name}__{tool_name}"
+
+    @staticmethod
+    def _extract_mcp_tool_name_from_message(message: Any) -> str | None:
+        """Best-effort parse of the tool name embedded in Codex MCP prompts."""
+        if not isinstance(message, str):
+            return None
+        match = re.search(r'run tool "([^"]+)"', message)
+        if not match:
+            return None
+        tool_name = match.group(1).strip()
+        return tool_name or None
+
+    @staticmethod
+    def _translate_mcp_elicitation_response(response: HookResponse | None = None) -> dict[str, Any]:
+        """Translate a hook decision into Codex MCP elicitation response shape."""
+        action = "accept"
+        if response is not None:
+            if response.decision == "deny":
+                action = "decline"
+            elif response.decision == "block":
+                action = "cancel"
+        return {"action": action, "content": None, "_meta": None}
+
+    @staticmethod
+    def _fail_closed_approval_response(method: str) -> dict[str, Any]:
+        """Return the safest denial shape when approval handling is unavailable."""
+        if method == "mcpServer/elicitation/request":
+            return {"action": "cancel", "content": None, "_meta": None}
+        return {"decision": "decline"}
 
     @staticmethod
     def _extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
@@ -214,6 +271,16 @@ class CodexAdapter(BaseAdapter):
         raw_tool_name = (
             item_data.get("tool_name") or item_data.get("toolName") or item_data.get("name")
         )
+        if not raw_tool_name and item_type == "mcpToolCall":
+            server_name = item_data.get("server")
+            mcp_tool = item_data.get("tool")
+            if (
+                isinstance(server_name, str)
+                and server_name
+                and isinstance(mcp_tool, str)
+                and mcp_tool
+            ):
+                raw_tool_name = self._compose_mcp_tool_name(server_name, mcp_tool)
         if isinstance(raw_tool_name, str) and raw_tool_name:
             item_data.setdefault("tool_name", self.normalize_tool_name(raw_tool_name))
         elif item_type == "commandExecution":
@@ -351,25 +418,99 @@ class CodexAdapter(BaseAdapter):
         """
         hook_event = self._translate_approval_event(method, params)
         if not hook_event:
-            # Unknown method - default to accept
-            return {"decision": "accept"}
+            logger.warning("Approval request %s could not be translated; failing closed", method)
+            return self._fail_closed_approval_response(method)
 
         if not self._hook_manager:
-            # No hook manager - default to accept
+            logger.warning("Approval request %s has no hook manager; failing closed", method)
+            return self._fail_closed_approval_response(method)
+
+        if self._is_safe_auto_approved_tool(hook_event):
+            if method == "mcpServer/elicitation/request":
+                return self._translate_mcp_elicitation_response()
             return {"decision": "accept"}
 
         try:
             hook_response = self._hook_manager.handle(hook_event)
+            if method == "mcpServer/elicitation/request":
+                return self._translate_mcp_elicitation_response(hook_response)
             return self.translate_from_hook_response(hook_response)
         except Exception as e:
             logger.error(f"Error processing approval request {method}: {e}")
-            return {"decision": "accept"}
+            return self._fail_closed_approval_response(method)
+
+    def _is_safe_auto_approved_tool(self, hook_event: HookEvent) -> bool:
+        """Return True for safe MCP discovery/UI-only tool calls."""
+        tool_name = hook_event.data.get("tool_name")
+        if tool_name in self.SAFE_MCP_PROXY_TOOLS:
+            return True
+
+        mcp_server = hook_event.data.get("mcp_server")
+        mcp_tool = hook_event.data.get("mcp_tool")
+        if mcp_server == "gobby-canvas" and mcp_tool in self.SAFE_CANVAS_CALL_TOOLS:
+            return True
+
+        if tool_name != "mcp__gobby__call_tool":
+            return False
+
+        raw_input = hook_event.data.get("tool_input") or hook_event.data.get("toolArgs") or {}
+        if not isinstance(raw_input, dict):
+            return False
+        return (
+            raw_input.get("server_name") == "gobby-canvas"
+            and raw_input.get("tool_name") in self.SAFE_CANVAS_CALL_TOOLS
+        )
 
     def _translate_approval_event(self, method: str, params: dict[str, Any]) -> HookEvent | None:
         """Translate approval request to HookEvent."""
         if method not in self.EVENT_MAP:
             logger.debug(f"Unknown approval method: {method}")
             return None
+
+        if method == "mcpServer/elicitation/request":
+            meta = params.get("_meta")
+            if not isinstance(meta, dict) or meta.get("codex_approval_kind") != "mcp_tool_call":
+                logger.debug("Ignoring unsupported Codex elicitation request: %s", method)
+                return None
+
+            server_name = params.get("serverName")
+            tool_name = self._extract_mcp_tool_name_from_message(params.get("message"))
+            if not isinstance(server_name, str) or not server_name or not tool_name:
+                logger.debug("Unable to derive MCP tool identity from elicitation request")
+                return None
+
+            original_tool = self._compose_mcp_tool_name(server_name, tool_name)
+            tool_params = meta.get("tool_params")
+            tool_input = tool_params if isinstance(tool_params, dict) else {}
+            data = {
+                "item_id": params.get("elicitationId", ""),
+                "item_type": "mcpToolCall",
+                "turn_id": params.get("turnId", ""),
+                "tool_name": original_tool,
+                "tool_input": tool_input,
+                "server_name": server_name,
+                "message": params.get("message"),
+            }
+
+            from gobby.hooks.normalization import normalize_tool_fields
+
+            normalize_tool_fields(data)
+
+            return HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=params.get("threadId", ""),
+                source=self.source,
+                timestamp=datetime.now(UTC),
+                machine_id=self._get_machine_id(),
+                data=data,
+                metadata={
+                    "requires_response": True,
+                    "item_id": data["item_id"],
+                    "approval_method": method,
+                    "original_tool_name": original_tool,
+                    "normalized_tool_name": data.get("tool_name", original_tool),
+                },
+            )
 
         thread_id = params.get("threadId", "")
         item_type = method.removeprefix("item/").removesuffix("/requestApproval")
@@ -520,6 +661,7 @@ class CodexAdapter(BaseAdapter):
                 data={
                     "turn_id": turn.get("id", ""),
                     "status": turn.get("status", ""),
+                    "prompt": params.get("prompt", ""),
                 },
             )
 

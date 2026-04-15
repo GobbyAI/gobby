@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 from opentelemetry.trace import Status, StatusCode
 
-from gobby.hooks.event_handlers._tool import EDIT_TOOLS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
@@ -35,6 +34,12 @@ from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
+
+_TURN_START_EVENT_VALUES = frozenset(
+    {
+        HookEventType.BEFORE_AGENT.value,
+    }
+)
 
 _TURN_END_EVENT_VALUES = frozenset(
     {
@@ -68,6 +73,10 @@ def _event_value(event_type: HookEventType | str) -> str:
     return str(event_type)
 
 
+def _is_turn_start_event(event_type: HookEventType | str) -> bool:
+    return _event_value(event_type) in _TURN_START_EVENT_VALUES
+
+
 def _is_turn_end_event(event_type: HookEventType | str) -> bool:
     return _event_value(event_type) in _TURN_END_EVENT_VALUES
 
@@ -76,6 +85,9 @@ def _resolve_rule_events(event_type: HookEventType | str) -> list[RuleTriggerEve
     """Resolve an incoming hook event into rule trigger events."""
     resolved: list[RuleTriggerEvent] = []
     raw_value = _event_value(event_type)
+
+    if _is_turn_start_event(raw_value):
+        resolved.append(RuleTriggerEvent.TURN_START)
 
     if _is_turn_end_event(raw_value):
         resolved.append(RuleTriggerEvent.TURN_END)
@@ -98,6 +110,13 @@ def _clear_edit_write_state(variables: dict[str, Any]) -> None:
     """Clear edit/write pending state and stop-block counter."""
     variables["edit_write_pending"] = False
     variables["edit_write_stop_blocks"] = 0
+
+
+def _is_write_like_event_data(event_data: dict[str, Any]) -> bool:
+    """Return True when normalized event data represents a file mutation."""
+    return bool(event_data.get("canonical_repo_mutation")) or (
+        event_data.get("canonical_tool_kind") == "write"
+    )
 
 
 class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
@@ -154,7 +173,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 raw_event_value = _event_value(event.event_type)
                 is_before_tool = raw_event_value == HookEventType.BEFORE_TOOL.value
                 is_after_tool = raw_event_value == HookEventType.AFTER_TOOL.value
-                is_before_agent = raw_event_value == HookEventType.BEFORE_AGENT.value
+                is_turn_start = RuleTriggerEvent.TURN_START in resolved_rule_events
                 is_turn_end = RuleTriggerEvent.TURN_END in resolved_rule_events
 
                 # Check global enforcement toggle
@@ -163,7 +182,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     return HookResponse(decision="allow")
 
                 # Collect mcp_call effects from hardcoded rules and DB rules.
-                # Initialized early so hardcoded BEFORE_AGENT rules can append.
+                # Initialized early so hardcoded turn-start rules can append.
                 mcp_calls: list[dict[str, Any]] = []
 
                 # Auto-track consecutive tool blocks (universal safety — not configurable)
@@ -195,11 +214,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         variables["consecutive_tool_blocks"] = 0
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
-                    tool_name_lower = event.data.get("tool_name", "").lower()
-                    if tool_name_lower in EDIT_TOOLS:
+                    if _is_write_like_event_data(event.data):
                         variables["edit_write_pending"] = True
 
-                elif is_before_agent:
+                elif is_turn_start:
                     variables["consecutive_tool_blocks"] = 0
                     variables["_last_blocked_tool"] = ""
                     variables["tool_block_pending"] = False
@@ -253,8 +271,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     if agent_block is not None:
                         variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
-                        tool_name_lower = event.data.get("tool_name", "").lower()
-                        if tool_name_lower in EDIT_TOOLS:
+                        if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
                         if span.is_recording():
                             span.set_attribute("final_decision", agent_block.decision)
@@ -268,8 +285,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
-                        tool_name_lower = event.data.get("tool_name", "").lower()
-                        if tool_name_lower in EDIT_TOOLS:
+                        if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
                         if span.is_recording():
                             span.set_attribute("final_decision", step_block.decision)
@@ -316,7 +332,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         override_decision = "block"
                         override_reason = (
                             "Rule enforced by Gobby: [edit-write-recovery]\n"
-                            "Your last Edit/Write attempt failed. "
+                            "Your last file mutation attempt failed. "
                             "Read the error and retry — do not stop."
                         )
                     else:
@@ -348,8 +364,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             # Don't clear on non-edit success during a parallel failure
                             # — the edit wasn't recovered yet.
                             if variables.get("edit_write_pending"):
-                                after_tool_lower = event.data.get("tool_name", "").lower()
-                                if after_tool_lower in EDIT_TOOLS or not had_pending_failure:
+                                if _is_write_like_event_data(event.data) or not had_pending_failure:
                                     _clear_edit_write_state(variables)
                     # Honour hardcoded override decisions (e.g. tool_block_pending stop gate)
                     # even when no declarative rules are installed for this event.
@@ -397,8 +412,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         # Don't clear on non-edit success during a parallel failure
                         # — the edit wasn't recovered yet.
                         if variables.get("edit_write_pending"):
-                            after_tool_lower = event.data.get("tool_name", "").lower()
-                            if after_tool_lower in EDIT_TOOLS or not had_pending_failure:
+                            if _is_write_like_event_data(event.data) or not had_pending_failure:
                                 _clear_edit_write_state(variables)
 
                 # 5. Evaluate rules in priority order
@@ -476,8 +490,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                                 variables["tool_block_pending"] = True
                                 variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                                 # Blocked edit/write never executed — nothing to recover
-                                tool_name_lower = event.data.get("tool_name", "").lower()
-                                if tool_name_lower in EDIT_TOOLS:
+                                if _is_write_like_event_data(event.data):
                                     _clear_edit_write_state(variables)
 
                     # Record rule evaluation metric

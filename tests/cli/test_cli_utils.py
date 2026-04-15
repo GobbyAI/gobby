@@ -507,6 +507,12 @@ class TestIsProcessAlive:
 class TestKillAllGobbyDaemons:
     """Tests for kill_all_gobby_daemons function."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_shutdown_source(self):
+        """Avoid shutdown provenance writes in daemon kill tests."""
+        with patch("gobby.runner_maintenance.write_shutdown_source"):
+            yield
+
     def test_no_daemons_found(self) -> None:
         """Test when no gobby daemons are running."""
         with patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}):
@@ -570,6 +576,7 @@ class TestStopDaemon:
         with (
             patch("gobby.cli.utils.stop_ui_server"),
             patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
+            patch("gobby.runner_maintenance.write_shutdown_source"),
             patch("gobby.cli.installers.service.get_service_status", return_value={}),
         ):
             yield

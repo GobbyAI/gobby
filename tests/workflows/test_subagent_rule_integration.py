@@ -4,7 +4,7 @@ Verifies that:
 - block-native-task-tools-unclaimed fires when is_subagent is False and task_claimed is False
 - block-native-task-tools-unclaimed is skipped when is_subagent is True or task_claimed is True
 - block-native-todo-write fires when is_subagent is False (regardless of task_claimed)
-- reset-subagent-flag clears is_subagent on before_agent events
+- reset-subagent-flag clears is_subagent on turn_start
 - Bidirectional toggle works within same session
 """
 
@@ -144,8 +144,8 @@ class TestSubagentRuleIntegration:
         assert result.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_reset_rule_clears_is_subagent_on_before_agent(self, engine) -> None:
-        """reset-subagent-flag should set is_subagent=False on before_agent."""
+    async def test_reset_rule_clears_is_subagent_on_turn_start(self, engine) -> None:
+        """reset-subagent-flag should set is_subagent=False on turn_start."""
         variables: dict = {"is_subagent": True}
         event = _make_hook_event(HookEventType.BEFORE_AGENT)
         result = await engine.evaluate(event, "test-session", variables)

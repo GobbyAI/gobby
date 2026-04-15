@@ -30,8 +30,9 @@ The shared state across all four layers is:
 
 ### Rules
 
-Rules are reactive. They fire on normalized hook events such as `before_tool`,
-`after_tool`, `before_agent`, `session_start`, or semantic `turn_end`.
+Rules are reactive. They fire on semantic workflow events such as
+`turn_start`, `turn_end`, `before_tool`, `after_tool`, and `session_start`,
+plus raw normalized escape-hatch events when needed.
 
 Rules are the right tool when you need to:
 
@@ -123,8 +124,10 @@ At runtime, the control flow looks like this:
 5. Pipelines or parent sessions use MCP tools to spawn agents, wait for
    completion, inspect task state, and continue orchestration.
 
-One important abstraction here is `turn_end`:
+Two important abstractions here are `turn_start` and `turn_end`:
 
+- `turn_start` is the semantic workflow event for the beginning of a turn.
+- It fires alongside the raw `before_agent` hook.
 - `turn_end` is a semantic workflow event.
 - It fires alongside the raw hook event when a session reaches the end of a
   turn, whether that arrives as `after_agent` or `stop`.

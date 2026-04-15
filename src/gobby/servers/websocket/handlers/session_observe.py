@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.sessions.terminal_kill import kill_terminal_session
+from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.sessions.transcript_archive import restore_transcript
 
 if TYPE_CHECKING:
@@ -21,10 +22,63 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_POST_KILL_SETTLE_SECONDS = 0.5
+
 
 def _is_terminal_session(session: Any) -> bool:
     """Return True when a session supports live attach/proxy semantics."""
     return getattr(session, "session_type", None) == "terminal"
+
+
+def _as_str(value: Any) -> str | None:
+    """Return a JSON-safe string or None."""
+    return value if isinstance(value, str) else None
+
+
+def _as_int(value: Any, default: int | None = None) -> int | None:
+    """Return a JSON-safe int or the provided default."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+async def _release_source_session(
+    mixin: SessionControlMixin,
+    source_session_id: str,
+    source_session: Any,
+) -> None:
+    """Stop the active terminal/agent runtime before resuming in web chat."""
+    killed = False
+    session_manager = getattr(mixin, "session_manager", None)
+
+    try:
+        from gobby.agents.kill import kill_agent
+        from gobby.storage.agents import LocalAgentRunManager
+
+        if session_manager:
+            arm = LocalAgentRunManager(session_manager.db)
+            run = arm.get_by_session(source_session_id)
+            if run:
+                logger.info("Killing agent %s before resume", run.id)
+                await kill_agent(run, session_manager.db, close_terminal=True)
+                killed = True
+                await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
+    except Exception as exc:
+        logger.warning("Failed to kill running agent before resume: %s", exc)
+
+    if killed:
+        return
+
+    terminal_ctx = getattr(source_session, "terminal_context", None)
+    if not terminal_ctx:
+        return
+
+    try:
+        term_killed = await kill_terminal_session(terminal_ctx, source_session_id)
+    except Exception as exc:
+        logger.warning("Failed to kill terminal session before resume: %s", exc)
+        return
+
+    if term_killed:
+        await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
 
 
 async def _resolve_agent_name_for_session(
@@ -82,6 +136,7 @@ async def handle_continue_in_chat(
     project_id = data.get("project_id")
     target_provider = data.get("provider")
     target_model = data.get("model")
+    target_reasoning_effort = _as_str(data.get("reasoning_effort"))
 
     # Look up source session for project_id and SDK session ID
     session_manager = getattr(mixin, "session_manager", None)
@@ -93,6 +148,11 @@ async def handle_continue_in_chat(
                 project_id = source_session.project_id
         except Exception as e:
             logger.warning(f"Failed to look up source session {source_session_id}: {e}")
+
+    resume_in_place = bool(source_session and _is_terminal_session(source_session))
+    if resume_in_place:
+        # Resuming a tmux session preserves the same durable session identity.
+        conversation_id = source_session_id
 
     # --- Resume guard: reject if source session is actively in use ---
     if source_session:
@@ -108,9 +168,16 @@ async def handle_continue_in_chat(
     # --- Resolve SDK session ID for native resume ---
     sdk_resume_id: str | None = None
 
-    source_provider = getattr(source_session, "source", None) if source_session else None
+    source_provider = _as_str(getattr(source_session, "source", None)) if source_session else None
+    effective_provider = target_provider or source_provider
+    source_title = _as_str(getattr(source_session, "title", None)) if source_session else None
+    source_chat_mode = (
+        _as_str(getattr(source_session, "chat_mode", None)) if source_session else None
+    )
+    source_model = _as_str(getattr(source_session, "model", None)) if source_session else None
+    effective_model = target_model or source_model
     can_sdk_resume = (
-        not target_provider or not source_provider or target_provider == source_provider
+        not effective_provider or not source_provider or effective_provider == source_provider
     )
 
     # 1. Source session's external_id IS the SDK session ID
@@ -129,45 +196,10 @@ async def handle_continue_in_chat(
             except Exception as e:
                 logger.warning(f"Failed to look up sdk_session_id: {e}")
 
-    # 3. Kill running agent/terminal that owns this session before resuming
-    if sdk_resume_id:
-        killed = False
-        # Check DB for active agent run on this session
-        try:
-            from gobby.agents.kill import kill_agent
-            from gobby.storage.agents import LocalAgentRunManager
-
-            session_manager = getattr(mixin, "session_manager", None)
-            if session_manager:
-                arm = LocalAgentRunManager(session_manager.db)
-                run = arm.get_by_session(source_session_id)
-                if run:
-                    logger.info(
-                        f"Killing agent {run.id} before resume",
-                    )
-                    await kill_agent(run, session_manager.db, close_terminal=True)
-                    killed = True
-                    await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.warning(f"Failed to kill running agent before resume: {e}")
-
-        # Fallback: kill plain terminal session (user's own CLI, not agent-spawned)
-        if not killed and source_session:
-            terminal_ctx = source_session.terminal_context
-            if terminal_ctx:
-                term_killed = await kill_terminal_session(terminal_ctx, source_session_id)
-                if term_killed:
-                    await asyncio.sleep(0.5)
-                    # Mark source session as expired
-                    if session_manager:
-                        try:
-                            await asyncio.to_thread(
-                                session_manager.update_status,
-                                source_session_id,
-                                "expired",
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to expire source session: {e}")
+    # 3. Kill the terminal/agent runtime that currently owns the session so the
+    #    resumed web chat can take over the same durable session identity.
+    if resume_in_place and source_session:
+        await _release_source_session(mixin, source_session_id, source_session)
 
     # --- Restore transcript from backup if original is missing ---
     if sdk_resume_id and source_session:
@@ -186,26 +218,99 @@ async def handle_continue_in_chat(
                     )
                     sdk_resume_id = None
 
+    if session_manager and source_session and resume_in_place:
+        try:
+            source_session = await asyncio.to_thread(
+                session_manager.update,
+                source_session_id,
+                source=effective_provider,
+                model=effective_model,
+                chat_mode=source_chat_mode,
+                session_type="web_chat",
+                status="active",
+                title=source_title,
+                project_id=project_id,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to convert resumed session %s to web_chat: %s", source_session_id, e
+            )
+            await mixin._send_error(websocket, f"Failed to resume session: {e}")
+            return
+    # If the client pre-created a web-chat row with a stale provider, correct
+    # it before booting the continuation session so provider restore is
+    # source-authoritative by default.
+    elif session_manager and effective_provider:
+        try:
+            target_session = await asyncio.to_thread(session_manager.get, conversation_id)
+            if target_session and getattr(target_session, "session_type", None) == "web_chat":
+                if (
+                    getattr(target_session, "source", None) != effective_provider
+                    or (
+                        effective_model
+                        and getattr(target_session, "model", None) != effective_model
+                    )
+                    or (source_title and getattr(target_session, "title", None) != source_title)
+                    or (
+                        source_chat_mode
+                        and getattr(target_session, "chat_mode", None) != source_chat_mode
+                    )
+                ):
+                    await asyncio.to_thread(
+                        session_manager.update,
+                        conversation_id,
+                        source=effective_provider,
+                        model=effective_model,
+                        title=source_title,
+                        chat_mode=source_chat_mode,
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Failed to normalize continuation session metadata for {conversation_id}: {e}"
+            )
+
     # Create chat session with optional SDK resume (check dict first to avoid redundant creation)
     session = mixin._chat_sessions.get(conversation_id)
     if session is None:
         try:
             session = await mixin._create_chat_session(
                 conversation_id,
-                model=target_model,
+                model=effective_model,
                 project_id=project_id,
                 resume_session_id=sdk_resume_id,
-                provider=target_provider,
+                provider=effective_provider,
+                reasoning_effort=target_reasoning_effort,
             )
+            if (
+                session_manager
+                and session.db_session_id
+                and not resume_in_place
+                and (source_title or source_chat_mode or effective_model)
+            ):
+                session_updates: dict[str, Any] = {}
+                if source_title:
+                    session_updates["title"] = source_title
+                if source_chat_mode:
+                    session_updates["chat_mode"] = source_chat_mode
+                if effective_model:
+                    session_updates["model"] = effective_model
+                if session_updates:
+                    await asyncio.to_thread(
+                        session_manager.update,
+                        session.db_session_id,
+                        **session_updates,
+                    )
         except Exception as e:
             logger.error(f"Failed to create continuation session: {e}")
             await mixin._send_error(websocket, f"Failed to create session: {e}")
             return
+    elif target_reasoning_effort is not None:
+        session.reasoning_effort = target_reasoning_effort
 
     # History injection via message_manager removed (session_messages table dropped)
 
     # Set parent_session_id on the DB record for lineage tracking
-    if session.db_session_id and session_manager:
+    if session.db_session_id and session_manager and session.db_session_id != source_session_id:
         try:
             await asyncio.to_thread(
                 session_manager.update_parent_session_id,
@@ -224,6 +329,13 @@ async def handle_continue_in_chat(
                 "source_session_id": source_session_id,
                 "db_session_id": session.db_session_id,
                 "resumed": bool(sdk_resume_id),
+                "ref": f"#{session.seq_num}" if session.seq_num is not None else None,
+                "title": source_title,
+                "source": effective_provider,
+                "model": effective_model,
+                "chat_mode": source_chat_mode,
+                "session_type": "web_chat",
+                "status": "active",
             }
         )
     )
@@ -318,8 +430,8 @@ async def handle_attach_to_session(
         )
         return
 
-    workflow_name = getattr(session, "workflow_name", None)
-    agent_run_id = getattr(session, "agent_run_id", None)
+    workflow_name = _as_str(getattr(session, "workflow_name", None))
+    agent_run_id = _as_str(getattr(session, "agent_run_id", None))
     agent_name = await _resolve_agent_name_for_session(
         mixin,
         session_id,
@@ -343,25 +455,36 @@ async def handle_attach_to_session(
         metadata["attached_session_id"] = session_id
 
     # Send response with initial messages and session metadata
-    ref = f"#{session.seq_num}" if getattr(session, "seq_num", None) else None
+    seq_num = _as_int(getattr(session, "seq_num", None))
+    ref = f"#{seq_num}" if seq_num is not None else None
     await websocket.send(
         json.dumps(
             {
                 "type": "attach_to_session_result",
                 "session_id": session_id,
-                "external_id": session.external_id,
-                "source": getattr(session, "source", "unknown"),
-                "title": getattr(session, "title", None),
-                "status": getattr(session, "status", "unknown"),
-                "model": getattr(session, "model", None),
+                "external_id": _as_str(getattr(session, "external_id", None)),
+                "source": _as_str(getattr(session, "source", None)) or "unknown",
+                "title": _as_str(getattr(session, "title", None)),
+                "status": _as_str(getattr(session, "status", None)) or "unknown",
+                "model": _as_str(getattr(session, "model", None)),
                 "ref": ref,
-                "chat_mode": getattr(session, "chat_mode", None),
-                "git_branch": getattr(session, "git_branch", None),
-                "context_window": getattr(session, "context_window", None),
-                "session_type": getattr(session, "session_type", None),
+                "chat_mode": _as_str(getattr(session, "chat_mode", None)),
+                "git_branch": _as_str(getattr(session, "git_branch", None)),
+                "context_window": _as_int(getattr(session, "context_window", None)),
+                "session_type": _as_str(getattr(session, "session_type", None)),
                 "workflow_name": workflow_name,
                 "agent_run_id": agent_run_id,
                 "agent_name": agent_name,
+                "usage_input_tokens": _as_int(getattr(session, "usage_input_tokens", 0), 0),
+                "usage_output_tokens": _as_int(getattr(session, "usage_output_tokens", 0), 0),
+                "usage_cache_read_tokens": _as_int(
+                    getattr(session, "usage_cache_read_tokens", 0),
+                    0,
+                ),
+                "usage_cache_creation_tokens": _as_int(
+                    getattr(session, "usage_cache_creation_tokens", 0),
+                    0,
+                ),
                 "messages": messages,
                 "total_count": total_count,
             }
@@ -443,6 +566,7 @@ async def handle_send_to_cli_session(
 
     # Try tmux delivery for idle sessions
     delivered_via_tmux = False
+    ctx: dict[str, Any] | None = None
     tmux_pane = None
     if hasattr(session, "terminal_context") and session.terminal_context:
         ctx = session.terminal_context if isinstance(session.terminal_context, dict) else {}
@@ -454,9 +578,7 @@ async def handle_send_to_cli_session(
 
     if tmux_pane:
         try:
-            from gobby.agents.tmux import get_tmux_session_manager
-
-            tmux_manager = get_tmux_session_manager()
+            tmux_manager = get_tmux_manager_for_context(ctx)
             ok = await tmux_manager.send_keys(tmux_pane, content + "\n")
             if ok:
                 delivered_via_tmux = True

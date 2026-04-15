@@ -149,6 +149,24 @@ class SessionLookupService:
                             f"Found session_id {platform_session_id} for external_id {external_id}"
                         )
                     else:
+                        recovered_session = self._session_manager.recover_session(
+                            external_id=external_id,
+                            source=event.source.value,
+                            machine_id=machine_id,
+                            project_id=project_id,
+                        )
+                        if recovered_session:
+                            platform_session_id = recovered_session.id
+                            self._logger.warning(
+                                "Recovered session %s for external_id=%s across source mismatch "
+                                "(incoming=%s, existing=%s)",
+                                platform_session_id,
+                                external_id,
+                                event.source.value,
+                                recovered_session.source,
+                            )
+                            return platform_session_id
+
                         # Auto-register session if not found
                         self._logger.warning(
                             "Session auto-registration: external_id=%s not found in DB "

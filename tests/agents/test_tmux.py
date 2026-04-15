@@ -43,6 +43,7 @@ class TestTmuxConfig:
             enabled=False,
             command="/usr/local/bin/tmux",
             socket_name="test",
+            socket_path="/tmp/tmux-1000/test",
             config_file="/tmp/tmux.conf",
             session_prefix="myprefix",
             history_limit=5000,
@@ -50,6 +51,7 @@ class TestTmuxConfig:
         assert config.enabled is False
         assert config.command == "/usr/local/bin/tmux"
         assert config.socket_name == "test"
+        assert config.socket_path == "/tmp/tmux-1000/test"
         assert config.config_file == "/tmp/tmux.conf"
         assert config.session_prefix == "myprefix"
         assert config.history_limit == 5000
@@ -139,6 +141,12 @@ class TestTmuxSessionManager:
         mgr = TmuxSessionManager(config)
         args = mgr._base_args()
         assert args == ["tmux", "-f", "/tmp/my.conf"]
+
+    def test_base_args_socket_path_takes_precedence(self) -> None:
+        config = TmuxConfig(socket_name="ignored", socket_path="/tmp/tmux-1000/gobby")
+        mgr = TmuxSessionManager(config)
+        args = mgr._base_args()
+        assert args == ["tmux", "-S", "/tmp/tmux-1000/gobby", "-f", "/dev/null"]
 
     @patch("shutil.which", return_value="/usr/bin/tmux")
     def test_is_available_true(self, mock_which) -> None:
@@ -325,6 +333,12 @@ class TestTmuxOutputReader:
         args = reader._base_args()
         assert args == ["tmux"]
 
+    def test_base_args_socket_path(self) -> None:
+        config = TmuxConfig(socket_name="", socket_path="/tmp/tmux-1000/gobby")
+        reader = TmuxOutputReader(config)
+        args = reader._base_args()
+        assert args == ["tmux", "-S", "/tmp/tmux-1000/gobby"]
+
     @pytest.mark.asyncio
     async def test_stop_reader_not_running(self) -> None:
         reader = TmuxOutputReader()
@@ -443,6 +457,12 @@ class TestTmuxPTYBridge:
         config = TmuxConfig(socket_name="")
         cmd = bridge._build_attach_cmd("my-session", config)
         assert cmd == ["tmux", "attach-session", "-t", "my-session"]
+
+    def test_build_attach_cmd_socket_path(self) -> None:
+        bridge = TmuxPTYBridge()
+        config = TmuxConfig(socket_name="", socket_path="/tmp/tmux-1000/gobby")
+        cmd = bridge._build_attach_cmd("my-session", config)
+        assert cmd == ["tmux", "-S", "/tmp/tmux-1000/gobby", "attach-session", "-t", "my-session"]
 
     @pytest.mark.asyncio
     async def test_detach_missing_is_noop(self) -> None:

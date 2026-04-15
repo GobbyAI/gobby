@@ -24,6 +24,13 @@ import { AgentStatusBar } from "./AgentStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
+import {
+  buildReasoningPreferenceKey,
+  fetchProviderModelCatalog,
+  getPreferredReasoningEffort,
+  resolveProviderModelPair,
+  type ProviderModelEntry,
+} from "../../lib/providerModels";
 
 const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
@@ -42,6 +49,12 @@ interface ChatPageProps {
   // Model selection
   currentModel?: string;
   onModelChange?: (model: string) => void;
+  reasoningPreferences?: Record<string, string>;
+  onReasoningPreferenceChange?: (
+    provider: string,
+    model: string,
+    reasoningEffort: string,
+  ) => void;
   // Command palette actions from App.tsx
   paletteActions?: CommandPaletteAction[];
   // Active sessions modal
@@ -66,16 +79,39 @@ export function ChatPage({
   agentHasProject = false,
   currentModel = "opus",
   onModelChange,
+  reasoningPreferences = {},
+  onReasoningPreferenceChange,
   paletteActions = [],
   onViewAgent,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
+  const lastAutoScrolledLoadRef = useRef<string | null>(null);
   const activeSession = conversations.sessions.find(
     (s) => s.id === conversations.activeSessionId,
   );
-  const activeTitle = activeSession?.title ?? null;
+  const mainSessionMeta =
+    chat.mainSessionMeta ??
+    (activeSession
+      ? {
+          ref: activeSession.seq_num != null ? `#${activeSession.seq_num}` : null,
+          source: activeSession.source,
+          title: activeSession.title ?? null,
+          status: activeSession.status,
+          model: activeSession.model ?? null,
+          externalId: activeSession.external_id,
+          chatMode: activeSession.chat_mode ?? null,
+          gitBranch: activeSession.git_branch ?? null,
+          contextWindow: null,
+          agentRunId: activeSession.agent_run_id ?? null,
+          workflowName: null,
+          agentName: null,
+          sessionType: "web_chat" as const,
+        }
+      : null);
+  const activeTitle = chat.sessionTitle ?? mainSessionMeta?.title ?? null;
   const effectiveSessionRef =
     chat.sessionRef ??
+    mainSessionMeta?.ref ??
     (activeSession?.seq_num != null ? `#${activeSession.seq_num}` : null);
 
   const {
@@ -134,21 +170,9 @@ export function ChatPage({
     setFocusSessionId(null);
   }, []);
 
-  // Watching: parked web chats stay selected in Sessions tab after starting a new chat
-  const [watchingSessionIds, setWatchingSessionIds] = useState<Set<string>>(
-    new Set(),
-  );
-  const handleUnwatch = useCallback((sessionId: string) => {
-    setWatchingSessionIds((prev) => {
-      const next = new Set(prev);
-      next.delete(sessionId);
-      return next;
-    });
-  }, []);
-
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
-      const currentSessionId = chat.viewingSessionId ?? chat.dbSessionId;
+      const currentSessionId = chat.dbSessionId;
       if (
         !currentSessionId ||
         chat.messages.length === 0 ||
@@ -156,17 +180,15 @@ export function ChatPage({
       ) {
         return;
       }
-      setWatchingSessionIds((prev) => new Set(prev).add(currentSessionId));
       setFocusSessionId(currentSessionId);
       showTab("sessions");
     },
-    [chat.dbSessionId, chat.messages.length, chat.viewingSessionId, showTab],
+    [chat.dbSessionId, chat.messages.length, showTab],
   );
 
   const handleSwapSession = useCallback(
     (target: SwappedSessionTarget) => {
       parkCurrentSession(target.sessionId);
-      handleUnwatch(target.sessionId);
 
       if (target.sessionType === "web_chat") {
         const targetSession = conversations.sessions.find(
@@ -175,51 +197,117 @@ export function ChatPage({
         if (targetSession) {
           conversations.onSelectSession(targetSession);
         }
+        if (isMobile) {
+          setIsPinned(false);
+        }
         return;
       }
 
       chat.viewSession?.(target.sessionId);
-      chat.observeSession?.(
-        target.sessionId,
-        target.agentRunId ? "observe" : "proxy",
-      );
+      chat.observeSession?.(target.sessionId, "observe");
+      if (isMobile) {
+        setIsPinned(false);
+      }
     },
-    [chat, conversations, handleUnwatch, parkCurrentSession],
+    [chat, conversations, isMobile, parkCurrentSession, setIsPinned],
   );
 
-  const handleAutonomousDetach = useCallback(() => {
-    if (chat.sessionInteractionMode === "proxy") {
-      chat.onDetachFromSession?.();
-      return;
-    }
-    if (chat.viewingSessionMeta?.sessionType === "terminal") {
-      chat.clearViewingSession?.();
-    }
-  }, [chat]);
-
+  // Available LLM providers — fetched from daemon API
+  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
+  const [providerModelCatalog, setProviderModelCatalog] = useState<
+    ProviderModelEntry[]
+  >([]);
   const viewingMeta = chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
   const isSwappedTerminal = viewingMeta?.sessionType === "terminal";
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
   );
-  const showObserveOverlay =
-    isAutonomousSession && chat.sessionInteractionMode !== "proxy";
-  const canAttachViewedSession =
+  const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
   const providerPickerDisabledReason = isAutonomousSession
     ? chat.sessionInteractionMode === "proxy"
       ? "Cannot change provider on a pipeline-managed session"
       : "Observing autonomous session"
     : null;
+  const mainInputSelection = resolveProviderModelPair(
+    providerModelCatalog,
+    {
+      provider: mainSessionMeta?.source ?? null,
+      model: mainSessionMeta?.model ?? null,
+    },
+    {
+      provider: chat.provider ?? null,
+      model: currentModel,
+    },
+  );
+  const viewedInputSelection = resolveProviderModelPair(
+    providerModelCatalog,
+    {
+      provider: viewingMeta?.source ?? null,
+      model: viewingMeta?.model ?? null,
+    },
+    {
+      provider: mainSessionMeta?.source ?? chat.provider ?? null,
+      model: mainSessionMeta?.model ?? currentModel,
+    },
+  );
   const effectiveInputProvider = isSwappedTerminal
-    ? viewingMeta?.source ?? chat.provider
-    : chat.provider;
+    ? viewedInputSelection.provider
+    : mainInputSelection.provider;
   const effectiveInputModel = isSwappedTerminal
-    ? viewingMeta?.model ?? currentModel
-    : currentModel;
+    ? viewedInputSelection.model ?? ""
+    : mainInputSelection.model ?? "";
+  const effectiveReasoningPreferenceKey = buildReasoningPreferenceKey(
+    effectiveInputProvider,
+    effectiveInputModel,
+  );
+  const effectiveInputReasoning = getPreferredReasoningEffort(
+    providerModelCatalog,
+    effectiveInputProvider,
+    effectiveInputModel,
+    effectiveReasoningPreferenceKey
+      ? reasoningPreferences[effectiveReasoningPreferenceKey]
+      : null,
+  );
+  const isReadOnlySession =
+    isSwappedTerminal && chat.sessionInteractionMode !== "proxy";
+  const showChatInput = !isReadOnlySession;
+  const chatInputDisabled =
+    !chat.isConnected || Boolean(chat.isContinuingSession);
+  const chatInputDisabledPlaceholder = !chat.isConnected
+    ? chat.isReconnecting
+      ? "Reconnecting to server..."
+      : "Connecting to server..."
+    : chat.isContinuingSession
+      ? "Resuming session in web chat..."
+      : undefined;
+  const chatInputDisabledAriaLabel = !chat.isConnected
+    ? chat.isReconnecting
+      ? "Message input — reconnecting"
+      : "Message input — connecting"
+    : chat.isContinuingSession
+      ? "Message input — resuming session"
+      : undefined;
+  const activityPanelChatSessionId =
+    isReadOnlySession ? chat.viewingSessionId ?? chat.dbSessionId : chat.dbSessionId;
+
+  const handleResumeViewedSession = useCallback(() => {
+    if (
+      !isSwappedTerminal ||
+      isAutonomousSession ||
+      !chat.viewingSessionId ||
+      !chat.continueSessionInChat
+    ) {
+      return;
+    }
+    void chat.continueSessionInChat(
+      chat.viewingSessionId,
+      projectId ?? undefined,
+    );
+  }, [chat, isAutonomousSession, isSwappedTerminal, projectId]);
 
   const handleSwappedSessionProviderSelection = useCallback(
-    async (provider: string, model: string) => {
+    async (provider: string, model: string, reasoningEffort: string | null) => {
       if (
         !isSwappedTerminal ||
         isAutonomousSession ||
@@ -243,9 +331,13 @@ export function ChatPage({
 
       chat.onProviderChange?.(provider);
       onModelChange?.(model);
+      if (reasoningEffort) {
+        onReasoningPreferenceChange?.(provider, model, reasoningEffort);
+      }
       await chat.continueSessionInChat(chat.viewingSessionId, projectId ?? undefined, {
         provider,
         model,
+        reasoningEffort,
       });
     },
     [
@@ -254,8 +346,41 @@ export function ChatPage({
       isAutonomousSession,
       isSwappedTerminal,
       onModelChange,
+      onReasoningPreferenceChange,
       projectId,
       viewingMeta?.status,
+    ],
+  );
+
+  const handleMainProviderSelection = useCallback(
+    (provider: string, model: string, reasoningEffort: string | null) => {
+      const providerChanged =
+        provider !== (effectiveInputProvider ?? chat.provider ?? "claude");
+
+      onModelChange?.(model);
+      if (reasoningEffort) {
+        onReasoningPreferenceChange?.(provider, model, reasoningEffort);
+      }
+
+      if (!providerChanged) {
+        return;
+      }
+
+      if (chat.onSwitchProvider) {
+        chat.onSwitchProvider(provider, {
+          model,
+          reasoningEffort,
+        });
+        return;
+      }
+
+      chat.onProviderChange?.(provider);
+    },
+    [
+      chat,
+      effectiveInputProvider,
+      onModelChange,
+      onReasoningPreferenceChange,
     ],
   );
 
@@ -268,8 +393,6 @@ export function ChatPage({
     [conversations, parkCurrentSession],
   );
 
-  // Available LLM providers — fetched from daemon API
-  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   useEffect(() => {
     fetch("/api/providers")
       .then((r) => {
@@ -284,7 +407,24 @@ export function ChatPage({
           .map((p: { name: string }) => p.name);
         setAvailableProviders(names);
       })
-      .catch(() => setAvailableProviders(["claude"]));
+      .catch(() => setAvailableProviders([effectiveInputProvider || "claude"]));
+  }, [effectiveInputProvider]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchProviderModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) {
+          setProviderModelCatalog(catalog);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProviderModelCatalog([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Modals
@@ -310,6 +450,32 @@ export function ChatPage({
   useEffect(() => {
     clearArtifacts();
   }, [chat.conversationSwitchKey, clearArtifacts]);
+
+  useEffect(() => {
+    if (chat.isLoadingMessages || chat.messages.length === 0) {
+      return;
+    }
+
+    const loadKey = [
+      chat.conversationSwitchKey ?? 0,
+      chat.viewingSessionId ?? chat.dbSessionId ?? "main-chat",
+    ].join(":");
+    if (lastAutoScrolledLoadRef.current === loadKey) {
+      return;
+    }
+    lastAutoScrolledLoadRef.current = loadKey;
+
+    const frameId = requestAnimationFrame(() => {
+      messageListRef.current?.scrollToBottom();
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [
+    chat.conversationSwitchKey,
+    chat.dbSessionId,
+    chat.isLoadingMessages,
+    chat.messages.length,
+    chat.viewingSessionId,
+  ]);
 
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {
@@ -468,14 +634,6 @@ export function ChatPage({
             viewingMeta?.title ??
             activeTitle
           }
-          viewingMeta={viewingMeta}
-          isAttached={!!chat.attachedSessionId}
-          sessionInteractionMode={chat.sessionInteractionMode}
-          isAutonomousSession={isAutonomousSession}
-          onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
-          onDetach={
-            isAutonomousSession ? handleAutonomousDetach : chat.clearViewingSession
-          }
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
@@ -525,65 +683,83 @@ export function ChatPage({
             />
           </div>
 
-          {isAutonomousSession && viewingMeta && (
+          {viewingMeta && (
             <AgentStatusBar
               viewingMeta={viewingMeta}
               interactionMode={chat.sessionInteractionMode ?? "none"}
+              isAttached={!!chat.attachedSessionId}
+              isAutonomousSession={isAutonomousSession}
+              onAttach={
+                canControlViewedSession ? chat.onAttachToViewed : undefined
+              }
+              onResume={
+                canControlViewedSession ? handleResumeViewedSession : undefined
+              }
+              onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
             />
           )}
 
           {/* Chat input */}
-          <ChatInput
-            onSend={onSend}
-            onStop={chat.onStop}
-            isStreaming={chat.isStreaming}
-            disabled={
-              !chat.isConnected ||
-              (isSwappedTerminal && chat.sessionInteractionMode !== "proxy")
-            }
-            viewingSession={showObserveOverlay}
-            onInputChange={chat.onInputChange}
-            paletteItems={chat.paletteItems}
-            onPaletteSelect={handlePaletteSelect}
-            mode={chat.mode}
-            onModeChange={chat.onModeChange}
-            contextUsage={chat.contextUsage}
-            currentBranch={chat.currentBranch}
-            worktreePath={chat.worktreePath}
-            projectId={projectId ?? null}
-            onWorktreeChange={chat.onWorktreeChange}
-            agentName={chat.activeAgent}
-            onAgentChange={chat.onAgentChange}
-            agentDefinitions={agentDefinitions}
-            agentGlobalDefs={agentGlobalDefs}
-            agentProjectDefs={agentProjectDefs}
-            agentShowScopeToggle={agentShowScopeToggle}
-            agentHasGlobal={agentHasGlobal}
-            agentHasProject={agentHasProject}
-            sttEnabled={voice.sttEnabled}
-            voiceInputMode={voice.voiceInputMode}
-            isRecording={voice.isRecording}
-            startRecording={voice.startRecording}
-            stopRecording={voice.stopRecording}
-            cancelRecording={voice.cancelRecording}
-            isMobile={isMobile}
-            onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
-            provider={effectiveInputProvider}
-            availableProviders={availableProviders}
-            currentModel={effectiveInputModel}
-            onModelChange={onModelChange}
-            onProviderChange={chat.onProviderChange}
-            onSwitchProvider={chat.onSwitchProvider}
-            onProviderSelectionChange={
-              isSwappedTerminal ? handleSwappedSessionProviderSelection : undefined
-            }
-            providerPickerDisabledReason={providerPickerDisabledReason}
-            hasMessages={chat.messages.length > 0}
-            proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
-            showObserveOverlay={showObserveOverlay}
-            onAttachObservedSession={chat.onAttachToViewed}
-            proxyDeliveryNotice={chat.proxyDeliveryNotice}
-          />
+          {showChatInput && (
+            <ChatInput
+              onSend={onSend}
+              onStop={chat.onStop}
+              isStreaming={chat.isStreaming}
+              disabled={chatInputDisabled}
+              disabledPlaceholder={chatInputDisabledPlaceholder}
+              disabledAriaLabel={chatInputDisabledAriaLabel}
+              onInputChange={chat.onInputChange}
+              paletteItems={chat.paletteItems}
+              onPaletteSelect={handlePaletteSelect}
+              mode={chat.mode}
+              onModeChange={chat.onModeChange}
+              contextUsage={chat.contextUsage}
+              currentBranch={chat.currentBranch}
+              worktreePath={chat.worktreePath}
+              projectId={projectId ?? null}
+              onWorktreeChange={chat.onWorktreeChange}
+              agentName={chat.activeAgent}
+              onAgentChange={chat.onAgentChange}
+              agentDefinitions={agentDefinitions}
+              agentGlobalDefs={agentGlobalDefs}
+              agentProjectDefs={agentProjectDefs}
+              agentShowScopeToggle={agentShowScopeToggle}
+              agentHasGlobal={agentHasGlobal}
+              agentHasProject={agentHasProject}
+              sttEnabled={voice.sttEnabled}
+              voiceInputMode={voice.voiceInputMode}
+              isRecording={voice.isRecording}
+              startRecording={voice.startRecording}
+              stopRecording={voice.stopRecording}
+              cancelRecording={voice.cancelRecording}
+              isMobile={isMobile}
+              onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
+              provider={effectiveInputProvider}
+              availableProviders={availableProviders}
+              providerModelCatalog={providerModelCatalog}
+              currentModel={effectiveInputModel}
+              currentReasoning={effectiveInputReasoning}
+              onModelChange={onModelChange}
+              onReasoningChange={(reasoningEffort) => {
+                if (effectiveInputProvider && effectiveInputModel) {
+                  onReasoningPreferenceChange?.(
+                    effectiveInputProvider,
+                    effectiveInputModel,
+                    reasoningEffort,
+                  );
+                }
+              }}
+              onProviderSelectionChange={
+                isSwappedTerminal
+                  ? handleSwappedSessionProviderSelection
+                  : handleMainProviderSelection
+              }
+              providerPickerDisabledReason={providerPickerDisabledReason}
+              hasMessages={chat.messages.length > 0}
+              proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
+              proxyDeliveryNotice={chat.proxyDeliveryNotice}
+            />
+          )}
         </ArtifactContext.Provider>
       </div>
 
@@ -616,11 +792,9 @@ export function ChatPage({
         projectId={projectId}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
-        chatSessionId={chat.dbSessionId}
+        chatSessionId={activityPanelChatSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
-        watchingSessionIds={watchingSessionIds}
-        onUnwatchSession={handleUnwatch}
         onSwapSession={handleSwapSession}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}

@@ -36,7 +36,7 @@ class WebChatSessionRequest(BaseModel):
 
     provider: str | None = Field(
         default="claude",
-        description="CLI provider backing the web chat session (claude, gemini, codex)",
+        description="CLI provider backing the web chat session (claude, gemini, qwen, codex)",
     )
     project_id: str | None = Field(None, description="Project ID to associate with session")
     cwd: str | None = Field(
@@ -45,4 +45,7 @@ class WebChatSessionRequest(BaseModel):
     )
     title: str | None = Field(None, description="Optional session title")
     model: str | None = Field(None, description="Optional model override")
+    reasoning_effort: str | None = Field(
+        None, description="Optional reasoning effort override for supported providers/models"
+    )
     chat_mode: str | None = Field(None, description="Optional chat mode override")

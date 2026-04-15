@@ -8,6 +8,7 @@ import { SessionDetail } from './SessionDetail'
 import { SourceIcon } from '../shared/SourceIcon'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { MobileSessionDrawer } from './MobileSessionDrawer'
+import { getSessionTitleText } from '../../lib/sessionTitle'
 
 interface SessionsPageProps {
   sessions: GobbySession[]
@@ -141,7 +142,7 @@ export function SessionsPage({
                 <div key={group.label} className="session-group">
                   <div className="session-group-label">{group.label}</div>
                   {group.sessions.map((session) => {
-                    const title = session.title || `Untitled #${session.ref}`
+                    const title = getSessionTitleText(session.title)
                     const isSelected = session.id === selectedSessionId
                     const isEditing = editingId === session.id
                     return (

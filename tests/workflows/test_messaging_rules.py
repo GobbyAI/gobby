@@ -1,8 +1,8 @@
 """Tests for messaging rules.
 
 Covers 5 rules:
-- deliver-pending-messages: calls MCP on before_agent
-- activate-pending-command: activates on before_agent when has_pending_command
+- deliver-pending-messages: calls MCP on turn_start
+- activate-pending-command: activates on turn_start when has_pending_command
 - command-tool-restriction: blocks disallowed tools when command active
 - command-exit-condition: auto-completes on after_tool when exit condition met
 - notify-unread-mail: injects context nudge when agent has pending messages
@@ -76,11 +76,11 @@ def _insert_rule(
 
 
 class TestDeliverPendingMessages:
-    """deliver-pending-messages calls MCP on before_agent for spawned agents only."""
+    """deliver-pending-messages calls MCP on turn_start for spawned agents only."""
 
     def _rule_body(self) -> RuleDefinitionBody:
         return RuleDefinitionBody(
-            event=RuleEvent.BEFORE_AGENT,
+            event=RuleEvent.TURN_START,
             when="variables.get('is_spawned_agent')",
             effects=[
                 RuleEffect(
@@ -144,11 +144,11 @@ class TestDeliverPendingMessages:
 
 
 class TestActivatePendingCommand:
-    """activate-pending-command fires when has_pending_command is set on spawned agents."""
+    """activate-pending-command fires on turn_start when a command is pending."""
 
     def _rule_body(self) -> RuleDefinitionBody:
         return RuleDefinitionBody(
-            event=RuleEvent.BEFORE_AGENT,
+            event=RuleEvent.TURN_START,
             when="variables.get('is_spawned_agent') and variables.get('has_pending_command')",
             effects=[
                 RuleEffect(

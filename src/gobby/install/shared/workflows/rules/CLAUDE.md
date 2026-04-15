@@ -10,7 +10,7 @@ This directory contains 16 bundled rule groups. These are **templates** — they
 | `tool-hygiene` | `tool-hygiene/` | 2 | Require `uv` for Python, track pending memory review |
 | `progressive-discovery` | `progressive-discovery/` | 7 | Enforce MCP discovery order: list_servers → list_tools → get_schema → call_tool |
 | `task-enforcement` | `task-enforcement/` | 8 | Block native task tools, require task before edit, track claims, require commits before status, block validation skip, block needs_review and review_approved for interactive, require error triage before status |
-| `stop-gates` | `stop-gates/` | 2 | Require task close and epic tree close before stop |
+| `stop-gates` | `stop-gates/` | 2 | Require task close and epic tree close before a turn can end |
 | `plan-mode` | `plan-mode/` | 3 | Detect enter/exit plan mode, reset on session start |
 | `memory-lifecycle` | `memory-lifecycle/` | 6 | Memory recall, digest, capture, title generation, tracking reset |
 | `context-handoff` | `context-handoff/` | 7 | Session summary injection (clear/compact/resume), task context, baseline dirty files |
@@ -43,6 +43,10 @@ rules:
 ```
 
 Multiple rules can live in one YAML file, or each rule can have its own file. The convention varies by group.
+
+For lifecycle authoring, prefer semantic workflow events such as `turn_start`
+and `turn_end`. Raw events such as `before_agent`, `after_agent`, and `stop`
+are escape hatches for provider-specific detail.
 
 ## Tags
 

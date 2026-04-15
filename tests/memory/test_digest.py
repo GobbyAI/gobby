@@ -328,7 +328,7 @@ class TestBuildTurnAndDigest:
         mock_session_manager,
         mock_llm_service,
     ):
-        """Digest title synthesis is a no-op when the title is already current."""
+        """Already-titled sessions skip title synthesis entirely."""
         session = mock_session_manager.get.return_value
         session.title = "Fix Auth Bug"
 
@@ -344,6 +344,9 @@ class TestBuildTurnAndDigest:
         assert "title" not in result
         mock_session_manager.update_title.assert_not_called()
         mock_rename.assert_not_awaited()
+        provider = mock_llm_service.get_default_provider.return_value
+        assert provider.generate_text.await_count == 1
+        assert provider.generate_text.await_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
     @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
@@ -444,6 +447,7 @@ class TestBuildTurnAndDigest:
         provider.generate_text = AsyncMock(return_value="unused")
         session_manager = MagicMock()
         session = MagicMock()
+        session.title = None
         llm_service = MagicMock()
 
         async def _slow_call(*args, **kwargs):
@@ -491,6 +495,7 @@ class TestBuildTurnAndDigestIdempotency:
         session.transcript_path = None
         session.source = "claude"
         session.digest_markdown = None
+        session.title = None
         session.seq_num = 42
         session.terminal_context = None
         session.last_digest_input_hash = None  # No prior digest
@@ -570,6 +575,108 @@ class TestBuildTurnAndDigestIdempotency:
         # LLM should NOT have been called
         provider = mock_llm_service.get_default_provider.return_value
         provider.generate_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
+    async def test_synthesizes_missing_title_from_existing_digest_when_duplicate(
+        self,
+        mock_rename,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Duplicate digest input still backfills a missing title from existing digest."""
+        import hashlib
+
+        prompt = "Fix the bug"
+        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        session = mock_session_manager.get.return_value
+        session.digest_markdown = "### Turn 1\nExisting digest"
+        session.last_digest_input_hash = expected_hash
+
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text = AsyncMock(return_value="Recovered Title")
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text=prompt,
+            llm_service=mock_llm_service,
+        )
+
+        assert result == {
+            "title": "Recovered Title",
+            "title_only": True,
+            "digest_length": len(session.digest_markdown),
+        }
+        mock_session_manager.update_title.assert_called_once_with("session-123", "Recovered Title")
+        mock_rename.assert_awaited_once()
+        mock_session_manager.update_last_turn_markdown.assert_not_called()
+        mock_session_manager.update_digest_markdown.assert_not_called()
+        mock_session_manager.update_last_digest_input_hash.assert_not_called()
+        assert provider.generate_text.await_count == 1
+        assert provider.generate_text.await_args.kwargs["caller"] == "memory.title_synthesis"
+
+    @pytest.mark.asyncio
+    async def test_skips_title_synthesis_when_title_present_and_duplicate(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Duplicate digest input does not hit the title LLM when title already exists."""
+        import hashlib
+
+        prompt = "Fix the bug"
+        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        session = mock_session_manager.get.return_value
+        session.digest_markdown = "### Turn 1\nExisting digest"
+        session.last_digest_input_hash = expected_hash
+        session.title = "Existing Title"
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text=prompt,
+            llm_service=mock_llm_service,
+        )
+
+        assert result is None
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text.assert_not_called()
+        mock_session_manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_title_synthesis_when_no_digest_and_duplicate(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Duplicate digest input without an existing digest still skips fully."""
+        import hashlib
+
+        prompt = "Fix the bug"
+        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        session = mock_session_manager.get.return_value
+        session.last_digest_input_hash = expected_hash
+        session.digest_markdown = None
+        session.title = None
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text=prompt,
+            llm_service=mock_llm_service,
+        )
+
+        assert result is None
+        provider = mock_llm_service.get_default_provider.return_value
+        provider.generate_text.assert_not_called()
+        mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)

@@ -3,7 +3,7 @@ tags: [task-enforcement, enforcement, tasks, gobby, default]
 rules:
   reset-subagent-flag:
     description: "Reset is_subagent on each user turn to prevent stale state from interrupted subagents"
-    event: before_agent
+    event: turn_start
     enabled: true
     priority: 5
     when: "variables.get('is_subagent')"

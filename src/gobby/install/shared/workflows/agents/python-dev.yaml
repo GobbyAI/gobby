@@ -20,6 +20,12 @@ instructions: |
      then call mark_task_needs_review(task_id) to submit for QA
   3. TERMINATE: Call kill_agent to shut down
 
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required task or review work is complete.
+  - Agent termination is separate and still requires `kill_agent`.
+
   PLAN CONTEXT:
   - If your task description includes a "Plan reference:" line with a file path,
     you may Read that file to understand the broader design and motivation.
@@ -42,7 +48,8 @@ instructions: |
   - Do NOT call close_task — blocked by workflow. Only mark_task_needs_review.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are handled by humans.
   - Do NOT call git push — the merge agent handles pushing.
-  - Do NOT stop or exit without calling kill_agent.
+  - `mark_task_needs_review` satisfies the workflow before termination; raw stop hooks are not the contract.
+  - Do NOT terminate or exit the agent process without calling kill_agent.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 

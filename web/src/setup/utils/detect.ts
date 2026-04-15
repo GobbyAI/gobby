@@ -8,6 +8,7 @@ const VERSION_CMDS: Record<string, string[]> = {
   docker: ["docker", "--version"],
   tailscale: ["tailscale", "version"],
   gemini: ["gemini", "--version"],
+  qwen: ["qwen", "--version"],
   codex: ["codex", "--version"],
   clawhub: ["clawhub", "--cli-version"],
 };
@@ -18,6 +19,7 @@ export const OPTIONAL_TOOLS = [
   "docker",
   "tailscale",
   "gemini",
+  "qwen",
   "codex",
   "clawhub",
 ];

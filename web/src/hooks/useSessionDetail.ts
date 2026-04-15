@@ -19,6 +19,19 @@ export interface SessionMessage {
   usage?: TokenUsage | null
 }
 
+export interface TranscriptStatus {
+  session_id: string
+  live_exists: boolean
+  archive_exists: boolean
+  availability: 'live' | 'archive_only' | 'missing'
+  content_state: 'messages' | 'empty' | 'unparseable' | 'missing'
+  session_source?: string | null
+  detected_source?: string | null
+  source_mismatch: boolean
+  raw_record_count: number
+  parsed_message_count: number
+}
+
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
@@ -71,6 +84,7 @@ function mapWebChatRecordToSessionMessage(message: Record<string, unknown>): Ses
 export function useSessionDetail(sessionId: string | null) {
   const [session, setSession] = useState<GobbySession | null>(null)
   const [messages, setMessages] = useState<SessionMessage[]>([])
+  const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
   const [totalMessages, setTotalMessages] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const messageSourceRef = useRef<'session' | 'chat' | null>(null)
@@ -80,6 +94,7 @@ export function useSessionDetail(sessionId: string | null) {
     if (!sessionId) {
       setSession(null)
       setMessages([])
+      setTranscriptStatus(null)
       setTotalMessages(0)
       messageSourceRef.current = null
       return
@@ -99,6 +114,7 @@ export function useSessionDetail(sessionId: string | null) {
           const data = await sessionRes.json()
           const sessionData = data.session || null
           setSession(sessionData)
+          setTranscriptStatus(null)
 
           const loadRenderedMessages = async (): Promise<{
             mapped: SessionMessage[]
@@ -147,6 +163,15 @@ export function useSessionDetail(sessionId: string | null) {
             }
           }
 
+          const loadTranscriptStatus = async (): Promise<TranscriptStatus | null> => {
+            const statusRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/transcript/status`)
+            if (!statusRes.ok) {
+              console.warn(`Transcript status fetch returned ${statusRes.status}`)
+              return null
+            }
+            return (await statusRes.json()) as TranscriptStatus
+          }
+
           const renderedResult = await loadRenderedMessages()
           if (cancelled) return
 
@@ -160,6 +185,7 @@ export function useSessionDetail(sessionId: string | null) {
             if (cancelled) return
 
             messageSourceRef.current = 'chat'
+            setTranscriptStatus(null)
             setMessages(chatResult.mapped)
             setTotalMessages(chatResult.totalCount)
 
@@ -177,6 +203,12 @@ export function useSessionDetail(sessionId: string | null) {
           messageSourceRef.current = 'session'
           setMessages(renderedResult.mapped)
           setTotalMessages(renderedResult.totalCount)
+          if (renderedResult.mapped.length === 0) {
+            const nextTranscriptStatus = await loadTranscriptStatus()
+            if (!cancelled) {
+              setTranscriptStatus(nextTranscriptStatus)
+            }
+          }
         } else {
           console.warn(`Session fetch returned ${sessionRes.status}`)
         }
@@ -270,5 +302,15 @@ export function useSessionDetail(sessionId: string | null) {
   // loadMore kept as no-op for interface compatibility
   const loadMore = useCallback(() => {}, [])
 
-  return { session, messages, isLoading, totalMessages, hasMore, loadMore, generateSummary, isGeneratingSummary }
+  return {
+    session,
+    messages,
+    transcriptStatus,
+    isLoading,
+    totalMessages,
+    hasMore,
+    loadMore,
+    generateSummary,
+    isGeneratingSummary,
+  }
 }

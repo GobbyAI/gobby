@@ -75,7 +75,7 @@ describe('SessionDetail', () => {
         session={{ ...SAMPLE_SESSION, title: null }}
       />,
     )
-    expect(screen.getByText(/Session #/)).toBeTruthy()
+    expect(screen.getByText('New Session')).toBeTruthy()
   })
 
   it('renders source icon', () => {

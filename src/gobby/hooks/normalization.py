@@ -12,6 +12,7 @@ Used by all adapters and the web-chat path.
 
 import json as _json
 import re as _re
+import shlex as _shlex
 from typing import Any
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -35,6 +36,27 @@ _SHELL_TOOLS = frozenset(
 _EXIT_CODE_RE = _re.compile(r"[Ee]xit.?code[:\s]+(\d+)")
 _APPLY_PATCH_FILE_RE = _re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$")
 _APPLY_PATCH_MOVE_RE = _re.compile(r"^\*\*\* Move to: (.+)$")
+_SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|"})
+_SHELL_INPUT_REDIRECTION_TOKENS = frozenset({"<", "<<", "<<<"})
+_SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset({">", ">>", "1>", "1>>"})
+_SHELL_CONTROL_TOKENS = (
+    _SHELL_CHAIN_TOKENS | _SHELL_INPUT_REDIRECTION_TOKENS | _SHELL_OUTPUT_REDIRECTION_TOKENS
+)
+_CANONICAL_READ_TOOL_NAMES = frozenset({"read"})
+_CANONICAL_WRITE_TOOL_NAMES = frozenset(
+    {
+        "edit",
+        "edit_file",
+        "notebook_edit",
+        "notebookedit",
+        "replace",
+        "write",
+        "write_file",
+    }
+)
+
+# Characters that strongly imply an inline sed/awk script rather than a file path.
+_SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 
 
 def is_shell_tool(tool_name: Any) -> bool:
@@ -101,6 +123,38 @@ def _normalize_file_change_input(tool_input: Any) -> Any:
     return normalized_input
 
 
+def _extract_tool_input_paths(tool_input: Any) -> list[str]:
+    """Extract canonical file paths from a normalized tool input payload."""
+    if not isinstance(tool_input, dict):
+        return []
+
+    paths: list[str] = []
+
+    file_paths = tool_input.get("file_paths")
+    if isinstance(file_paths, list):
+        for path in file_paths:
+            _append_unique_path(paths, path)
+
+    _append_unique_path(paths, tool_input.get("file_path"))
+
+    changes = tool_input.get("changes")
+    if isinstance(changes, list):
+        for change in changes:
+            _append_unique_path(paths, _extract_change_path(change))
+
+    return paths
+
+
+def _setdefault_tool_input_paths(tool_input: Any, paths: list[str]) -> None:
+    """Backfill normalized file_path/file_paths into tool_input when derivable."""
+    if not isinstance(tool_input, dict) or not paths:
+        return
+
+    tool_input.setdefault("file_path", paths[0])
+    if len(paths) > 1:
+        tool_input.setdefault("file_paths", paths)
+
+
 def _extract_apply_patch_text(tool_input: Any) -> str | None:
     """Extract raw patch text from apply_patch inputs."""
     if isinstance(tool_input, str):
@@ -154,6 +208,262 @@ def _normalize_apply_patch_input(tool_input: Any) -> dict[str, Any]:
                 normalized_input.setdefault("file_paths", paths)
 
     return normalized_input
+
+
+def _get_command_text(tool_input: Any) -> str | None:
+    """Extract a shell command string from normalized tool input."""
+    if not isinstance(tool_input, dict):
+        return None
+
+    command = tool_input.get("command")
+    if isinstance(command, str) and command.strip():
+        return command
+
+    cmd = tool_input.get("cmd")
+    if isinstance(cmd, str) and cmd.strip():
+        return cmd
+
+    return None
+
+
+def _shell_positional_args(parts: list[str]) -> list[str]:
+    """Return non-option shell args, excluding obvious control operators."""
+    return [
+        part
+        for part in parts[1:]
+        if part and part not in _SHELL_CONTROL_TOKENS and not part.startswith("-")
+    ]
+
+
+def _looks_file_like(candidate: str) -> bool:
+    """Return True when ``candidate`` looks like a file path, not an inline script.
+
+    Used to gate sed/awk's last positional arg so we don't classify an inline
+    script (``'s/foo/bar/'``, ``'{print $1}'``) as a file that was read.
+    """
+    if not candidate or any(ch in candidate for ch in _SCRIPT_LIKE_CHARS):
+        return False
+    # Must carry a path separator or an extension-like dot that isn't a leading/solo dot.
+    if "/" in candidate:
+        return True
+    if "." in candidate and candidate not in {".", ".."}:
+        return True
+    return False
+
+
+def _looks_path_target(candidate: str) -> bool:
+    """Return True when ``candidate`` is a plausible shell path target."""
+    if not candidate or candidate in _SHELL_CONTROL_TOKENS or candidate == "-":
+        return False
+    if candidate.startswith("-") or candidate.startswith("&"):
+        return False
+    if any(ch in candidate for ch in _SCRIPT_LIKE_CHARS):
+        return False
+    return True
+
+
+def _build_canonical_tool_metadata(
+    kind: str,
+    *,
+    paths: list[str] | None = None,
+    repo_mutation: bool = False,
+    confidence: str = "high",
+) -> dict[str, Any]:
+    """Build a canonical metadata payload for a tool event."""
+    data: dict[str, Any] = {
+        "canonical_tool_kind": kind,
+        "canonical_tool_confidence": confidence,
+    }
+    if paths:
+        data["canonical_file_paths"] = paths
+        data["canonical_file_path"] = paths[0]
+    if repo_mutation:
+        data["canonical_repo_mutation"] = True
+    return data
+
+
+def _has_sed_inplace_option(parts: list[str]) -> bool:
+    """Return True when a sed command performs in-place editing."""
+    for part in parts[1:]:
+        if part in {"-i", "--in-place"}:
+            return True
+        if part.startswith("-i"):
+            return True
+        if part.startswith("--in-place="):
+            return True
+    return False
+
+
+def _has_perl_inplace_option(parts: list[str]) -> bool:
+    """Return True when a perl command edits files in place."""
+    for part in parts[1:]:
+        if part == "-pi" or part.startswith("-pi"):
+            return True
+        if part == "-i" or part.startswith("-i"):
+            return True
+    return False
+
+
+def _extract_redirection_paths(parts: list[str]) -> list[str]:
+    """Extract explicit output redirection targets from shell tokens."""
+    paths: list[str] = []
+    for idx, token in enumerate(parts[:-1]):
+        if token not in _SHELL_OUTPUT_REDIRECTION_TOKENS:
+            continue
+        candidate = parts[idx + 1]
+        if _looks_path_target(candidate):
+            _append_unique_path(paths, candidate)
+    return paths
+
+
+def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
+    """Infer canonical semantics from simple shell read/search/write commands."""
+    try:
+        parts = _shlex.split(command)
+    except ValueError:
+        return {}
+
+    if not parts or any(token in _SHELL_CHAIN_TOKENS for token in parts):
+        return {}
+
+    if any(token in _SHELL_INPUT_REDIRECTION_TOKENS for token in parts):
+        return {}
+
+    cmd = parts[0]
+    redirection_paths = _extract_redirection_paths(parts)
+    if redirection_paths:
+        return _build_canonical_tool_metadata(
+            "write",
+            paths=redirection_paths,
+            repo_mutation=True,
+        )
+
+    if cmd in {"rg", "grep", "git"}:
+        if cmd == "git" and len(parts) > 1 and parts[1] != "grep":
+            return {}
+        return _build_canonical_tool_metadata("search")
+
+    if cmd in {"cat", "head", "tail", "bat", "nl"}:
+        positional = _shell_positional_args(parts)
+        paths = [candidate for candidate in positional if _looks_file_like(candidate)]
+        return _build_canonical_tool_metadata("read", paths=paths or None)
+
+    if cmd == "sed" and len(parts) >= 2:
+        positional = _shell_positional_args(parts)
+        candidate = positional[-1] if positional else None
+        if _has_sed_inplace_option(parts):
+            paths = [candidate] if candidate and _looks_path_target(candidate) else []
+            return _build_canonical_tool_metadata(
+                "write",
+                paths=paths or None,
+                repo_mutation=True,
+            )
+        paths = [item for item in positional if _looks_file_like(item)]
+        return _build_canonical_tool_metadata("read", paths=paths or None)
+
+    if cmd == "perl" and _has_perl_inplace_option(parts):
+        positional = _shell_positional_args(parts)
+        candidate = positional[-1] if positional else None
+        paths = [candidate] if candidate and _looks_path_target(candidate) else []
+        return _build_canonical_tool_metadata(
+            "write",
+            paths=paths or None,
+            repo_mutation=True,
+        )
+
+    if cmd == "tee":
+        positional = _shell_positional_args(parts)
+        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        return _build_canonical_tool_metadata(
+            "write",
+            paths=paths or None,
+            repo_mutation=True,
+        )
+
+    if cmd in {"touch", "rm", "mkdir", "rmdir"}:
+        positional = _shell_positional_args(parts)
+        paths = [candidate for candidate in positional if _looks_path_target(candidate)]
+        return _build_canonical_tool_metadata(
+            "write",
+            paths=paths or None,
+            repo_mutation=True,
+        )
+
+    if cmd in {"cp", "mv", "install"}:
+        positional = _shell_positional_args(parts)
+        candidate = positional[-1] if positional else None
+        paths = [candidate] if candidate and _looks_path_target(candidate) else []
+        return _build_canonical_tool_metadata(
+            "write",
+            paths=paths or None,
+            repo_mutation=True,
+        )
+
+    if cmd == "truncate":
+        truncate_positional: list[str] = []
+        skip_next = False
+        for part in parts[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if part in _SHELL_CONTROL_TOKENS or not part:
+                continue
+            if part in {"-s", "--size"}:
+                skip_next = True
+                continue
+            if part.startswith("--size=") or part.startswith("-"):
+                continue
+            truncate_positional.append(part)
+        paths = [candidate for candidate in truncate_positional if _looks_path_target(candidate)]
+        return _build_canonical_tool_metadata(
+            "write",
+            paths=paths or None,
+            repo_mutation=True,
+        )
+
+    return {}
+
+
+def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
+    """Annotate events with canonical read/search/write semantics across CLIs."""
+    tool_name = data.get("tool_name")
+    tool_input = data.get("tool_input")
+
+    metadata: dict[str, Any] = {}
+    tool_name_lower = tool_name.lower() if isinstance(tool_name, str) else ""
+
+    if tool_name_lower in _CANONICAL_READ_TOOL_NAMES:
+        metadata = _build_canonical_tool_metadata("read")
+    elif tool_name_lower in _CANONICAL_WRITE_TOOL_NAMES:
+        metadata = _build_canonical_tool_metadata("write", repo_mutation=True)
+    elif tool_name_lower in {"grep_search", "grep"}:
+        metadata = _build_canonical_tool_metadata("search")
+    elif tool_name == "Bash":
+        command = _get_command_text(tool_input)
+        if command:
+            metadata = _normalize_shell_tool_metadata(command)
+    elif "mcp_server" in data and "mcp_tool" in data:
+        metadata = _build_canonical_tool_metadata("mcp")
+
+    canonical_file_paths = metadata.get("canonical_file_paths")
+    if not isinstance(canonical_file_paths, list):
+        canonical_file_paths = []
+
+    if not canonical_file_paths:
+        canonical_file_paths = _extract_tool_input_paths(tool_input)
+        if canonical_file_paths:
+            metadata["canonical_file_paths"] = canonical_file_paths
+
+    if canonical_file_paths and "canonical_file_path" not in metadata:
+        metadata["canonical_file_path"] = canonical_file_paths[0]
+
+    if metadata.get("canonical_tool_kind") == "write" and "canonical_repo_mutation" not in metadata:
+        metadata["canonical_repo_mutation"] = True
+
+    if canonical_file_paths:
+        _setdefault_tool_input_paths(tool_input, canonical_file_paths)
+
+    data.update(metadata)
 
 
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -241,6 +551,9 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     # ── Phase 2: MCP prefix/inner extraction + output aliases ──────────
     normalize_mcp_fields(data)
+
+    # ── Phase 2.5: infer canonical read/search/write semantics ────────
+    _set_canonical_tool_metadata(data)
 
     # ── Phase 3: infer is_error from tool output for shell tools ──────
     _detect_tool_error(data)

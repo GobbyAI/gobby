@@ -120,12 +120,17 @@ class TestHandleInternalDaemonNotReady:
         assert response.decision == "allow"
         assert "unreachable" in (response.reason or "")
 
+    @pytest.mark.parametrize(
+        "event_type",
+        [HookEventType.SESSION_START, HookEventType.AFTER_AGENT],
+    )
     def test_handle_retries_for_critical_hooks(
         self,
         manager_with_mocks: HookManager,
         make_event: Callable,
+        event_type: HookEventType,
     ) -> None:
-        """Critical hooks (SESSION_START) retry daemon health checks."""
+        """Critical hooks retry daemon health checks before failing open."""
         manager = manager_with_mocks
         manager._health_monitor.get_cached_status.return_value = (
             False,
@@ -136,7 +141,7 @@ class TestHandleInternalDaemonNotReady:
         # check_now returns True on second call (recovery)
         manager._health_monitor.check_now.side_effect = [False, True]
 
-        event = make_event(event_type=HookEventType.SESSION_START)
+        event = make_event(event_type=event_type)
         handler = MagicMock(return_value=HookResponse(decision="allow"))
         manager._event_handlers.get_handler.return_value = handler
 

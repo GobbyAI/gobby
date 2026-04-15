@@ -220,6 +220,7 @@ class ChatSessionMixin:
         project_id: str | None = None,
         resume_session_id: str | None = None,
         provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create and bootstrap a new ChatSession with lifecycle hooks wired.
 
@@ -231,9 +232,16 @@ class ChatSessionMixin:
             # Double-check: another coroutine may have created it while we waited
             existing = self._chat_sessions.get(conversation_id)
             if existing is not None:
+                if reasoning_effort is not None:
+                    existing.reasoning_effort = reasoning_effort
                 return existing
             return await self._create_chat_session_inner(
-                conversation_id, model, project_id, resume_session_id, provider
+                conversation_id,
+                model,
+                project_id,
+                resume_session_id,
+                provider,
+                reasoning_effort,
             )
 
     async def _create_chat_session_inner(
@@ -243,18 +251,25 @@ class ChatSessionMixin:
         project_id: str | None = None,
         resume_session_id: str | None = None,
         provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Inner implementation — must be called under the per-conversation lock from _session_create_locks."""
         session_key = conversation_id
         session_manager = getattr(self, "session_manager", None)
         existing_db_session = None
+        existing_terminal_resume = False
         if session_manager:
             try:
                 candidate = await asyncio.to_thread(session_manager.get, session_key)
-                if candidate and getattr(candidate, "session_type", None) == "web_chat":
-                    existing_db_session = candidate
+                if candidate:
+                    candidate_session_type = getattr(candidate, "session_type", None)
+                    if candidate_session_type == "web_chat":
+                        existing_db_session = candidate
+                    elif candidate_session_type == "terminal" and resume_session_id:
+                        existing_db_session = candidate
+                        existing_terminal_resume = True
             except Exception as e:
-                logger.debug(f"Failed to resolve existing web-chat session {session_key}: {e}")
+                logger.debug(f"Failed to resolve existing chat session {session_key}: {e}")
 
         # Early agent resolution to determine provider (Codex vs Claude SDK)
         pending_agents = getattr(self, "_pending_agents", {})
@@ -277,13 +292,19 @@ class ChatSessionMixin:
             except Exception as e:
                 logger.warning(f"Failed to resolve agent '{agent_name}' for provider check: {e}")
 
-        # Provider precedence: queued UI override > explicit message provider
-        # > existing DB session source > agent definition > default.
+        # Provider precedence: queued UI override > existing DB session source
+        # > explicit message provider > agent definition > default.
+        #
+        # Durable web-chat rows are the authoritative provider binding for an
+        # existing conversation. A stale frontend provider selection should not
+        # silently re-route a restored session onto a different backend.
         pending_providers = getattr(self, "_pending_providers", {})
         pending_provider = pending_providers.pop(session_key, None)
-        effective_provider = pending_provider or provider
+        effective_provider = pending_provider
         if not effective_provider and existing_db_session:
             effective_provider = getattr(existing_db_session, "source", None)
+        if not effective_provider:
+            effective_provider = provider
         if not effective_provider and agent_body:
             effective_provider = getattr(agent_body, "provider", None)
 
@@ -295,9 +316,14 @@ class ChatSessionMixin:
                 provider=provider_name,
                 conversation_id=conversation_id,
                 model=model,
+                reasoning_effort=reasoning_effort,
             )
         else:
             session = ChatSession(conversation_id=conversation_id)
+            session.reasoning_effort = reasoning_effort
+
+        if reasoning_effort is not None:
+            session.reasoning_effort = reasoning_effort
 
         if resume_session_id:
             session.resume_session_id = resume_session_id
@@ -391,8 +417,33 @@ class ChatSessionMixin:
         )
         session.project_id = effective_pid
 
-        # Bind to the durable web-chat DB row if one already exists. This is
-        # the canonical identity for selection/open/swap flows.
+        if existing_terminal_resume and existing_db_session and session_manager:
+            try:
+                normalized_session = await asyncio.to_thread(
+                    session_manager.update,
+                    existing_db_session.id,
+                    source=provider_name,
+                    model=model,
+                    project_id=effective_pid,
+                    session_type="web_chat",
+                    status="active",
+                )
+                if normalized_session is not None:
+                    existing_db_session = normalized_session
+                logger.info(
+                    "Converted resumed terminal session %s into durable web-chat row",
+                    existing_db_session.id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to normalize resumed terminal session %s for web chat: %s",
+                    existing_db_session.id,
+                    e,
+                )
+
+        # Bind to the durable web-chat DB row if one already exists. Terminal
+        # resumes also reuse their existing row and normalize it to web_chat
+        # in place so resume cannot mint a duplicate web-chat identity.
         if existing_db_session:
             session.db_session_id = existing_db_session.id
             session.seq_num = existing_db_session.seq_num
@@ -403,6 +454,7 @@ class ChatSessionMixin:
                 and existing_db_session.usage_output_tokens > 0
                 and existing_db_session.external_id
                 and not _is_bootstrap_external_id(existing_db_session.external_id)
+                and existing_db_session.source == provider_name
             ):
                 session.resume_session_id = existing_db_session.external_id
 
@@ -532,15 +584,15 @@ class ChatSessionMixin:
             try:
                 cli_source = effective_provider or "claude"
                 context_parts: list[str] = []
-                if effective_provider == "gemini":
+                if effective_provider in {"gemini", "qwen"}:
                     preamble = _build_agent_identity_preamble(agent_body)
                 else:
                     preamble = agent_body.build_prompt_preamble()
                 if preamble:
                     context_parts.append(preamble)
-                # Gemini web chat defers instructions + skills to BEFORE_AGENT
+                # Gemini/Qwen web chat defer instructions + skills to BEFORE_AGENT
                 # so the first prompt does not duplicate heavy context blocks.
-                if effective_provider != "gemini":
+                if effective_provider not in {"gemini", "qwen"}:
                     skills_text = await asyncio.to_thread(
                         _inject_agent_skills,
                         agent_body,

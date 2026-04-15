@@ -14,6 +14,11 @@ def _is_gemini_cli_installed() -> bool:
     return shutil.which("gemini") is not None
 
 
+def _is_qwen_cli_installed() -> bool:
+    """Check if Qwen CLI is installed."""
+    return shutil.which("qwen") is not None
+
+
 def _is_codex_cli_installed() -> bool:
     """Check if OpenAI Codex CLI is installed."""
     return shutil.which("codex") is not None

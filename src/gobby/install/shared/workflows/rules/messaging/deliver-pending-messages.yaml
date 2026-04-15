@@ -3,7 +3,7 @@ tags: [messaging, p2p, commands, gobby, default]
 rules:
   deliver-pending-messages:
     description: "Deliver pending inter-session messages on each agent turn"
-    event: before_agent
+    event: turn_start
     enabled: true
     when: "variables.get('is_spawned_agent')"
     priority: 10

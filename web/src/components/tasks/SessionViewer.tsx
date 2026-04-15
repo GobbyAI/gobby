@@ -55,6 +55,7 @@ function duration(start: string, end: string): string {
 const SOURCE_LABELS: Record<string, string> = {
   claude: 'Claude Code',
   gemini: 'Gemini CLI',
+  qwen: 'Qwen CLI',
   codex: 'Codex',
 }
 

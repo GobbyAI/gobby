@@ -2,7 +2,7 @@
 """Unified settings validator for all CLI integrations.
 
 Validates hook configuration files across Claude Code, Gemini CLI,
-and Codex.
+Qwen CLI, and Codex.
 
 CLI is identified via --cli flag (primary) or path-based detection (fallback).
 
@@ -39,7 +39,7 @@ class ValidationConfig:
     settings_file: str  # "settings.json" or "hooks.json"
     required_hooks: tuple[str, ...]  # Required hook types
     nested: bool  # True = hooks have nested "hooks" array (Claude/Gemini)
-    check_enable_hooks: bool = False  # Gemini requires general.enableHooks=true
+    check_enable_hooks: bool = False  # Gemini/Qwen require general.enableHooks=true
     check_version: int | None = None  # Reserved for future use
 
 
@@ -65,6 +65,26 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
     "gemini": ValidationConfig(
         cli_name="Gemini CLI",
         settings_dir=".gemini",
+        settings_file="settings.json",
+        required_hooks=(
+            "SessionStart",
+            "SessionEnd",
+            "BeforeAgent",
+            "AfterAgent",
+            "BeforeTool",
+            "AfterTool",
+            "BeforeToolSelection",
+            "BeforeModel",
+            "AfterModel",
+            "PreCompress",
+            "Notification",
+        ),
+        nested=True,
+        check_enable_hooks=True,
+    ),
+    "qwen": ValidationConfig(
+        cli_name="Qwen CLI",
+        settings_dir=".qwen",
         settings_file="settings.json",
         required_hooks=(
             "SessionStart",
@@ -161,7 +181,7 @@ def validate(config: ValidationConfig) -> int:
     if config.check_enable_hooks:
         general = settings.get("general", {})
         if not general.get("enableHooks"):
-            print("general.enableHooks is not set to true (required for Gemini)")
+            print(f"general.enableHooks is not set to true (required for {config.cli_name})")
             return 1
         print("general.enableHooks is enabled")
 
@@ -184,7 +204,7 @@ def validate(config: ValidationConfig) -> int:
             return 1
 
         if config.nested:
-            # Claude/Gemini: nested structure with "hooks" array
+            # Claude/Gemini/Qwen: nested structure with "hooks" array
             first_config = hook_configs[0]
             if not isinstance(first_config.get("hooks"), list) or not first_config["hooks"]:
                 print(f"No 'hooks' array in {hook_type} configuration")
@@ -219,7 +239,7 @@ def main() -> int:
     """Main entry point."""
     config = detect_cli_config()
     if config is None:
-        print("Could not detect CLI. Use --cli=<name> (claude, gemini, codex)")
+        print("Could not detect CLI. Use --cli=<name> (claude, gemini, qwen, codex)")
         return 1
 
     return validate(config)

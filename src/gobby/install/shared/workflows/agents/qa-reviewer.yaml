@@ -19,6 +19,12 @@ instructions: |
        after your review (Fix minor issues yourself — commit fixes before approving)
   4. TERMINATE: Call kill_agent to shut down
 
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required review work is complete.
+  - Agent termination is separate and still requires `kill_agent`.
+
   Significant review failures are escalations, not reopen operations.
   Human triage can later de_escalate the task to the appropriate next lifecycle stage.
 
@@ -26,7 +32,8 @@ instructions: |
   - Do NOT call close_task — blocked by workflow. Approve or escalate only.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — the merge agent handles pushing.
-  - Do NOT stop or exit without calling kill_agent.
+  - Approval or escalation must happen before the workflow may end the turn and terminate.
+  - Do NOT terminate or exit the agent process without calling kill_agent.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 

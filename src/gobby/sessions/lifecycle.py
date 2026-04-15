@@ -21,6 +21,7 @@ from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.sessions import LocalSessionManager
 
@@ -434,11 +435,13 @@ class SessionLifecycleManager:
         parser: Any = ClaudeTranscriptParser()
         if session.source == "gemini":
             parser = GeminiTranscriptParser()
+        elif session.source == "qwen":
+            parser = QwenTranscriptParser()
         elif session.source == "codex":
             parser = CodexTranscriptParser()
         # Default (claude or unknown) uses Claude transcript format
 
-        # Gemini stores sessions as single JSON files, not JSONL.
+        # Gemini/Qwen store sessions as single JSON files, not JSONL.
         # Dispatch to parse_session_json() for .json files so the parser
         # can iterate the messages array instead of treating the whole
         # file as one malformed JSONL line.

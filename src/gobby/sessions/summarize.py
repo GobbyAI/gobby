@@ -186,16 +186,16 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
     """Read and parse a transcript file in its native format.
 
     Claude and Codex use JSONL (one JSON object per line).
-    Gemini stores sessions as a single JSON object with a ``messages`` array.
+    Gemini/Qwen store sessions as a single JSON object with a ``messages`` array.
     The returned dicts are in the source's native format — callers that need
     to iterate content blocks should use format-aware helpers.
 
     Args:
         path: Path to the transcript file.
-        source: Session source (``"claude"``, ``"gemini"``, ``"codex"``).
+        source: Session source (``"claude"``, ``"gemini"``, ``"qwen"``, ``"codex"``).
     """
-    # Gemini JSON session files are a single JSON object, not JSONL.
-    if path.suffix == ".json" and source == "gemini":
+    # Gemini/Qwen JSON session files are a single JSON object, not JSONL.
+    if path.suffix == ".json" and source in {"gemini", "qwen"}:
         return await _read_gemini_json_transcript(path)
 
     # JSONL format (Claude, Codex, default)

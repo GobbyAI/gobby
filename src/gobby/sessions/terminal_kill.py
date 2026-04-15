@@ -13,6 +13,8 @@ import os
 import signal
 from typing import Any
 
+from gobby.sessions.tmux_context import get_tmux_prefix_for_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,7 +36,7 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
     if tmux_pane:
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
+                *get_tmux_prefix_for_context(terminal_ctx),
                 "kill-pane",
                 "-t",
                 str(tmux_pane),
