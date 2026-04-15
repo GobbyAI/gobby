@@ -248,13 +248,19 @@ class ChatSessionMixin:
         session_key = conversation_id
         session_manager = getattr(self, "session_manager", None)
         existing_db_session = None
+        existing_terminal_resume = False
         if session_manager:
             try:
                 candidate = await asyncio.to_thread(session_manager.get, session_key)
-                if candidate and getattr(candidate, "session_type", None) == "web_chat":
-                    existing_db_session = candidate
+                if candidate:
+                    candidate_session_type = getattr(candidate, "session_type", None)
+                    if candidate_session_type == "web_chat":
+                        existing_db_session = candidate
+                    elif candidate_session_type == "terminal" and resume_session_id:
+                        existing_db_session = candidate
+                        existing_terminal_resume = True
             except Exception as e:
-                logger.debug(f"Failed to resolve existing web-chat session {session_key}: {e}")
+                logger.debug(f"Failed to resolve existing chat session {session_key}: {e}")
 
         # Early agent resolution to determine provider (Codex vs Claude SDK)
         pending_agents = getattr(self, "_pending_agents", {})
@@ -397,8 +403,33 @@ class ChatSessionMixin:
         )
         session.project_id = effective_pid
 
-        # Bind to the durable web-chat DB row if one already exists. This is
-        # the canonical identity for selection/open/swap flows.
+        if existing_terminal_resume and existing_db_session and session_manager:
+            try:
+                normalized_session = await asyncio.to_thread(
+                    session_manager.update,
+                    existing_db_session.id,
+                    source=provider_name,
+                    model=model,
+                    project_id=effective_pid,
+                    session_type="web_chat",
+                    status="active",
+                )
+                if normalized_session is not None:
+                    existing_db_session = normalized_session
+                logger.info(
+                    "Converted resumed terminal session %s into durable web-chat row",
+                    existing_db_session.id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to normalize resumed terminal session %s for web chat: %s",
+                    existing_db_session.id,
+                    e,
+                )
+
+        # Bind to the durable web-chat DB row if one already exists. Terminal
+        # resumes also reuse their existing row and normalize it to web_chat
+        # in place so resume cannot mint a duplicate web-chat identity.
         if existing_db_session:
             session.db_session_id = existing_db_session.id
             session.seq_num = existing_db_session.seq_num

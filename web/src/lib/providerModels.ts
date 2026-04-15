@@ -3,6 +3,7 @@ export interface ProviderModelOption {
   label: string;
   hidden?: boolean;
   is_default?: boolean;
+  canonical_id?: string;
 }
 
 export interface ProviderModelEntry {
@@ -50,6 +51,31 @@ export function getModelsForProvider(
   return Array.isArray(entry?.models) ? entry.models : [];
 }
 
+function normalizeModelIdentifier(value?: string | null): string | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized.length > 0 ? normalized : null;
+}
+
+function findMatchingModelOption(
+  models: ProviderModelOption[],
+  requestedModel?: string | null,
+): ProviderModelOption | null {
+  const normalizedRequested = normalizeModelIdentifier(requestedModel);
+  if (!normalizedRequested) {
+    return null;
+  }
+
+  return (
+    models.find((model) => {
+      const candidates = [
+        normalizeModelIdentifier(model.value),
+        normalizeModelIdentifier(model.canonical_id),
+      ].filter(Boolean);
+      return candidates.includes(normalizedRequested);
+    }) ?? null
+  );
+}
+
 export function getPreferredModelForProvider(
   catalog: ProviderModelEntry[],
   provider: string | null | undefined,
@@ -65,9 +91,9 @@ export function getPreferredModelForProvider(
     return preferredModel?.trim() || null;
   }
 
-  const normalizedPreferred = preferredModel?.trim() || null;
-  if (normalizedPreferred && models.some((model) => model.value === normalizedPreferred)) {
-    return normalizedPreferred;
+  const matchedModel = findMatchingModelOption(models, preferredModel);
+  if (matchedModel) {
+    return matchedModel.value;
   }
 
   return (
