@@ -389,6 +389,52 @@ class TestIsTmuxPaneAlive:
         with patch("subprocess.run", return_value=mock_result):
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
 
+    def test_alive_pane_with_socket_path(self):
+        """When a socket path is known, liveness checks that exact tmux server."""
+        mock_result = MagicMock()
+        mock_result.stdout = "%6\n"
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            assert (
+                SessionLivenessMonitor._is_tmux_pane_alive(
+                    "%6", "/tmp/tmux-1000/gobby"
+                )
+                is True
+            )
+
+        mock_run.assert_called_once_with(
+            ["tmux", "-S", "/tmp/tmux-1000/gobby", "list-panes", "-a", "-F", "#{pane_id}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+    def test_dead_pane_checks_default_and_gobby_socket_when_path_unknown(self):
+        """Legacy rows without a socket path check both the default server and Gobby's socket."""
+        default_result = MagicMock()
+        default_result.stdout = ""
+        gobby_result = MagicMock()
+        gobby_result.stdout = "%6\n"
+
+        with patch("subprocess.run", side_effect=[default_result, gobby_result]) as mock_run:
+            assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is True
+
+        assert mock_run.call_args_list[0].args[0] == [
+            "tmux",
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}",
+        ]
+        assert mock_run.call_args_list[1].args[0] == [
+            "tmux",
+            "-L",
+            "gobby",
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}",
+        ]
+
     def test_tmux_not_installed(self):
         """FileNotFoundError (tmux not installed) returns False."""
         with patch("subprocess.run", side_effect=FileNotFoundError):
@@ -419,12 +465,24 @@ class TestGetActiveSessionsWithPid:
         """Correctly extracts parent_pid and tmux_pane from terminal_context JSON."""
         mock_session_storage.db.fetchall.return_value = [
             {"id": "s1", "terminal_context": json.dumps({"parent_pid": 12345})},
-            {"id": "s2", "terminal_context": json.dumps({"parent_pid": 67890, "tmux_pane": "%3"})},
+            {
+                "id": "s2",
+                "terminal_context": json.dumps(
+                    {
+                        "parent_pid": 67890,
+                        "tmux_pane": "%3",
+                        "tmux_socket_path": "/tmp/tmux-1000/gobby",
+                    }
+                ),
+            },
         ]
 
         result = monitor._get_active_sessions_with_pid()
 
-        assert result == [("s1", 12345, None), ("s2", 67890, "%3")]
+        assert result == [
+            ("s1", 12345, None, None),
+            ("s2", 67890, "%3", "/tmp/tmux-1000/gobby"),
+        ]
 
     def test_skips_missing_pid(self, monitor, mock_session_storage):
         """Sessions without parent_pid are excluded."""
@@ -475,4 +533,23 @@ class TestGetActiveSessionsWithPid:
 
         result = monitor._get_active_sessions_with_pid()
 
-        assert result == [("s1", 123, None)]
+        assert result == [("s1", 123, None, None)]
+
+    def test_non_string_tmux_socket_path_treated_as_none(self, monitor, mock_session_storage):
+        """Non-string tmux_socket_path values are normalized to None."""
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "s1",
+                "terminal_context": json.dumps(
+                    {
+                        "parent_pid": 123,
+                        "tmux_pane": "%4",
+                        "tmux_socket_path": 42,
+                    }
+                ),
+            },
+        ]
+
+        result = monitor._get_active_sessions_with_pid()
+
+        assert result == [("s1", 123, "%4", None)]

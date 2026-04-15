@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.sessions.terminal_kill import kill_terminal_session
+from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.sessions.transcript_archive import restore_transcript
 
 if TYPE_CHECKING:
@@ -565,6 +566,7 @@ async def handle_send_to_cli_session(
 
     # Try tmux delivery for idle sessions
     delivered_via_tmux = False
+    ctx: dict[str, Any] | None = None
     tmux_pane = None
     if hasattr(session, "terminal_context") and session.terminal_context:
         ctx = session.terminal_context if isinstance(session.terminal_context, dict) else {}
@@ -576,9 +578,7 @@ async def handle_send_to_cli_session(
 
     if tmux_pane:
         try:
-            from gobby.agents.tmux import get_tmux_session_manager
-
-            tmux_manager = get_tmux_session_manager()
+            tmux_manager = get_tmux_manager_for_context(ctx)
             ok = await tmux_manager.send_keys(tmux_pane, content + "\n")
             if ok:
                 delivered_via_tmux = True

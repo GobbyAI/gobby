@@ -66,7 +66,9 @@ class TmuxSessionManager:
                 args.extend(["-d", self._config.wsl_distribution])
 
         args.append(self._config.command)
-        if self._config.socket_name:
+        if self._config.socket_path:
+            args.extend(["-S", self._config.socket_path])
+        elif self._config.socket_name:
             args.extend(["-L", self._config.socket_name])
         # Always use explicit config to prevent user's ~/.tmux.conf from
         # interfering (e.g. 'destroy-unattached on' kills detached sessions).

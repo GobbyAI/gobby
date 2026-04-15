@@ -43,6 +43,34 @@ class TestKillTerminalSession:
         )
 
     @pytest.mark.asyncio
+    async def test_kills_via_tmux_pane_on_recorded_socket(self) -> None:
+        """Should target the recorded tmux socket path when killing a pane."""
+        ctx = {
+            "tmux_pane": "%49",
+            "tmux_socket_path": "/tmp/tmux-1000/gobby",
+            "parent_pid": "12345",
+        }
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            result = await kill_terminal_session(ctx, "test-session-id")
+
+        assert result is True
+        mock_exec.assert_called_once_with(
+            "tmux",
+            "-S",
+            "/tmp/tmux-1000/gobby",
+            "kill-pane",
+            "-t",
+            "%49",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    @pytest.mark.asyncio
     async def test_falls_back_to_pid_when_tmux_fails(self) -> None:
         """Should try PID kill when tmux kill-pane fails."""
         ctx = {"tmux_pane": "%49", "parent_pid": "12345"}
@@ -645,3 +673,66 @@ class TestContinueInChatTerminalKill:
             code="UNSUPPORTED_SESSION_TYPE",
         )
         ws.send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_send_to_cli_session_uses_recorded_tmux_socket(self) -> None:
+        """CLI proxy send should target the tmux server recorded on the session."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "terminal"
+        source_session.terminal_context = {
+            "tmux_pane": "%7",
+            "tmux_socket_path": "/tmp/tmux-1000/gobby",
+        }
+        source_session.metadata = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+
+        inter_message = MagicMock()
+        inter_message.id = "msg-1"
+        inter_msg_manager = MagicMock()
+        inter_msg_manager.create_message.return_value = inter_message
+
+        tmux_manager = MagicMock()
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {"attached_session_id": "web-123"}}
+        host._send_error = AsyncMock()
+
+        with (
+            patch(
+                "gobby.storage.inter_session_messages.InterSessionMessageManager",
+                return_value=inter_msg_manager,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.get_tmux_manager_for_context",
+                return_value=tmux_manager,
+            ) as mock_get_tmux_manager,
+        ):
+            await SessionControlMixin._handle_send_to_cli_session(
+                host,
+                ws,
+                {"session_id": "source-uuid", "content": "hello"},
+            )
+
+        mock_get_tmux_manager.assert_called_once_with(source_session.terminal_context)
+        tmux_manager.send_keys.assert_awaited_once_with("%7", "hello\n")
+        inter_msg_manager.mark_delivered.assert_called_once_with("msg-1")
+        host._send_error.assert_not_awaited()
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["type"] == "send_to_cli_session_result"
+        assert response["session_id"] == "source-uuid"
+        assert response["delivered"] is True
+        assert response["delivery_method"] == "tmux"
+        assert response["message_id"] == "msg-1"

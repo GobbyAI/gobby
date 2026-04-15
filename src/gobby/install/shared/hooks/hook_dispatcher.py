@@ -35,6 +35,8 @@ from typing import Any
 
 import aiofiles
 
+from gobby.sessions.tmux_context import parse_tmux_socket_path
+
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 60887
 DEFAULT_BOOTSTRAP_PATH = "~/.gobby/bootstrap.yaml"
@@ -202,8 +204,10 @@ def get_terminal_context() -> dict[str, str | int | bool | None]:
     # kill_agent to kill the parent's tmux pane instead of the child's terminal.
     if os.environ.get("TMUX"):
         context["tmux_pane"] = os.environ.get("TMUX_PANE")
+        context["tmux_socket_path"] = parse_tmux_socket_path(os.environ.get("TMUX"))
     else:
         context["tmux_pane"] = None
+        context["tmux_socket_path"] = None
 
     # Generic terminal program identifier (set by many terminals)
     term_program = os.environ.get("TERM_PROGRAM")

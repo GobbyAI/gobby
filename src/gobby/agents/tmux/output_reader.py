@@ -57,7 +57,9 @@ class TmuxOutputReader:
 
     def _base_args(self) -> list[str]:
         args = [self._config.command]
-        if self._config.socket_name:
+        if self._config.socket_path:
+            args.extend(["-S", self._config.socket_path])
+        elif self._config.socket_name:
             args.extend(["-L", self._config.socket_name])
         if self._config.config_file:
             args.extend(["-f", self._config.config_file])

@@ -21,6 +21,8 @@ import time
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.tmux import TmuxConfig
+
 if TYPE_CHECKING:
     from gobby.sessions.processor import SessionMessageProcessor
     from gobby.storage.sessions import LocalSessionManager
@@ -131,7 +133,7 @@ class SessionLivenessMonitor:
             return
 
         # 3. Check each session's parent PID (and tmux pane if present)
-        for session_id, parent_pid, tmux_pane in active_sessions:
+        for session_id, parent_pid, tmux_pane, tmux_socket_path in active_sessions:
             if session_id in self._recently_handled:
                 continue
 
@@ -140,7 +142,7 @@ class SessionLivenessMonitor:
 
             # Parent PID is dead — but if running in tmux, the pane may
             # still be alive (e.g. terminal tab closed while tmux persists).
-            if tmux_pane and self._is_tmux_pane_alive(tmux_pane):
+            if tmux_pane and self._is_tmux_pane_alive(tmux_pane, tmux_socket_path):
                 logger.debug(
                     f"Session {session_id} parent PID {parent_pid} dead but tmux pane {tmux_pane} alive - refreshing",
                 )
@@ -160,11 +162,13 @@ class SessionLivenessMonitor:
             await self._expire_session(session_id)
             self._recently_handled[session_id] = now
 
-    def _get_active_sessions_with_pid(self) -> list[tuple[str, int, str | None]]:
+    def _get_active_sessions_with_pid(
+        self,
+    ) -> list[tuple[str, int, str | None, str | None]]:
         """Query active/paused sessions that have a parent_pid in terminal_context.
 
         Returns:
-            List of (session_id, parent_pid, tmux_pane) tuples.
+            List of (session_id, parent_pid, tmux_pane, tmux_socket_path) tuples.
             tmux_pane is None when the session has no tmux pane.
         """
         try:
@@ -184,7 +188,7 @@ class SessionLivenessMonitor:
             )
             return []
 
-        result: list[tuple[str, int, str | None]] = []
+        result: list[tuple[str, int, str | None, str | None]] = []
         for row in rows:
             raw_ctx = row["terminal_context"]
             if not raw_ctx:
@@ -199,7 +203,10 @@ class SessionLivenessMonitor:
                 tmux_pane = ctx.get("tmux_pane")
                 if tmux_pane is not None and not isinstance(tmux_pane, str):
                     tmux_pane = None
-                result.append((row["id"], parent_pid, tmux_pane))
+                tmux_socket_path = ctx.get("tmux_socket_path")
+                if tmux_socket_path is not None and not isinstance(tmux_socket_path, str):
+                    tmux_socket_path = None
+                result.append((row["id"], parent_pid, tmux_pane, tmux_socket_path))
 
         return result
 
@@ -218,24 +225,36 @@ class SessionLivenessMonitor:
             return False
 
     @staticmethod
-    def _is_tmux_pane_alive(pane_id: str) -> bool:
+    def _is_tmux_pane_alive(pane_id: str, socket_path: str | None = None) -> bool:
         """Check if a tmux pane is still alive.
 
         Args:
             pane_id: Tmux pane identifier (e.g. ``%6``).
+            socket_path: Exact tmux socket path, when known.
 
         Returns:
             True if the pane exists in any tmux session, False otherwise
             (including when tmux is not installed or the server isn't running).
         """
+        socket_names = [TmuxConfig().socket_name or "gobby"]
+        candidate_commands: list[list[str]] = []
+        if socket_path:
+            candidate_commands.append(["tmux", "-S", socket_path])
+        else:
+            candidate_commands.append(["tmux"])
+            candidate_commands.extend([["tmux", "-L", socket_name] for socket_name in socket_names])
+
         try:
-            result = subprocess.run(
-                ["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return pane_id in result.stdout.splitlines()
+            for command in candidate_commands:
+                result = subprocess.run(
+                    [*command, "list-panes", "-a", "-F", "#{pane_id}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if pane_id in result.stdout.splitlines():
+                    return True
+            return False
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return False
 
