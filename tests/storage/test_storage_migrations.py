@@ -108,6 +108,17 @@ def test_agent_runs_table_includes_claimed_session_id_on_fresh_db(tmp_path) -> N
     assert "claimed_session_id" in agent_run_columns
 
 
+def test_sessions_table_includes_title_source_on_fresh_db(tmp_path) -> None:
+    """Fresh baseline schema should include title provenance tracking."""
+    db_path = tmp_path / "sessions_title_source.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    session_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(sessions)")}
+    assert "title_source" in session_columns
+
+
 def test_tasks_claimed_session_fk_is_set_null_on_fresh_db(tmp_path) -> None:
     """Fresh databases should end with ON DELETE SET NULL for canonical task ownership."""
     db_path = tmp_path / "tasks_claim_owner_fk.db"

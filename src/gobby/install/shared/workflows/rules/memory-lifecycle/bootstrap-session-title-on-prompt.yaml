@@ -1,0 +1,14 @@
+tags: [memory-lifecycle, memory, lifecycle, title, gobby, default]
+
+rules:
+  bootstrap-session-title-on-prompt:
+    description: "Set a heuristic session title from the first meaningful user prompt"
+    event: turn_start
+    enabled: true
+    priority: 9
+    when: "len((event.data.get('prompt') or '').strip()) >= 1 and not (event.data.get('prompt') or '').strip().startswith('/')"
+    effects:
+      - type: mcp_call
+        server: gobby-memory
+        tool: bootstrap_session_title
+        background: false

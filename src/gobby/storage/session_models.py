@@ -33,6 +33,7 @@ class Session:
     parent_session_id: str | None
     created_at: str
     updated_at: str
+    title_source: str | None = None
     agent_depth: int = 0  # 0 = human-initiated, 1+ = agent-spawned
     spawned_by_agent_id: str | None = None  # ID of agent that spawned this session
     # Terminal pickup metadata fields
@@ -81,6 +82,7 @@ class Session:
             source=row["source"],
             project_id=row["project_id"],
             title=row["title"],
+            title_source=row["title_source"] if "title_source" in row.keys() else None,
             status=row["status"],
             transcript_path=row["transcript_path"],
             summary_path=row["summary_path"],

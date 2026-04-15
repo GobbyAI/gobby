@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 211
+BASELINE_VERSION = 213
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -305,6 +305,12 @@ def _column_exists(db: LocalDatabase, table: str, column: str) -> bool:
         f"SELECT COUNT(*) as cnt FROM pragma_table_info('{table}') WHERE name = ?", (column,)
     )
     return bool(row and row["cnt"] > 0)
+
+
+def _add_column_if_missing(db: LocalDatabase, table: str, column_sql: str, column: str) -> None:
+    """Add a column only when it is absent, allowing migration reruns after version rewinds."""
+    if not _column_exists(db, table, column):
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
 
 
 def _migrate_claimed_by_session_id(db: LocalDatabase) -> None:
@@ -1130,6 +1136,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         212,
         "Update tasks.claimed_by_session_id to ON DELETE SET NULL",
         _migrate_tasks_claimed_session_fk_set_null,
+    ),
+    (
+        213,
+        "Add title_source column to sessions",
+        lambda db: _add_column_if_missing(db, "sessions", "title_source TEXT", "title_source"),
     ),
 ]
 

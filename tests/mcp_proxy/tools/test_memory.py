@@ -335,6 +335,66 @@ class TestSyncExport:
         assert result["success"] is False
 
 
+# ─── bootstrap_session_title ────────────────────────────────────────────
+
+
+class TestBootstrapSessionTitle:
+    """Tests for bootstrap_session_title tool."""
+
+    @pytest.mark.asyncio
+    async def test_no_session_id(self, mock_memory_manager: MagicMock) -> None:
+        """Returns error when session_id is empty."""
+        registry = create_memory_registry(mock_memory_manager)
+        result = await registry.call("bootstrap_session_title", {"session_id": ""})
+        assert result["success"] is False
+        assert "required" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_success(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_session_manager: MagicMock,
+    ) -> None:
+        """Successful heuristic title bootstrap."""
+        with patch(
+            "gobby.mcp_proxy.tools.memory._bootstrap_session_title",
+            new_callable=AsyncMock,
+            return_value="Bootstrap Title",
+        ):
+            registry = create_memory_registry(
+                mock_memory_manager, session_manager=mock_session_manager
+            )
+            result = await registry.call(
+                "bootstrap_session_title",
+                {"session_id": "sess-123", "prompt_text": "Fix the auth bug"},
+            )
+
+        assert result == {"success": True, "title": "Bootstrap Title"}
+
+    @pytest.mark.asyncio
+    async def test_skipped(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_session_manager: MagicMock,
+    ) -> None:
+        """Skipped when the session already has a title or prompt is unusable."""
+        with patch(
+            "gobby.mcp_proxy.tools.memory._bootstrap_session_title",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            registry = create_memory_registry(
+                mock_memory_manager, session_manager=mock_session_manager
+            )
+            result = await registry.call(
+                "bootstrap_session_title",
+                {"session_id": "sess-123", "prompt_text": "/clear"},
+            )
+
+        assert result["success"] is True
+        assert result["skipped"] is True
+
+
 # ─── build_turn_and_digest ──────────────────────────────────────────────
 
 

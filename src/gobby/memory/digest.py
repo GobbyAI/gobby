@@ -18,6 +18,18 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _LIFECYCLE_CMDS = ("/clear", "/exit", "/compact")
+_MAX_SESSION_TITLE_LENGTH = 80
+_TITLE_LINE_CLEANUP_RE = re.compile(r"^\s*(?:[-*+>#]+|\d+[.)])\s*")
+_TITLE_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_TITLE_CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+_TITLE_LEADING_PHRASE_RE = re.compile(
+    r"^(?:please\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+|"
+    r"help\s+me\s+(?:to\s+)?|i(?:'d| would)?\s+like\s+to\s+|"
+    r"i\s+want\s+to\s+|need\s+to\s+|we\s+need\s+to\s+|"
+    r"let'?s\s+|can\s+we\s+|could\s+we\s+)",
+    re.IGNORECASE,
+)
+_TITLE_BREAK_RE = re.compile(r"(?<=[.!?])\s+|[:;]\s+|\s+[/-]\s+")
 
 
 async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
@@ -253,6 +265,122 @@ def _build_title_synthesis_prompt(digest_markdown: str) -> str:
     )
 
 
+def _coerce_prompt_text(prompt_text: Any) -> str:
+    """Normalize prompt text from string or multimodal blocks into plain text."""
+    if isinstance(prompt_text, str):
+        return prompt_text
+    if not isinstance(prompt_text, list):
+        return str(prompt_text or "")
+
+    parts: list[str] = []
+    for block in prompt_text:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text" and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+            continue
+        if isinstance(block.get("content"), str):
+            parts.append(block["content"])
+    return "\n".join(part for part in parts if part)
+
+
+def _truncate_title(title: str, limit: int = _MAX_SESSION_TITLE_LENGTH) -> str:
+    """Clamp a title without cutting through a word when possible."""
+    title = title.strip()
+    if len(title) <= limit:
+        return title
+
+    words = title.split()
+    truncated_words: list[str] = []
+    current_length = 0
+    for word in words:
+        next_length = len(word) if not truncated_words else current_length + 1 + len(word)
+        if next_length > limit:
+            break
+        truncated_words.append(word)
+        current_length = next_length
+
+    if truncated_words:
+        return " ".join(truncated_words)
+    return title[:limit].rstrip()
+
+
+def _build_heuristic_title(prompt_text: Any) -> str | None:
+    """Derive a cheap bootstrap title from the first meaningful user prompt."""
+    raw_text = _coerce_prompt_text(prompt_text)
+    if not raw_text.strip():
+        return None
+
+    cleaned = _TITLE_CODE_BLOCK_RE.sub(" ", raw_text)
+    cleaned = _TITLE_LINK_RE.sub(r"\1", cleaned)
+    cleaned = cleaned.replace("`", " ")
+
+    lines: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = _TITLE_LINE_CLEANUP_RE.sub("", raw_line).strip()
+        if line:
+            lines.append(line)
+
+    if not lines:
+        return None
+
+    candidate = re.sub(r"\s+", " ", lines[0]).strip()
+    if not candidate or candidate.startswith("/"):
+        return None
+
+    candidate = _TITLE_LEADING_PHRASE_RE.sub("", candidate)
+    candidate = _TITLE_BREAK_RE.split(candidate, maxsplit=1)[0]
+    candidate = candidate.strip(" \t\r\n.,:;!?-")
+    if not candidate:
+        return None
+
+    words = candidate.split()
+    if len(words) > 7:
+        candidate = " ".join(words[:7])
+
+    candidate = _truncate_title(candidate)
+    if not candidate:
+        return None
+
+    return candidate[0].upper() + candidate[1:]
+
+
+async def bootstrap_session_title(
+    session_manager: Any,
+    session_id: str,
+    prompt_text: Any,
+) -> str | None:
+    """Set a local heuristic title from the first meaningful prompt."""
+    if not session_manager or not session_id:
+        return None
+
+    session = session_manager.get(session_id)
+    if session is None:
+        return None
+
+    existing_title = str(getattr(session, "title", "") or "").strip()
+    if existing_title:
+        return None
+
+    title = _build_heuristic_title(prompt_text)
+    if not title:
+        return None
+
+    updated = session_manager.update_title(
+        session_id,
+        title,
+        title_source="heuristic",
+    )
+    if updated is None:
+        return None
+
+    logger.info("Bootstrapped heuristic title for session %s", session_id)
+    return title
+
+
 async def _resolve_undigested_pairs(
     session: Any,
     prompt_text: str | None,
@@ -360,7 +488,8 @@ async def _synthesize_title(
     the legacy ``provider.generate_text`` path.
     """
     existing_title = str(getattr(session, "title", "") or "").strip()
-    if existing_title:
+    title_source = str(getattr(session, "title_source", "") or "").strip().lower()
+    if existing_title and title_source != "heuristic":
         return None
 
     try:
@@ -399,17 +528,15 @@ async def _synthesize_title(
             llm_timeout,
         )
 
-    title_str = str(title).strip().strip('"').strip("'")
-    if title_str and len(title_str) < 80:
-        if getattr(session, "title", None) == title_str:
-            return None
-        updated_session = session_manager.update_title(session_id, title_str)
+    title_str = _truncate_title(str(title).strip().strip('"').strip("'"))
+    if title_str and len(title_str) <= _MAX_SESSION_TITLE_LENGTH:
+        updated_session = session_manager.update_title(
+            session_id,
+            title_str,
+            title_source="llm",
+        )
         if updated_session is None:
             return None
-
-        from gobby.workflows.summary_actions import _rename_tmux_window
-
-        await _rename_tmux_window(updated_session, title_str)
         return title_str
     return None
 
@@ -468,7 +595,9 @@ async def build_turn_and_digest(
             return None
 
         existing_title = str(getattr(session, "title", "") or "").strip()
+        title_source = str(getattr(session, "title_source", "") or "").strip().lower()
         needs_title = not bool(existing_title)
+        needs_title_refinement = needs_title or title_source == "heuristic"
         existing_digest = getattr(session, "digest_markdown", None) or ""
 
         # 2. Resolve undigested pairs
@@ -477,7 +606,7 @@ async def build_turn_and_digest(
         resolved = await _resolve_undigested_pairs(
             session, prompt_text, session_id, max_turns, num_pairs
         )
-        if resolved is None and (not needs_title or not existing_digest):
+        if resolved is None and (not needs_title_refinement or not existing_digest):
             return None
 
         # 3. Resolve LLM provider/model
@@ -546,7 +675,7 @@ async def build_turn_and_digest(
         }
 
         # 7. Synthesize title from updated digest
-        if needs_title:
+        if needs_title_refinement:
             try:
                 title = await _synthesize_title(
                     provider,

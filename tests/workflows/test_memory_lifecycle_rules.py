@@ -6,6 +6,7 @@ are tested there instead.
 
 Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
+- bootstrap-session-title-on-prompt: heuristic title bootstrap on first prompt
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
 - require-memory-review-before-status: block on before_tool (close_task, mark_task_needs_review, mark_task_review_approved)
@@ -29,6 +30,7 @@ pytestmark = pytest.mark.unit
 
 MEMORY_RULES = {
     "reset-memory-tracking-on-start",
+    "bootstrap-session-title-on-prompt",
     "memory-recall-on-prompt",
     "memory-capture-nudge",
     "require-memory-review-before-status",
@@ -120,6 +122,33 @@ class TestResetMemoryTrackingOnStart:
         assert body.when is not None
         assert "clear" in body.when
         assert "compact" in body.when
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# bootstrap-session-title-on-prompt
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestBootstrapSessionTitleOnPrompt:
+    """Bootstrap a heuristic title before the first completed turn."""
+
+    def test_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("bootstrap-session-title-on-prompt")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "turn_start"
+        assert body.effects[0].type == "mcp_call"
+        assert body.effects[0].server == "gobby-memory"
+        assert body.effects[0].tool == "bootstrap_session_title"
+        assert body.effects[0].background is False
+
+    def test_has_prompt_guard(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("bootstrap-session-title-on-prompt")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        assert "startswith('/')" in body.when
 
 
 # ═══════════════════════════════════════════════════════════════════════

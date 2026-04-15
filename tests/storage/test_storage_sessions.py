@@ -25,6 +25,7 @@ class TestSession:
             source="claude",
             project_id=sample_project["id"],
         )
+        session_manager.update(session.id, title_source="manual")
 
         row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session.id,))
         assert row is not None
@@ -33,6 +34,7 @@ class TestSession:
         assert session_from_row.id == session.id
         assert session_from_row.external_id == "test-cli-key"
         assert session_from_row.source == "claude"
+        assert session_from_row.title_source == "manual"
 
     def test_to_dict(
         self,
@@ -262,6 +264,61 @@ class TestLocalSessionManager:
         updated = session_manager.update_title(session.id, "New Title")
         assert updated is not None
         assert updated.title == "New Title"
+
+    def test_update_title_schedules_tmux_rename(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Title changes propagate to tmux through the shared title update path."""
+        session = session_manager.register(
+            external_id="tmux-title-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={"tmux_pane": "%42"},
+        )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.update_title(session.id, "Terminal Title")
+
+        assert updated is not None
+        mock_rename.assert_called_once()
+        renamed_session, renamed_title = mock_rename.call_args.args
+        assert renamed_session.id == session.id
+        assert renamed_title == "Terminal Title"
+
+    def test_update_title_can_update_source_without_renaming(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Changing provenance alone should not notify listeners or rename tmux."""
+        session = session_manager.register(
+            external_id="title-source-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Stable Title",
+            terminal_context={"tmux_pane": "%42"},
+        )
+        session_manager.update(session.id, title_source="heuristic")
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.update_title(
+                session.id,
+                "Stable Title",
+                title_source="llm",
+            )
+
+        assert updated is not None
+        assert updated.title_source == "llm"
+        assert calls == []
+        mock_rename.assert_not_called()
 
     def test_update_title_notifies_listeners(
         self,

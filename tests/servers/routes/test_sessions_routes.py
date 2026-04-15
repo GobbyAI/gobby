@@ -1104,6 +1104,11 @@ class TestRenameSession:
         data = response.json()
         assert data["status"] == "success"
         assert data["title"] == "New Title"
+        mock_server.session_manager.update_title.assert_called_once_with(
+            "sess-abc123",
+            "New Title",
+            title_source="manual",
+        )
 
     def test_rename_empty_title(self, client, mock_server) -> None:
         """Returns 400 when title is empty."""

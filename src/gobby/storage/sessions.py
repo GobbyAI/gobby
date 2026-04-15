@@ -24,6 +24,8 @@ SYSTEM_SESSION_ID = "00000000-0000-0000-0000-000000000001"
 class LocalSessionManager:
     """Manager for local session storage."""
 
+    _VALID_TITLE_SOURCES: ClassVar[set[str]] = {"heuristic", "llm", "manual"}
+
     def __init__(self, db: DatabaseProtocol):
         """Initialize with database connection."""
         self.db = db
@@ -144,13 +146,13 @@ class LocalSessionManager:
                 self.db.execute(
                     """
                     INSERT INTO sessions (
-                        id, external_id, machine_id, source, project_id, title,
+                        id, external_id, machine_id, source, project_id, title, title_source,
                         transcript_path, git_branch, parent_session_id,
                         agent_depth, spawned_by_agent_id, terminal_context,
                         workflow_name, session_type, status, created_at, updated_at, seq_num,
                         had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
                     """,
                     (
                         session_id,
@@ -531,28 +533,56 @@ class LocalSessionManager:
             (tools_json, session_id),
         )
 
-    def update_title(self, session_id: str, title: str) -> Session | None:
+    def update_title(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        title_source: str | None = None,
+    ) -> Session | None:
         """Update session title."""
         current = self.get(session_id)
         if current is None:
             return None
-        if current.title == title:
+        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
+            raise ValueError(
+                f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
+            )
+
+        title_changed = current.title != title
+        source_changed = title_source is not None and current.title_source != title_source
+        if not title_changed and not source_changed:
             return current
 
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-            (title, now, session_id),
-        )
+        values: dict[str, Any] = {"updated_at": now}
+        if title_changed:
+            values["title"] = title
+        if source_changed:
+            values["title_source"] = title_source
+        self.db.safe_update("sessions", values, "id = ?", (session_id,))
         updated = self.get(session_id)
         if updated is None:
             return None
 
-        for listener in list(self._title_listeners):
+        if title_changed:
             try:
-                listener(session_id, title)
+                from gobby.workflows.summary_actions import schedule_tmux_window_rename
+
+                schedule_tmux_window_rename(updated, title)
             except Exception:
-                logger.warning("Title listener failed for session %s", session_id, exc_info=True)
+                logger.warning(
+                    "Failed to schedule tmux title update for session %s",
+                    session_id,
+                    exc_info=True,
+                )
+
+        if title_changed:
+            for listener in list(self._title_listeners):
+                try:
+                    listener(session_id, title)
+                except Exception:
+                    logger.warning("Title listener failed for session %s", session_id, exc_info=True)
 
         return updated
 
@@ -650,6 +680,7 @@ class LocalSessionManager:
         transcript_path: str | None = None,
         status: str | None = None,
         title: str | None = None,
+        title_source: str | None = None,
         git_branch: str | None = None,
         terminal_context: dict[str, Any] | None = None,
         project_id: str | None = None,
@@ -667,6 +698,7 @@ class LocalSessionManager:
             transcript_path: New transcript path (optional)
             status: New status (optional)
             title: New title (optional)
+            title_source: New title provenance (optional)
             git_branch: New git branch (optional)
             terminal_context: New terminal context (optional)
             project_id: New project ID (optional)
@@ -700,6 +732,12 @@ class LocalSessionManager:
             values["status"] = status
         if title is not None:
             values["title"] = title
+        if title_source is not None:
+            if title_source not in self._VALID_TITLE_SOURCES:
+                raise ValueError(
+                    f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
+                )
+            values["title_source"] = title_source
         if git_branch is not None:
             values["git_branch"] = git_branch
         if terminal_context is not None:
