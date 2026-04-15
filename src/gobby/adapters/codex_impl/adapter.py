@@ -133,7 +133,6 @@ class CodexAdapter(BaseAdapter):
         "mcp__gobby__get_tool_schema",
         "mcp__gobby__recommend_tools",
         "mcp__gobby__search_tools",
-        "mcp__gobby__get_variable",
     }
 
     # UI-only canvas calls are safe because they only present/update

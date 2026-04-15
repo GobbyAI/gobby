@@ -16,7 +16,7 @@ from gobby.sessions.transcripts.base import (
 
 logger = logging.getLogger(__name__)
 
-_INTERNAL_CONTENT_TYPES = {"hook_prompt"}
+_INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt"})
 
 
 @dataclass

@@ -17,4 +17,11 @@ describe("SourceIcon", () => {
     const icon = container.querySelector("img.source-icon-claude");
     expect(icon).toBeTruthy();
   });
+
+  it("renders the Qwen provider as an image", () => {
+    const { container } = render(<SourceIcon source="qwen" size={16} />);
+
+    const icon = container.querySelector("img.source-icon-qwen");
+    expect(icon).toBeTruthy();
+  });
 });

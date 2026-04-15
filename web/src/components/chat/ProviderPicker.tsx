@@ -57,9 +57,19 @@ export function ProviderPicker({
   const [catalog, setCatalog] = useState<ProviderModelEntry[]>([]);
 
   useEffect(() => {
-    if (open) {
-      fetchProviderModelCatalog().then(setCatalog);
-    }
+    if (!open) return;
+    let cancelled = false;
+    fetchProviderModelCatalog()
+      .then((entries) => {
+        if (!cancelled) setCatalog(entries);
+      })
+      .catch((err) => {
+        console.error("[ProviderPicker] failed to load model catalog", err);
+        if (!cancelled) setCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const effectiveProvider = currentProvider || "claude";

@@ -105,8 +105,11 @@ Change `gobby install` for supported hook surfaces so it:
 - exposes `dryRunInstall()` through `gobby install --dry-run` so the user can see the
   detected hook surfaces, planned backup paths, ownership claims, and required free space
   without changing active config
-- executes detect -> backup -> claim -> install inside a transaction-like
-  `performInstall()` wrapper so the sequence is atomic from the user's perspective
+- executes detect -> backup -> claim -> install inside a `performInstall()`
+  wrapper that performs ordered per-surface staged swaps with a journal, so the
+  sequence is crash-consistent from the user's perspective (each surface is a
+  single-rename commit with a journal entry; partial commits are detected on
+  startup and completed or rolled back)
 - stages backups, manifests, and rendered hook payloads under
   `~/.gobby/hooks/staging/install-<timestamp>-<pid>/` and only swaps them into live
   locations after every staged artifact has been validated
@@ -126,23 +129,26 @@ Implementation expectations for the install path:
 - `createBackup()` writes dated backups, verifies the staged backup checksum, and retries
   transient write failures before returning a fatal backup error
 - `writeManifest()` writes a staged manifest, validates the schema and integrity
-  fingerprints, fsyncs the file, and only then participates in the final atomic swap
-- `claimOwnership()` is not treated as committed until the backup, manifest, and active
-  hook payload swaps all succeed
-- `installGobbyHooks()` writes only to staged targets until `performInstall()` reaches the
-  final atomic commit step
+  fingerprints, fsyncs the file, and only then participates in its own
+  single-rename swap as part of the ordered per-surface commit sequence
+- `claimOwnership()` is not treated as committed until every per-surface swap
+  (backup, manifest, active hook payload) has been journaled and renamed into
+  place
+- `installGobbyHooks()` writes only to staged targets until `performInstall()`
+  reaches the per-surface swap step for each hook payload
 - `rollbackInstall()` restores the latest dated backups, removes staged files, reverts any
   staged ownership claims, and writes a rollback entry to trace history if
   `claimOwnership()`, `installGobbyHooks()`, or `writeManifest()` fails or the process is
-  interrupted
+  interrupted; on next start the journal lets `performInstall()` detect partial
+  per-surface commits and either complete or roll back each one
 
 User-facing failure handling:
 
 - exit `2`: preflight validation or dry-run failed; no changes were made
 - exit `3`: backup creation could not be completed; no ownership claim or active install
   may remain
-- exit `4`: atomic commit failed but rollback completed successfully
-- exit `5`: atomic commit failed and rollback was incomplete; manual recovery is required
+- exit `4`: a per-surface swap failed but rollback completed successfully
+- exit `5`: a per-surface swap failed and rollback was incomplete; manual recovery is required
 - error messages must name the failing step, the affected path, whether rollback ran, and
   the backup or manifest path the user should inspect next
 

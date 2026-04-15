@@ -63,7 +63,8 @@ export async function fetchProviderModelCatalog(): Promise<
   }
 
   try {
-    const res = await fetch("/api/providers/models");
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+    const res = await fetch(`${baseUrl}/api/providers/models`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data?.providers)) {

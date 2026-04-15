@@ -79,10 +79,38 @@ def _load_json_object(raw: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _looks_like_qwen(data: dict[str, Any]) -> bool:
+    """Return True if the payload carries a Qwen model marker.
+
+    Qwen currently writes Gemini-compatible JSON, so structural checks cannot
+    distinguish them. When a ``model`` field (top-level, meta, or on a message)
+    contains "qwen", prefer the Qwen label over the Gemini fallback.
+    """
+    for key in ("model", "modelName"):
+        value = data.get(key)
+        if isinstance(value, str) and "qwen" in value.lower():
+            return True
+    meta = data.get("meta")
+    if isinstance(meta, dict):
+        for key in ("model", "modelName"):
+            value = meta.get(key)
+            if isinstance(value, str) and "qwen" in value.lower():
+                return True
+    messages = data.get("messages")
+    if isinstance(messages, list):
+        for entry in messages:
+            if isinstance(entry, dict):
+                for key in ("model", "modelName"):
+                    value = entry.get(key)
+                    if isinstance(value, str) and "qwen" in value.lower():
+                        return True
+    return False
+
+
 def _detect_source_from_record(data: dict[str, Any]) -> str | None:
     """Infer transcript source from a decoded transcript record."""
     if "sessionId" in data or isinstance(data.get("messages"), list):
-        return "gemini"
+        return "qwen" if _looks_like_qwen(data) else "gemini"
 
     line_type = data.get("type")
     payload = data.get("payload")
@@ -116,7 +144,7 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
 def _detect_source_from_json_session(data: dict[str, Any]) -> str | None:
     """Infer transcript source from a native JSON session file."""
     if "sessionId" in data or isinstance(data.get("messages"), list):
-        return "gemini"
+        return "qwen" if _looks_like_qwen(data) else "gemini"
     return _detect_source_from_record(data)
 
 

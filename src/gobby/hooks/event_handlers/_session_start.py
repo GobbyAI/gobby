@@ -123,7 +123,7 @@ class SessionStartMixin(EventHandlersBase):
         input_data: dict[str, Any],
         external_id: str,
     ) -> str | None:
-        """Find a Gemini-compatible session JSON file."""
+        """Find a JSON session transcript for supported CLIs (Gemini, Qwen)."""
         cwd = input_data.get("cwd")
         if not cwd:
             self.logger.debug("Cannot derive %s transcript: no cwd", cli_label)

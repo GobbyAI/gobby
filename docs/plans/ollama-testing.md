@@ -16,7 +16,7 @@
 
 ## Approach
 
-Bundle into one task with two phases: **(1) execute the swap and validate end-to-end**, then **(2) add the dim validation safety net** so the next provider/model swap surfaces config drift loudly instead of silently.
+Bundle into one task with three phases: **(1) execute the swap**, **(2) smoke test the three call sites end-to-end**, and **(3) add the dim validation safety net** so the next provider/model swap surfaces config drift loudly instead of silently.
 
 ### Phase 1 — Execute the swap
 

@@ -607,8 +607,10 @@ class MemoryManager:
                         decay_factor = temporal_decay(mem.updated_at, half_life)
                         similarity *= decay_factor
 
-                    if effective_min_score > 0 and (
-                        similarity is None or similarity < effective_min_score
+                    if (
+                        effective_min_score > 0
+                        and similarity is not None
+                        and similarity < effective_min_score
                     ):
                         continue
 

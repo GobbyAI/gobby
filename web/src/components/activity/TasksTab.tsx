@@ -405,7 +405,10 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     setVisibleCount(INITIAL_TASK_LIMIT);
   }, [projectId, search, statusFilters]);
 
-  // Client-side filtering
+  // Client-side filter + stable re-sort by updated_at desc to match the
+  // server's sort_by=updated_at request. WebSocket task_created events
+  // append to `tasks` without preserving ordering, so we re-sort here to
+  // keep the list consistent with the server ordering.
   const now = useNow();
   const DAY_MS = 24 * 60 * 60 * 1000;
   const filtered = useMemo(() => {
@@ -418,12 +421,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
         if (!closedAt) return false;
         return now - new Date(closedAt).getTime() < DAY_MS;
       })
-      .sort((a, b) => {
-        const pa = a.priority ?? 3;
-        const pb = b.priority ?? 3;
-        if (pa !== pb) return pa - pb;
-        return (b.created_at ?? "").localeCompare(a.created_at ?? "");
-      });
+      .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
   }, [tasks, statusFilters, now, DAY_MS]);
 
   const treeData = useMemo(() => {

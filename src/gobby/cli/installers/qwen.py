@@ -179,8 +179,16 @@ def uninstall_qwen(project_path: Path, mode: str = "project") -> dict[str, Any]:
     backup_file = qwen_path / f"settings.json.{timestamp}.backup"
     copy2(settings_file, backup_file)
 
-    with open(settings_file) as f:
-        settings = json.load(f)
+    try:
+        with open(settings_file) as f:
+            settings = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "Could not parse %s (%s); treating as empty and continuing uninstall",
+            settings_file,
+            e,
+        )
+        settings = {}
 
     if "hooks" in settings:
         for hook_type in _HOOK_TYPES:

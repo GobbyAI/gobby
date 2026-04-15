@@ -160,7 +160,22 @@ def build_qwen_command_with_resume(
     gobby_session_id: str | None = None,
     model: str | None = None,
 ) -> list[str]:
-    """Build Qwen CLI command with session resume."""
+    """
+    Build Qwen CLI command with session resume.
+
+    Uses -r flag to resume a preflight-captured session, with session context
+    injected into the initial prompt.
+
+    Args:
+        qwen_external_id: Qwen's session_id from preflight capture
+        prompt: Optional user prompt
+        auto_approve: If True, add --approval-mode yolo
+        gobby_session_id: Gobby session ID to inject into context
+        model: Optional model name to pass to the CLI (--model flag)
+
+    Returns:
+        Command list for subprocess execution
+    """
     command = ["qwen", "-r", qwen_external_id]
 
     if model:

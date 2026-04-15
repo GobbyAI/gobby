@@ -79,13 +79,17 @@ describe("ProviderPicker", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("pro-3.1")).toBeTruthy();
-      expect(screen.getByText("flash-3")).toBeTruthy();
-      expect(screen.getByText("codex-5.4")).toBeTruthy();
-      expect(screen.getByText("mini-5.4")).toBeTruthy();
-      expect(screen.getByText("codex-5.3")).toBeTruthy();
-      expect(screen.getByText("coder-model (qwen-oauth)")).toBeTruthy();
-      expect(screen.getByText("gpt-5 (openai)")).toBeTruthy();
+      // Labels are transformed by parseGemini/parseCodex/parseQwen to friendly
+      // display forms by resolveVisibleModels in providerModels.ts.
+      expect(screen.getByText("Gemini 3.1 Pro")).toBeTruthy();
+      expect(screen.getByText("Gemini 3 Flash")).toBeTruthy();
+      expect(screen.getByText("GPT 5.4")).toBeTruthy();
+      expect(screen.getByText("GPT 5.4 Mini")).toBeTruthy();
+      expect(screen.getByText("GPT 5.3 Codex")).toBeTruthy();
+      expect(
+        screen.getByText(/Coder Model.*Qwen Oauth/i),
+      ).toBeTruthy();
+      expect(screen.getByText(/Gpt 5.*Openai/i)).toBeTruthy();
     });
   });
 
@@ -108,7 +112,7 @@ describe("ProviderPicker", () => {
       />,
     );
 
-    await userEvent.click(await screen.findByText("codex-5.4"));
+    await userEvent.click(await screen.findByText("GPT 5.4"));
 
     expect(onProviderChange).toHaveBeenCalledWith("codex");
     expect(onModelChange).toHaveBeenCalledWith("gpt-5.4");

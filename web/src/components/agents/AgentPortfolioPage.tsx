@@ -70,6 +70,14 @@ type SortField = 'name' | 'tasks' | 'success' | 'tokens' | 'lastActive'
 // Helpers
 // =============================================================================
 
+const AGENT_SOURCE_ICONS: Record<string, string> = {
+  claude: '\u2728',
+  gemini: '\u2666',
+  qwen: '\u25C8',
+  codex: '\u{1F4E6}',
+}
+const DEFAULT_AGENT_SOURCE_ICON = '\u{1F916}'
+
 function getBaseUrl(): string {
   return ''
 }
@@ -179,7 +187,7 @@ function AgentCard({
     <div className={`agent-card ${isExpanded ? 'agent-card--expanded' : ''}`}>
       <button className="agent-card-header" onClick={onToggle}>
         <div className="agent-card-identity">
-          <span className="agent-card-icon">{agent.source === 'claude' ? '\u2728' : agent.source === 'gemini' ? '\u2666' : agent.source === 'qwen' ? '\u25C8' : agent.source === 'codex' ? '\u{1F4E6}' : '\u{1F916}'}</span>
+          <span className="agent-card-icon">{AGENT_SOURCE_ICONS[agent.source] ?? DEFAULT_AGENT_SOURCE_ICON}</span>
           <span className="agent-card-name">{agent.name}</span>
           <span className="agent-card-sessions">{agent.sessionCount} sessions</span>
         </div>

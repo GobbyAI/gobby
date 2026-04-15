@@ -53,6 +53,8 @@ Create systematic improvement plan:
 - Use dynamic imports for large components
 
 ```javascript
+import { lazy } from 'react';
+
 // Lazy load heavy component
 const HeavyChart = lazy(() => import('./HeavyChart'));
 ```
@@ -150,6 +152,13 @@ const observer = new IntersectionObserver((entries) => {
     }
   });
 });
+
+// Start observing a target element.
+const target = document.querySelector('.lazy-element');
+if (target) observer.observe(target);
+
+// When done (e.g., component unmount), release the observer.
+// observer.disconnect();
 ```
 
 ### React/Framework Optimization

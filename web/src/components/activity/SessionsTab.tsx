@@ -254,7 +254,20 @@ export const SessionsTab = memo(function SessionsTab({
     if (!initialSelectionAppliedRef.current) {
       initialSelectionAppliedRef.current = true;
       selectionClearedRef.current = false;
-      setSelectedSessionId(hasFocusedEntry ? focusSessionId : entries[0].id);
+      // Honor an explicit focus request over the persisted selection, then
+      // the persisted selection (lazy init from localStorage) if it still
+      // points at a visible entry, then fall back to the first entry.
+      const persistedStillPresent =
+        selectedSessionId != null &&
+        entries.some((entry) => entry.id === selectedSessionId);
+      const nextSelection = hasFocusedEntry
+        ? focusSessionId
+        : persistedStillPresent
+          ? selectedSessionId
+          : entries[0].id;
+      if (nextSelection !== selectedSessionId) {
+        setSelectedSessionId(nextSelection);
+      }
       if (hasFocusedEntry) {
         onFocusHandled?.();
       }

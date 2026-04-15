@@ -158,7 +158,9 @@ function CliSessionCard({
 }) {
   const seqLabel = session.seq_num != null ? `#${session.seq_num}` : null
   const titleText = getSessionTitleText(session.title)
-  const displayTitle = seqLabel ? `${seqLabel}: ${titleText}` : titleText
+  const displayTitle = seqLabel
+    ? `${seqLabel}: ${titleText}`
+    : titleText || session.ref
   const color = SOURCE_COLORS[session.source] ?? SOURCE_COLORS.unknown
 
   return (

@@ -89,7 +89,8 @@ def list_tasks(
         limit: Maximum tasks to return
         offset: Pagination offset
         sort_by: Ordering strategy. "hierarchy" preserves parent/child ordering;
-            "updated_at" and "created_at" sort chronologically.
+            "updated_at" and "created_at" sort chronologically; "priority"
+            sorts by task priority (lower value = higher priority).
         sort_order: "asc" or "desc" for non-hierarchical sorts.
 
     Results are ordered hierarchically: parents appear before their children,

@@ -1448,8 +1448,6 @@ class TestCloseTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """Test close_task with commit_sha links the commit first."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
@@ -1472,10 +1470,17 @@ class TestCloseTaskTool:
                 side_effect=lambda sha, cwd=None: sha,
             ),
         ):
+            expected_repo_path = "/fake/repo/path"
             mock_proj_instance = MagicMock()
-            mock_proj_instance.get.return_value = None
+            mock_project = MagicMock()
+            mock_project.repo_path = expected_repo_path
+            mock_proj_instance.get.return_value = mock_project
             MockProjManager.return_value = mock_proj_instance
             mock_git.return_value = "abc123"
+
+            # Build the registry inside the patch so RegistryContext picks up
+            # the mocked LocalProjectManager.
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             await registry.call(
                 "close_task",
@@ -1486,10 +1491,10 @@ class TestCloseTaskTool:
                 },
             )
 
-            # link_commit is called with cwd kwarg for repo-aware commit linking
+            # link_commit is called with cwd kwarg resolved from the project repo
             call_args = mock_task_manager.link_commit.call_args
             assert call_args[0] == ("550e8400-e29b-41d4-a716-446655440000", "new-commit")
-            assert "cwd" in call_args.kwargs
+            assert call_args.kwargs["cwd"] == expected_repo_path
 
             close_call = mock_task_manager.close_task.call_args
             assert close_call[0] == ("550e8400-e29b-41d4-a716-446655440000",)

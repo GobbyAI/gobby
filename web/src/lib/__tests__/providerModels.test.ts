@@ -164,6 +164,37 @@ describe("providerModels", () => {
     );
   });
 
+  it("falls back to the preferred model when the provider is unknown", () => {
+    expect(
+      getPreferredModelForProvider(catalog, "nonexistent", "some-model"),
+    ).toBe("some-model");
+    expect(getPreferredModelForProvider(catalog, "nonexistent")).toBeNull();
+  });
+
+  it("falls back to the provider's strongest model when the canonical id is unknown", () => {
+    expect(
+      getPreferredModelForProvider(catalog, "claude", "claude-unknown-zzz"),
+    ).toBe("opus");
+  });
+
+  it("resolves an unknown provider by echoing the requested model", () => {
+    expect(
+      resolveProviderModelPair(catalog, {
+        provider: "nonexistent",
+        model: "foo",
+      }),
+    ).toEqual({ provider: "nonexistent", model: "foo" });
+  });
+
+  it("resolves an unknown canonical id to the provider's strongest model", () => {
+    expect(
+      resolveProviderModelPair(catalog, {
+        provider: "claude",
+        model: "claude-unknown-zzz",
+      }),
+    ).toEqual({ provider: "claude", model: "opus" });
+  });
+
   it("logs and returns an empty catalog when the fetch fails", async () => {
     const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));

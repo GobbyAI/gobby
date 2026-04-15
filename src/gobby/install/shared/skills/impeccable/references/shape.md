@@ -80,6 +80,6 @@ Anything unresolved that the implementer should resolve during build.
 
 ---
 
-Ask the user Get explicit confirmation of the brief before finishing. If the user disagrees with any part, revisit the relevant discovery questions.
+Ask the user for explicit confirmation of the brief before finishing. If the user disagrees with any part, revisit the relevant discovery questions.
 
 Once confirmed, the brief is complete. The user can now hand it to the `impeccable` skill, or use it to guide any other implementation approach. (If the user wants the full discovery-then-build flow in one step, they should use the impeccable skill's `craft` mode instead, which runs this skill internally.)

@@ -246,7 +246,7 @@ class TestSearchMemoriesGraphIntegration:
 
         # Mock storage
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -281,7 +281,7 @@ class TestSearchMemoriesGraphIntegration:
         )
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -308,7 +308,7 @@ class TestSearchMemoriesGraphIntegration:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.9)])
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         # Mock the kg_service method to verify it's not called
@@ -335,7 +335,7 @@ class TestSearchMemoriesGraphIntegration:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.8)])
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -369,7 +369,7 @@ class TestSearchMemoriesGraphIntegration:
         system_mem.source_type = "agent"
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: user_mem if mid == "mem-2" else system_mem
+            side_effect=lambda mid, project_id=None: user_mem if mid == "mem-2" else system_mem
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -442,9 +442,23 @@ class TestGraphSearchProjectIdScoping:
         mem_b = _mock_memory("mem-2", "content B")
         mem_b.project_id = "proj-B"
 
-        manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_a if mid == "mem-1" else mem_b
-        )
+        def _scoped_get_memory(mid: str, project_id: str | None = None):
+            mem = mem_a if mid == "mem-1" else mem_b
+            if project_id and mem.project_id and mem.project_id != project_id:
+                raise ValueError(f"Memory {mid} not found")
+            return mem
+
+        def _scoped_get_memories(ids, project_id=None):
+            out = []
+            for mid in ids:
+                try:
+                    out.append(_scoped_get_memory(mid, project_id))
+                except ValueError:
+                    continue
+            return out
+
+        manager.storage.get_memory = MagicMock(side_effect=_scoped_get_memory)
+        manager.storage.get_memories = MagicMock(side_effect=_scoped_get_memories)
 
         result = await manager.search_memories(query="test", project_id="proj-A", limit=10)
 
@@ -477,7 +491,7 @@ class TestGraphSearchProjectIdScoping:
         mem_global.project_id = None  # Global memory
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_a if mid == "mem-1" else mem_global
+            side_effect=lambda mid, project_id=None: mem_a if mid == "mem-1" else mem_global
         )
 
         result = await manager.search_memories(query="test", project_id="proj-A", limit=10)
@@ -599,7 +613,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -655,7 +669,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -686,7 +700,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)

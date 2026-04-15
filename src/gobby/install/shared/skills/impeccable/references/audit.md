@@ -98,7 +98,13 @@ For each issue, document:
 - **Impact**: How it affects users
 - **WCAG/Standard**: Which standard it violates (if applicable)
 - **Recommendation**: How to fix it
-- **Suggested command**: Which command to use (prefer: `adapt`, `animate`, `audit`, `bolder`, `clarify`, `colorize`, `critique`, `delight`, `distill`, `harden`, `layout`, `optimize`, `overdrive`, `polish`, `quieter`, `shape`, `typeset`)
+- **Suggested steering reference**: Which vendored reference doc covers the
+  fix (prefer: `adapt`, `animate`, `audit`, `bolder`, `clarify`, `colorize`,
+  `critique`, `delight`, `distill`, `harden`, `layout`, `optimize`,
+  `overdrive`, `polish`, `quieter`, `shape`, `typeset`). Load them via
+  `get_skill_file(name="impeccable", path="references/<name>.md")` on the
+  `gobby-skills` MCP server — they are reference files, not runnable slash
+  commands.
 
 ### Patterns & Systemic Issues
 
