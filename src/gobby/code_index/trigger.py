@@ -101,6 +101,13 @@ class CodeIndexTrigger:
             else:
                 detail = stderr.decode().strip() if stderr else "(no stderr)"
                 logger.warning(f"gcode index exited {proc.returncode}: {detail}")
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+            raise
         except TimeoutError:
             logger.warning("gcode index timed out after 30s")
             try:

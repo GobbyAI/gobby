@@ -258,6 +258,14 @@ class CronExecutor:
 
             return output
 
+        except asyncio.CancelledError:
+            if process is not None:
+                try:
+                    process.kill()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
+            raise
         except TimeoutError as err:
             if process:
                 process.terminate()
