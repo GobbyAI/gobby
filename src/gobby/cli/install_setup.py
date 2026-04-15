@@ -41,7 +41,7 @@ def _urlopen_https(req: Request, *, timeout: int) -> Any:
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise ValueError(f"Only HTTPS URLs are allowed, got: {parsed.scheme}://...")
-    return urlopen(req, timeout=timeout)  # nosec B310 — scheme validated above
+    return urlopen(req, timeout=timeout)  # nosec B310 # scheme validated above
 
 
 def ensure_daemon_config() -> dict[str, Any]:

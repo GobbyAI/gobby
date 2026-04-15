@@ -53,6 +53,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 UPSTREAM_BASE = "https://raw.githubusercontent.com/pbakaus/impeccable/main/source/skills"
 
@@ -107,9 +108,12 @@ AVAILABLE_COMMANDS_LIST = ", ".join(f"`{c}`" for c in COMMANDS)
 
 def fetch(cmd: str) -> str:
     url = f"{UPSTREAM_BASE}/{cmd}/SKILL.md"
+    if urlparse(url).scheme != "https":
+        raise ValueError(f"Only HTTPS URLs are allowed, got: {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "gobby-impeccable-upgrade"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read().decode("utf-8")
+    with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310 # scheme validated above
+        body: bytes = resp.read()
+    return body.decode("utf-8")
 
 
 def substitute_command_refs(text: str) -> str:
