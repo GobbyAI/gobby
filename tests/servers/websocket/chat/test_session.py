@@ -353,6 +353,7 @@ class TestCreateChatSessionInner:
                 provider="gemini",
                 conversation_id="conv-gemini",
                 model=None,
+                reasoning_effort=None,
             )
             assert mock_session.system_prompt_override == (
                 "## Role\nYou are Gobby\n\n"
@@ -398,6 +399,7 @@ class TestCreateChatSessionInner:
             provider="codex",
             conversation_id="conv-existing",
             model=None,
+            reasoning_effort=None,
         )
 
     @pytest.mark.asyncio

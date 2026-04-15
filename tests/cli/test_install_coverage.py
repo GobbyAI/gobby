@@ -297,6 +297,7 @@ class TestInstallCommand:
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/src/install")),
             patch("gobby.cli.install._is_claude_code_installed", return_value=False),
             patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
         ):
             result = runner.invoke(install, ["-C", str(tmp_path)], catch_exceptions=False)

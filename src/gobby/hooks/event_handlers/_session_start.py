@@ -107,14 +107,18 @@ class SessionStartMixin(EventHandlersBase):
             Path to transcript file, or None if not derivable.
         """
         if cli_source == "gemini":
-            return self._find_json_session_transcript("gemini", "Gemini", input_data, external_id)
+            return self._find_gemini_transcript(input_data, external_id)
         if cli_source == "qwen":
-            return self._find_json_session_transcript("qwen", "Qwen", input_data, external_id)
+            return self._find_qwen_transcript(input_data, external_id)
         return None
 
     def _find_gemini_transcript(self, input_data: dict[str, Any], external_id: str) -> str | None:
-        """Backwards-compatible wrapper for Gemini transcript lookup."""
+        """Locate a Gemini CLI JSON session transcript for the hook event."""
         return self._find_json_session_transcript("gemini", "Gemini", input_data, external_id)
+
+    def _find_qwen_transcript(self, input_data: dict[str, Any], external_id: str) -> str | None:
+        """Locate a Qwen CLI JSON session transcript for the hook event."""
+        return self._find_json_session_transcript("qwen", "Qwen", input_data, external_id)
 
     def _find_json_session_transcript(
         self,
