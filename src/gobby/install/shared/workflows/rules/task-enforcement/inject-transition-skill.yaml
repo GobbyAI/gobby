@@ -9,8 +9,8 @@ rules:
     when: >
       (event.data.get('mcp_tool') == 'get_tool_schema'
        or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
-      and tool_input.get('server_name') == 'gobby-tasks'
-      and tool_input.get('tool_name') in ('close_task', 'mark_task_needs_review', 'mark_task_review_approved', 'reopen_task', 'escalate_task', 'de_escalate_task')
+      and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
+      and (tool_input.get('tool_name') or tool_input.get('tool')) in ('close_task', 'mark_task_needs_review', 'mark_task_review_approved', 'reopen_task', 'escalate_task', 'de_escalate_task')
     effects:
       - type: mcp_call
         server: gobby-skills

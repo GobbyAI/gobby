@@ -573,6 +573,34 @@ async def run_daemon(runner: GobbyRunner) -> None:
         # Cleanup with timeouts to prevent hanging
         # Use timeout slightly longer than uvicorn's graceful shutdown to let it finish
         server.should_exit = True
+
+        # Reap child processes immediately — before the HTTP drain.
+        # MCP stdio subprocesses, gemini --acp, codex app-server, gcode, etc.
+        # are children of this process and must not outlive us. The owning
+        # subsystems' shutdown logic runs later (lifespan shutdown after HTTP
+        # drain), which is far too late — kill them now so they're gone
+        # within seconds of SIGTERM, not tens of seconds later.
+        try:
+            import psutil
+
+            _self = psutil.Process(os.getpid())
+            _children = _self.children(recursive=True)
+            if _children:
+                logger.info(f"Reaping {len(_children)} child process(es) on shutdown")
+                for _child in _children:
+                    try:
+                        _child.terminate()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                _gone, _alive = await asyncio.to_thread(psutil.wait_procs, _children, 1.0)
+                for _child in _alive:
+                    try:
+                        _child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+        except Exception as e:
+            logger.warning(f"Child process reap failed: {e}")
+
         try:
             await asyncio.wait_for(server_task, timeout=graceful_shutdown_timeout + 5)
         except TimeoutError:
@@ -793,6 +821,23 @@ async def run_daemon(runner: GobbyRunner) -> None:
             await asyncio.wait_for(runner.mcp_proxy.disconnect_all(), timeout=3.0)
         except TimeoutError:
             logger.warning("MCP disconnect timed out")
+
+        # Force-kill any child processes still alive after graceful shutdown.
+        # SIGTERM was sent early; SIGKILL here handles stragglers.
+        try:
+            import psutil
+
+            _self = psutil.Process(os.getpid())
+            _children = _self.children(recursive=True)
+            if _children:
+                logger.info(f"Force-killing {len(_children)} remaining child process(es)")
+                for _child in _children:
+                    try:
+                        _child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+        except Exception as e:
+            logger.warning(f"Child process force-kill failed: {e}")
 
         # Clean up PID file on graceful shutdown
         cleanup_pid_file()

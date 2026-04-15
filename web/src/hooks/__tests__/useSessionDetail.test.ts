@@ -69,6 +69,11 @@ describe('useSessionDetail', () => {
     ).toBe(true)
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes('/api/sessions/sess-web/transcript/status'),
+      ),
+    ).toBe(false)
+    expect(
+      mockFetch.fn.mock.calls.some(([url]) =>
         String(url).includes('/api/sessions/sess-web/messages'),
       ),
     ).toBe(true)
@@ -110,6 +115,44 @@ describe('useSessionDetail', () => {
         String(url).includes('/api/chat/gemini-ext-1/messages'),
       ),
     ).toBe(false)
+  })
+
+  it('loads transcript status for empty transcript-backed sessions', async () => {
+    await loadModule()
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-empty$/, {
+      session: {
+        id: 'sess-empty',
+        external_id: 'empty-ext-1',
+        session_type: 'terminal',
+        transcript_path: '/tmp/mystery.jsonl',
+        status: 'paused',
+      },
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-empty/messages?limit=10000&offset=0', {
+      messages: [],
+      total_count: 941,
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-empty/transcript/status', {
+      session_id: 'sess-empty',
+      live_exists: true,
+      archive_exists: false,
+      availability: 'live',
+      content_state: 'unparseable',
+      session_source: 'claude',
+      detected_source: null,
+      source_mismatch: false,
+      raw_record_count: 941,
+      parsed_message_count: 0,
+    })
+
+    const { result } = renderHook(() => useSessionDetail('sess-empty'))
+    act(() => mockWs.instances[0]?.simulateOpen())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    expect(result.current.messages).toHaveLength(0)
+    expect(result.current.transcriptStatus?.content_state).toBe('unparseable')
+    expect(result.current.totalMessages).toBe(941)
   })
 
   it('upserts rendered session_message websocket events by message id', async () => {

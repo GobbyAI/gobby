@@ -595,6 +595,8 @@ class LocalTaskManager:
         title_like: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        sort_by: str = "hierarchy",
+        sort_order: str = "asc",
     ) -> list[Task]:
         """List tasks with filtering.
 
@@ -621,6 +623,8 @@ class LocalTaskManager:
             title_like=title_like,
             limit=limit,
             offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
     def list_ready_tasks(

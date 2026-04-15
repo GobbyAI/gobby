@@ -202,7 +202,9 @@ class TmuxPTYBridge:
 
     def _build_attach_cmd(self, session_name: str, config: TmuxConfig) -> list[str]:
         args = [config.command]
-        if config.socket_name:
+        if config.socket_path:
+            args.extend(["-S", config.socket_path])
+        elif config.socket_name:
             args.extend(["-L", config.socket_name])
         args.extend(["attach-session", "-t", session_name])
         return args

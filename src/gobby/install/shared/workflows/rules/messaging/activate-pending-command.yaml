@@ -3,7 +3,7 @@ tags: [messaging, p2p, commands, gobby, default]
 rules:
   activate-pending-command:
     description: "Activate a pending command when agent starts a turn"
-    event: before_agent
+    event: turn_start
     enabled: true
     priority: 15
     when: "variables.get('is_spawned_agent') and variables.get('has_pending_command')"

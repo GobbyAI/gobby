@@ -1,17 +1,19 @@
-name: block-escaped-quotes
-description: "Detect and block escaped quotes in tool arguments to prevent JSON parsing errors."
-type: rule
-enabled: true
+tags: [tool-hygiene, enforcement, json, gobby, default]
 
-# Matches any tool call that contains escaped quotes in its arguments
-when: "event.event_type == 'pre-tool-use' and regex_search(r'\\\"', str(event.data.get('tool_input', {})))"
+rules:
+  block-escaped-quotes:
+    description: "Detect and block escaped quotes in tool arguments to prevent JSON parsing errors"
+    event: before_tool
+    enabled: true
+    priority: 20
+    when: >-
+      '\\"' in str(event.data.get('tool_input', {}))
+    effect:
+      type: block
+      reason: |
+        Your tool call contains escaped quotes (`\"`) in the arguments, which causes JSON parsing errors in the MCP proxy.
 
-action:
-  decision: block
-  reason: |
-    Your tool call contains escaped quotes (`\"`) in the arguments, which causes JSON parsing errors in the MCP proxy.
-
-    To fix this:
-    - DO NOT escape quotes inside JSON strings.
-    - Use raw strings if your client supports them, or simply provide the string value without backslash escapes.
-    - Example: Use {"pattern": "match me"} NOT {"pattern": "match \"me\""}.
+        To fix this:
+        - Do not escape quotes inside JSON strings.
+        - Use raw strings if your client supports them, or provide the string value without backslash escapes.
+        - Example: use {"pattern": "match me"} not {"pattern": "match \"me\""}.

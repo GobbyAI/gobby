@@ -25,7 +25,7 @@ function stableHash(s: string): string {
 /** Strip protocol tags not meant for display */
 function stripProtocolTags(text: string): string {
   return text.replace(
-    /<\/?(?:command-name|command-message|proposed_plan|proposed_implementation|search_quality_reflection)>/g,
+    /<\/?(?:command-name|command-message|proposed_plan|proposed_implementation|search_quality_reflection|permissions instructions|permission instructions|collaboration_mode)>/g,
     ''
   )
 }

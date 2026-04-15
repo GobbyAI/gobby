@@ -221,6 +221,72 @@ class TestSessionManagerLookup:
         result = session_mgr.get_session("nonexistent-uuid")
         assert result is None
 
+    def test_recover_session_prefers_metadata_rich_candidate(
+        self,
+        session_mgr: SessionManager,
+        session_storage: LocalSessionManager,
+        test_project: dict,
+    ) -> None:
+        """Cross-source recovery should prefer the candidate with transcript metadata."""
+        preferred = session_storage.register(
+            external_id="shared-external-id",
+            machine_id="machine-1",
+            source="codex",
+            project_id=test_project["id"],
+            title="Canonical Session",
+            transcript_path="/tmp/rollout.jsonl",
+            terminal_context={"tmux_pane": "%1"},
+        )
+        session_storage.register(
+            external_id="shared-external-id",
+            machine_id="machine-1",
+            source="claude",
+            project_id=test_project["id"],
+            title=None,
+            transcript_path=None,
+        )
+
+        recovered = session_mgr.recover_session(
+            external_id="shared-external-id",
+            source="gemini",
+            machine_id="machine-1",
+            project_id=test_project["id"],
+        )
+
+        assert recovered is not None
+        assert recovered.id == preferred.id
+        assert session_mgr.get_session_id("shared-external-id", "gemini") == preferred.id
+
+    def test_recover_session_returns_none_for_ambiguous_candidates(
+        self,
+        session_mgr: SessionManager,
+        session_storage: LocalSessionManager,
+        test_project: dict,
+    ) -> None:
+        """Recovery should refuse ties instead of silently picking a row."""
+        session_storage.register(
+            external_id="ambiguous-external-id",
+            machine_id="machine-1",
+            source="codex",
+            project_id=test_project["id"],
+        )
+        session_storage.register(
+            external_id="ambiguous-external-id",
+            machine_id="machine-1",
+            source="claude",
+            project_id=test_project["id"],
+        )
+
+        recovered = session_mgr.recover_session(
+            external_id="ambiguous-external-id",
+            source="gemini",
+            machine_id="machine-1",
+            project_id=test_project["id"],
+        )
+
+        assert recovered is None
+        assert session_mgr.get_session_id("ambiguous-external-id", "gemini") is None
+
 
 class TestSessionManagerStatus:
     """Tests for session status management."""

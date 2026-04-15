@@ -184,10 +184,10 @@ def register_core_routes(
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
             provider = body.provider or "claude"
-            if provider not in {"claude", "gemini", "codex"}:
+            if provider not in {"claude", "gemini", "qwen", "codex"}:
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid provider. Must be one of: claude, gemini, codex",
+                    detail="Invalid provider. Must be one of: claude, gemini, qwen, codex",
                 )
 
             project_id = server.resolve_project_id(body.project_id, body.cwd)

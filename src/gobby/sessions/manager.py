@@ -39,6 +39,20 @@ def _merge_terminal_context(
     return merged
 
 
+def _recovery_score(session: Session) -> tuple[bool, bool, bool]:
+    """Score recovery candidates by metadata completeness only."""
+    return (
+        not bool(session.transcript_path),
+        not bool(session.title),
+        not bool(session.terminal_context),
+    )
+
+
+def _recovery_rank(session: Session) -> tuple[bool, bool, bool, str, str]:
+    """Rank cross-source recovery candidates by completeness, then age."""
+    return (*_recovery_score(session), session.created_at, session.id)
+
+
 class SessionManager:
     """
     Manages session lifecycle for AI coding assistants (local-first).
@@ -323,6 +337,49 @@ class SessionManager:
 
         except Exception as e:
             self.logger.debug(f"Failed to lookup session_id from database: {e}", exc_info=True)
+            return None
+
+    def recover_session(
+        self,
+        external_id: str,
+        source: str,
+        machine_id: str,
+        project_id: str | None,
+        session_type: str | None = None,
+    ) -> Session | None:
+        """Recover an existing session across sources when lookup is otherwise unambiguous."""
+        try:
+            candidates = self._storage.find_by_external_id_all_sources(
+                external_id=external_id,
+                machine_id=machine_id,
+                project_id=project_id,
+                session_type=session_type,
+            )
+            if not candidates:
+                return None
+
+            ranked = sorted(candidates, key=_recovery_rank)
+            if len(ranked) > 1 and _recovery_score(ranked[0]) == _recovery_score(ranked[1]):
+                self.logger.warning(
+                    "Ambiguous cross-source session recovery for external_id=%s source=%s "
+                    "machine_id=%s project_id=%s candidates=%s",
+                    external_id,
+                    source,
+                    machine_id,
+                    project_id,
+                    [candidate.id for candidate in ranked[:2]],
+                )
+                return None
+
+            recovered = ranked[0]
+            self.cache_session_mapping(external_id, source, recovered.id)
+            return recovered
+
+        except Exception as e:
+            self.logger.debug(
+                f"Failed to recover session_id across sources for external_id={external_id}: {e}",
+                exc_info=True,
+            )
             return None
 
     def get_session_id(self, external_id: str, source: str) -> str | None:

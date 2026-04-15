@@ -87,6 +87,8 @@ class CodexAppServerClient:
 
         # Thread tracking for session management
         self._threads: dict[str, CodexThread] = {}
+        self._pending_turn_prompts_by_thread: dict[str, str] = {}
+        self._turn_prompts: dict[str, str] = {}
 
     @property
     def state(self) -> CodexConnectionState:
@@ -435,6 +437,7 @@ class CodexAppServerClient:
             "threadId": thread_id,
             "input": inputs,
         }
+        self._pending_turn_prompts_by_thread[thread_id] = prompt
 
         # Add context prefix as instructions field
         if context_prefix:
@@ -452,9 +455,45 @@ class CodexAppServerClient:
             items=turn_data.get("items", []),
             error=turn_data.get("error"),
         )
+        if turn.id:
+            self._turn_prompts[turn.id] = prompt
 
         logger.debug(f"Started turn {turn.id} in thread {thread_id}")
         return turn
+
+    def _enrich_notification(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Attach best-effort client-side context to app-server notifications."""
+        if method == "turn/started":
+            prompt = params.get("prompt")
+            if not isinstance(prompt, str) or not prompt:
+                turn = params.get("turn")
+                turn_id = turn.get("id") if isinstance(turn, dict) else None
+                if isinstance(turn_id, str) and turn_id:
+                    prompt = self._turn_prompts.get(turn_id)
+                if not prompt:
+                    thread_id = params.get("threadId")
+                    if isinstance(thread_id, str) and thread_id:
+                        prompt = self._pending_turn_prompts_by_thread.get(thread_id)
+                if prompt:
+                    enriched = dict(params)
+                    enriched["prompt"] = prompt
+                    params = enriched
+
+            thread_id = params.get("threadId")
+            turn = params.get("turn")
+            turn_id = turn.get("id") if isinstance(turn, dict) else None
+            if isinstance(turn_id, str) and turn_id and isinstance(thread_id, str) and thread_id:
+                self._pending_turn_prompts_by_thread.pop(thread_id, None)
+            return params
+
+        if method == "turn/completed":
+            turn = params.get("turn")
+            turn_id = turn.get("id") if isinstance(turn, dict) else None
+            if isinstance(turn_id, str) and turn_id:
+                self._turn_prompts.pop(turn_id, None)
+            return params
+
+        return params
 
     async def interrupt_turn(self, thread_id: str, turn_id: str) -> None:
         """
@@ -780,6 +819,8 @@ class CodexAppServerClient:
                 elif "method" in message:
                     method = message["method"]
                     params = message.get("params", {})
+                    if isinstance(params, dict):
+                        params = self._enrich_notification(method, params)
 
                     logger.debug(f"Received notification: {method}")
 

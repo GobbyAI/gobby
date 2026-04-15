@@ -221,3 +221,22 @@ async def test_empty_flush_is_noop(trigger: CodeIndexTrigger, tmp_path: Path) ->
     with patch("asyncio.create_subprocess_exec") as mock_exec:
         await trigger._flush("nonexistent-project")
         mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_flush_cancel_before_subprocess_assignment_is_clean(
+    trigger: CodeIndexTrigger, tmp_path: Path
+) -> None:
+    """Cancellation before create_subprocess_exec assigns proc should not raise UnboundLocalError."""
+    gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
+    gcode_bin.parent.mkdir(parents=True, exist_ok=True)
+    gcode_bin.touch()
+    trigger._pending["proj-1"] = {"/src/foo.py"}
+    trigger._root_paths["proj-1"] = "/repo"
+
+    with (
+        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("asyncio.create_subprocess_exec", side_effect=asyncio.CancelledError),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await trigger._flush("proj-1")

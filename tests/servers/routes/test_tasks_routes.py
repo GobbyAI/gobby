@@ -40,16 +40,25 @@ def task_manager(temp_db) -> LocalTaskManager:
 
 
 @pytest.fixture
-def session_id(temp_db, project_id: str) -> str:
+def session(temp_db, project_id: str):
     session_manager = LocalSessionManager(temp_db)
-    session = session_manager.register(
+    return session_manager.register(
         external_id="test-external-session",
         machine_id="test-machine",
         source="codex",
         project_id=project_id,
         title="Test session",
     )
+
+
+@pytest.fixture
+def session_id(session) -> str:
     return session.id
+
+
+@pytest.fixture
+def session_ref(session) -> str:
+    return session.ref
 
 
 @pytest.fixture
@@ -58,6 +67,7 @@ def server(temp_db, task_manager):
     srv = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
+        session_manager=LocalSessionManager(temp_db),
         task_manager=task_manager,
     )
     return srv
@@ -437,6 +447,23 @@ class TestLifecycleMutations:
         assert data["state"]["owner_session_id"] == session_id
         assert data["state"]["is_claimed"] is True
 
+    def test_claim_task_resolves_session_ref(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        session_id: str,
+        session_ref: str,
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/claim",
+            json={"session_id": session_ref},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["claimed_by_session_id"] == session_id
+        assert data["state"]["owner_session_id"] == session_id
+        assert data["state"]["is_claimed"] is True
+
     def test_release_task_claim(
         self,
         client: TestClient,
@@ -524,6 +551,22 @@ class TestCloseTask:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "closed"
+
+    def test_close_with_session_ref(
+        self,
+        client: TestClient,
+        sample_task: dict,
+        session_id: str,
+        session_ref: str,
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/close",
+            json={"session_id": session_ref},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "closed"
+        assert data["closed_in_session_id"] == session_id
 
     def test_close_with_invalid_commit_sha_returns_400(
         self, client: TestClient, sample_task: dict

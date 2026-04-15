@@ -57,6 +57,7 @@ class RuleDefinition(BaseModel):
 class RuleTriggerEvent(str, Enum):
     """Events that workflow rules can respond to."""
 
+    TURN_START = "turn_start"
     TURN_END = "turn_end"
 
     SESSION_START = "session_start"

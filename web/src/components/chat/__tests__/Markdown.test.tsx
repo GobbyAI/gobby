@@ -76,4 +76,22 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('Paragraph 1')
     expect(container.textContent).toContain('Paragraph 2')
   })
+
+  it('strips permissions and collaboration wrapper tags', () => {
+    const { container } = render(
+      <Markdown
+        content={
+          '<permissions instructions>Filesystem sandboxing defines which files can be read or written.</permissions instructions><collaboration_mode>Collaboration Mode: Default</collaboration_mode>'
+        }
+        id="test-10"
+      />,
+    )
+
+    expect(container.textContent).toContain(
+      'Filesystem sandboxing defines which files can be read or written.',
+    )
+    expect(container.textContent).toContain('Collaboration Mode: Default')
+    expect(container.textContent).not.toContain('permissions instructions')
+    expect(container.textContent).not.toContain('collaboration_mode')
+  })
 })

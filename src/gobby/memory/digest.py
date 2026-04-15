@@ -62,7 +62,7 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
 
     Args:
         transcript_path: Path to the JSONL transcript file
-        source: CLI source (claude, gemini, codex, etc.)
+        source: CLI source (claude, gemini, qwen, codex, etc.)
 
     Returns:
         Tuple of (prompt_text, response_text). Empty strings if not found.
@@ -117,7 +117,7 @@ async def _read_undigested_turns(
 
     Args:
         transcript_path: Path to the JSONL transcript file
-        source: CLI source (claude, gemini, codex, etc.)
+        source: CLI source (claude, gemini, qwen, codex, etc.)
         digested_count: Number of pairs already digested
 
     Returns:
@@ -359,6 +359,10 @@ async def _synthesize_title(
     ``call_feature`` for tier-based fallback.  Otherwise falls back to
     the legacy ``provider.generate_text`` path.
     """
+    existing_title = str(getattr(session, "title", "") or "").strip()
+    if existing_title:
+        return None
+
     try:
         from gobby.prompts.loader import PromptLoader
 
@@ -463,15 +467,18 @@ async def build_turn_and_digest(
             logger.warning(f"build_turn_and_digest: Session {session_id} not found")
             return None
 
+        existing_title = str(getattr(session, "title", "") or "").strip()
+        needs_title = not bool(existing_title)
+        existing_digest = getattr(session, "digest_markdown", None) or ""
+
         # 2. Resolve undigested pairs
         max_turns = getattr(digest_config, "max_turns", 50) if digest_config else 50
         num_pairs = getattr(digest_config, "num_pairs", 50) if digest_config else 50
         resolved = await _resolve_undigested_pairs(
             session, prompt_text, session_id, max_turns, num_pairs
         )
-        if resolved is None:
+        if resolved is None and (not needs_title or not existing_digest):
             return None
-        undigested_pairs, input_hash = resolved
 
         # 3. Resolve LLM provider/model
         if digest_config:
@@ -483,6 +490,34 @@ async def build_turn_and_digest(
         else:
             provider = llm_service.get_default_provider()
             model = None
+
+        if resolved is None:
+            try:
+                title = await _synthesize_title(
+                    provider,
+                    model,
+                    existing_digest,
+                    session_id,
+                    session_manager,
+                    session,
+                    db,
+                    llm_service=llm_service,
+                    digest_config=digest_config,
+                )
+            except Exception as e:
+                logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
+                return None
+
+            if not title:
+                return None
+
+            return {
+                "title": title,
+                "title_only": True,
+                "digest_length": len(existing_digest),
+            }
+
+        undigested_pairs, input_hash = resolved
 
         # 4. Build turn record via LLM
         last_turn = await _build_turn_record(provider, model, undigested_pairs, db)
@@ -511,22 +546,23 @@ async def build_turn_and_digest(
         }
 
         # 7. Synthesize title from updated digest
-        try:
-            title = await _synthesize_title(
-                provider,
-                model,
-                updated_digest,
-                session_id,
-                session_manager,
-                session,
-                db,
-                llm_service=llm_service,
-                digest_config=digest_config,
-            )
-            if title:
-                result["title"] = title
-        except Exception as e:
-            logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
+        if needs_title:
+            try:
+                title = await _synthesize_title(
+                    provider,
+                    model,
+                    updated_digest,
+                    session_id,
+                    session_manager,
+                    session,
+                    db,
+                    llm_service=llm_service,
+                    digest_config=digest_config,
+                )
+                if title:
+                    result["title"] = title
+            except Exception as e:
+                logger.warning(f"build_turn_and_digest: Title synthesis failed: {e}")
 
         return result
 

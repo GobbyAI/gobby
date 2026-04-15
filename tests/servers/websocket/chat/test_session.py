@@ -353,6 +353,7 @@ class TestCreateChatSessionInner:
                 provider="gemini",
                 conversation_id="conv-gemini",
                 model=None,
+                reasoning_effort=None,
             )
             assert mock_session.system_prompt_override == (
                 "## Role\nYou are Gobby\n\n"
@@ -361,6 +362,115 @@ class TestCreateChatSessionInner:
             )
             agent_body.build_prompt_preamble.assert_not_called()
             mock_inject_skills.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_existing_web_chat_source_wins_over_stale_message_provider(
+        self, mixin: DummyMixin
+    ) -> None:
+        existing_db_sess = MagicMock()
+        existing_db_sess.id = "db-existing"
+        existing_db_sess.seq_num = 88
+        existing_db_sess.session_type = "web_chat"
+        existing_db_sess.source = "codex"
+        existing_db_sess.project_id = "proj-1"
+        existing_db_sess.external_id = None
+        existing_db_sess.usage_output_tokens = 0
+        existing_db_sess.chat_mode = None
+        existing_db_sess.approved_tools_json = None
+
+        mock_session = AsyncMock()
+        mock_session.provider = "codex"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = MagicMock()
+        mixin.session_manager.get.return_value = existing_db_sess
+
+        await mixin._create_chat_session_inner("conv-existing", provider="gemini")
+
+        mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
+            provider="codex",
+            conversation_id="conv-existing",
+            model=None,
+            reasoning_effort=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_resume_reuses_existing_terminal_session_row(self, mixin: DummyMixin):
+        existing_terminal = MagicMock()
+        existing_terminal.id = "term-row-id"
+        existing_terminal.seq_num = 27
+        existing_terminal.session_type = "terminal"
+        existing_terminal.source = "claude"
+        existing_terminal.project_id = "proj-1"
+        existing_terminal.external_id = "sdk-session-123"
+        existing_terminal.usage_output_tokens = 0
+        existing_terminal.chat_mode = "accept_edits"
+        existing_terminal.approved_tools_json = None
+        existing_terminal.model = "claude-opus-4-6"
+
+        normalized_session = MagicMock()
+        normalized_session.id = "term-row-id"
+        normalized_session.seq_num = 27
+        normalized_session.session_type = "web_chat"
+        normalized_session.source = "claude"
+        normalized_session.project_id = "proj-1"
+        normalized_session.external_id = "sdk-session-123"
+        normalized_session.usage_output_tokens = 0
+        normalized_session.chat_mode = "accept_edits"
+        normalized_session.approved_tools_json = None
+        normalized_session.model = "claude-opus-4-6"
+
+        with patch("gobby.servers.websocket.chat._session.ChatSession") as MockSessionClass:
+            mock_session = AsyncMock()
+            mock_session.chat_mode = "plan"
+            mock_session.db_session_id = None
+            mock_session.resume_session_id = None
+            mock_session.project_path = None
+            mock_session.project_id = None
+            mock_session.system_prompt_override = None
+            mock_session.model = "claude-opus-4-6"
+            MockSessionClass.return_value = mock_session
+
+            mixin.session_manager = MagicMock()
+            mixin.session_manager.db = MagicMock()
+            mixin.session_manager.get.return_value = existing_terminal
+            mixin.session_manager.update.return_value = normalized_session
+
+            session = await mixin._create_chat_session_inner(
+                "term-row-id",
+                model="claude-opus-4-6",
+                project_id="proj-1",
+                resume_session_id="sdk-session-123",
+                provider="claude",
+            )
+
+            assert session == mock_session
+            assert mock_session.db_session_id == "term-row-id"
+            assert mock_session.seq_num == 27
+            assert mock_session.resume_session_id == "sdk-session-123"
+            assert mock_session.chat_mode == "accept_edits"
+            mock_session.start.assert_awaited_once_with(model="claude-opus-4-6")
+            mixin.session_manager.register.assert_not_called()
+            mixin.session_manager.update.assert_any_call(
+                "term-row-id",
+                source="claude",
+                model="claude-opus-4-6",
+                project_id="proj-1",
+                session_type="web_chat",
+                status="active",
+            )
+            mixin.session_manager.update_model.assert_called_once_with(
+                "term-row-id",
+                "claude-opus-4-6",
+            )
 
     @pytest.mark.asyncio
     async def test_fire_session_end(self, mixin: DummyMixin):

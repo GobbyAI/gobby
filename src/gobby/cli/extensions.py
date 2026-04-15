@@ -76,7 +76,7 @@ def _get_hook_description(event_type: HookEventType) -> str:
 @click.option(
     "--source",
     "-s",
-    type=click.Choice(["claude", "gemini", "codex"]),
+    type=click.Choice(["claude", "gemini", "qwen", "codex"]),
     default="claude",
     help="Source CLI to simulate",
 )

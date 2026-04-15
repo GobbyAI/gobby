@@ -14,6 +14,8 @@ from gobby.servers.websocket.chat.provider_backends import (
     GeminiManagedChatSession,
     GeminiWebChatBackend,
     ProviderBackendHealth,
+    QwenManagedChatSession,
+    QwenWebChatBackend,
 )
 
 
@@ -35,6 +37,7 @@ class WebChatRuntimeManager:
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
         )
         self._gemini_backend = GeminiWebChatBackend(default_model=gemini_default_model)
+        self._qwen_backend = QwenWebChatBackend()
 
     @property
     def codex_client(self) -> CodexAppServerClient | None:
@@ -46,13 +49,16 @@ class WebChatRuntimeManager:
         if background:
             await self._codex_backend.start(background=True)
             await self._gemini_backend.start(background=True)
+            await self._qwen_backend.start(background=True)
             return
 
         await self._codex_backend.start()
         await self._gemini_backend.start()
+        await self._qwen_backend.start()
 
     async def stop(self) -> None:
         """Stop daemon-owned provider backends."""
+        await self._qwen_backend.stop()
         await self._gemini_backend.stop()
         await self._codex_backend.stop()
 
@@ -62,6 +68,8 @@ class WebChatRuntimeManager:
             return self._codex_backend.health()
         if provider == "gemini":
             return self._gemini_backend.health()
+        if provider == "qwen":
+            return self._qwen_backend.health()
         if provider == "claude":
             return self._claude_backend.health()
         return ProviderBackendHealth(provider=provider, available=False, startup_error="unknown")
@@ -71,6 +79,7 @@ class WebChatRuntimeManager:
         return {
             "claude": self.health("claude").to_dict(),
             "gemini": self.health("gemini").to_dict(),
+            "qwen": self.health("qwen").to_dict(),
             "codex": self.health("codex").to_dict(),
         }
 
@@ -80,6 +89,7 @@ class WebChatRuntimeManager:
         provider: str,
         conversation_id: str,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create a provider-specific session wrapper for web chat."""
         if provider == "gemini":
@@ -87,12 +97,21 @@ class WebChatRuntimeManager:
                 conversation_id=conversation_id,
                 _backend=self._gemini_backend,
                 _model=model,
+                reasoning_effort=reasoning_effort,
+            )
+        if provider == "qwen":
+            return QwenManagedChatSession(
+                conversation_id=conversation_id,
+                _backend=self._qwen_backend,
+                _model=model,
+                reasoning_effort=reasoning_effort,
             )
         if provider == "codex":
             return CodexManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._codex_backend,
                 _model=model,
+                reasoning_effort=reasoning_effort,
                 _transcript_retry_attempts=self._codex_backend.transcript_retry_attempts,
                 _transcript_retry_delay_seconds=self._codex_backend.transcript_retry_delay_seconds,
             )
@@ -100,4 +119,6 @@ class WebChatRuntimeManager:
         session: ChatSessionProtocol = self._claude_backend.create_session(conversation_id)
         if isinstance(session, ChatSession) and model:
             session._model = model
+        if isinstance(session, ChatSession):
+            session.reasoning_effort = reasoning_effort
         return session

@@ -86,7 +86,7 @@ describe('KanbanBoard', () => {
 
     expect(screen.getByText('Ready')).toBeTruthy()
     expect(screen.getByText('In Progress')).toBeTruthy()
-    expect(screen.getByText('Review')).toBeTruthy()
+    expect(screen.getByText('Needs Review')).toBeTruthy()
     expect(screen.getByText('Blocked')).toBeTruthy()
     expect(screen.getByText('Merge Ready')).toBeTruthy()
     expect(screen.getByText('Closed')).toBeTruthy()

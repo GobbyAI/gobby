@@ -3,10 +3,10 @@ import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { SourceIcon } from "../shared/SourceIcon";
 import type { GobbySession } from "../../hooks/useSessions";
 import { useSessionDetail } from "../../hooks/useSessionDetail";
-import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { MessageItem } from "../chat/MessageItem";
 import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
+import { getSessionTitleText } from "../../lib/sessionTitle";
 import {
   SessionInteractionModal,
   type InteractionMode,
@@ -29,8 +29,6 @@ interface SessionsTabProps {
   isMobile?: boolean;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
-  watchingSessionIds?: Set<string>;
-  onUnwatch?: (sessionId: string) => void;
   onSwapSession?: (target: SwappedSessionTarget) => void;
 }
 
@@ -54,6 +52,8 @@ interface SessionContextMenu {
   y: number;
   entry: SessionEntry;
 }
+
+const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
@@ -99,27 +99,29 @@ export const SessionsTab = memo(function SessionsTab({
   onKillAgent,
   onExpireSession,
   chatSessionId,
-  isMobile = false,
   focusSessionId,
   onFocusHandled,
-  watchingSessionIds,
-  onUnwatch,
   onSwapSession,
 }: SessionsTabProps) {
   const [agents, setAgents] = useState<RunningAgent[]>([]);
   const [activitySessions, setActivitySessions] = useState<GobbySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    null,
-  );
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(WATCHING_SESSION_ID_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [topHeight, setTopHeight] = useState(35);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
   const [modalMode, setModalMode] = useState<InteractionMode | null>(null);
   const [modalEntry, setModalEntry] = useState<SessionEntry | null>(null);
+  const initialSelectionAppliedRef = useRef(false);
+  const selectionClearedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { confirm, ConfirmDialogElement } = useConfirmDialog();
 
   // No-op artifact context for MessageItem rendering
   const noopArtifactCtx = useMemo(
@@ -150,9 +152,7 @@ export const SessionsTab = memo(function SessionsTab({
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
       const isWatchable = (s: GobbySession) =>
-        s.source !== "pipeline" &&
-        s.source !== "cron" &&
-        s.id !== chatSessionId;
+        s.source !== "pipeline" && s.source !== "cron";
       const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
       const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
       setActivitySessions([...active, ...paused]);
@@ -164,7 +164,7 @@ export const SessionsTab = memo(function SessionsTab({
     } finally {
       setLoading(false);
     }
-  }, [projectId, chatSessionId]);
+  }, [projectId]);
 
   // Initial fetch + poll every 5s
   useEffect(() => {
@@ -190,8 +190,9 @@ export const SessionsTab = memo(function SessionsTab({
         id: a.session_id ?? a.run_id,
         type: "agent" as const,
         label:
-          matchedSession?.title ??
-          (a.mode === "agent"
+          matchedSession
+            ? getSessionTitleText(matchedSession.title)
+            : (a.mode === "agent"
             ? `Agent ${a.run_id.slice(0, 8)}`
             : `Session ${a.run_id.slice(0, 8)}`),
         provider: a.provider,
@@ -212,7 +213,7 @@ export const SessionsTab = memo(function SessionsTab({
         return {
           id: s.id,
           type: "cli" as const,
-          label: s.title ?? `CLI ${s.ref}`,
+          label: getSessionTitleText(s.title),
           provider: s.source ?? "unknown",
           status: (s.status === "paused" ? "paused" : "active") as
             | "active"
@@ -228,30 +229,100 @@ export const SessionsTab = memo(function SessionsTab({
 
     // Filter out entries being expired
     return [...agentEntries, ...sessionEntries].filter(
-      (e) => !expiringIds.has(e.id),
+      (e) => !expiringIds.has(e.id) && e.id !== chatSessionId,
     );
-  }, [agents, activitySessions, expiringIds]);
+  }, [agents, activitySessions, chatSessionId, expiringIds]);
 
-  // Auto-close watching view when the selected session disappears from the list
+  // Seed the watching pane once on load, keep it stable, and only fall back
+  // when the selected entry disappears or the list becomes empty.
   useEffect(() => {
-    if (selectedSessionId && !loading) {
-      const stillPresent = entries.some((e) => e.id === selectedSessionId);
-      if (!stillPresent) {
+    if (loading) {
+      return;
+    }
+
+    if (entries.length === 0) {
+      selectionClearedRef.current = false;
+      if (selectedSessionId !== null) {
         setSelectedSessionId(null);
       }
+      return;
     }
-  }, [entries, selectedSessionId, loading]);
 
-  // Programmatic focus: select a session when requested from outside
-  useEffect(() => {
-    if (focusSessionId && !loading) {
+    const hasFocusedEntry =
+      focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
+
+    if (!initialSelectionAppliedRef.current) {
+      initialSelectionAppliedRef.current = true;
+      selectionClearedRef.current = false;
+      // Honor an explicit focus request over the persisted selection, then
+      // the persisted selection (lazy init from localStorage) if it still
+      // points at a visible entry, then fall back to the first entry.
+      const persistedStillPresent =
+        selectedSessionId != null &&
+        entries.some((entry) => entry.id === selectedSessionId);
+      const nextSelection = hasFocusedEntry
+        ? focusSessionId
+        : persistedStillPresent
+          ? selectedSessionId
+          : entries[0].id;
+      if (nextSelection !== selectedSessionId) {
+        setSelectedSessionId(nextSelection);
+      }
+      if (hasFocusedEntry) {
+        onFocusHandled?.();
+      }
+      return;
+    }
+
+    if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
+      selectionClearedRef.current = false;
       setSelectedSessionId(focusSessionId);
       onFocusHandled?.();
+      return;
     }
-  }, [focusSessionId, loading, onFocusHandled]);
+
+    if (!selectedSessionId) {
+      if (selectionClearedRef.current) {
+        return;
+      }
+      setSelectedSessionId(entries[0].id);
+      return;
+    }
+
+    const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
+    if (!stillPresent) {
+      if (selectedSessionId === chatSessionId && !hasFocusedEntry) {
+        selectionClearedRef.current = true;
+        setSelectedSessionId(null);
+        return;
+      }
+      selectionClearedRef.current = false;
+      setSelectedSessionId(entries[0].id);
+    }
+  }, [
+    chatSessionId,
+    entries,
+    focusSessionId,
+    loading,
+    onFocusHandled,
+    selectedSessionId,
+  ]);
+
+  useEffect(() => {
+    try {
+      if (selectedSessionId) {
+        localStorage.setItem(WATCHING_SESSION_ID_KEY, selectedSessionId);
+      } else {
+        localStorage.removeItem(WATCHING_SESSION_ID_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [selectedSessionId]);
 
   // Fetch selected session messages
-  const { messages, isLoading } = useSessionDetail(selectedSessionId);
+  const { messages, isLoading, transcriptStatus } =
+    useSessionDetail(selectedSessionId);
   const chatMessages: ChatMessage[] = useMemo(
     () =>
       messages.map((m) => {
@@ -292,7 +363,8 @@ export const SessionsTab = memo(function SessionsTab({
   }, [chatMessages.length]);
 
   const handleSelect = useCallback((id: string) => {
-    setSelectedSessionId((prev) => (prev === id ? null : id));
+    selectionClearedRef.current = false;
+    setSelectedSessionId(id);
   }, []);
 
   const selectedEntry = useMemo(
@@ -300,37 +372,26 @@ export const SessionsTab = memo(function SessionsTab({
     [entries, selectedSessionId],
   );
 
+  const emptyStateMessage = useMemo(() => {
+    if (transcriptStatus?.content_state === "unparseable") {
+      return "Transcript exists but could not be parsed";
+    }
+    if (transcriptStatus?.content_state === "missing") {
+      return "Session has no transcript";
+    }
+    return "No messages yet";
+  }, [transcriptStatus]);
+
   const handleExpire = useCallback(
-    async (entry: SessionEntry) => {
-      const confirmed = await confirm({
-        title: "Expire session",
-        description:
-          entry.type === "agent"
-            ? "This will cancel the agent and terminate its session."
-            : "This will expire the session and kill any associated terminal.",
-        confirmLabel: "Expire",
-        destructive: true,
-      });
-      if (!confirmed) return;
+    (entry: SessionEntry) => {
       setExpiringIds((prev) => new Set(prev).add(entry.id));
-      setSelectedSessionId((prev) => (prev === entry.id ? null : prev));
       if (entry.type === "agent" && entry.runId) {
         onKillAgent?.(entry.runId);
       } else {
         onExpireSession?.(entry.id);
       }
     },
-    [onKillAgent, onExpireSession, confirm],
-  );
-
-  // Context menu handlers
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, entry: SessionEntry) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setCtxMenu({ x: e.clientX, y: e.clientY, entry });
-    },
-    [],
+    [onKillAgent, onExpireSession],
   );
 
   const handleMenuButtonClick = useCallback(
@@ -396,7 +457,6 @@ export const SessionsTab = memo(function SessionsTab({
 
   return (
     <div className="flex flex-col h-full">
-      {ConfirmDialogElement}
       {/* Session list */}
       <div
         className={`overflow-y-auto ${selectedSessionId ? "border-b border-border" : "flex-1"}`}
@@ -414,7 +474,6 @@ export const SessionsTab = memo(function SessionsTab({
               key={`${entry.type}-${entry.id}`}
               className={`session-entry${isSelected ? " session-entry--active" : ""}${isPaused ? " session-entry--paused" : ""}`}
               onClick={() => handleSelect(entry.id)}
-              onContextMenu={(e) => handleContextMenu(e, entry)}
             >
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <SourceIcon source={entry.provider} size={14} />
@@ -424,47 +483,23 @@ export const SessionsTab = memo(function SessionsTab({
               </div>
               <div className="flex items-center gap-1.5">
                 {renderBadges(entry)}
-                {isMobile ? (
-                  <button
-                    className="session-more-btn"
-                    onClick={(e) => handleMenuButtonClick(e, entry)}
-                    title="Session actions"
+                <button
+                  className="session-more-btn"
+                  onClick={(e) => handleMenuButtonClick(e, entry)}
+                  title="Session actions"
+                  aria-label="Session actions"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
                   >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <circle cx="12" cy="5" r="2" />
-                      <circle cx="12" cy="12" r="2" />
-                      <circle cx="12" cy="19" r="2" />
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    className="session-expire-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleExpire(entry);
-                    }}
-                    title="Expire session"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
-                )}
+                    <circle cx="12" cy="5" r="2" />
+                    <circle cx="12" cy="12" r="2" />
+                    <circle cx="12" cy="19" r="2" />
+                  </svg>
+                </button>
               </div>
             </div>
           );
@@ -503,7 +538,8 @@ export const SessionsTab = memo(function SessionsTab({
             <div className="flex flex-none items-center gap-3">
               {selectedEntry && onSwapSession && (
                 <button
-                  className="text-xs text-accent hover:text-foreground"
+                  type="button"
+                  className="session-pane-action"
                   onClick={() => {
                     if (selectedSessionId) {
                       onSwapSession({
@@ -511,24 +547,12 @@ export const SessionsTab = memo(function SessionsTab({
                         sessionType: selectedEntry.sessionType ?? null,
                         agentRunId: selectedEntry.agentRunId ?? null,
                       });
-                      setSelectedSessionId(null);
                     }
                   }}
                 >
                   Swap
                 </button>
               )}
-              <button
-                className="text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  if (selectedSessionId && watchingSessionIds?.has(selectedSessionId)) {
-                    onUnwatch?.(selectedSessionId);
-                  }
-                  setSelectedSessionId(null);
-                }}
-              >
-                Close
-              </button>
             </div>
           </div>
 
@@ -541,7 +565,7 @@ export const SessionsTab = memo(function SessionsTab({
                 </div>
               ) : chatMessages.length === 0 ? (
                 <div className="activity-tab-empty">
-                  <p>No messages yet</p>
+                  <p>{emptyStateMessage}</p>
                 </div>
               ) : (
                 <>

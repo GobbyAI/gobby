@@ -1,7 +1,7 @@
 """Tests for auto-task rules.
 
 Verifies auto-task rules sync correctly and have proper structure:
-- inject-autonomous-mode: inject_context on before_agent (when auto_task_ref set)
+- inject-autonomous-mode: inject_context on turn_start (when auto_task_ref set)
 - guide-task-continuation: block on turn_end (when task tree incomplete)
 - notify-task-tree-complete: inject_context on turn_end (when task tree complete)
 """
@@ -100,7 +100,7 @@ class TestInjectAutoTaskContext:
         row = manager.get_by_name("inject-autonomous-mode")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_agent"
+        assert body.event.value == "turn_start"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert (

@@ -192,6 +192,12 @@ _CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
         ".gemini/settings.json",
         "~/.gemini/settings.json",
     ),
+    "qwen": (
+        "Qwen CLI",
+        "~/.qwen/settings.json",
+        ".qwen/settings.json",
+        "~/.qwen/settings.json",
+    ),
     "codex": ("Codex", "~/.codex/hooks.json", ".codex/hooks.json", None),
 }
 
@@ -203,7 +209,7 @@ def _run_standard_cli_install(
     mode: str,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run install + echo for a standard CLI (claude, gemini, codex)."""
+    """Run install + echo for a standard CLI (claude, gemini, qwen, codex)."""
     display_name, global_config, project_subpath, mcp_path = _CLI_INSTALL_META[cli_name]
 
     click.echo("-" * 40)
@@ -636,6 +642,7 @@ def _echo_uninstall_summary(results: dict[str, dict[str, Any]]) -> bool:
 _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
     "claude": ("Claude Code", "hooks from settings"),
     "gemini": ("Gemini CLI", "hooks from settings"),
+    "qwen": ("Qwen CLI", "hooks from settings"),
     "codex": ("Codex", "hooks from settings"),
 }
 

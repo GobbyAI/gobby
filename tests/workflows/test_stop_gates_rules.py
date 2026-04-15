@@ -123,8 +123,8 @@ class TestStopAttemptsPlumbing:
         assert variables.get("stop_attempts") == 4
 
     @pytest.mark.asyncio
-    async def test_before_agent_resets_stop_attempts(self, db) -> None:
-        """BEFORE_AGENT should reset stop_attempts to 0."""
+    async def test_turn_start_boundary_resets_stop_attempts(self, db) -> None:
+        """The semantic turn_start boundary should reset stop_attempts to 0."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"stop_attempts": 5}
 
@@ -326,14 +326,14 @@ class TestCompactPreservesTriagedState:
 class TestBeforeAgentResetsPlumbing:
     """Test hardcoded BEFORE_AGENT resets in RuleEngine.
 
-    BEFORE_AGENT clears per-turn stop-cycle state: tool_block_pending,
+    The semantic turn_start boundary clears per-turn stop-cycle state: tool_block_pending,
     stop_attempts, consecutive_tool_blocks, _last_blocked_tool.
     It does NOT reset errors_resolved (session-scoped).
     """
 
     @pytest.mark.asyncio
     async def test_clears_tool_block_pending(self, db) -> None:
-        """BEFORE_AGENT should clear tool_block_pending."""
+        """The semantic turn_start boundary should clear tool_block_pending."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"tool_block_pending": True}
 
@@ -344,7 +344,7 @@ class TestBeforeAgentResetsPlumbing:
 
     @pytest.mark.asyncio
     async def test_preserves_errors_resolved(self, db) -> None:
-        """BEFORE_AGENT should NOT reset errors_resolved (fix for infinite loop bug)."""
+        """The semantic turn_start boundary should NOT reset errors_resolved."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"errors_resolved": True}
 
@@ -355,7 +355,7 @@ class TestBeforeAgentResetsPlumbing:
 
     @pytest.mark.asyncio
     async def test_full_reset_on_new_turn(self, db) -> None:
-        """BEFORE_AGENT should reset stop-cycle variables (but not errors_resolved)."""
+        """The semantic turn_start boundary should reset stop-cycle variables."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "tool_block_pending": True,
@@ -810,8 +810,8 @@ class TestConsecutiveBlockScoping:
         assert variables.get("consecutive_tool_blocks") == 1
 
     @pytest.mark.asyncio
-    async def test_before_agent_resets_last_blocked_tool(self, db) -> None:
-        """BEFORE_AGENT should reset _last_blocked_tool alongside the counter."""
+    async def test_turn_start_boundary_resets_last_blocked_tool(self, db) -> None:
+        """The semantic turn_start boundary should reset _last_blocked_tool."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "TodoWrite",

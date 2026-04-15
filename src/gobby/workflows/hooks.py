@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_turn_start_event(event_type: HookEventType | str) -> bool:
+    value = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
+    return value == HookEventType.BEFORE_AGENT.value
+
+
 def _is_turn_end_event(event_type: HookEventType | str) -> bool:
     value = event_type.value if isinstance(event_type, HookEventType) else str(event_type)
     return value in {HookEventType.AFTER_AGENT.value, HookEventType.STOP.value}
@@ -272,8 +277,8 @@ class WorkflowHookHandler:
             detect_bash_commit(event, variables, session_id)
             detect_mcp_call(event, variables, session_id)
 
-        # Plan mode detection (BEFORE_AGENT for system reminder tags)
-        if event.event_type == HookEventType.BEFORE_AGENT:
+        # Plan mode detection on the semantic start-of-turn boundary
+        if _is_turn_start_event(event.event_type):
             prompt = (event.data or {}).get("prompt", "") or ""
             if prompt:
                 detect_plan_mode_from_context(prompt, variables, session_id)

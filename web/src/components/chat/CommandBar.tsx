@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
-import type { SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
+import { getSessionTitleText } from '../../lib/sessionTitle'
 
 interface RunningAgent {
   run_id: string
@@ -14,12 +14,6 @@ interface RunningAgent {
 interface CommandBarProps {
   sessionRef: string | null
   title: string | null
-  viewingMeta?: SessionObservationMeta | null
-  isAttached?: boolean
-  sessionInteractionMode?: SessionInteractionMode
-  isAutonomousSession?: boolean
-  onAttach?: () => void
-  onDetach?: () => void
   onOpenPalette: () => void
   onOpenActiveSessions: () => void
   onNewChat: (agentName?: string) => void
@@ -34,34 +28,9 @@ interface CommandBarProps {
   isPanelPinned: boolean
 }
 
-const SOURCE_CONFIG: Record<string, { label: string; dot: string }> = {
-  claude: { label: 'Claude', dot: 'bg-purple-400' },
-  gemini: { label: 'Gemini', dot: 'bg-green-400' },
-  codex: { label: 'Codex', dot: 'bg-blue-400' },
-}
-
-function formatChatMode(chatMode: string | null | undefined): string | null {
-  switch (chatMode) {
-    case 'plan':
-      return 'Plan'
-    case 'accept_edits':
-      return 'Act'
-    case 'bypass':
-      return 'Auto'
-    default:
-      return null
-  }
-}
-
 export function CommandBar({
   sessionRef,
   title,
-  viewingMeta,
-  isAttached,
-  sessionInteractionMode = 'none',
-  isAutonomousSession = false,
-  onAttach,
-  onDetach,
   onOpenPalette,
   onOpenActiveSessions: _onOpenActiveSessions,
   onNewChat,
@@ -75,8 +44,6 @@ export function CommandBar({
   agentHasProject: _agentHasProject = false,
   isPanelPinned,
 }: CommandBarProps) {
-  const isObserving = !!viewingMeta
-
   const handleNewChat = useCallback(() => {
     onNewChat()
   }, [onNewChat])
@@ -85,33 +52,21 @@ export function CommandBar({
     <div className="command-bar">
       {/* Left cluster — Session context */}
       <div className="command-bar-left">
-        {isObserving && viewingMeta ? (
-          <ObservationSegment
-            sessionRef={sessionRef}
-            viewingMeta={viewingMeta}
-            isAttached={!!isAttached}
-            sessionInteractionMode={sessionInteractionMode}
-            isAutonomousSession={isAutonomousSession}
-            onAttach={onAttach}
-            onDetach={onDetach}
-          />
-        ) : (
-          <button
-            type="button"
-            className="command-bar-session"
-            data-testid="chat-session-selector"
-            onClick={onOpenPalette}
-            title="Switch session (Cmd+K)"
-          >
-            {sessionRef && (
-              <span className="command-bar-ref">{sessionRef}</span>
-            )}
-            <span className="command-bar-title">
-              {title ?? 'New Chat Session'}
-            </span>
-            <span className="command-bar-caret">&#9662;</span>
-          </button>
-        )}
+        <button
+          type="button"
+          className="command-bar-session"
+          data-testid="chat-session-selector"
+          onClick={onOpenPalette}
+          title="Switch session (Cmd+K)"
+        >
+          {sessionRef && (
+            <span className="command-bar-ref">{sessionRef}</span>
+          )}
+          <span className="command-bar-title">
+            {getSessionTitleText(title)}
+          </span>
+          <span className="command-bar-caret">&#9662;</span>
+        </button>
       </div>
 
       {/* Right cluster — Live activity */}
@@ -134,62 +89,6 @@ export function CommandBar({
           <PanelIcon pinned={isPanelPinned} />
         </button>
       </div>
-    </div>
-  )
-}
-
-function ObservationSegment({
-  sessionRef,
-  viewingMeta,
-  isAttached,
-  sessionInteractionMode,
-  isAutonomousSession,
-  onAttach,
-  onDetach,
-}: {
-  sessionRef: string | null
-  viewingMeta: SessionObservationMeta
-  isAttached: boolean
-  sessionInteractionMode: SessionInteractionMode
-  isAutonomousSession: boolean
-  onAttach?: () => void
-  onDetach?: () => void
-}) {
-  const sourceConf = SOURCE_CONFIG[viewingMeta.source]
-  const sourceLabel = sourceConf?.label ?? viewingMeta.source
-  const sourceDot = sourceConf?.dot ?? 'bg-neutral-400'
-  const isLive = viewingMeta.status === 'active'
-  const modeLabel = formatChatMode(viewingMeta.chatMode)
-
-  const statusLabel =
-    sessionInteractionMode === 'proxy' || isAttached ? 'Attached' : 'Observing'
-
-  return (
-    <div className="command-bar-observation">
-      {sessionRef && (
-        <span className="command-bar-ref">{sessionRef}</span>
-      )}
-      <span className="command-bar-title">
-        {viewingMeta.title ?? 'Terminal session'}
-      </span>
-      <span className={`inline-block w-1.5 h-1.5 rounded-full ${sourceDot}`} />
-      <span className="text-muted-foreground text-[11px]">{sourceLabel}</span>
-      {modeLabel && (
-        <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-          {modeLabel}
-        </span>
-      )}
-      <span className="text-muted-foreground/60 text-[11px]">&middot;</span>
-      <span className="text-muted-foreground text-[11px]">
-        {statusLabel}
-        {isLive && statusLabel === 'Observing' && ' (live)'}
-      </span>
-      {(() => {
-        if (isAutonomousSession && !isAttached) return null
-        if (isAttached && onDetach) return <button className="command-bar-obs-btn" onClick={onDetach}>Detach</button>
-        if (!isAttached && onAttach) return <button className="command-bar-obs-btn command-bar-obs-btn--attach" onClick={onAttach}>Attach</button>
-        return null
-      })()}
     </div>
   )
 }

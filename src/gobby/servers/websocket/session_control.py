@@ -65,6 +65,7 @@ class SessionControlMixin:
             project_id: str | None = None,
             resume_session_id: str | None = None,
             provider: str | None = None,
+            reasoning_effort: str | None = None,
         ) -> ChatSessionProtocol: ...
 
     # -- Session lifecycle handlers ------------------------------------------

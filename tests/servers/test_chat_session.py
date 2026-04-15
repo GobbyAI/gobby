@@ -300,6 +300,39 @@ class TestProjectRouting:
             # CWD should fall back to Path.cwd() since _find_project_root returns None
             assert captured_options["cwd"] == expected_cwd
 
+    @pytest.mark.asyncio
+    async def test_start_passes_reasoning_effort_to_claude_options(
+        self, session: ChatSession
+    ) -> None:
+        """Claude sessions should forward supported effort levels to the SDK."""
+        session.reasoning_effort = "high"
+
+        captured_options: dict[str, Any] = {}
+
+        def capture_options(**kwargs: Any) -> MagicMock:
+            captured_options.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.servers.chat_session._build_gobby_mcp_entry",
+                return_value={"command": "gobby", "args": ["mcp-server"]},
+            ),
+            patch("gobby.servers.chat_session._find_project_root", return_value=None),
+            patch(
+                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
+            ),
+            patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
+            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client_cls.return_value = mock_client
+
+            await session.start(model="sonnet")
+
+        assert captured_options["effort"] == "high"
+
 
 class TestHistoryInjection:
     """Tests for history injection on session recreation."""

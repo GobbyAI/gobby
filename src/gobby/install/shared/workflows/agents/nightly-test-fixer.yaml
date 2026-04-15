@@ -27,12 +27,19 @@ instructions: |
   7. Call `close_task` with a `changes_summary` describing what you fixed. Validation will run automatically.
   8. Call `kill_agent` to terminate
 
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required task work is complete.
+  - Agent termination is separate and still requires `kill_agent`.
+
   CRITICAL RULES:
   - Do NOT call mark_task_review_approved — close_task handles validation.
   - Do NOT call reopen_task or de_escalate_task — close_task is your only lifecycle transition.
   - Do NOT call git push.
   - Do NOT run the full pytest suite — targeted tests only.
-  - Do NOT stop without calling kill_agent.
+  - `close_task` is the step-completion requirement before the workflow may end the turn.
+  - Do NOT terminate the agent process without calling kill_agent.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 

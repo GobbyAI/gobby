@@ -8,9 +8,12 @@ import json
 import logging
 import os
 import shutil
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from gobby.config.app import deep_merge
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -18,14 +21,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PROVIDERS = ("claude", "gemini", "codex")
-_CACHE_VERSION = 1
+_PROVIDERS = ("claude", "gemini", "qwen", "codex")
+_CACHE_VERSION = 2
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _CLAUDE_ALIASES: tuple[tuple[str, str], ...] = (
     ("haiku", "Haiku"),
     ("sonnet", "Sonnet"),
     ("opus", "Opus"),
 )
+_CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "max")
+_QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 
 
 def _gobby_home() -> Path:
@@ -59,6 +64,41 @@ def _extract_reasoning(model: dict[str, Any]) -> dict[str, Any] | None:
     if default_effort is not None:
         result["default_effort"] = str(default_effort)
     return result
+
+
+def _format_qwen_model_value(model_id: str, auth_type: str | None) -> str:
+    if not auth_type:
+        return model_id
+    return f"{model_id}({auth_type})"
+
+
+def _split_qwen_model_value(value: str) -> tuple[str, str | None]:
+    trimmed = value.strip()
+    close_idx = trimmed.rfind(")")
+    open_idx = trimmed.rfind("(")
+    if open_idx >= 0 and close_idx == len(trimmed) - 1 and open_idx < close_idx:
+        model_id = trimmed[:open_idx].strip()
+        auth_type = trimmed[open_idx + 1 : close_idx].strip()
+        if model_id and auth_type in _QWEN_AUTH_TYPES:
+            return model_id, auth_type
+    return trimmed, None
+
+
+def _merge_models(
+    primary: list[dict[str, Any]],
+    secondary: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen_values: set[str] = set()
+
+    for item in [*primary, *secondary]:
+        value = str(item.get("value") or "").strip()
+        if not value or value in seen_values:
+            continue
+        seen_values.add(value)
+        merged.append(copy.deepcopy(item))
+
+    return merged
 
 
 class ProviderModelCatalog:
@@ -227,6 +267,8 @@ class ProviderModelCatalog:
             return await self._discover_claude_models()
         if provider == "gemini":
             return await self._discover_gemini_models()
+        if provider == "qwen":
+            return await self._discover_qwen_models()
         if provider == "codex":
             return await self._discover_codex_models(codex_client=codex_client)
         raise ValueError(f"Unknown provider: {provider}")
@@ -274,12 +316,124 @@ class ProviderModelCatalog:
         return models
 
     async def _discover_gemini_models(self) -> list[dict[str, Any]]:
-        if not shutil.which("gemini"):
-            raise FileNotFoundError("gemini CLI not found in PATH")
+        return await self._discover_acp_models(provider="gemini", display_name="Gemini")
+
+    async def _discover_qwen_models(self) -> list[dict[str, Any]]:
+        if not shutil.which("qwen"):
+            raise FileNotFoundError("qwen CLI not found in PATH")
+
+        acp_error: Exception | None = None
+        try:
+            acp_models = await self._discover_acp_models(
+                provider="qwen",
+                display_name="Qwen",
+                prompt_timeout_env="GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS",
+            )
+        except Exception as exc:
+            acp_models = []
+            acp_error = exc
+
+        models = _merge_models(acp_models, self._discover_qwen_configured_models())
+        if models:
+            return self._normalize_qwen_model_labels(models)
+        if acp_error is not None:
+            raise acp_error
+        return []
+
+    def _discover_qwen_configured_models(self) -> list[dict[str, Any]]:
+        settings = self._load_qwen_settings()
+        model_providers = settings.get("modelProviders")
+        if not isinstance(model_providers, dict):
+            return []
+
+        models: list[dict[str, Any]] = []
+        for auth_type, configured_models in model_providers.items():
+            if auth_type not in _QWEN_AUTH_TYPES or auth_type == "qwen-oauth":
+                continue
+            if not isinstance(configured_models, list):
+                continue
+            for configured_model in configured_models:
+                if not isinstance(configured_model, dict):
+                    continue
+                model_id = str(configured_model.get("id") or "").strip()
+                if not model_id:
+                    continue
+                entry: dict[str, Any] = {
+                    "value": _format_qwen_model_value(model_id, auth_type),
+                    "label": str(configured_model.get("name") or model_id),
+                }
+                description = configured_model.get("description")
+                if isinstance(description, str) and description.strip():
+                    entry["description"] = description.strip()
+                models.append(entry)
+        return models
+
+    def _load_qwen_settings(self) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        seen_paths: set[Path] = set()
+        settings_paths = [
+            Path.home() / ".qwen" / "settings.json",
+            Path.cwd() / ".qwen" / "settings.json",
+        ]
+
+        for settings_path in settings_paths:
+            if settings_path in seen_paths or not settings_path.exists():
+                continue
+            seen_paths.add(settings_path)
+            try:
+                payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("Failed to read Qwen settings from %s: %s", settings_path, exc)
+                continue
+            if not isinstance(payload, dict):
+                continue
+            deep_merge(merged, payload)
+
+        return merged
+
+    def _normalize_qwen_model_labels(
+        self,
+        models: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        base_id_counts = Counter(
+            model_id
+            for model in models
+            if (model_id := _split_qwen_model_value(str(model.get("value") or ""))[0])
+        )
+        if not any(count > 1 for count in base_id_counts.values()):
+            return models
+
+        normalized: list[dict[str, Any]] = []
+        for model in models:
+            entry = copy.deepcopy(model)
+            value = str(entry.get("value") or "")
+            model_id, auth_type = _split_qwen_model_value(value)
+            if not auth_type or base_id_counts[model_id] <= 1:
+                normalized.append(entry)
+                continue
+            label = str(entry.get("label") or value)
+            if f"({auth_type})" not in label:
+                entry["label"] = f"{label} ({auth_type})"
+            normalized.append(entry)
+        return normalized
+
+    async def _discover_acp_models(
+        self,
+        *,
+        provider: str,
+        display_name: str,
+        prompt_timeout_env: str = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS",
+    ) -> list[dict[str, Any]]:
+        if not shutil.which(provider):
+            raise FileNotFoundError(f"{provider} CLI not found in PATH")
 
         from gobby.adapters.gemini_acp_client import GeminiACPClient
 
-        client = GeminiACPClient()
+        client = GeminiACPClient(
+            cli_name=provider,
+            display_name=display_name,
+            prompt_timeout_env=prompt_timeout_env,
+        )
         await client.start()
         try:
             session_info = client.session_info
@@ -371,6 +525,7 @@ class ProviderModelCatalog:
             "value": alias,
             "label": label,
             "canonical_id": str(canonical_id),
+            "reasoning": {"supported_efforts": list(_CLAUDE_REASONING_EFFORTS)},
         }
 
     async def _get_cli_version(self, provider: str) -> str | None:

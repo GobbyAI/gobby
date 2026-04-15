@@ -160,8 +160,8 @@ class TestBlockNativeTodoWrite:
 class TestRequireTaskBeforeEdit:
     """Verify require-task-before-edit blocks edits without claimed task."""
 
-    def test_blocks_edit_tools(self, db, manager) -> None:
-        """Should block Edit, Write, NotebookEdit."""
+    def test_block_effect_is_not_tied_to_native_tool_names(self, db, manager) -> None:
+        """The block effect should rely on canonical mutation semantics."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-task-before-edit")
@@ -170,9 +170,9 @@ class TestRequireTaskBeforeEdit:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "block"
-        assert set(body.effects[0].tools) == {"Edit", "Write", "NotebookEdit"}
+        assert body.effects[0].tools in (None, [])
 
-    def test_when_checks_task_claimed_and_plan_file_and_plan_mode(self, db, manager) -> None:
+    def test_when_checks_task_claimed_mutation_and_plan_mode(self, db, manager) -> None:
         """Should check task_claimed and multi-file task gating."""
         _sync_bundled(db)
 
@@ -181,6 +181,7 @@ class TestRequireTaskBeforeEdit:
 
         assert body.when is not None
         assert "task_claimed" in body.when
+        assert "canonical_repo_mutation" in body.when
         assert "requires_task_for_any_touched_file" in body.when
         assert "plan_mode" in body.when
 
@@ -191,6 +192,7 @@ class TestRequireTaskBeforeEdit:
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and event.data.get('canonical_repo_mutation') "
             "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
         )
 
@@ -201,6 +203,7 @@ class TestRequireTaskBeforeEdit:
                 "task_claimed": False,
                 "plan_mode": False,
             },
+            "event": type("Event", (), {"data": {"canonical_repo_mutation": True}})(),
             "tool_input": {"file_path": "/project/.gobby/plans/my-plan.md"},
             "source": "claude_code",
         }
@@ -218,6 +221,7 @@ class TestRequireTaskBeforeEdit:
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and event.data.get('canonical_repo_mutation') "
             "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
         )
 
@@ -227,6 +231,7 @@ class TestRequireTaskBeforeEdit:
                 "task_claimed": False,
                 "plan_mode": False,
             },
+            "event": type("Event", (), {"data": {"canonical_repo_mutation": True}})(),
             "tool_input": {"file_path": "/project/src/main.py"},
             "source": "claude_code",
         }
@@ -244,6 +249,7 @@ class TestRequireTaskBeforeEdit:
 
         condition = (
             "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and event.data.get('canonical_repo_mutation') "
             "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
         )
 
@@ -253,6 +259,7 @@ class TestRequireTaskBeforeEdit:
                 "task_claimed": False,
                 "plan_mode": True,
             },
+            "event": type("Event", (), {"data": {"canonical_repo_mutation": True}})(),
             "tool_input": {"file_path": "/project/docs/plans/my-plan.md"},
             "source": "claude_code",
         }

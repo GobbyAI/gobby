@@ -40,6 +40,11 @@ class MockMemory:
         access_count: int = 0,
         tags: list[str] | None = None,
         similarity: float | None = None,
+        search_via: str | None = None,
+        ranking_score: float | None = None,
+        raw_semantic_score: float | None = None,
+        temporal_decay_factor: float | None = None,
+        ranking_mode: str | None = None,
     ):
         self.id = id
         self.content = content
@@ -53,6 +58,16 @@ class MockMemory:
         self.tags = tags or []
         if similarity is not None:
             self.similarity = similarity
+        if search_via is not None:
+            self.search_via = search_via
+        if ranking_score is not None:
+            self.ranking_score = ranking_score
+        if raw_semantic_score is not None:
+            self.raw_semantic_score = raw_semantic_score
+        if temporal_decay_factor is not None:
+            self.temporal_decay_factor = temporal_decay_factor
+        if ranking_mode is not None:
+            self.ranking_mode = ranking_mode
 
 
 @pytest.fixture
@@ -253,7 +268,16 @@ class TestSearchMemories:
     async def test_search_memories_success(self, memory_registry, mock_memory_manager):
         """Test successful memory search."""
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id="m1", content="Memory 1", similarity=0.95),
+            MockMemory(
+                id="m1",
+                content="Memory 1",
+                similarity=0.95,
+                search_via="semantic",
+                ranking_score=0.91,
+                raw_semantic_score=0.95,
+                temporal_decay_factor=1.0,
+                ranking_mode="semantic_only",
+            ),
             MockMemory(id="m2", content="Memory 2", similarity=0.85),
         ]
 
@@ -267,6 +291,12 @@ class TestSearchMemories:
         assert result["success"] is True
         assert len(result["memories"]) == 2
         assert result["memories"][0]["similarity"] == 0.95
+        assert result["memories"][0]["ranking_score"] == 0.91
+        assert result["memories"][0]["search_via"] == "semantic"
+        assert result["memories"][0]["ranking_mode"] == "semantic_only"
+        call_kwargs = mock_memory_manager.search_memories.call_args.kwargs
+        assert call_kwargs["limit"] == 5
+        assert call_kwargs["min_score"] is None
 
     @pytest.mark.asyncio
     async def test_search_memories_with_filters(self, memory_registry, mock_memory_manager):
@@ -289,6 +319,68 @@ class TestSearchMemories:
         assert call_kwargs["tags_all"] == ["important"]
         assert call_kwargs["tags_any"] == ["work", "personal"]
         assert call_kwargs["tags_none"] == ["archived"]
+
+    @pytest.mark.asyncio
+    async def test_search_memories_does_not_apply_default_threshold(
+        self, memory_registry, mock_memory_manager
+    ):
+        """Manual search should not apply config.min_recall_score implicitly."""
+        mock_memory_manager.config.min_recall_score = 0.9
+        mock_memory_manager.search_memories.return_value = [
+            MockMemory(id="m1", content="Memory 1", similarity=0.65),
+        ]
+
+        with patch(
+            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+        ):
+            result = await memory_registry.call(
+                "search_memories", {"query": "test query", "limit": 5}
+            )
+
+        assert result["success"] is True
+        assert [mem["id"] for mem in result["memories"]] == ["m1"]
+        call_kwargs = mock_memory_manager.search_memories.call_args.kwargs
+        assert call_kwargs["limit"] == 5
+        assert call_kwargs["min_score"] is None
+
+    @pytest.mark.asyncio
+    async def test_search_memories_with_explicit_min_score_filters_results(
+        self, memory_registry, mock_memory_manager
+    ):
+        """Explicit min_score filters by semantic similarity only."""
+        mock_memory_manager.search_memories.return_value = [
+            MockMemory(
+                id="m1",
+                content="Memory 1",
+                similarity=0.65,
+                ranking_score=0.08,
+                raw_semantic_score=0.8,
+                temporal_decay_factor=0.8125,
+                ranking_mode="rrf",
+            ),
+            MockMemory(
+                id="m2",
+                content="Memory 2",
+                similarity=0.55,
+                ranking_score=0.12,
+                raw_semantic_score=0.7,
+                temporal_decay_factor=0.7857,
+                ranking_mode="rrf",
+            ),
+        ]
+
+        with patch(
+            "gobby.utils.project_context.get_project_context", return_value={"id": "proj-1"}
+        ):
+            result = await memory_registry.call(
+                "search_memories", {"query": "test query", "limit": 2, "min_score": 0.6}
+            )
+
+        assert result["success"] is True
+        assert [mem["id"] for mem in result["memories"]] == ["m1"]
+        call_kwargs = mock_memory_manager.search_memories.call_args.kwargs
+        assert call_kwargs["limit"] == 4
+        assert call_kwargs["min_score"] is None
 
     @pytest.mark.asyncio
     async def test_search_memories_error(self, memory_registry, mock_memory_manager):

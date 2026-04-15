@@ -29,8 +29,10 @@ Before editing files, create or claim a Gobby task and work under that task. For
 
 When working task state as an agent:
 - Prefer lifecycle MCP tools such as `create_task` with `claim=true`, `claim_task`, `mark_task_needs_review`, `close_task`, `reopen_task`, and `escalate_task`.
+- When code changes are complete and the task is ready to finish, prefer `close_task(task_id, commit_sha="...")` so the commit is linked and the task is closed in one step.
+- Use `link_commit` only when you intentionally need to attach a commit while keeping the task open, such as handing work off for review or continuing follow-up changes later.
 - Do not claim work by setting generic `status`/`assignee` fields through `update_task`, CLI commands, database writes, or ad hoc scripts.
 - Treat `gobby tasks ...` as a human/operator interface. Use it for manual inspection only when MCP is unavailable, not for agent task lifecycle writes.
 - If the `gobby-tasks` MCP server is unavailable, stop and surface that as the blocker instead of mutating task state through another path.
 
-If you change code, link the resulting commit back to the task before closing it. If blocked, document the blocker in the task rather than bypassing the workflow.
+If you change code, ensure the resulting commit is linked to the task before it is closed; `close_task(..., commit_sha=...)` is the default path for that. If blocked, document the blocker in the task rather than bypassing the workflow.

@@ -108,22 +108,28 @@ class TestDaemonStop:
         try:
             parent = psutil.Process(pid)
             children_before = parent.children(recursive=True)
-            child_pids = [c.pid for c in children_before]
         except psutil.NoSuchProcess:
-            child_pids = []
+            children_before = []
 
         # Stop daemon
         os.kill(pid, signal.SIGTERM)
-        time.sleep(3.0)
 
-        # Check that child processes are also gone
-        for child_pid in child_pids:
-            try:
-                child = psutil.Process(child_pid)
-                if child.is_running() and child.status() != psutil.STATUS_ZOMBIE:
-                    pytest.fail(f"Orphan child process {child_pid} still running")
-            except psutil.NoSuchProcess:
-                pass  # Expected - child process is gone
+        # Wait for the daemon's graceful shutdown (15 s) plus cleanup buffer,
+        # matching test_daemon_stops_gracefully_on_sigterm
+        shutdown_deadline = time.time() + 25.0
+        while time.time() < shutdown_deadline:
+            if not daemon_instance.is_alive():
+                break
+            time.sleep(0.2)
+
+        # Wait for any child processes to exit as well. psutil.wait_procs treats
+        # zombies as gone, which matches what we want here.
+        _, alive = psutil.wait_procs(children_before, timeout=10.0)
+        still_running = [
+            c.pid for c in alive if c.is_running() and c.status() != psutil.STATUS_ZOMBIE
+        ]
+        if still_running:
+            pytest.fail(f"Orphan child processes still running: {still_running}")
 
     def test_stop_is_idempotent_on_non_running_daemon(self, e2e_project_dir) -> None:
         """Verify stopping a non-running daemon doesn't error."""

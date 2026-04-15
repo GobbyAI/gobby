@@ -13,16 +13,29 @@ if TYPE_CHECKING:
 
 # Static model catalog per provider. Dynamic probing can augment this
 # later without breaking the contract.
-_BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
+_BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
     "claude": [
-        {"value": "opus", "label": "Opus"},
-        {"value": "sonnet", "label": "Sonnet"},
-        {"value": "haiku", "label": "Haiku"},
+        {
+            "value": "opus",
+            "label": "Opus",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+        },
+        {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+        },
+        {
+            "value": "haiku",
+            "label": "Haiku",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+        },
     ],
     "gemini": [
         {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},
         {"value": "gemini-3-flash-preview", "label": "flash-3"},
     ],
+    "qwen": [],
     "codex": [
         {"value": "gpt-5.4", "label": "codex-5.4"},
         {"value": "gpt-5.4-mini", "label": "mini-5.4"},
@@ -31,7 +44,12 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
     ],
 }
 
-_PROVIDER_DEFS = [("claude", "claude"), ("gemini", "gemini"), ("codex", "codex")]
+_PROVIDER_DEFS = [
+    ("claude", "claude"),
+    ("gemini", "gemini"),
+    ("qwen", "qwen"),
+    ("codex", "codex"),
+]
 
 
 def _friendly_label(provider: str, model: str) -> str:

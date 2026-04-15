@@ -3,7 +3,7 @@ tags: [auto-task, task, autonomous, lifecycle, gobby, default]
 rules:
   inject-autonomous-mode:
     description: "Inject autonomous task execution context when auto_task_ref is set"
-    event: before_agent
+    event: turn_start
     enabled: true
     priority: 60
     when: "variables.get('auto_task_ref')"

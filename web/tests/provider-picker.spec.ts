@@ -60,9 +60,21 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
               provider: "claude",
               available: true,
               models: [
-                { value: "opus", label: "Opus" },
-                { value: "sonnet", label: "Sonnet" },
-                { value: "haiku", label: "Haiku" },
+                {
+                  value: "opus",
+                  label: "Opus",
+                  canonical_id: "claude-opus-4-6",
+                },
+                {
+                  value: "sonnet",
+                  label: "Sonnet",
+                  canonical_id: "claude-sonnet-4-6",
+                },
+                {
+                  value: "haiku",
+                  label: "Haiku",
+                  canonical_id: "claude-haiku-4-5-20251001",
+                },
               ],
               source: "static",
             },
@@ -164,6 +176,94 @@ test.beforeEach(async ({ page }) => {
   }, { conversationId: CURRENT_CONVERSATION_ID });
 
   await mockApiRoutes(page);
+});
+
+test("provider chip repairs an invalid persisted provider/model pair", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("gobby-selected-provider", "claude");
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({
+        model: "gpt-5.4",
+        fontSize: 16,
+        theme: "dark",
+        defaultChatMode: "plan",
+      }),
+    );
+  });
+
+  await page.routeWebSocket("**/ws", (ws) => {
+    ws.onMessage((raw) => {
+      const msg = JSON.parse(String(raw)) as Record<string, unknown>;
+      if (msg.type === "subscribe") {
+        ws.send(
+          JSON.stringify({
+            type: "connection_established",
+            conversation_ids: [CURRENT_CONVERSATION_ID],
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "subscribe_success",
+            events: msg.events ?? [],
+          }),
+        );
+      }
+    });
+  });
+
+  await page.goto("/#chat");
+
+  const providerButton = page.getByLabel("Select provider and model");
+  await expect(providerButton).toBeVisible();
+  await expect(providerButton).not.toContainText("Claude gpt-5.4");
+  await expect(providerButton).toContainText("Claude opus");
+});
+
+test("provider chip normalizes canonical model ids to the matching alias", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("gobby-selected-provider", "claude");
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({
+        model: "claude-opus-4-6",
+        fontSize: 16,
+        theme: "dark",
+        defaultChatMode: "plan",
+      }),
+    );
+  });
+
+  await page.routeWebSocket("**/ws", (ws) => {
+    ws.onMessage((raw) => {
+      const msg = JSON.parse(String(raw)) as Record<string, unknown>;
+      if (msg.type === "subscribe") {
+        ws.send(
+          JSON.stringify({
+            type: "connection_established",
+            conversation_ids: [CURRENT_CONVERSATION_ID],
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "subscribe_success",
+            events: msg.events ?? [],
+          }),
+        );
+      }
+    });
+  });
+
+  await page.goto("/#chat");
+
+  const providerButton = page.getByLabel("Select provider and model");
+  await expect(providerButton).toBeVisible();
+  await expect(providerButton).not.toContainText("Claude haiku");
+  await expect(providerButton).toContainText("Claude opus");
 });
 
 test("Gemini picker selection sticks visually and first send routes through Gemini", async ({

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { Dialog, DialogContent } from "./ui/Dialog";
 import type { GobbySession } from "../../hooks/useSessions";
 import { formatRelativeTime } from "../../utils/formatTime";
+import { getSessionTitleText } from "../../lib/sessionTitle";
 import { SOURCE_COLORS, SOURCE_LABELS } from "../shared/sourceTheme";
 
 interface ResumeSessionModalProps {
@@ -183,7 +184,7 @@ export function ResumeSessionModal({
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {session.seq_num != null ? `#${session.seq_num}: ` : ''}{session.title || `Session ${session.ref || session.id.slice(0, 8)}`}
+                    {session.seq_num != null ? `#${session.seq_num}: ` : ''}{getSessionTitleText(session.title)}
                   </div>
                   <div style={{ fontSize: "12px", color: "var(--text-muted, #888)", marginTop: "2px" }}>
                     {SOURCE_LABELS[session.source] ?? session.source}

@@ -7,49 +7,22 @@ import {
 } from "./ui/Dialog";
 import { SourceIcon } from "../shared/SourceIcon";
 import { cn } from "../../lib/utils";
+import {
+  fetchProviderModelCatalog,
+  getModelsForProvider,
+  type ProviderModelEntry,
+} from "../../lib/providerModels";
 
-interface ProviderModelEntry {
-  provider: string;
-  available: boolean;
-  models: { value: string; label: string }[];
-  source: "static" | "live" | "cache" | "failed";
-}
-
-/** Fetch the canonical model catalog from the daemon. */
-let _cachedModels: ProviderModelEntry[] | null = null;
-let _cachedModelsTimestamp = 0;
-// Cache TTL — 5 minutes. After this, the next call refetches from the backend.
-const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
-
-async function fetchModelCatalog(): Promise<ProviderModelEntry[]> {
-  const now = Date.now();
-  const cacheFresh =
-    _cachedModels !== null && now - _cachedModelsTimestamp < MODELS_CACHE_TTL_MS;
-  if (cacheFresh) return _cachedModels!;
-  try {
-    const res = await fetch("/api/providers/models");
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data?.providers)) {
-        _cachedModels = data.providers;
-        _cachedModelsTimestamp = now;
-        return _cachedModels!;
-      }
-    }
-  } catch {
-    // Use empty catalog when the daemon is unavailable.
-  }
-  return [];
-}
-
-function getModelsForProvider(
+function getVisibleModelsForProvider(
   catalog: ProviderModelEntry[],
   provider: string,
   currentModel: string,
 ): { value: string; label: string }[] {
-  const entry = catalog.find((e) => e.provider === provider);
-  if (entry?.models?.length) return entry.models;
-  return [{ value: currentModel, label: currentModel || "Default" }];
+  const entry = catalog.find((candidate) => candidate.provider === provider);
+  const models = getModelsForProvider(catalog, provider);
+  if (models.length > 0) return models;
+  if (entry) return [{ value: "default", label: "Default" }];
+  return [{ value: currentModel || "default", label: currentModel || "Default" }];
 }
 
 interface ProviderPickerProps {
@@ -84,9 +57,19 @@ export function ProviderPicker({
   const [catalog, setCatalog] = useState<ProviderModelEntry[]>([]);
 
   useEffect(() => {
-    if (open) {
-      fetchModelCatalog().then(setCatalog);
-    }
+    if (!open) return;
+    let cancelled = false;
+    fetchProviderModelCatalog()
+      .then((entries) => {
+        if (!cancelled) setCatalog(entries);
+      })
+      .catch((err) => {
+        console.error("[ProviderPicker] failed to load model catalog", err);
+        if (!cancelled) setCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   const effectiveProvider = currentProvider || "claude";
@@ -210,7 +193,11 @@ export function ProviderPicker({
             </div>
             <div className="px-2 pb-2 max-h-[60vh] overflow-y-auto">
               {visibleProviders.map((provider) => {
-                const models = getModelsForProvider(catalog, provider, currentModel);
+                const models = getVisibleModelsForProvider(
+                  catalog,
+                  provider,
+                  currentModel,
+                );
                 const isActive =
                   provider === effectiveProvider ||
                   (!currentProvider && provider === "claude");

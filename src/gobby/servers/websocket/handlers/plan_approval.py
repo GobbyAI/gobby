@@ -128,7 +128,7 @@ async def handle_recovered_plan_approval(
 
     # Compatibility fallback for older clients that still send external_id.
     if not db_session:
-        for source in ("claude", "gemini", "codex"):
+        for source in ("claude", "gemini", "qwen", "codex"):
             try:
                 db_session = await asyncio.to_thread(
                     session_manager.find_active_by_external_id, conversation_id, source

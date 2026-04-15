@@ -55,7 +55,8 @@ class ChatSessionPermissionsMixin:
     _pending_approval_decision: str | None
     _pending_approval_event: asyncio.Event | None
 
-    # MCP proxy discovery tools — always safe to auto-approve in accept_edits mode
+    # MCP proxy discovery tools — safe across chat modes because they only
+    # inspect MCP registry/capabilities and do not execute downstream tools.
     _SAFE_MCP_PROXY_TOOLS = frozenset(
         {
             "mcp__gobby__list_mcp_servers",
@@ -64,7 +65,19 @@ class ChatSessionPermissionsMixin:
             "mcp__gobby__recommend_tools",
             "mcp__gobby__search_tools",
             "mcp__gobby__get_variable",
-            "mcp__gobby__set_variable",
+        }
+    )
+
+    # UI-only canvas calls are safe to auto-approve because they only present
+    # information in the web UI; they do not mutate the repo or system state.
+    _SAFE_CANVAS_CALL_TOOLS = frozenset(
+        {
+            "render_surface",
+            "update_surface",
+            "close_canvas",
+            "wait_for_interaction",
+            "canvas_present",
+            "show_file",
         }
     )
 
@@ -194,6 +207,11 @@ class ChatSessionPermissionsMixin:
                     message=resp.get("reason", "Blocked by session lifecycle")
                 )
 
+        if tool_name in self._SAFE_MCP_PROXY_TOOLS:
+            return PermissionResultAllow(updated_input=input_data)
+        if tool_name == "mcp__gobby__call_tool" and self._is_safe_canvas_call(input_data):
+            return PermissionResultAllow(updated_input=input_data)
+
         # Check tool approval (before AskUserQuestion, which has its own flow)
         if tool_name != "AskUserQuestion":
             if self._needs_tool_approval(tool_name):
@@ -276,6 +294,8 @@ class ChatSessionPermissionsMixin:
             # MCP proxy discovery tools — always safe
             if tool_name in self._SAFE_MCP_PROXY_TOOLS:
                 return False
+            # Safe canvas presentation tools are also auto-approved
+            # (handled in _can_use_tool because they need inner-tool inspection).
             # MCP proxy call_tool — inspect inner tool in _can_use_tool
             if tool_name == "mcp__gobby__call_tool":
                 return False  # Handled by _is_write_mcp_call in _can_use_tool
@@ -328,6 +348,8 @@ class ChatSessionPermissionsMixin:
 
     def _is_write_mcp_call(self, input_data: dict[str, Any]) -> bool:
         """Check if an MCP call_tool invocation targets a write operation."""
+        if self._is_safe_canvas_call(input_data):
+            return False
         tool_name = input_data.get("tool_name", "")
         if not tool_name:
             return True  # can't determine — treat as write
@@ -335,6 +357,12 @@ class ChatSessionPermissionsMixin:
         if self._mcp_call_tool_key(input_data) in self._approved_tools:
             return False
         return not tool_name.startswith(self._READ_TOOL_PREFIXES)
+
+    def _is_safe_canvas_call(self, input_data: dict[str, Any]) -> bool:
+        """Return True for UI-only canvas MCP calls that are safe to auto-approve."""
+        server_name = input_data.get("server_name", "")
+        tool_name = input_data.get("tool_name", "")
+        return server_name == "gobby-canvas" and tool_name in self._SAFE_CANVAS_CALL_TOOLS
 
     def _is_write_bash(self, input_data: dict[str, Any]) -> bool:
         """Check if a Bash command performs write/destructive operations (plan mode)."""
@@ -421,7 +449,7 @@ class ChatSessionPermissionsMixin:
             plan_dirs = [_resolve(d) for d in plan_dirs]
 
             home = Path.home()
-            for cli in (".claude", ".gemini", ".codex"):
+            for cli in (".claude", ".gemini", ".qwen", ".codex"):
                 plan_dirs.append(home / cli / "plans")
             # Gemini also uses ~/.gemini/tmp/{hash}/plans/
             gemini_tmp = home / ".gemini" / "tmp"
@@ -478,7 +506,7 @@ class ChatSessionPermissionsMixin:
             '<plan-mode status="active">',
             "You are in PLAN MODE. Your role is to research and design, not execute.",
             "",
-            "ALLOWED: Read, Glob, Grep, read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .gemini/, .codex/)",
+            "ALLOWED: Read, Glob, Grep, read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .gemini/, .qwen/, .codex/)",
             "BLOCKED: Edit, Write, NotebookEdit, write/destructive Bash (rm, mv, git add/commit/push, redirects)",
             "",
             "Present a structured plan with:",

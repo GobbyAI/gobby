@@ -35,10 +35,19 @@ import { Button } from "./components/chat/ui/Button";
 import type { GobbySession } from "./hooks/useSessions";
 import type { CommandPaletteAction } from "./components/chat/CommandPalette";
 import { FilesProvider } from "./contexts/FilesContext";
+import {
+  buildReasoningPreferenceKey,
+  fetchProviderModelCatalog,
+  getPreferredModelForProvider,
+  getPreferredReasoningEffort,
+  resolveModelValueForProvider,
+  type ProviderModelEntry,
+} from "./lib/providerModels";
 import { cn } from "./lib/utils";
 
 const CONVERSATION_ID_STORAGE_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_STORAGE_KEY = "gobby-db-session-id";
+const REASONING_PREFERENCES_STORAGE_KEY = "gobby-reasoning-preferences";
 
 
 function loadPersistedConversationId(): string | null {
@@ -58,6 +67,19 @@ function loadPersistedDbSessionId(): string | null {
     return localStorage.getItem(DB_SESSION_ID_STORAGE_KEY);
   } catch {
     return null;
+  }
+}
+
+function loadReasoningPreferences(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(REASONING_PREFERENCES_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
   }
 }
 
@@ -263,6 +285,7 @@ export default function App() {
     conversationId,
     conversationSwitchKey,
     sessionRef,
+    sessionTitle,
     dbSessionId,
     currentBranch,
     worktreePath,
@@ -294,9 +317,11 @@ export default function App() {
     addSystemMessage,
     viewSession,
     clearViewingSession,
+    mainSessionMeta,
     observeSession,
     viewingSessionId,
     viewingSessionMeta,
+    isContinuingSession,
     attachToViewed,
     detachFromSession,
     attachedSessionId,
@@ -327,6 +352,12 @@ export default function App() {
     updateVoiceInputMode,
     resetSettings,
   } = useSettings();
+  const [providerModelCatalog, setProviderModelCatalog] = useState<
+    ProviderModelEntry[]
+  >([]);
+  const [reasoningPreferences, setReasoningPreferences] = useState<
+    Record<string, string>
+  >(() => loadReasoningPreferences());
   const voice = useVoice(
     wsRef,
     conversationId,
@@ -491,6 +522,105 @@ export default function App() {
     "Personal";
   const agentDefs = useAgentDefinitions(effectiveProjectId, selectedProvider ?? undefined);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchProviderModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) {
+          setProviderModelCatalog(catalog);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProviderModelCatalog([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        REASONING_PREFERENCES_STORAGE_KEY,
+        JSON.stringify(reasoningPreferences),
+      );
+    } catch {
+      // Best-effort local preference cache
+    }
+  }, [reasoningPreferences]);
+
+  useEffect(() => {
+    const activeProvider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
+    const selectedModelForProvider = resolveModelValueForProvider(
+      providerModelCatalog,
+      activeProvider,
+      settings.model,
+    );
+    const persistedModelForProvider = resolveModelValueForProvider(
+      providerModelCatalog,
+      activeProvider,
+      mainSessionMeta?.model ?? null,
+    );
+
+    const nextModel =
+      selectedModelForProvider ??
+      persistedModelForProvider ??
+      getPreferredModelForProvider(providerModelCatalog, activeProvider, null);
+
+    if (nextModel && nextModel !== settings.model) {
+      updateModel(nextModel);
+    }
+  }, [
+    mainSessionMeta?.model,
+    mainSessionMeta?.source,
+    providerModelCatalog,
+    selectedProvider,
+    settings.model,
+    updateModel,
+  ]);
+
+  const updateReasoningPreference = useCallback(
+    (
+      provider: string | null | undefined,
+      model: string | null | undefined,
+      reasoningEffort: string | null | undefined,
+    ) => {
+      const key = buildReasoningPreferenceKey(provider, model);
+      if (!key || !reasoningEffort) {
+        return;
+      }
+      setReasoningPreferences((prev) => {
+        if (prev[key] === reasoningEffort) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [key]: reasoningEffort,
+        };
+      });
+    },
+    [],
+  );
+
+  const currentMainReasoning = useMemo(() => {
+    const provider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
+    const preferenceKey = buildReasoningPreferenceKey(provider, settings.model);
+    return getPreferredReasoningEffort(
+      providerModelCatalog,
+      provider,
+      settings.model,
+      preferenceKey ? reasoningPreferences[preferenceKey] : null,
+    );
+  }, [
+    mainSessionMeta?.source,
+    providerModelCatalog,
+    reasoningPreferences,
+    selectedProvider,
+    settings.model,
+  ]);
+
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {
     let cancelled = false;
@@ -596,7 +726,12 @@ export default function App() {
         : undefined);
 
     if (match) {
-      switchConversation(match.id);
+      switchConversation(match.id, {
+        preserveViewing: Boolean(viewingSessionId),
+      });
+    } else if (viewingSessionId && !persistedDbSessionId) {
+      // Restored read-only session view with no parked main-chat session.
+      return;
     } else if (persistedConversationId && !persistedDbSessionId) {
       // Preserve an explicit local fresh-chat ID so reloads do not jump back
       // to the most recent saved session before the user sends a first message.
@@ -615,13 +750,19 @@ export default function App() {
     sessionsHook.isLoading,
     webChatSessions,
     dbSessionId,
+    viewingSessionId,
     switchConversation,
     startNewChat,
   ]);
 
   // Wrap sendMessage to include the selected model + colon command interception
   const handleSendMessage = useCallback(
-    async (content: string, files?: QueuedFile[]) => {
+    async (
+      content: string,
+      files?: QueuedFile[],
+      options?: { reasoningEffort?: string | null },
+    ) => {
+      const reasoningEffort = options?.reasoningEffort ?? currentMainReasoning;
       const parsed = parseColonCommand(content);
       if (parsed) {
         const ctx = await resolveInjectContext(parsed);
@@ -633,12 +774,21 @@ export default function App() {
           files,
           effectiveProjectId,
           ctx ?? undefined,
+          reasoningEffort,
         );
       } else {
-        sendMessage(content, settings.model, files, effectiveProjectId);
+        sendMessage(
+          content,
+          settings.model,
+          files,
+          effectiveProjectId,
+          undefined,
+          reasoningEffort,
+        );
       }
     },
     [
+      currentMainReasoning,
       sendMessage,
       settings.model,
       effectiveProjectId,
@@ -823,7 +973,14 @@ export default function App() {
             console.warn("Cannot ask Gobby: disconnected");
             return;
           }
-          const sent = sendMessage(context, settings.model);
+          const sent = sendMessage(
+            context,
+            settings.model,
+            undefined,
+            undefined,
+            undefined,
+            currentMainReasoning,
+          );
           if (!sent) {
             console.error("Failed to send message to Gobby");
           }
@@ -832,7 +989,7 @@ export default function App() {
         }
       }, 0);
     },
-    [sendMessage, settings.model, isConnected],
+    [currentMainReasoning, sendMessage, settings.model, isConnected],
   );
 
   /* "Resume Session" from Sessions page — continue CLI session in web chat */
@@ -872,13 +1029,22 @@ export default function App() {
     setOnModeChanged(updateChatMode);
   }, [updateChatMode, setOnModeChanged]);
 
-  // Restore persisted mode on conversation switch (DB value > user default > plan).
-  // Keyed on conversationSwitchKey (not conversationId) so that SDK session ID
-  // adoption — which changes conversationId but is the same logical conversation
-  // — does NOT reset the user's mode back to the default.
+  const handleStartNewChat = useCallback(
+    (agentName?: string) => {
+      updateChatMode(settings.defaultChatMode);
+      startNewChat(agentName);
+    },
+    [settings.defaultChatMode, startNewChat, updateChatMode],
+  );
+
+  // Restore persisted mode only when we have an active durable web-chat session.
+  // Drafts are seeded by handleStartNewChat; observed sessions sync mode through
+  // useChat's authoritative session metadata and mode_changed events.
   useEffect(() => {
     if (sessionsHook.isLoading) return;
+    if (!dbSessionId) return;
     const session = webChatSessions.find((s) => s.id === dbSessionId);
+    if (!session) return;
     const restoredMode =
       (session?.chat_mode as ChatMode | null) || settings.defaultChatMode;
     updateChatMode(restoredMode);
@@ -918,7 +1084,14 @@ export default function App() {
         return;
       }
       if (item.action === "compact_chat") {
-        sendMessage("/compact", settings.model, undefined, effectiveProjectId);
+        sendMessage(
+          "/compact",
+          settings.model,
+          undefined,
+          effectiveProjectId,
+          undefined,
+          currentMainReasoning,
+        );
         return;
       }
       if (item.action === "resume_session") {
@@ -954,6 +1127,7 @@ export default function App() {
       settings.model,
       settings.chatMode,
       effectiveProjectId,
+      currentMainReasoning,
       updateChatMode,
       sendMode,
       addSystemMessage,
@@ -1002,6 +1176,8 @@ export default function App() {
             settings.model,
             undefined,
             effectiveProjectId,
+            undefined,
+            currentMainReasoning,
           ),
       },
       {
@@ -1051,6 +1227,7 @@ export default function App() {
     sendMessage,
     settings.model,
     effectiveProjectId,
+    currentMainReasoning,
     addSystemMessage,
   ]);
 
@@ -1185,6 +1362,7 @@ export default function App() {
                 chat={{
                   messages,
                   sessionRef,
+                  sessionTitle,
                   currentBranch,
                   worktreePath,
                   isStreaming,
@@ -1219,8 +1397,10 @@ export default function App() {
                   continueSessionInChat,
                   viewSession,
                   clearViewingSession,
+                  mainSessionMeta,
                   viewingSessionId,
                   viewingSessionMeta,
+                  isContinuingSession,
                   observeSession,
                   attachedSessionId,
                   attachedSessionMeta,
@@ -1240,7 +1420,7 @@ export default function App() {
                   sessions: webChatSessions,
                   activeSessionId: dbSessionId,
                   deletingIds: sessionsHook.deletingIds,
-                  onNewChat: startNewChat,
+                  onNewChat: handleStartNewChat,
                   onSelectSession: handleSelectConversation,
                   onDeleteSession: handleDeleteConversation,
                   onRenameSession: sessionsHook.renameSession,
@@ -1258,6 +1438,8 @@ export default function App() {
                 }}
                 currentModel={settings.model}
                 onModelChange={updateModel}
+                reasoningPreferences={reasoningPreferences}
+                onReasoningPreferenceChange={updateReasoningPreference}
                 agentDefinitions={agentDefs.definitions}
                 agentGlobalDefs={agentDefs.globalDefs}
                 agentProjectDefs={agentDefs.projectDefs}
@@ -1388,6 +1570,7 @@ export default function App() {
             undefined,
             effectiveProjectId,
             context,
+            currentMainReasoning,
           );
         }}
       />

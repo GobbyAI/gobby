@@ -92,17 +92,17 @@ class TestPlanModeSync:
 
 
 class TestHandlePlanModeEntry:
-    """Verify handle-plan-mode-entry: before_agent, skill injection only."""
+    """Verify handle-plan-mode-entry: turn_start, skill injection only."""
 
-    def test_fires_on_before_agent_with_plan_mode_guard(self, db, manager) -> None:
-        """Should fire on before_agent when plan_mode is set."""
+    def test_fires_on_turn_start_with_plan_mode_guard(self, db, manager) -> None:
+        """Should fire on turn_start when plan_mode is set."""
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-entry")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_agent"
+        assert body.event.value == "turn_start"
         assert body.when is not None
         assert "plan_mode" in body.when
         assert "plan_skill_loaded" in body.when

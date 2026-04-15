@@ -16,6 +16,8 @@ from gobby.sessions.transcripts.base import (
 
 logger = logging.getLogger(__name__)
 
+_INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt"})
+
 
 @dataclass
 class ToolResult:
@@ -223,6 +225,9 @@ def render_incremental(
     state = pending_state
 
     for msg in new_messages:
+        if msg.content_type in _INTERNAL_CONTENT_TYPES:
+            continue
+
         # 1. Classify role and detect hook feedback
         role = msg.role
         if _is_hook_feedback(msg):
@@ -297,7 +302,8 @@ _PROTOCOL_TAG_UNCLOSED_RE = re.compile(
 
 # Tags where only the wrapper should be stripped (content preserved)
 _TAG_ONLY_STRIP_RE = re.compile(
-    r"</?(?:proposed_plan|proposed_implementation|search_quality_reflection)>"
+    r"</?(?:proposed_plan|proposed_implementation|search_quality_reflection"
+    r"|permissions instructions|permission instructions|collaboration_mode)>"
 )
 
 
@@ -445,6 +451,6 @@ def _process_message_block(
         state.current_message.content_blocks.append(block)
 
     # Update summary content
-    if msg.content_type == "text" and state.current_message.role != "system":
+    if msg.content_type == "text":
         if isinstance(block_content, str):
             state.current_message.content += block_content

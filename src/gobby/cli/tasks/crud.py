@@ -11,8 +11,7 @@ import click
 from gobby.cli.tasks._utils import (
     collect_ancestors,
     compute_tree_prefixes,
-    format_task_header,
-    format_task_row,
+    format_task_list,
     get_claimed_task_ids,
     get_task_manager,
     normalize_status,
@@ -53,6 +52,16 @@ from gobby.utils.project_context import get_project_context
 @click.option("--blocked", is_flag=True, help="Show only canonically blocked tasks")
 @click.option("--closed", "closed_only", is_flag=True, help="Show only canonically closed tasks")
 @click.option("--limit", "-l", default=50, help="Max tasks to show")
+@click.option(
+    "--group",
+    "group_by",
+    type=click.Choice(["project", "lifecycle"]),
+    default=None,
+    help=(
+        "Group output by project or lifecycle. When omitted, tasks are "
+        "auto-grouped by project if no project context is detected."
+    ),
+)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_tasks(
     status: str | None,
@@ -66,6 +75,7 @@ def list_tasks(
     blocked: bool,
     closed_only: bool,
     limit: int,
+    group_by: str | None,
     json_format: bool,
 ) -> None:
     """List tasks."""
@@ -196,20 +206,33 @@ def list_tasks(
     # Get tasks claimed by active sessions for indicator display
     claimed_ids = get_claimed_task_ids()
 
+    # Auto-group by project when running outside a project context unless the
+    # user already asked for a specific grouping.
+    effective_group_by = group_by
+    if effective_group_by is None and project_id is None:
+        effective_group_by = "project"
+
+    # Tree prefixes are precomputed against the global display order. When
+    # grouping by lifecycle, children can land in a different bucket than
+    # their parent, leaving glyphs pointing at rows that aren't adjacent.
+    # Skip the prefixes in that case so the tree doesn't render misleading
+    # connectors.
+    prefixes = (
+        compute_tree_prefixes(display_tasks, primary_ids)
+        if effective_group_by != "lifecycle"
+        else None
+    )
     click.echo(f"Found {len(tasks_list)} {label}:")
-    click.echo(format_task_header())
-    prefixes = compute_tree_prefixes(display_tasks, primary_ids)
-    for task in display_tasks:
-        prefix_info = prefixes.get(task.id, ("", True))
-        tree_prefix, is_primary = prefix_info
-        click.echo(
-            format_task_row(
-                task,
-                tree_prefix=tree_prefix,
-                is_primary=is_primary,
-                claimed_task_ids=claimed_ids,
-            )
-        )
+    rendered = format_task_list(
+        display_tasks,
+        claimed_task_ids=claimed_ids,
+        primary_ids=primary_ids,
+        tree_prefixes=prefixes,
+        group_by=effective_group_by,
+        db=manager.db,
+    )
+    if rendered:
+        click.echo(rendered)
 
 
 @click.command("ready")
@@ -249,28 +272,26 @@ def ready_tasks(
     claimed_ids = get_claimed_task_ids()
 
     click.echo(f"Found {len(tasks_list)} ready tasks:")
-    click.echo(format_task_header())
 
     if flat:
-        # Simple flat list without tree structure
-        for task in tasks_list:
-            click.echo(format_task_row(task, claimed_task_ids=claimed_ids))
+        rendered = format_task_list(
+            list(tasks_list),
+            claimed_task_ids=claimed_ids,
+            db=manager.db,
+        )
     else:
-        # Include ancestors for proper tree hierarchy
         display_tasks, primary_ids = collect_ancestors(tasks_list, manager)
         display_tasks = sort_tasks_for_tree(display_tasks)
         prefixes = compute_tree_prefixes(display_tasks, primary_ids)
-        for task in display_tasks:
-            prefix_info = prefixes.get(task.id, ("", True))
-            tree_prefix, is_primary = prefix_info
-            click.echo(
-                format_task_row(
-                    task,
-                    tree_prefix=tree_prefix,
-                    is_primary=is_primary,
-                    claimed_task_ids=claimed_ids,
-                )
-            )
+        rendered = format_task_list(
+            display_tasks,
+            claimed_task_ids=claimed_ids,
+            primary_ids=primary_ids,
+            tree_prefixes=prefixes,
+            db=manager.db,
+        )
+    if rendered:
+        click.echo(rendered)
 
 
 @click.command("blocked")

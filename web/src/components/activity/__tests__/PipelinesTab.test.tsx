@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { PipelinesTab } from '../PipelinesTab'
 import { createMockFetch, type MockFetchInstance } from '../../../test/mocks/fetch'
 
@@ -56,5 +56,14 @@ describe('PipelinesTab', () => {
 
     expect(executionCalls.length).toBeGreaterThan(0)
     expect(executionCalls[0]).not.toContain('status=running')
+  })
+
+  it('orders the filter options as All, Completed, Failed, Running', async () => {
+    render(<PipelinesTab projectId="proj-1" />)
+
+    const select = await screen.findByDisplayValue('All')
+    const options = within(select).getAllByRole('option').map((option) => option.textContent)
+
+    expect(options).toEqual(['All', 'Completed', 'Failed', 'Running'])
   })
 })

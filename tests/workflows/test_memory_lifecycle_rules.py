@@ -6,8 +6,8 @@ are tested there instead.
 
 Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
-- memory-recall-on-prompt: mcp_call on before_agent
-- memory-capture-nudge: inject_context on before_agent
+- memory-recall-on-prompt: mcp_call on turn_start
+- memory-capture-nudge: inject_context on turn_start
 - require-memory-review-before-status: block on before_tool (close_task, mark_task_needs_review, mark_task_review_approved)
 - clear-memory-review-on-create: set_variable on before_tool
 
@@ -135,10 +135,11 @@ class TestMemoryRecallOnPrompt:
         row = manager.get_by_name("memory-recall-on-prompt")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_agent"
+        assert body.event.value == "turn_start"
         assert body.effects[0].type == "mcp_call"
         assert body.effects[0].server == "gobby-memory"
         assert body.effects[0].tool == "search_memories"
+        assert body.effects[0].arguments["min_score"] == 0.7
 
     def test_not_background(self, db, manager) -> None:
         """Recall must block to inject context."""
@@ -161,7 +162,7 @@ class TestMemoryCaptureNudge:
         row = manager.get_by_name("memory-capture-nudge")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_agent"
+        assert body.event.value == "turn_start"
         assert body.effects[0].type == "inject_context"
         assert body.effects[0].template is not None
         assert "create_memory" in body.effects[0].template

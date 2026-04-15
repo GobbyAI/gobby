@@ -246,7 +246,7 @@ class TestSearchMemoriesGraphIntegration:
 
         # Mock storage
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -281,7 +281,7 @@ class TestSearchMemoriesGraphIntegration:
         )
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -308,7 +308,7 @@ class TestSearchMemoriesGraphIntegration:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.9)])
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         # Mock the kg_service method to verify it's not called
@@ -335,7 +335,7 @@ class TestSearchMemoriesGraphIntegration:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.8)])
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -369,7 +369,7 @@ class TestSearchMemoriesGraphIntegration:
         system_mem.source_type = "agent"
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: user_mem if mid == "mem-2" else system_mem
+            side_effect=lambda mid, project_id=None: user_mem if mid == "mem-2" else system_mem
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -442,9 +442,23 @@ class TestGraphSearchProjectIdScoping:
         mem_b = _mock_memory("mem-2", "content B")
         mem_b.project_id = "proj-B"
 
-        manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_a if mid == "mem-1" else mem_b
-        )
+        def _scoped_get_memory(mid: str, project_id: str | None = None):
+            mem = mem_a if mid == "mem-1" else mem_b
+            if project_id and mem.project_id and mem.project_id != project_id:
+                raise ValueError(f"Memory {mid} not found")
+            return mem
+
+        def _scoped_get_memories(ids, project_id=None):
+            out = []
+            for mid in ids:
+                try:
+                    out.append(_scoped_get_memory(mid, project_id))
+                except ValueError:
+                    continue
+            return out
+
+        manager.storage.get_memory = MagicMock(side_effect=_scoped_get_memory)
+        manager.storage.get_memories = MagicMock(side_effect=_scoped_get_memories)
 
         result = await manager.search_memories(query="test", project_id="proj-A", limit=10)
 
@@ -477,7 +491,7 @@ class TestGraphSearchProjectIdScoping:
         mem_global.project_id = None  # Global memory
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_a if mid == "mem-1" else mem_global
+            side_effect=lambda mid, project_id=None: mem_a if mid == "mem-1" else mem_global
         )
 
         result = await manager.search_memories(query="test", project_id="proj-A", limit=10)
@@ -535,6 +549,40 @@ class TestTemporalDecayIntegration:
     """Integration tests for temporal decay in search_memories."""
 
     @pytest.mark.asyncio
+    async def test_graph_enabled_path_keeps_qdrant_similarity(self) -> None:
+        """Graph-enabled search should preserve the real Qdrant score for semantic hits."""
+        llm_service = MagicMock()
+        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+
+        vs = AsyncMock()
+        embed_fn = AsyncMock(return_value=[0.1])
+
+        manager = _make_manager(
+            neo4j_url="http://localhost:7474",
+            llm_service=llm_service,
+            vector_store=vs,
+            embed_fn=embed_fn,
+        )
+        object.__setattr__(manager.config, "temporal_decay_half_life_days", 0.0)
+
+        vs.search = AsyncMock(return_value=[("mem-1", 0.675)])
+        manager._kg_service.search_entities_by_vector = AsyncMock(return_value=[])
+        manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
+        manager._fts5_ranked = AsyncMock(return_value=[])
+
+        mem = _mock_memory("mem-1", "content")
+        mem.source_type = "agent"
+        manager.storage.get_memory = MagicMock(return_value=mem)
+
+        result = await manager.search_memories(query="test", limit=10)
+
+        assert len(result) == 1
+        assert result[0].similarity == pytest.approx(0.675)
+        assert result[0].ranking_score == pytest.approx(0.675)
+        assert result[0].search_via == "semantic"
+        assert result[0].ranking_mode == "semantic_only"
+
+    @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_graph_path(self) -> None:
         """In graph-augmented search, an older memory should rank below a recent one."""
         llm_service = MagicMock()
@@ -565,7 +613,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -573,6 +621,30 @@ class TestTemporalDecayIntegration:
         result_ids = [m.id for m in result]
         assert result_ids[0] == "mem-recent"
         assert result_ids[1] == "mem-old"
+
+    @pytest.mark.asyncio
+    async def test_min_score_applies_after_temporal_decay(self) -> None:
+        """min_score filters on final semantic similarity after temporal decay."""
+        vs = AsyncMock()
+        embed_fn = AsyncMock(return_value=[0.1])
+
+        manager = _make_manager(
+            vector_store=vs,
+            embed_fn=embed_fn,
+        )
+        object.__setattr__(manager.config, "temporal_decay_half_life_days", 30.0)
+
+        now = datetime.now(UTC)
+        old = now - timedelta(days=90)
+        vs.search = AsyncMock(return_value=[("mem-old", 0.9)])
+
+        mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
+        mem_old.source_type = "agent"
+        manager.storage.get_memory = MagicMock(return_value=mem_old)
+
+        result = await manager.search_memories(query="test", limit=10, min_score=0.3)
+
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_older_memory_ranks_lower_qdrant_only(self) -> None:
@@ -597,7 +669,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -628,7 +700,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)

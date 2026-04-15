@@ -4,7 +4,7 @@ import gzip
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,19 @@ def _write_jsonl_file(path: Path, lines: list[dict]) -> Path:
         for line in lines:
             f.write(json.dumps(line) + "\n")
     return path
+
+
+def _make_codex_message(role: str, text: str, ts: str) -> dict:
+    block_type = "input_text" if role == "user" else "output_text"
+    return {
+        "timestamp": ts,
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": role,
+            "content": [{"type": block_type, "text": text}],
+        },
+    }
 
 
 pytestmark = pytest.mark.unit
@@ -462,6 +475,126 @@ class TestTranscriptReaderRendered:
         reader = TranscriptReader(session_manager)
         result = await reader.get_rendered_messages("empty-session")
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_sniffs_codex_source_from_mismatched_live_jsonl(self, tmp_path: Path):
+        transcript_path = tmp_path / "rollout-2026-04-13T10-00-00Z-ext-abc.jsonl"
+        lines = [
+            _make_codex_message("user", "hello from codex", "2026-04-13T10:00:00Z"),
+            _make_codex_message("assistant", "codex reply", "2026-04-13T10:00:01Z"),
+        ]
+        _write_jsonl_file(transcript_path, lines)
+
+        session = MagicMock()
+        session.external_id = "ext-abc"
+        session.source = "claude"
+        session.transcript_path = str(transcript_path)
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        reader = TranscriptReader(session_manager)
+
+        rendered = await reader.get_rendered_messages("sess-1")
+        count = await reader.count_messages("sess-1")
+
+        assert len(rendered) == 2
+        assert rendered[0].role == "user"
+        assert "hello from codex" in rendered[0].content
+        assert count == 2
+
+    @pytest.mark.asyncio
+    async def test_sniffs_codex_source_from_mismatched_archive(self, tmp_path: Path):
+        archive_dir = tmp_path / "archives"
+        external_id = "ext-codex-archive"
+        lines = [
+            _make_codex_message("user", "archived user", "2026-04-13T10:00:00Z"),
+            _make_codex_message("assistant", "archived assistant", "2026-04-13T10:00:01Z"),
+        ]
+        _write_gzip_archive(archive_dir, external_id, lines)
+
+        session = MagicMock()
+        session.external_id = external_id
+        session.source = "claude"
+        session.transcript_path = "/Users/test/.codex/sessions/2026/04/13/rollout-ext.jsonl"
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        reader = TranscriptReader(session_manager, archive_dir=str(archive_dir))
+
+        rendered = await reader.get_rendered_messages("sess-1")
+        count = await reader.count_messages("sess-1")
+
+        assert len(rendered) == 2
+        assert rendered[1].role == "assistant"
+        assert "archived assistant" in rendered[1].content
+        assert count == 2
+
+    @pytest.mark.asyncio
+    async def test_rederives_qwen_transcript_from_projects_layout(self, tmp_path: Path):
+        external_id = "ext-qwen-123"
+        transcript_path = (
+            tmp_path / ".qwen" / "projects" / "project-slug" / "chats" / f"{external_id}.jsonl"
+        )
+        _write_jsonl_file(
+            transcript_path,
+            [
+                {
+                    "type": "user",
+                    "content": "hello from qwen",
+                },
+                {
+                    "type": "model",
+                    "content": "qwen reply",
+                },
+            ],
+        )
+
+        session = MagicMock()
+        session.external_id = external_id
+        session.source = "qwen"
+        session.transcript_path = None
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        reader = TranscriptReader(session_manager)
+
+        with patch.object(Path, "home", return_value=tmp_path):
+            rendered = await reader.get_rendered_messages("sess-1")
+
+        assert len(rendered) == 2
+        assert "hello from qwen" in rendered[0].content
+        assert session_manager.update.call_count >= 1
+        assert session_manager.update.call_args_list[-1] == (
+            ("sess-1",),
+            {"transcript_path": str(transcript_path)},
+        )
+
+    @pytest.mark.asyncio
+    async def test_reports_unparseable_transcript_status(self, tmp_path: Path):
+        transcript_path = tmp_path / "mystery.jsonl"
+        _write_jsonl_file(
+            transcript_path,
+            [{"weird": "shape"}, {"still": "unknown"}],
+        )
+
+        session = MagicMock()
+        session.external_id = "mystery"
+        session.source = "claude"
+        session.transcript_path = str(transcript_path)
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        reader = TranscriptReader(session_manager)
+        status = await reader.get_transcript_status("sess-1")
+
+        assert status["availability"] == "live"
+        assert status["content_state"] == "unparseable"
+        assert status["raw_record_count"] == 2
+        assert status["parsed_message_count"] == 0
 
 
 class TestTranscriptReaderGeminiJSON:

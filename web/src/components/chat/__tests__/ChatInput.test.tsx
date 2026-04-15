@@ -48,7 +48,7 @@ function PTTHarness({
   onStopRecording = vi.fn(),
   onCancelRecording = vi.fn(),
 }: {
-  onSend?: (message: string, files?: unknown) => void
+  onSend?: (message: string, files?: unknown, options?: { reasoningEffort?: string | null }) => void
   onStopRecording?: () => void
   onCancelRecording?: () => void
 }) {
@@ -95,11 +95,35 @@ describe('ChatInput', () => {
     expect(textarea).toHaveAttribute('aria-label', 'Message input')
   })
 
-  it('shows connecting placeholder when disabled', () => {
+  it('shows an unavailable placeholder when disabled without state-specific copy', () => {
     render(<ChatInput {...defaultProps} disabled={true} />)
 
     const textarea = screen.getByRole('textbox')
-    expect(textarea).toHaveAttribute('aria-label', 'Message input — connecting')
+    expect(textarea).toHaveAttribute('placeholder', 'Message input unavailable...')
+    expect(textarea).toHaveAttribute('aria-label', 'Message input — unavailable')
+  })
+
+  it('defaults to read-only copy when disabled while viewing a session', () => {
+    render(<ChatInput {...defaultProps} disabled={true} viewingSession={true} />)
+
+    const textarea = screen.getByRole('textbox')
+    expect(textarea).toHaveAttribute('placeholder', 'Read-only while watching this session...')
+    expect(textarea).toHaveAttribute('aria-label', 'Message input — watching read only')
+  })
+
+  it('uses the provided disabled placeholder and aria label', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        disabled={true}
+        disabledPlaceholder="Resuming session in web chat..."
+        disabledAriaLabel="Message input — resuming session"
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    expect(textarea).toHaveAttribute('placeholder', 'Resuming session in web chat...')
+    expect(textarea).toHaveAttribute('aria-label', 'Message input — resuming session')
   })
 
   it('shows streaming placeholder when streaming', () => {
@@ -107,6 +131,24 @@ describe('ChatInput', () => {
 
     const textarea = screen.getByRole('textbox')
     expect(textarea).toHaveAttribute('aria-label', 'Message input — streaming')
+  })
+
+  it('renders the proxy delivery notice above the toolbar row', () => {
+    const { container } = render(
+      <ChatInput
+        {...defaultProps}
+        onModeChange={vi.fn()}
+        proxyDeliveryNotice="Message queued until the session yields."
+      />,
+    )
+
+    const notice = screen.getByText('Message queued until the session yields.')
+    const toolbar = container.querySelector('.chat-input-toolbar')
+
+    expect(notice).toBeTruthy()
+    expect(toolbar).toBeTruthy()
+    expect(container.querySelector('.chat-input-notice-slot')?.contains(notice)).toBe(true)
+    expect(toolbar?.previousElementSibling).toContainElement(notice)
   })
 
   it('calls onSend when Enter is pressed', async () => {
@@ -117,7 +159,9 @@ describe('ChatInput', () => {
     await userEvent.type(textarea, 'Hello world')
     await userEvent.keyboard('{Enter}')
 
-    expect(onSend).toHaveBeenCalledWith('Hello world', undefined)
+    expect(onSend).toHaveBeenCalledWith('Hello world', undefined, {
+      reasoningEffort: 'auto',
+    })
   })
 
   it('does not send empty messages', async () => {
@@ -151,12 +195,15 @@ describe('ChatInput', () => {
   })
 
   it('renders mode selector when onModeChange provided', () => {
-    render(
+    const { container } = render(
       <ChatInput {...defaultProps} onModeChange={vi.fn()} mode="accept_edits" />,
     )
 
     expect(screen.getByTestId('mode-selector')).toBeTruthy()
     expect(screen.getByText('accept_edits')).toBeTruthy()
+
+    const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
+    expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
   })
 
   it('shows a mic button in PTT mode with empty input', () => {
@@ -312,7 +359,9 @@ describe('ChatInput', () => {
     await userEvent.type(textarea, 'Hello')
     await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
 
-    expect(onSend).toHaveBeenCalledWith('Hello', undefined)
+    expect(onSend).toHaveBeenCalledWith('Hello', undefined, {
+      reasoningEffort: 'auto',
+    })
   })
 
   it('shows model selection in the toolbar for a single-provider setup', () => {
@@ -328,6 +377,23 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByLabelText('Select model')).toBeTruthy()
+  })
+
+  it('formats known provider labels with canonical casing', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        provider="openai"
+        availableProviders={['openai']}
+        currentModel="local"
+        onModelChange={vi.fn()}
+        onSwitchProvider={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('OpenAI')).toBeTruthy()
+    expect(screen.getByText('Local')).toBeTruthy()
+    expect(screen.getByLabelText('Select reasoning effort')).toBeTruthy()
   })
 
   it('forwards non-local slash commands in proxy mode', async () => {
@@ -350,7 +416,9 @@ describe('ChatInput', () => {
     await userEvent.type(textarea, '/plan')
     await userEvent.keyboard('{Enter}')
 
-    expect(onSend).toHaveBeenCalledWith('/plan', undefined)
+    expect(onSend).toHaveBeenCalledWith('/plan', undefined, {
+      reasoningEffort: 'auto',
+    })
     expect(onPaletteSelect).not.toHaveBeenCalled()
   })
 

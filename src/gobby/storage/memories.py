@@ -65,6 +65,10 @@ class Memory:
     media: str | None = None  # JSON-serialized MediaAttachment data
     similarity: float | None = None  # Set at search time, not persisted
     search_via: str | None = None  # Set at search time, not persisted
+    ranking_score: float | None = None  # Hybrid retrieval rank, not persisted
+    raw_semantic_score: float | None = None  # Raw Qdrant score, not persisted
+    temporal_decay_factor: float | None = None  # Search-time decay, not persisted
+    ranking_mode: str | None = None  # Search-time scoring mode, not persisted
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Memory":
@@ -95,7 +99,7 @@ class Memory:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "id": self.id,
             "memory_type": self.memory_type,
             "content": self.content,
@@ -109,6 +113,19 @@ class Memory:
             "tags": self.tags,
             "media": self.media,
         }
+        if self.similarity is not None:
+            data["similarity"] = self.similarity
+        if self.search_via is not None:
+            data["search_via"] = self.search_via
+        if self.ranking_score is not None:
+            data["ranking_score"] = self.ranking_score
+        if self.raw_semantic_score is not None:
+            data["raw_semantic_score"] = self.raw_semantic_score
+        if self.temporal_decay_factor is not None:
+            data["temporal_decay_factor"] = self.temporal_decay_factor
+        if self.ranking_mode is not None:
+            data["ranking_mode"] = self.ranking_mode
+        return data
 
 
 class LocalMemoryManager:
@@ -219,6 +236,33 @@ class LocalMemoryManager:
         if not row:
             raise ValueError(f"Memory {memory_id} not found")
         return Memory.from_row(row)
+
+    def get_memories(
+        self,
+        memory_ids: list[str],
+        project_id: str | None = None,
+    ) -> list[Memory]:
+        """Return multiple memories, preserving the requested order."""
+        if not memory_ids:
+            return []
+
+        placeholders = ", ".join("?" for _ in memory_ids)
+        if project_id:
+            rows = self.db.fetchall(
+                f"SELECT * FROM memories WHERE id IN ({placeholders}) "
+                "AND (project_id = ? OR project_id IS NULL)",
+                (*memory_ids, project_id),
+            )
+        else:
+            rows = self.db.fetchall(
+                f"SELECT * FROM memories WHERE id IN ({placeholders})",
+                tuple(memory_ids),
+            )
+
+        memories_by_id = {row["id"]: Memory.from_row(row) for row in rows}
+        return [
+            memories_by_id[memory_id] for memory_id in memory_ids if memory_id in memories_by_id
+        ]
 
     def memory_exists(self, memory_id: str) -> bool:
         """Check if a memory with the given ID exists."""

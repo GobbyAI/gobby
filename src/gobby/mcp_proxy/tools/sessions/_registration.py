@@ -50,7 +50,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
 
         Args:
             external_id: Client's session ID (required)
-            source: CLI type - claude, gemini, codex, agent-sdk, etc. (required)
+            source: CLI type - claude, gemini, qwen, codex, agent-sdk, etc. (required)
             machine_id: Machine identifier (auto-resolved if omitted)
             project_id: Project ID (auto-resolved from .gobby/project.json if omitted)
             title: Session title

@@ -34,11 +34,17 @@ instructions: |
   2. Call merge_clone with clone_id and target_branch
   3. Call kill_agent (conflict resolution not available for clones)
 
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required merge work is complete.
+  - Merge completion and `kill_agent` are explicit workflow termination actions, not raw stop-hook behavior.
+
   CRITICAL RULES:
   - Do NOT call close_task — the coordinator handles task lifecycle.
   - Do NOT spawn other agents.
   - Do NOT use Bash for git commands — the merge tools handle everything.
-  - Do NOT stop or exit without calling kill_agent.
+  - Do NOT terminate or exit the agent process without calling kill_agent.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 
 workflows:

@@ -573,8 +573,8 @@ class TestLoadConfig:
         # Bootstrap swallows the int() conversion error and returns defaults
         assert config.daemon_port == 60887
 
-    def test_load_config_migrates_legacy_session_title_db_keys(self, temp_dir: Path) -> None:
-        """Legacy session_title DB config is migrated into digest before validation."""
+    def test_load_config_rejects_legacy_session_title_db_keys(self, temp_dir: Path) -> None:
+        """Legacy session_title DB config now fails loudly instead of being migrated."""
 
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
@@ -584,19 +584,16 @@ class TestLoadConfig:
                     "session_title.timeout": 45,
                 }
 
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=DummyConfigStore(),
-        )
+        with pytest.raises(ValueError, match="session_title config has been removed"):
+            load_config(
+                config_file=str(temp_dir / "bootstrap.yaml"),
+                config_store=DummyConfigStore(),
+            )
 
-        assert config.digest.provider == "local"
-        assert config.digest.model == "gemma-3"
-        assert config.digest.timeout == 45
-
-    def test_load_config_prefers_explicit_digest_over_legacy_session_title(
+    def test_load_config_rejects_legacy_session_title_even_with_explicit_digest(
         self, temp_dir: Path
     ) -> None:
-        """Explicit digest config should win when both old and new keys exist."""
+        """Explicit digest config does not mask stale legacy session_title DB keys."""
 
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
@@ -609,14 +606,11 @@ class TestLoadConfig:
                     "digest.timeout": 15,
                 }
 
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=DummyConfigStore(),
-        )
-
-        assert config.digest.provider == "claude"
-        assert config.digest.model == "haiku"
-        assert config.digest.timeout == 15
+        with pytest.raises(ValueError, match="session_title config has been removed"):
+            load_config(
+                config_file=str(temp_dir / "bootstrap.yaml"),
+                config_store=DummyConfigStore(),
+            )
 
 
 class TestBootstrapConfig:

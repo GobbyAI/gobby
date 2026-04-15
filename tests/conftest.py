@@ -64,6 +64,13 @@ def safe_db_dir() -> Iterator[Path]:
         yield Path(tmpdir)
 
 
+@pytest.fixture(scope="session")
+def safe_gobby_home_dir() -> Iterator[Path]:
+    """Session-scoped temp directory for safe Gobby home."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+
 @pytest.fixture
 def temp_db(temp_dir: Path) -> Iterator["LocalDatabase"]:
     """Create a temporary database for testing."""
@@ -156,7 +163,10 @@ def mock_daemon_config() -> "MagicMock":
 
 @pytest.fixture(autouse=True)
 def protect_production_resources(
-    request: pytest.FixtureRequest, temp_dir: Path, safe_db_dir: Path
+    request: pytest.FixtureRequest,
+    temp_dir: Path,
+    safe_db_dir: Path,
+    safe_gobby_home_dir: Path,
 ) -> Iterator[None]:
     """
     Defensive fixture to prevent tests from touching production resources.
@@ -209,6 +219,7 @@ def protect_production_resources(
     safe_config_file = safe_logs_dir / "config-test.yaml"
     env_vars = {
         "GOBBY_TEST_PROTECT": "1",  # Enable safety switch in app.py, database.py, and cli/utils.py
+        "GOBBY_HOME": str(safe_gobby_home_dir),
         "GOBBY_DATABASE_PATH": str(safe_db_path),
         "GOBBY_CONFIG_FILE": str(safe_config_file),  # Redirect config reads/writes
         "GOBBY_LOGGING_CLIENT": str(safe_log_client),

@@ -39,6 +39,7 @@ class ChatMessagingMixin:
             project_id: str | None = None,
             resume_session_id: str | None = None,
             provider: str | None = None,
+            reasoning_effort: str | None = None,
         ) -> ChatSessionProtocol: ...
 
         async def _send_error(
@@ -207,7 +208,8 @@ class ChatMessagingMixin:
         request_id = data.get("request_id", "")
         project_id = data.get("project_id")
         provider = data.get("provider")
-        if provider is not None and provider not in {"claude", "codex", "gemini"}:
+        reasoning_effort = data.get("reasoning_effort")
+        if provider is not None and provider not in {"claude", "codex", "gemini", "qwen"}:
             await self._send_error(
                 websocket, f"Invalid provider '{provider}'", request_id=request_id
             )
@@ -245,6 +247,7 @@ class ChatMessagingMixin:
                 project_id,
                 inject_context=inject_context,
                 provider=provider,
+                reasoning_effort=reasoning_effort,
             )
         )
         task.add_done_callback(self._on_chat_task_done)
@@ -268,6 +271,7 @@ class ChatMessagingMixin:
         project_id: str | None = None,
         inject_context: str | None = None,
         provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
         from gobby.llm.claude_models import (
@@ -399,6 +403,7 @@ class ChatMessagingMixin:
                         model=model,
                         project_id=project_id,
                         provider=provider,
+                        reasoning_effort=reasoning_effort,
                     )
                     # Notify client of session identity + branch context
                     ref = _session_ref()
@@ -438,7 +443,10 @@ class ChatMessagingMixin:
                     )
                     return
 
-            elif model and session.model and model != session.model:
+            if reasoning_effort is not None:
+                session.reasoning_effort = reasoning_effort
+
+            if model and session.model and model != session.model:
                 # Mid-conversation model switch
                 old_model = session.model
                 try:

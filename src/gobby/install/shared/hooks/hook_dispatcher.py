@@ -9,7 +9,7 @@
 # ///
 """Unified Hook Dispatcher - Routes CLI hooks to Gobby daemon.
 
-Supports Claude Code, Gemini CLI, and Codex.
+Supports Claude Code, Gemini CLI, Qwen CLI, and Codex.
 CLI is identified via --cli flag (primary) or path-based detection (fallback).
 
 Usage:
@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
+
+from gobby.sessions.tmux_context import parse_tmux_socket_path
 
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 60887
@@ -86,6 +88,16 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         terminal_context_hooks=frozenset({"SessionStart"}),
         json_error_exit_code=1,
         logger_name="gobby.hooks.gemini.dispatcher",
+        suppress_logs=False,
+        has_source_detection=False,
+    ),
+    "qwen": CLIConfig(
+        source="qwen",
+        critical_hooks=frozenset({"SessionStart"}),
+        session_start_hooks=frozenset({"SessionStart"}),
+        terminal_context_hooks=frozenset({"SessionStart"}),
+        json_error_exit_code=1,
+        logger_name="gobby.hooks.qwen.dispatcher",
         suppress_logs=False,
         has_source_detection=False,
     ),
@@ -192,8 +204,10 @@ def get_terminal_context() -> dict[str, str | int | bool | None]:
     # kill_agent to kill the parent's tmux pane instead of the child's terminal.
     if os.environ.get("TMUX"):
         context["tmux_pane"] = os.environ.get("TMUX_PANE")
+        context["tmux_socket_path"] = parse_tmux_socket_path(os.environ.get("TMUX"))
     else:
         context["tmux_pane"] = None
+        context["tmux_socket_path"] = None
 
     # Generic terminal program identifier (set by many terminals)
     term_program = os.environ.get("TERM_PROGRAM")
@@ -393,7 +407,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--cli",
         default=None,
-        help="CLI name (claude, gemini, codex)",
+        help="CLI name (claude, gemini, qwen, codex)",
     )
     parser.add_argument(
         "--debug",
@@ -722,7 +736,7 @@ async def main() -> int:
                 # failed", not "tool blocked"). Stop hooks are the
                 # exception — they use exit code 2 to block, same as
                 # Claude. Exit 0 would allow the stop.
-                if config.source in ("gemini", "codex") and hook_type != "Stop":
+                if config.source in ("gemini", "qwen", "codex") and hook_type != "Stop":
                     print(json.dumps(result))
                     return 0
 

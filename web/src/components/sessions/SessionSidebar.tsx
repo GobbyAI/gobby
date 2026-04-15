@@ -1,4 +1,5 @@
 import type { GobbySession, SessionFilters, ProjectInfo } from '../../hooks/useSessions'
+import { getSessionDisplayTitle } from '../../lib/sessionTitle'
 
 interface SessionSidebarProps {
   sessions: GobbySession[]
@@ -31,6 +32,7 @@ function sourceLabel(source: string): string {
   switch (source) {
     case 'claude': return 'Claude'
     case 'gemini': return 'Gemini'
+    case 'qwen': return 'Qwen'
     case 'codex': return 'Codex'
     default: return source
   }
@@ -40,6 +42,7 @@ function sourceDotClass(source: string): string {
   switch (source) {
     case 'claude': return 'session-source-dot claude'
     case 'gemini': return 'session-source-dot gemini'
+    case 'qwen': return 'session-source-dot qwen'
     case 'codex': return 'session-source-dot codex'
     default: return 'session-source-dot'
   }
@@ -202,7 +205,7 @@ function SessionItem({
   onSelect: (session: GobbySession) => void
 }) {
   const isResumable = session.source === 'claude'
-  const title = session.title || `Untitled #${session.ref}`
+  const title = getSessionDisplayTitle(session)
 
   return (
     <div

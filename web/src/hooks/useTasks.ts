@@ -159,6 +159,8 @@ export function useTasks(projectId?: string | null) {
     try {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams({ limit: '500' })
+      params.set('sort_by', 'updated_at')
+      params.set('sort_order', 'desc')
       if (filters.priority !== null) params.set('priority', String(filters.priority))
       if (filters.taskType) params.set('task_type', filters.taskType)
       if (filters.assignee) params.set('assignee', filters.assignee)

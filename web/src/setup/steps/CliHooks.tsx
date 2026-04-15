@@ -9,12 +9,14 @@ import type { StepProps } from "../types.js";
 const CLI_LABELS: Record<string, string> = {
   claude: "Claude Code",
   gemini: "Gemini CLI",
+  qwen: "Qwen CLI",
   codex: "Codex",
 };
 
 const CLI_FLAGS: Record<string, string> = {
   claude: "--claude",
   gemini: "--gemini",
+  qwen: "--qwen",
   codex: "--codex",
 };
 

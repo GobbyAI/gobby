@@ -239,7 +239,7 @@ class TestChatSessionSendMessage:
         # Mock receive_response to throw exception group
         async def failing_stream():
             raise ExceptionGroup("test", [ValueError("some issue")])
-            yield  # noqa: unreachable — required to make this an async generator
+            yield  # pragma: no cover - required to make this an async generator
 
         session._client.receive_response.return_value = failing_stream()
 
@@ -280,6 +280,34 @@ class TestChatSessionSendMessage:
         await session.switch_model("new-model")
         session._client.set_model.assert_awaited_once_with("new-model")
         assert session.model == "new-model"
+
+    @pytest.mark.asyncio
+    async def test_send_message_reconnects_when_reasoning_effort_changes(
+        self, session: ChatSession
+    ) -> None:
+        session.reasoning_effort = "high"
+        session._active_reasoning_effort = None
+        session._model = "sonnet"
+        session.sdk_session_id = "sdk-123"
+        session._reconnect_for_reasoning_effort_change = AsyncMock()
+        session._client.receive_response.return_value = TestChatSessionSendMessage._mock_stream(
+            [
+                ResultMessage(
+                    subtype="result",
+                    duration_ms=0,
+                    duration_api_ms=0,
+                    is_error=False,
+                    num_turns=1,
+                    session_id="sdk-123",
+                    result="ok",
+                ),
+            ]
+        )
+
+        async for _ in session.send_message("Hi!"):
+            pass
+
+        session._reconnect_for_reasoning_effort_change.assert_awaited_once()
 
     @staticmethod
     async def _mock_stream(items):

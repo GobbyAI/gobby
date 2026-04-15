@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { GobbySession } from '../../hooks/useSessions'
 import { SourceIcon } from '../shared/SourceIcon'
 import { formatRelativeTime } from '../../utils/formatTime'
+import { getSessionDisplayTitle } from '../../lib/sessionTitle'
 
 interface SessionLineageProps {
   /** The currently selected session. */
@@ -85,7 +86,7 @@ function TreeNodeView({
           {!hasChildren && <span className="lineage-node-leaf">{'\u2022'}</span>}
           <SourceIcon source={s.source} size={12} />
           <span className="lineage-node-title">
-            {s.title || `Session #${s.ref}`}
+            {getSessionDisplayTitle(s)}
           </span>
           {s.agent_depth > 0 && (
             <span className="lineage-node-depth">L{s.agent_depth}</span>

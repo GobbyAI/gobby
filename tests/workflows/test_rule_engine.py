@@ -1196,8 +1196,8 @@ class TestConsecutiveToolBlocks:
         assert variables["consecutive_tool_blocks"] == 0
 
     @pytest.mark.asyncio
-    async def test_counter_resets_on_before_agent(self, db: LocalDatabase) -> None:
-        """Counter should reset to 0 on BEFORE_AGENT (new turn = fresh start)."""
+    async def test_counter_resets_on_turn_start_boundary(self, db: LocalDatabase) -> None:
+        """Counter should reset to 0 on the semantic turn_start boundary."""
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"consecutive_tool_blocks": 5}
@@ -1567,6 +1567,43 @@ class TestEditWritePending:
         assert variables.get("edit_write_pending") is True
 
     @pytest.mark.asyncio
+    async def test_edit_write_pending_set_for_apply_patch(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Normalized apply_patch should participate in edit-write recovery."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "apply_patch",
+                "tool_input": (
+                    "*** Begin Patch\n*** Update File: src/main.py\n@@\n*** End Patch\n"
+                ),
+            },
+        )
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("edit_write_pending") is True
+
+    @pytest.mark.asyncio
+    async def test_edit_write_pending_set_for_shell_write(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """High-confidence shell writes should participate in edit recovery."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": "printf hi > src/main.py"}},
+        )
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("edit_write_pending") is True
+
+    @pytest.mark.asyncio
     async def test_edit_write_pending_not_set_for_read(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
@@ -1588,6 +1625,27 @@ class TestEditWritePending:
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"edit_write_pending": True}
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables["edit_write_pending"] is False
+
+    @pytest.mark.asyncio
+    async def test_edit_write_pending_cleared_on_apply_patch_success(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        """Successful normalized apply_patch should clear edit_write_pending."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"edit_write_pending": True}
+        event = _make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "apply_patch",
+                "tool_input": (
+                    "*** Begin Patch\n*** Update File: src/main.py\n@@\n*** End Patch\n"
+                ),
+            },
+        )
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["edit_write_pending"] is False
@@ -2167,8 +2225,8 @@ class TestStopAttempts:
             assert variables["stop_attempts"] == i + 1
 
     @pytest.mark.asyncio
-    async def test_stop_attempts_resets_on_before_agent(self, db: LocalDatabase) -> None:
-        """stop_attempts should reset on BEFORE_AGENT."""
+    async def test_stop_attempts_resets_on_turn_start_boundary(self, db: LocalDatabase) -> None:
+        """stop_attempts should reset on the semantic turn_start boundary."""
         engine = RuleEngine(db)
         variables: dict[str, Any] = {"stop_attempts": 5}
 
@@ -2225,6 +2283,54 @@ class TestUnmappedEventType:
 
 
 class TestTurnEndResolution:
+    @pytest.mark.asyncio
+    async def test_before_agent_resolves_to_raw_and_semantic_start(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "raw-before-agent",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_AGENT,
+                effects=[RuleEffect(type="set_variable", variable="raw_start", value=True)],
+            ),
+        )
+        _insert_rule(
+            manager,
+            "semantic-turn-start",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_START,
+                effects=[RuleEffect(type="set_variable", variable="semantic_start", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.BEFORE_AGENT)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["raw_start"] is True
+        assert variables["semantic_start"] is True
+
+    @pytest.mark.asyncio
+    async def test_turn_start_rule_fires_for_before_agent(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "turn-start-before-agent",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.TURN_START,
+                effects=[RuleEffect(type="set_variable", variable="matched_start", value=True)],
+            ),
+        )
+
+        variables: dict[str, Any] = {"stop_attempts": 5}
+        event = _make_event(HookEventType.BEFORE_AGENT)
+        await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert variables["matched_start"] is True
+        assert variables["stop_attempts"] == 0
+
     @pytest.mark.asyncio
     async def test_turn_end_rule_fires_for_stop(self, db: LocalDatabase, manager) -> None:
         _insert_rule(

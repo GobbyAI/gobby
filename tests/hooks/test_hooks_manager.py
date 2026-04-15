@@ -1,5 +1,6 @@
 """Tests for the HookManager coordinator."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -937,6 +938,45 @@ class TestHookManagerSessionLookup:
         assert mock_register.called
         assert response.decision == "allow"
 
+    def test_handle_recovers_existing_session_across_source_mismatch(
+        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+    ) -> None:
+        """Later hooks with the wrong source should reuse the existing row."""
+        manager = hook_manager_with_mocks
+        project_meta = (temp_dir / ".gobby" / "project.json").read_text()
+        project_id = json.loads(project_meta)["id"]
+        existing = manager._session_storage.register(
+            external_id="shared-session-id",
+            machine_id="test-machine-id",
+            source="codex",
+            project_id=project_id,
+            transcript_path=str(temp_dir / "rollout-shared-session-id.jsonl"),
+            title="Recovered Session",
+        )
+        existing_session_id = existing.id
+
+        wrong_source_event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="shared-session-id",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "bash", "cwd": str(temp_dir)},
+            machine_id="test-machine-id",
+        )
+
+        response = manager.handle(wrong_source_event)
+
+        assert response.decision == "allow"
+        assert (
+            manager._session_manager.get_session_id("shared-session-id", "claude")
+            == existing_session_id
+        )
+        rows = manager._session_storage.db.fetchall(
+            "SELECT id FROM sessions WHERE external_id = ?",
+            ("shared-session-id",),
+        )
+        assert len(rows) == 1
+
     def test_handle_backfills_terminal_context_for_known_session(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
@@ -1251,18 +1291,28 @@ class TestHookManagerWebhookDispatch:
 
         loop_thread = threading.Thread(target=run_loop, daemon=True)
         loop_thread.start()
+        dispatched = threading.Event()
 
         try:
+
+            async def mock_dispatch(*args, **kwargs):
+                dispatched.set()
+                return None
+
             with (
                 patch.object(manager._webhook_dispatcher, "_build_payload", return_value={}),
                 patch.object(
                     manager._webhook_dispatcher,
                     "_dispatch_single",
                     new_callable=AsyncMock,
-                ),
+                    side_effect=mock_dispatch,
+                ) as mock_dispatch_single,
             ):
                 # Should schedule async task
                 manager._dispatch_webhooks_async(event)
+                assert dispatched.wait(timeout=1), "Async webhook dispatch never ran"
+                assert mock_dispatch_single.await_count == 1
+                asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=1)
         finally:
             loop.call_soon_threadsafe(loop.stop)
             loop_thread.join(timeout=1)

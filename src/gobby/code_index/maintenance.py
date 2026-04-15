@@ -77,6 +77,7 @@ async def _run_maintenance(
             continue
 
         if gcode_available:
+            proc: asyncio.subprocess.Process | None = None
             try:
                 proc = await asyncio.create_subprocess_exec(
                     str(gcode_bin),
@@ -94,7 +95,21 @@ async def _run_maintenance(
                         f"Maintenance reindex failed for {project.id} "
                         f"(exit code {proc.returncode}): {detail}"
                     )
+            except asyncio.CancelledError:
+                if proc is not None:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except ProcessLookupError:
+                        pass
+                raise
             except TimeoutError:
+                if proc is not None:
+                    try:
+                        proc.kill()
+                        await proc.wait()
+                    except ProcessLookupError:
+                        pass
                 logger.warning(f"Maintenance reindex timed out for {project.id}")
             except Exception as e:
                 logger.warning(f"Maintenance reindex failed for {project.id}: {e}")

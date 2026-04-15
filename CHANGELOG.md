@@ -8,6 +8,16 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Behavioral changes
+
+- **Memory recall threshold raised**: `memory-recall-on-prompt.yaml` bumps
+  `min_score` from `0.6` to `0.7`. Lower-confidence memories that were
+  previously returned on prompt will now be filtered out. If you relied on
+  the old threshold, edit the installed rule row in `workflow_definitions`
+  (or ship a local override rule) to restore `min_score: 0.6`.
+
 ## [0.3.6]
 
 ### Features

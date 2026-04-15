@@ -150,6 +150,32 @@ def test_render_transcript_strips_search_quality_reflection_tags():
     assert rendered[0].content == "Result: thinking... done"
 
 
+def test_render_transcript_strips_permissions_instructions_tags():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<permissions instructions>Filesystem sandboxing defines which files can be read or written.</permissions instructions>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "Filesystem sandboxing defines which files can be read or written."
+
+
+def test_render_transcript_strips_collaboration_mode_tags():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<collaboration_mode>Collaboration Mode: Default</collaboration_mode>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "Collaboration Mode: Default"
+
+
 def test_render_incremental_returns_completed_turns():
     state = RenderState()
 
@@ -183,6 +209,19 @@ def test_render_transcript_unknown_block_type():
     assert block.type == "unknown"
     assert block.block_type == "random_type"
     assert block.raw == {"some": "raw"}
+
+
+def test_render_transcript_suppresses_hook_prompt_blocks():
+    msgs = [
+        make_msg(0, "assistant", "internal", content_type="hook_prompt"),
+        make_msg(1, "assistant", "Visible output"),
+    ]
+
+    rendered = render_transcript(msgs)
+
+    assert len(rendered) == 1
+    assert rendered[0].content == "Visible output"
+    assert [block.type for block in rendered[0].content_blocks] == ["text"]
 
 
 def test_render_transcript_tool_reference():

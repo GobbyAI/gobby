@@ -57,12 +57,13 @@ observers:
     behavior: mcp_call_tracking
 
 triggers:
-  on_stop:
+  on_turn_end:
+    # Semantic end-of-turn policy (`stop` / `after_agent` transport details normalize here)
     # Increment stop attempts counter
     - action: increment_variable
       name: stop_attempts
 
-    # Block stop when a tool was just blocked (agent should follow the block instructions)
+    # Block turn end when a tool was just blocked (agent should follow the block instructions)
     - action: block_stop
       when: "variables.get('_tool_block_pending') and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 3)"
       reason: |
@@ -84,8 +85,8 @@ triggers:
     - action: memory_review_gate
       when: "not variables.get('memory_review_completed') and (variables.get('stop_attempts', 0) or 0) < 3"
 
-    # Task closure enforcement - block stop if task is still in_progress
-    # Agents must close_task() or set to review before stopping
+    # Task closure enforcement - block turn end if task is still in_progress
+    # Agents must close_task() or set to review before yielding
     # Skip in plan mode or if escape hatch triggered (3+ consecutive stop attempts)
     - action: require_task_review_or_close_before_stop
       when: "not variables.get('plan_mode') and variables.get('stop_attempts', 0) < variables.get('max_stop_attempts', 3)"
@@ -196,7 +197,8 @@ triggers:
         set_variable on gobby-workflows:
         set_variable(name="errors_resolved", value=true, session_id="<session_id>")
 
-  on_before_agent:
+  on_turn_start:
+    # Semantic start-of-turn reset (`before_agent` is the raw transport detail)
     # Reset stop attempts counter on user activity
     - action: set_variable
       name: stop_attempts
@@ -300,13 +302,13 @@ triggers:
           reason: |
             skip_validation is not allowed when a commit is attached. If work was done, validation must run. Close the task without skip_validation.
 
-        # Block AskUserQuestion when the stop hook has fired with an actionable directive
+        # Block AskUserQuestion when the turn-end hook has fired with an actionable directive
         # If stop_attempts > 0 and a task is still claimed, the agent should be
         # committing and closing the task — not deferring to the user with a question
         - tools: [AskUserQuestion]
           when: "variables.get('stop_attempts', 0) > 0 and task_claimed"
           reason: |
-            Do not ask — act on the hook directive. The stop hook told you what to do:
+            Do not ask — act on the hook directive. The turn-end gate told you what to do:
             1. Commit your changes: git commit -m "[{{ project.name }}-#N] description"
             2. Close the task: close_task(task_id="#N", commit_sha="<sha>")
             3. Then stop.
@@ -338,7 +340,7 @@ triggers:
     # Skip for MCP tool calls — those are often the agent complying with a
     # stop-gate directive (e.g., set_variable to clear a gate). Resetting the
     # counter on MCP calls prevents the 3-strike escape hatch from triggering.
-    # The on_before_agent handler resets stop_attempts on each new user prompt.
+    # The on_turn_start handler resets stop_attempts on each new user prompt.
     - action: set_variable
       name: stop_attempts
       value: 0

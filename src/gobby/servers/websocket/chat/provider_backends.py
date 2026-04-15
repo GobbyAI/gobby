@@ -14,6 +14,7 @@ from typing import Any
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
+from gobby.adapters.qwen import QwenAdapter
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -36,6 +37,7 @@ _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS = 0.1
 # GeminiAdapter is stateless w.r.t. tool-name normalization; share one instance
 # instead of constructing a new adapter on every tool call.
 _GEMINI_TOOL_NAME_ADAPTER = GeminiAdapter()
+_QWEN_TOOL_NAME_ADAPTER = QwenAdapter()
 
 
 def _error_message(exc: BaseException) -> str:
@@ -118,6 +120,7 @@ class ManagedChatSessionBase:
     _connected: bool = field(default=False, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _model: str | None = field(default=None, repr=False)
+    reasoning_effort: str | None = field(default=None, repr=False)
     _tool_approval_config: Any | None = field(default=None, repr=False)
     _tool_approval_callback: Any | None = field(default=None, repr=False)
     _session_manager_ref: Any | None = field(default=None, repr=False)
@@ -231,6 +234,15 @@ class GeminiManagedChatSession(
     _plan_feedback: str | None = field(default=None, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
 
+    def _web_chat_source(self) -> str:
+        return f"{self.provider}_web_chat"
+
+    def _provider_label(self) -> str:
+        return self.provider.capitalize()
+
+    def _tool_name_adapter(self) -> GeminiAdapter:
+        return _QWEN_TOOL_NAME_ADAPTER if self.provider == "qwen" else _GEMINI_TOOL_NAME_ADAPTER
+
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
         if not self._connected:
             await self.start(model=self._model)
@@ -252,7 +264,7 @@ class GeminiManagedChatSession(
                     session_ref=session_ref,
                     project_id=self.project_id,
                     cwd=self.project_path,
-                    source="gemini_web_chat",
+                    source=self._web_chat_source(),
                 )
             )
 
@@ -264,7 +276,7 @@ class GeminiManagedChatSession(
                 resp = await self._on_before_agent(
                     {
                         "prompt": prompt,
-                        "source": "gemini_web_chat",
+                        "source": self._web_chat_source(),
                     }
                 )
                 if resp and resp.get("context"):
@@ -301,7 +313,8 @@ class GeminiManagedChatSession(
                 yield DoneEvent(tool_calls_count=0, sdk_session_id=self.sdk_session_id)
             except Exception as exc:
                 logger.error(
-                    "Gemini managed session %s error: %s",
+                    "%s managed session %s error: %s",
+                    self._provider_label(),
                     self.conversation_id,
                     exc,
                     exc_info=True,
@@ -309,8 +322,8 @@ class GeminiManagedChatSession(
                 yield TextChunk(content=f"Generation failed: {exc}")
                 yield DoneEvent(tool_calls_count=0)
 
-    @staticmethod
     def _translate_event(
+        self,
         event: StreamEvent,
         *,
         allow_message_fallback: bool = True,
@@ -340,7 +353,7 @@ class GeminiManagedChatSession(
                 return None
 
             # Normalize tool name for rule enforcement
-            normalized_name = _GEMINI_TOOL_NAME_ADAPTER.normalize_tool_name(tool_name)
+            normalized_name = self._tool_name_adapter().normalize_tool_name(tool_name)
 
             tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
             mcp_server = event.data.get("mcp_server") or event.data.get("server_name")
@@ -349,7 +362,7 @@ class GeminiManagedChatSession(
             return ToolCallEvent(
                 tool_call_id=call_id,
                 tool_name=normalized_name,
-                server_name=mcp_server or "gemini",
+                server_name=mcp_server or self.provider,
                 arguments=tool_input,
             )
 
@@ -373,7 +386,19 @@ class GeminiManagedChatSession(
         return None
 
     async def interrupt(self) -> None:
-        logger.debug("Gemini interrupt requested for %s (no-op)", self.conversation_id)
+        logger.debug(
+            "%s interrupt requested for %s (no-op)",
+            self._provider_label(),
+            self.conversation_id,
+        )
+
+
+@dataclass
+class QwenManagedChatSession(GeminiManagedChatSession):
+    """Web-chat session backed by the shared Qwen ACP backend."""
+
+    provider: str = field(default="qwen", init=False)
+    chat_mode: str = field(default="plan")
 
 
 @dataclass
@@ -503,8 +528,12 @@ class GeminiWebChatBackend:
         *,
         client: GeminiACPClient | None = None,
         default_model: str | None = None,
+        provider: str = "gemini",
+        display_name: str = "Gemini",
     ) -> None:
-        self._client = client or GeminiACPClient()
+        self.provider = provider
+        self._display_name = display_name
+        self._client = client or GeminiACPClient(cli_name=provider, display_name=display_name)
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._default_model = default_model
         self._startup_task: asyncio.Task[None] | None = None
@@ -526,13 +555,15 @@ class GeminiWebChatBackend:
             try:
                 await self._client.stop()
             except Exception:
-                logger.debug("Gemini backend cleanup after failed startup", exc_info=True)
+                logger.debug(
+                    "%s backend cleanup after failed startup", self._display_name, exc_info=True
+                )
             self._health = ProviderBackendHealth(
                 provider=self.provider,
                 available=False,
                 startup_error=_error_message(exc),
             )
-            logger.warning("Gemini ACP backend startup failed: %s", exc)
+            logger.warning("%s ACP backend startup failed: %s", self._display_name, exc)
             return
 
         self._health = ProviderBackendHealth(provider=self.provider, available=True)
@@ -577,7 +608,9 @@ class GeminiWebChatBackend:
 
         await self.start()
         if not self._health.available:
-            raise RuntimeError(self._health.startup_error or "Gemini backend unavailable")
+            raise RuntimeError(
+                self._health.startup_error or f"{self._display_name} backend unavailable"
+            )
 
         session_id = session.sdk_session_id or session.resume_session_id
         cwd = session.project_path or "."
@@ -586,11 +619,13 @@ class GeminiWebChatBackend:
                 session_id,
                 model=session._model,
                 cwd=cwd,
+                reasoning_effort=session.reasoning_effort,
             )
         else:
             session_info = await self._client.create_session(
                 model=session._model,
                 cwd=cwd,
+                reasoning_effort=session.reasoning_effort,
             )
 
         resolved_session_id = (
@@ -613,20 +648,47 @@ class GeminiWebChatBackend:
         prompt: str,
     ) -> AsyncIterator[StreamEvent]:
         if not self._health.available:
-            raise RuntimeError(self._health.startup_error or "Gemini backend unavailable")
+            raise RuntimeError(
+                self._health.startup_error or f"{self._display_name} backend unavailable"
+            )
         if not session.sdk_session_id:
-            raise RuntimeError("Gemini session missing sessionId")
+            raise RuntimeError(f"{self._display_name} session missing sessionId")
 
         async for event in self._client.send(
             prompt,
             session_id=session.sdk_session_id,
             model=session._model,
+            reasoning_effort=session.reasoning_effort,
         ):
             yield event
 
     async def switch_model(self, session: GeminiManagedChatSession, new_model: str) -> None:
         session._model = new_model
         session._connected = False
+
+
+class QwenWebChatBackend(GeminiWebChatBackend):
+    """Shared daemon-owned Qwen ACP backend."""
+
+    provider = "qwen"
+
+    def __init__(
+        self,
+        *,
+        client: GeminiACPClient | None = None,
+        default_model: str | None = None,
+    ) -> None:
+        super().__init__(
+            client=client
+            or GeminiACPClient(
+                cli_name="qwen",
+                display_name="Qwen",
+                prompt_timeout_env="GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS",
+            ),
+            default_model=default_model,
+            provider="qwen",
+            display_name="Qwen",
+        )
 
 
 class CodexWebChatBackend:
@@ -808,6 +870,7 @@ class CodexWebChatBackend:
                 prompt,
                 context_prefix=context_prefix,
                 model=session._model,
+                reasoningEffort=session.reasoning_effort,
             )
             session._turn_id = turn.id or session._turn_id
 

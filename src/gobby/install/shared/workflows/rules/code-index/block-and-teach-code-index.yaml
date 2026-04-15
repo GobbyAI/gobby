@@ -9,11 +9,11 @@ rules:
     when: >
       not variables.get('code_index_loaded')
       and (
-        (event.data.get('tool_name') == 'Read'
-         and tool_input.get('file_path', '').rpartition('.')[2]
+        (event.data.get('canonical_tool_kind') == 'read'
+         and event.data.get('canonical_file_path', '').rpartition('.')[2]
              in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
                  'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala'))
-        or event.data.get('tool_name', '').lower() in ('grep_search', 'grep')
+        or event.data.get('canonical_tool_kind') == 'search'
       )
     effects:
       - type: block

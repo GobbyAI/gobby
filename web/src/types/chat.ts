@@ -123,6 +123,10 @@ export interface QueuedFile {
   base64: string | null;
 }
 
+export interface ChatSendOptions {
+  reasoningEffort?: string | null;
+}
+
 export interface ProjectOption {
   id: string;
   name: string;
@@ -168,6 +172,7 @@ export interface SwappedSessionTarget {
 export interface ChatState {
   messages: ChatMessage[];
   sessionRef: string | null;
+  sessionTitle?: string | null;
   currentBranch: string | null;
   worktreePath: string | null;
   isStreaming: boolean;
@@ -176,7 +181,11 @@ export interface ChatState {
   isConnected: boolean;
   isReconnecting: boolean;
   contextUsage?: ContextUsage;
-  onSend: (content: string, files?: QueuedFile[]) => void;
+  onSend: (
+    content: string,
+    files?: QueuedFile[],
+    options?: ChatSendOptions,
+  ) => void;
   onStop: () => void;
   onRespondToQuestion: (
     toolCallId: string,
@@ -198,11 +207,18 @@ export interface ChatState {
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
   activeAgent?: string;
   onAgentChange?: (agentName: string) => void;
-  onSwitchProvider?: (provider: string) => void;
+  onSwitchProvider?: (
+    provider: string,
+    options?: { model?: string | null; reasoningEffort?: string | null },
+  ) => void;
   continueSessionInChat?: (
     sourceDbSessionId: string,
     projectId?: string,
-    options?: { provider?: string | null; model?: string | null },
+    options?: {
+      provider?: string | null;
+      model?: string | null;
+      reasoningEffort?: string | null;
+    },
   ) => Promise<string>;
   planPendingApproval: boolean;
   onApprovePlan: () => void;
@@ -222,8 +238,10 @@ export interface ChatState {
   conversationSwitchKey?: number;
   viewSession?: (sessionId: string) => void;
   clearViewingSession?: () => void;
+  mainSessionMeta?: SessionObservationMeta | null;
   viewingSessionId?: string | null;
   viewingSessionMeta?: SessionObservationMeta | null;
+  isContinuingSession?: boolean;
   attachedSessionId?: string | null;
   attachedSessionMeta?: SessionObservationMeta | null;
   sessionInteractionMode?: SessionInteractionMode;

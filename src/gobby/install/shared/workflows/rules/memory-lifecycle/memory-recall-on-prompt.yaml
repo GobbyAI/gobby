@@ -3,7 +3,7 @@ tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 rules:
   memory-recall-on-prompt:
     description: "Search and inject relevant memories before agent prompt"
-    event: before_agent
+    event: turn_start
     enabled: true
     priority: 10
     when: "len((event.data.get('prompt') or '').split()) >= 6"
@@ -13,6 +13,6 @@ rules:
         tool: search_memories
         arguments:
           limit: 2
-          min_score: 0.6
+          min_score: 0.7
         background: false
         inject_result: true

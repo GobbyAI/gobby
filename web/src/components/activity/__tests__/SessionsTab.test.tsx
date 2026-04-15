@@ -3,6 +3,18 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SessionsTab } from "../SessionsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../test/mocks/fetch";
 
+type SessionDetailMock = {
+  messages: Array<{ id?: string; content?: string }>
+  isLoading: boolean
+  transcriptStatus: { content_state: string } | null
+}
+
+const mockUseSessionDetail = vi.fn<() => SessionDetailMock>(() => ({
+  messages: [],
+  isLoading: false,
+  transcriptStatus: null,
+}));
+
 vi.mock("../../chat/artifacts/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
@@ -14,7 +26,7 @@ vi.mock("../../shared/SourceIcon", () => ({
 }));
 
 vi.mock("../../../hooks/useSessionDetail", () => ({
-  useSessionDetail: () => ({ messages: [], isLoading: false }),
+  useSessionDetail: () => mockUseSessionDetail(),
 }));
 
 vi.mock("../../../hooks/useConfirmDialog", () => ({
@@ -166,6 +178,12 @@ const activeSessions = [
 
 describe("SessionsTab", () => {
   beforeEach(() => {
+    mockUseSessionDetail.mockReset();
+    mockUseSessionDetail.mockReturnValue({
+      messages: [],
+      isLoading: false,
+      transcriptStatus: null,
+    });
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
     mockFetch.mockJsonResponse("/api/sessions?status=active", {
@@ -185,6 +203,7 @@ describe("SessionsTab", () => {
     await waitFor(() => {
       expect(screen.getByText("#201: Terminal Session")).toBeTruthy();
       expect(screen.getByText("#203: Other Web Chat")).toBeTruthy();
+      expect(screen.getByText(/Watching #201: Terminal Session/)).toBeTruthy();
     });
 
     expect(screen.queryByText("#202: Current Web Chat")).toBeNull();
@@ -193,6 +212,8 @@ describe("SessionsTab", () => {
 
     expect(screen.getAllByText(/^tmux$/i)).toHaveLength(1);
     expect(screen.getAllByText(/^web$/i)).toHaveLength(1);
+    expect(screen.getAllByLabelText("Session actions")).toHaveLength(2);
+    expect(screen.queryByText("Close")).toBeNull();
   });
 
   it("shows agent badge and lets a watched session swap into the main chat", async () => {
@@ -217,6 +238,81 @@ describe("SessionsTab", () => {
       sessionId: "web-other",
       sessionType: "web_chat",
       agentRunId: "run-auto-203",
+    });
+    expect(screen.getByText(/Watching #203: Other Web Chat/)).toBeTruthy();
+  });
+
+  it("keeps the watched pane open when the selected session is clicked again", async () => {
+    render(<SessionsTab chatSessionId="web-current" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#201: Terminal Session")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("#201: Terminal Session"));
+    expect(screen.getByText(/Watching #201: Terminal Session/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText("#201: Terminal Session"));
+    expect(screen.getByText(/Watching #201: Terminal Session/)).toBeTruthy();
+  });
+
+  it("clears the watched pane when the selected session becomes the main chat without a parked replacement", async () => {
+    const { rerender } = render(
+      <SessionsTab focusSessionId="web-other" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Watching #203: Other Web Chat/)).toBeTruthy();
+    });
+
+    rerender(<SessionsTab chatSessionId="web-other" />);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Watching /)).toBeNull();
+    });
+  });
+
+  it("shows parser mismatch empty state for unparseable transcripts", async () => {
+    mockUseSessionDetail.mockReturnValue({
+      messages: [],
+      isLoading: false,
+      transcriptStatus: { content_state: "unparseable" },
+    });
+
+    render(<SessionsTab focusSessionId="terminal-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript exists but could not be parsed")).toBeTruthy();
+    });
+  });
+
+  it("shows missing transcript empty state", async () => {
+    mockUseSessionDetail.mockReturnValue({
+      messages: [],
+      isLoading: false,
+      transcriptStatus: { content_state: "missing" },
+    });
+
+    render(<SessionsTab focusSessionId="terminal-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Session has no transcript")).toBeTruthy();
+    });
+  });
+
+  it("only handles focus once when the focused session is already selected", async () => {
+    const onFocusHandled = vi.fn();
+
+    render(
+      <SessionsTab
+        focusSessionId="terminal-1"
+        onFocusHandled={onFocusHandled}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#201: Terminal Session")).toBeTruthy();
+      expect(onFocusHandled).toHaveBeenCalledTimes(1);
     });
   });
 });

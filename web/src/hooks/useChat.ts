@@ -13,9 +13,13 @@ import { classifyTool } from "../types/chat";
 import type { QueuedFile } from "../types/chat";
 import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
+import { AUTO_REASONING_EFFORT } from "../lib/providerModels";
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
+const VIEWING_SESSION_ID_KEY = "gobby-viewing-session-id";
+const VIEWING_SESSION_MODE_KEY = "gobby-viewing-session-mode";
+const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex"]);
 
 interface WebSocketMessage {
   type: string;
@@ -133,22 +137,107 @@ function saveDbSessionId(id: string | null): void {
   }
 }
 
-interface CreatedWebChatSession {
+function loadViewingSessionId(): string | null {
+  return localStorage.getItem(VIEWING_SESSION_ID_KEY);
+}
+
+function saveViewingSessionId(id: string | null): void {
+  if (id) {
+    localStorage.setItem(VIEWING_SESSION_ID_KEY, id);
+  } else {
+    localStorage.removeItem(VIEWING_SESSION_ID_KEY);
+  }
+}
+
+function loadViewingSessionMode(): "none" | "observe" {
+  const persisted = localStorage.getItem(VIEWING_SESSION_MODE_KEY);
+  return persisted === "observe" ? "observe" : "none";
+}
+
+function saveViewingSessionMode(mode: "none" | "observe"): void {
+  if (mode === "observe") {
+    localStorage.setItem(VIEWING_SESSION_MODE_KEY, mode);
+  } else {
+    localStorage.removeItem(VIEWING_SESSION_MODE_KEY);
+  }
+}
+
+function isChatProvider(value: unknown): value is string {
+  return typeof value === "string" && CHAT_PROVIDERS.has(value);
+}
+
+function isValidSessionType(value: unknown): value is "terminal" | "web_chat" {
+  return value === "terminal" || value === "web_chat";
+}
+
+function normalizeSessionType(value: unknown): "terminal" | "web_chat" | null {
+  return isValidSessionType(value) ? value : null;
+}
+
+function normalizeReasoningEffort(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === AUTO_REASONING_EFFORT) {
+    return null;
+  }
+  return normalized;
+}
+
+interface CreatedWebChatSession extends Record<string, unknown> {
   id: string;
   source: string;
   model: string | null;
   chat_mode: string | null;
   seq_num: number | null;
   title: string | null;
+  status?: string | null;
+  external_id?: string | null;
+  git_branch?: string | null;
+  context_window?: number | null;
+}
+
+interface ContinuationRollbackSnapshot {
+  sourceSessionId: string;
+  conversationId: string;
+  dbSessionId: string | null;
+  mainSessionMeta: SessionObservationMeta | null;
+  sessionTitle: string | null;
+  sessionRef: string | null;
+  selectedProvider: string | null;
+  messages: ChatMessage[];
+  contextUsage: {
+    totalInputTokens: number;
+    outputTokens: number;
+    contextWindow: number | null;
+    uncachedInputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  };
+  currentMode: ChatMode;
+  currentBranch: string | null;
+  worktreePath: string | null;
+  viewingSessionId: string | null;
+  viewingSessionMeta: SessionObservationMeta | null;
+  observedSessionId: string | null;
+  observedSessionMeta: SessionObservationMeta | null;
+  attachedSessionId: string | null;
+  attachedSessionMeta: SessionObservationMeta | null;
+  sessionInteractionMode: SessionInteractionMode;
+  proxyDeliveryNotice: string | null;
 }
 
 async function createWebChatSession(params?: {
   projectId?: string | null;
   provider?: string | null;
   model?: string | null;
+  reasoningEffort?: string | null;
   chatMode?: ChatMode | null;
+  title?: string | null;
 }): Promise<CreatedWebChatSession> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+  const reasoningEffort = normalizeReasoningEffort(params?.reasoningEffort ?? null);
   const response = await fetch(`${baseUrl}/api/sessions/web-chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -156,7 +245,9 @@ async function createWebChatSession(params?: {
       project_id: params?.projectId ?? null,
       provider: params?.provider ?? null,
       model: params?.model ?? null,
+      reasoning_effort: reasoningEffort,
       chat_mode: params?.chatMode ?? null,
+      title: params?.title ?? null,
     }),
   });
 
@@ -166,6 +257,110 @@ async function createWebChatSession(params?: {
 
   const data = await response.json();
   return data.session as CreatedWebChatSession;
+}
+
+function computeContextUsageFromSessionData(
+  session: Record<string, unknown> | null,
+): {
+  totalInputTokens: number;
+  outputTokens: number;
+  contextWindow: number | null;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+} {
+  const totalInputTokens =
+    typeof session?.usage_input_tokens === "number"
+      ? session.usage_input_tokens
+      : 0;
+  const outputTokens =
+    typeof session?.usage_output_tokens === "number"
+      ? session.usage_output_tokens
+      : 0;
+  const cacheReadTokens =
+    typeof session?.usage_cache_read_tokens === "number"
+      ? session.usage_cache_read_tokens
+      : 0;
+  const cacheCreationTokens =
+    typeof session?.usage_cache_creation_tokens === "number"
+      ? session.usage_cache_creation_tokens
+      : 0;
+  const contextWindow =
+    typeof session?.context_window === "number" ? session.context_window : null;
+
+  return {
+    totalInputTokens,
+    outputTokens,
+    contextWindow,
+    uncachedInputTokens: Math.max(
+      0,
+      totalInputTokens - cacheReadTokens - cacheCreationTokens,
+    ),
+    cacheReadTokens,
+    cacheCreationTokens,
+  };
+}
+
+function hasSessionUsage(session: Record<string, unknown> | null): boolean {
+  if (!session) return false;
+  return (
+    (typeof session.usage_input_tokens === "number" &&
+      session.usage_input_tokens > 0) ||
+    (typeof session.usage_output_tokens === "number" &&
+      session.usage_output_tokens > 0) ||
+    typeof session.context_window === "number"
+  );
+}
+
+function toSessionObservationMeta(
+  session: Record<string, unknown> | null,
+  overrides?: Partial<SessionObservationMeta>,
+): SessionObservationMeta | null {
+  if (!session) return null;
+  return {
+    ref:
+      overrides?.ref ??
+      (typeof session.seq_num === "number" ? `#${session.seq_num}` : null),
+    source:
+      overrides?.source ??
+      (typeof session.source === "string" ? session.source : "unknown"),
+    title:
+      overrides?.title ??
+      (typeof session.title === "string" ? session.title : null),
+    status:
+      overrides?.status ??
+      (typeof session.status === "string" ? session.status : "unknown"),
+    model:
+      overrides?.model ??
+      (typeof session.model === "string" ? session.model : null),
+    externalId:
+      overrides?.externalId ??
+      (typeof session.external_id === "string" ? session.external_id : ""),
+    chatMode:
+      overrides?.chatMode ??
+      (typeof session.chat_mode === "string" ? session.chat_mode : null),
+    gitBranch:
+      overrides?.gitBranch ??
+      (typeof session.git_branch === "string" ? session.git_branch : null),
+    contextWindow:
+      overrides?.contextWindow ??
+      (typeof session.context_window === "number"
+        ? session.context_window
+        : null),
+    agentRunId:
+      overrides?.agentRunId ??
+      (typeof session.agent_run_id === "string" ? session.agent_run_id : null),
+    workflowName:
+      overrides?.workflowName ??
+      (typeof session.workflow_name === "string"
+        ? session.workflow_name
+        : null),
+    agentName:
+      overrides?.agentName ??
+      (typeof session.agent_name === "string" ? session.agent_name : null),
+    sessionType:
+      overrides?.sessionType ?? normalizeSessionType(session.session_type),
+  };
 }
 
 interface ApiMessage {
@@ -574,10 +769,14 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
   return result;
 }
 
-function mapRenderedMessageToChatMessage(message: Record<string, unknown>): ChatMessage {
+function mapRenderedMessageToChatMessage(
+  message: Record<string, unknown>,
+): ChatMessage {
   const chatMsg: ChatMessage = {
     id: String(message.id ?? `ws-${Date.now()}`),
-    role: ((message.role as string) as "user" | "assistant" | "system") || "assistant",
+    role:
+      (message.role as string as "user" | "assistant" | "system") ||
+      "assistant",
     content: (message.content as string) ?? "",
     timestamp: new Date((message.timestamp as string) ?? Date.now()),
     contentBlocks: message.content_blocks as ContentBlock[] | undefined,
@@ -646,6 +845,12 @@ export function useChat() {
 
   // Session title — stored from switchConversation to survive filtered list race
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  const [mainSessionMeta, setMainSessionMeta] =
+    useState<SessionObservationMeta | null>(null);
+  const sessionRefRef = useRef<string | null>(sessionRef);
+  useEffect(() => {
+    sessionRefRef.current = sessionRef;
+  }, [sessionRef]);
 
   // LLM provider selection (null = server default), persisted to localStorage
   const [selectedProvider, setSelectedProviderRaw] = useState<string | null>(
@@ -675,14 +880,25 @@ export function useChat() {
   }, [selectedProvider]);
 
   // Session viewing tracking (read-only observation of CLI sessions via REST)
-  const [viewingSessionId, setViewingSessionId] = useState<string | null>(null);
+  const [viewingSessionId, setViewingSessionId] = useState<string | null>(() =>
+    loadViewingSessionId(),
+  );
   const viewingSessionIdRef = useRef<string | null>(null);
   const [viewingSessionMeta, setViewingSessionMeta] =
     useState<SessionObservationMeta | null>(null);
   const viewingSessionMetaRef = useRef<SessionObservationMeta | null>(null);
+  const initialViewingSessionIdRef = useRef<string | null>(
+    loadViewingSessionId(),
+  );
+  const initialViewingModeRef = useRef<"none" | "observe">(
+    loadViewingSessionMode(),
+  );
+  const initialViewingRestoreRef = useRef(false);
 
   // Live terminal observation is distinct from interactive proxy mode.
-  const [observedSessionId, setObservedSessionId] = useState<string | null>(null);
+  const [observedSessionId, setObservedSessionId] = useState<string | null>(
+    null,
+  );
   const observedSessionIdRef = useRef<string | null>(null);
   const observedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
   const [sessionInteractionMode, setSessionInteractionMode] =
@@ -702,6 +918,11 @@ export function useChat() {
   const [attachedSessionMeta, setAttachedSessionMeta] =
     useState<SessionObservationMeta | null>(null);
   const attachedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
+  const [isContinuingSession, setIsContinuingSession] = useState(false);
+  const continuingSessionIdRef = useRef<string | null>(null);
+  const continuationRollbackRef = useRef<ContinuationRollbackSnapshot | null>(
+    null,
+  );
 
   // Keep a ref so onopen/reconnect can read the current agent
   const activeAgentRef = useRef(activeAgent);
@@ -714,6 +935,10 @@ export function useChat() {
   const projectIdRef = useRef<string | null>(null);
   const setProjectIdRef = useCallback((id: string | null) => {
     projectIdRef.current = id;
+  }, []);
+  const clearContinuingSession = useCallback(() => {
+    continuingSessionIdRef.current = null;
+    setIsContinuingSession(false);
   }, []);
 
   const resolveAgentName = useCallback(async (agentRunId: string) => {
@@ -808,13 +1033,15 @@ export function useChat() {
   // Stable ref to sendMessage for use inside WS handlers / callbacks
   // defined before sendMessage itself. Updated after sendMessage is created.
   const sendMessageRef = useRef<
-    ((
-      content: string,
-      model?: string | null,
-      files?: QueuedFile[],
-      projectId?: string | null,
-      injectContext?: string,
-    ) => boolean) | null
+    | ((
+        content: string,
+        model?: string | null,
+        files?: QueuedFile[],
+        projectId?: string | null,
+        injectContext?: string,
+        reasoningEffort?: string | null,
+      ) => boolean)
+    | null
   >(null);
 
   const bindActiveSession = useCallback((sessionId: string | null) => {
@@ -828,6 +1055,66 @@ export function useChat() {
     saveConversationId(nextId);
   }, []);
 
+  const applyMainSessionMeta = useCallback(
+    (session: Record<string, unknown> | null) => {
+      const nextMeta = toSessionObservationMeta(session, {
+        sessionType: "web_chat",
+      });
+      setMainSessionMeta(nextMeta);
+      setSessionTitle(nextMeta?.title ?? null);
+      if (nextMeta?.ref) {
+        setSessionRef(nextMeta.ref);
+      }
+      if (nextMeta && isChatProvider(nextMeta.source)) {
+        setSelectedProvider(nextMeta.source);
+      }
+      if (nextMeta?.chatMode) {
+        const restored = nextMeta.chatMode as ChatMode;
+        if (restored !== currentModeRef.current) {
+          currentModeRef.current = restored;
+          onModeChangedRef.current?.(restored);
+        }
+      }
+      if (hasSessionUsage(session)) {
+        setContextUsage(computeContextUsageFromSessionData(session));
+      }
+    },
+    [setSelectedProvider],
+  );
+
+  const clearSessionObservationState = useCallback(
+    ({ preserveViewing = false }: { preserveViewing?: boolean } = {}) => {
+      if (
+        observedSessionIdRef.current &&
+        wsRef.current?.readyState === WebSocket.OPEN
+      ) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "detach_from_session",
+            session_id: observedSessionIdRef.current,
+          }),
+        );
+      }
+      if (!preserveViewing) {
+        viewingSessionIdRef.current = null;
+        viewingSessionMetaRef.current = null;
+        setViewingSessionId(null);
+        setViewingSessionMeta(null);
+      }
+      observedSessionIdRef.current = null;
+      observedSessionMetaRef.current = null;
+      attachedSessionIdRef.current = null;
+      attachedSessionMetaRef.current = null;
+      sessionInteractionModeRef.current = "none";
+      setObservedSessionId(null);
+      setAttachedSessionId(null);
+      setAttachedSessionMeta(null);
+      setSessionInteractionMode("none");
+      setProxyDeliveryNotice(null);
+    },
+    [],
+  );
+
   const resetMainChatState = useCallback(() => {
     lastSeqRef.current = 0;
     activeRequestIdRef.current = null;
@@ -835,6 +1122,7 @@ export function useChat() {
     setIsThinking(false);
     setSessionRef(null);
     setSessionTitle(null);
+    setMainSessionMeta(null);
     setCurrentBranch(null);
     setWorktreePath(null);
     setCanvasSurfaces(new Map());
@@ -858,6 +1146,9 @@ export function useChat() {
       projectId?: string | null;
       provider?: string | null;
       model?: string | null;
+      reasoningEffort?: string | null;
+      chatMode?: ChatMode | null;
+      title?: string | null;
       forceNew?: boolean;
     }): Promise<string | null> => {
       if (!options?.forceNew && dbSessionIdRef.current) {
@@ -871,14 +1162,13 @@ export function useChat() {
         projectId: options?.projectId ?? projectIdRef.current,
         provider: options?.provider ?? selectedProviderRef.current,
         model: options?.model ?? null,
-        chatMode: currentModeRef.current,
+        reasoningEffort: options?.reasoningEffort ?? null,
+        chatMode: options?.chatMode ?? currentModeRef.current,
+        title: options?.title ?? null,
       })
         .then((session) => {
           bindActiveSession(session.id);
-          if (session.seq_num != null) {
-            setSessionRef(`#${session.seq_num}`);
-          }
-          setSessionTitle(session.title ?? null);
+          applyMainSessionMeta(session as Record<string, unknown>);
           if (
             wsRef.current?.readyState === WebSocket.OPEN &&
             activeAgentRef.current
@@ -904,7 +1194,7 @@ export function useChat() {
       creatingSessionIdRef.current = pending;
       return await pending;
     },
-    [bindActiveSession],
+    [applyMainSessionMeta, bindActiveSession],
   );
 
   useEffect(() => {
@@ -947,7 +1237,77 @@ export function useChat() {
   const activeRequestIdRef = useRef<string | null>(null);
 
   // Queue for messages sent while disconnected — flushed on reconnect
-  const pendingMessagesRef = useRef<{ content: string; projectId?: string | null }[]>([]);
+  const pendingMessagesRef = useRef<
+    {
+      content: string;
+      model?: string | null;
+      projectId?: string | null;
+      reasoningEffort?: string | null;
+    }[]
+  >([]);
+
+  const clearContinuationRollback = useCallback(() => {
+    continuationRollbackRef.current = null;
+  }, []);
+
+  const restoreContinuationState = useCallback(
+    (snapshot: ContinuationRollbackSnapshot) => {
+      conversationIdRef.current = snapshot.conversationId;
+      setConversationId(snapshot.conversationId);
+      saveConversationId(snapshot.conversationId);
+      dbSessionIdRef.current = snapshot.dbSessionId;
+      setDbSessionId(snapshot.dbSessionId);
+      saveDbSessionId(snapshot.dbSessionId);
+      setMessages(snapshot.messages);
+      setMainSessionMeta(snapshot.mainSessionMeta);
+      setSessionTitle(snapshot.sessionTitle);
+      setSessionRef(snapshot.sessionRef);
+      setSelectedProvider(snapshot.selectedProvider);
+      setContextUsage(snapshot.contextUsage);
+      setCurrentBranch(snapshot.currentBranch);
+      setWorktreePath(snapshot.worktreePath);
+      setViewingSessionId(snapshot.viewingSessionId);
+      viewingSessionIdRef.current = snapshot.viewingSessionId;
+      saveViewingSessionId(snapshot.viewingSessionId);
+      setViewingSessionMeta(snapshot.viewingSessionMeta);
+      viewingSessionMetaRef.current = snapshot.viewingSessionMeta;
+      observedSessionIdRef.current = snapshot.observedSessionId;
+      observedSessionMetaRef.current = snapshot.observedSessionMeta;
+      setObservedSessionId(snapshot.observedSessionId);
+      attachedSessionIdRef.current = snapshot.attachedSessionId;
+      setAttachedSessionId(snapshot.attachedSessionId);
+      attachedSessionMetaRef.current = snapshot.attachedSessionMeta;
+      setAttachedSessionMeta(snapshot.attachedSessionMeta);
+      sessionInteractionModeRef.current = snapshot.sessionInteractionMode;
+      setSessionInteractionMode(snapshot.sessionInteractionMode);
+      saveViewingSessionMode(
+        snapshot.viewingSessionId &&
+          snapshot.sessionInteractionMode === "observe"
+          ? "observe"
+          : "none",
+      );
+      setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
+      setIsLoadingMessages(false);
+      currentModeRef.current = snapshot.currentMode;
+      onModeChangedRef.current?.(snapshot.currentMode);
+
+      if (
+        snapshot.observedSessionId &&
+        snapshot.sessionInteractionMode !== "none" &&
+        wsRef.current?.readyState === WebSocket.OPEN
+      ) {
+        pendingSessionInteractionModeRef.current =
+          snapshot.sessionInteractionMode === "proxy" ? "proxy" : "observe";
+        wsRef.current.send(
+          JSON.stringify({
+            type: "attach_to_session",
+            session_id: snapshot.observedSessionId,
+          }),
+        );
+      }
+    },
+    [setContextUsage, setSelectedProvider],
+  );
 
   /** Returns true if the chunk belongs to the currently active request. */
   function isActiveRequest(requestId?: string): boolean {
@@ -971,9 +1331,7 @@ export function useChat() {
   const handleVoiceMessageRef = useRef<(data: Record<string, unknown>) => void>(
     () => {},
   );
-  const handleBinaryMessageRef = useRef<(data: ArrayBuffer) => void>(
-    () => {},
-  );
+  const handleBinaryMessageRef = useRef<(data: ArrayBuffer) => void>(() => {});
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -984,7 +1342,7 @@ export function useChat() {
 
     console.log("Connecting to WebSocket:", wsUrl);
     const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';  // For TTS audio binary frames
+    ws.binaryType = "arraybuffer"; // For TTS audio binary frames
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -999,7 +1357,14 @@ export function useChat() {
         // Send each queued message after a brief delay to let WS fully initialize
         setTimeout(() => {
           for (const msg of queued) {
-            sendMessageRef.current?.(msg.content, null, undefined, msg.projectId);
+            sendMessageRef.current?.(
+              msg.content,
+              msg.model ?? null,
+              undefined,
+              msg.projectId,
+              undefined,
+              msg.reasoningEffort,
+            );
           }
         }, 500);
       }
@@ -1012,6 +1377,7 @@ export function useChat() {
         fetch(`${baseUrl}/api/chat/${convId}/messages?after_seq=${afterSeq}`)
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
+            if (viewingSessionIdRef.current) return;
             if (!data?.messages?.length) return;
             const backfilled: ChatMessage[] = data.messages.map(
               (m: {
@@ -1024,7 +1390,10 @@ export function useChat() {
               }) => ({
                 id: m.id,
                 role: m.role as "user" | "assistant" | "system",
-                content: [{ type: "text" as const, content: m.content }],
+                content: m.content,
+                contentBlocks: m.content
+                  ? [{ type: "text" as const, content: m.content }]
+                  : [],
                 toolCalls: m.tool_calls ?? [],
                 timestamp: new Date(m.created_at),
               }),
@@ -1123,7 +1492,7 @@ export function useChat() {
         try {
           handleBinaryMessageRef.current(event.data);
         } catch (err) {
-          console.error('TTS binary message error:', err);
+          console.error("TTS binary message error:", err);
         }
         return;
       }
@@ -1274,8 +1643,78 @@ export function useChat() {
           if (agentName) setActiveAgent(agentName);
         } else if (data.type === "session_continued") {
           const continued = data as Record<string, unknown>;
-          setDbSessionId((continued.db_session_id as string) ?? null);
+          clearContinuingSession();
+          const nextConversationId =
+            (continued.conversation_id as string | undefined) ?? null;
+          const nextDbSessionId = (continued.db_session_id as string) ?? null;
+          if (
+            nextConversationId &&
+            nextConversationId !== conversationIdRef.current
+          ) {
+            conversationIdRef.current = nextConversationId;
+            setConversationId(nextConversationId);
+            saveConversationId(nextConversationId);
+          }
+          setDbSessionId(nextDbSessionId);
+          dbSessionIdRef.current = nextDbSessionId;
+          saveDbSessionId(nextDbSessionId);
+          const continuedMeta = toSessionObservationMeta(continued, {
+            ref: (continued.ref as string | undefined) ?? sessionRefRef.current,
+            status: (continued.status as string | undefined) ?? "active",
+            sessionType:
+              normalizeSessionType(continued.session_type) ?? "web_chat",
+          });
+          if (continuedMeta) {
+            setMainSessionMeta(continuedMeta);
+            setSessionTitle(continuedMeta.title ?? null);
+            if (continuedMeta.ref) {
+              setSessionRef(continuedMeta.ref);
+            }
+            if (continuedMeta.source && isChatProvider(continuedMeta.source)) {
+              setSelectedProvider(continuedMeta.source);
+            }
+            if (continuedMeta.chatMode) {
+              const restored = continuedMeta.chatMode as ChatMode;
+              currentModeRef.current = restored;
+              onModeChangedRef.current?.(restored);
+            }
+          }
+          if (nextDbSessionId) {
+            const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+            fetch(`${baseUrl}/api/sessions/${nextDbSessionId}`)
+              .then((res) => (res.ok ? res.json() : null))
+              .then((payload) => {
+                const session = payload?.session;
+                if (!session || dbSessionIdRef.current !== nextDbSessionId)
+                  return;
+                applyMainSessionMeta(session);
+              })
+              .catch(() => {});
+          }
+          clearContinuationRollback();
           console.log("Session continued:", data);
+        } else if (data.type === "error") {
+          const err = data as Record<string, unknown>;
+          if (continuingSessionIdRef.current) {
+            const activeContinuationId = continuingSessionIdRef.current;
+            clearContinuingSession();
+            const rollback = continuationRollbackRef.current;
+            if (rollback && rollback.sourceSessionId === activeContinuationId) {
+              clearContinuationRollback();
+              restoreContinuationState(rollback);
+            }
+          }
+          const errorMessage =
+            typeof err.message === "string" ? err.message : "Unknown error";
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `system-error-${uuid()}`,
+              role: "system" as const,
+              content: errorMessage,
+              timestamp: new Date(),
+            },
+          ]);
         } else if (data.type === "connection_established") {
           const serverConversations = (data.conversation_ids as string[]) || [];
           if (serverConversations.includes(conversationIdRef.current)) {
@@ -1365,39 +1804,49 @@ export function useChat() {
         } else if (data.type === "attach_to_session_result") {
           const result = data as Record<string, unknown>;
           const sid = result.session_id as string;
-          const meta: SessionObservationMeta = {
-            ref: (result.ref as string) ?? null,
-            source: (result.source as string) ?? "unknown",
-            title: (result.title as string) ?? null,
-            status: (result.status as string) ?? "unknown",
-            model: (result.model as string) ?? null,
-            externalId: (result.external_id as string) ?? "",
-            chatMode: (result.chat_mode as string) ?? null,
-            gitBranch: (result.git_branch as string) ?? null,
-            contextWindow: (result.context_window as number) ?? null,
-            agentRunId: (result.agent_run_id as string) ?? null,
-            workflowName: (result.workflow_name as string) ?? null,
-            agentName: (result.agent_name as string) ?? null,
-            sessionType:
-              ((result.session_type as "terminal" | "web_chat" | null) ?? null),
-          };
+          const meta =
+            toSessionObservationMeta(result) ??
+            ({
+              ref: null,
+              source: "unknown",
+              title: null,
+              status: "unknown",
+              model: null,
+              externalId: "",
+              chatMode: null,
+              gitBranch: null,
+              contextWindow: null,
+              agentRunId: null,
+              workflowName: null,
+              agentName: null,
+              sessionType: null,
+            } satisfies SessionObservationMeta);
           setObservedSessionId(sid);
+          observedSessionIdRef.current = sid;
           observedSessionMetaRef.current = meta;
           // Also set viewing state (attached implies viewing)
           setViewingSessionId(sid);
+          viewingSessionIdRef.current = sid;
           setViewingSessionMeta(meta);
+          viewingSessionMetaRef.current = meta;
           const requestedMode = pendingSessionInteractionModeRef.current;
+          const proxyCapable =
+            meta.sessionType === "terminal" && meta.status === "active";
           const nextMode =
-            requestedMode === "proxy" && meta.sessionType !== "terminal"
-              ? "none"
-              : requestedMode;
+            requestedMode === "proxy" && !proxyCapable ? "none" : requestedMode;
           setSessionInteractionMode(nextMode);
           if (nextMode === "proxy") {
             setAttachedSessionId(sid);
             setAttachedSessionMeta(meta);
+            setProxyDeliveryNotice(null);
           } else {
             setAttachedSessionId(null);
             setAttachedSessionMeta(null);
+            setProxyDeliveryNotice(
+              requestedMode === "proxy" && meta.sessionType === "terminal"
+                ? "This terminal session is paused. Use Resume Session to continue it in web chat."
+                : null,
+            );
           }
           // Map initial messages into chat format with proper tool call grouping
           const msgs = (result.messages as ApiMessage[]) || [];
@@ -1423,6 +1872,9 @@ export function useChat() {
           setIsStreaming(false);
           setIsThinking(false);
           setSessionRef((result.ref as string) ?? null);
+          if (hasSessionUsage(result)) {
+            setContextUsage(computeContextUsageFromSessionData(result));
+          }
           // Do NOT set dbSessionId here. Under the unified session identity
           // model, dbSessionId mirrors the user's main chat conversation id,
           // not an observed/attached session. Observed state lives on
@@ -1513,7 +1965,14 @@ export function useChat() {
     };
     // resolveAgentName is a stable useCallback (its own deps are []) — safe
     // to reference here without re-creating connect every render.
-  }, [resolveAgentName]);
+  }, [
+    applyMainSessionMeta,
+    clearContinuingSession,
+    clearContinuationRollback,
+    resolveAgentName,
+    restoreContinuationState,
+    setSelectedProvider,
+  ]);
 
   // Handle streaming chat chunks
   const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
@@ -1799,6 +2258,19 @@ export function useChat() {
 
   // Handle model switch notifications
   const handleModelSwitched = useCallback((msg: ModelSwitchedMessage) => {
+    const matchesActiveConversation =
+      msg.conversation_id === conversationIdRef.current ||
+      msg.conversation_id === dbSessionIdRef.current;
+    if (matchesActiveConversation) {
+      setMainSessionMeta((prev) =>
+        prev
+          ? {
+              ...prev,
+              model: msg.new_model,
+            }
+          : prev,
+      );
+    }
     setMessages((prev) => [
       ...prev,
       {
@@ -1832,6 +2304,16 @@ export function useChat() {
     }
     saveDbSessionId(dbSessionId);
   }, [dbSessionId, viewingSessionMeta?.sessionType]);
+  useEffect(() => {
+    saveViewingSessionId(viewingSessionId);
+  }, [viewingSessionId]);
+  useEffect(() => {
+    saveViewingSessionMode(
+      viewingSessionId && sessionInteractionMode === "observe"
+        ? "observe"
+        : "none",
+    );
+  }, [sessionInteractionMode, viewingSessionId]);
 
   // Keep refs in sync
   useEffect(() => {
@@ -1855,66 +2337,55 @@ export function useChat() {
 
   // Switch to an existing server-owned web-chat session by DB session ID.
   const switchConversation = useCallback(
-    (id: string) => {
+    (id: string, options?: { preserveViewing?: boolean }) => {
       if (!id) return;
-      if (id === dbSessionIdRef.current && messagesRef.current.length > 0) {
+      const preserveViewing = options?.preserveViewing ?? false;
+      if (
+        id === dbSessionIdRef.current &&
+        !preserveViewing &&
+        messagesRef.current.length > 0
+      ) {
         return;
       }
 
-      resetMainChatState();
+      if (!preserveViewing) {
+        clearSessionObservationState();
+        resetMainChatState();
+      }
       bindActiveSession(id);
       setConversationSwitchKey((k) => k + 1);
 
-      setIsLoadingMessages(true);
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (!data?.messages?.length || conversationIdRef.current !== id) return;
-          const mapped = data.messages.map(
-            (m: Record<string, unknown>) =>
+      if (!preserveViewing) {
+        setIsLoadingMessages(true);
+        fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (viewingSessionIdRef.current) return;
+            if (!data?.messages?.length || conversationIdRef.current !== id)
+              return;
+            const mapped = data.messages.map((m: Record<string, unknown>) =>
               mapRenderedMessageToChatMessage(m),
-          );
-          if (mapped.length > 0) {
-            setMessages(mapped);
-          }
-          if (data.max_seq) {
-            lastSeqRef.current = data.max_seq as number;
-          }
-        })
-        .catch((err) => console.error("Failed to fetch chat messages:", err))
-        .finally(() => setIsLoadingMessages(false));
+            );
+            if (mapped.length > 0) {
+              setMessages(mapped);
+            }
+            if (data.max_seq) {
+              lastSeqRef.current = data.max_seq as number;
+            }
+          })
+          .catch((err) => console.error("Failed to fetch chat messages:", err))
+          .finally(() => setIsLoadingMessages(false));
+      }
 
       fetch(`${baseUrl}/api/sessions/${id}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           const s = data?.session;
           if (!s || conversationIdRef.current !== id) return;
-          if (s.title) setSessionTitle(s.title);
-          if (s.seq_num != null) setSessionRef(`#${s.seq_num}`);
-          if (
-            s.usage_input_tokens > 0 ||
-            s.usage_output_tokens > 0 ||
-            s.context_window
-          ) {
-            const totalIn = s.usage_input_tokens ?? 0;
-            const cacheRead = s.usage_cache_read_tokens ?? 0;
-            const cacheCreation = s.usage_cache_creation_tokens ?? 0;
-            setContextUsage({
-              totalInputTokens: totalIn,
-              outputTokens: s.usage_output_tokens ?? 0,
-              contextWindow: s.context_window ?? null,
-              uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-              cacheReadTokens: cacheRead,
-              cacheCreationTokens: cacheCreation,
-            });
-          }
+          applyMainSessionMeta(s);
           if (s.chat_mode) {
             const restored = s.chat_mode as ChatMode;
-            if (restored !== currentModeRef.current) {
-              currentModeRef.current = restored;
-              onModeChangedRef.current?.(restored);
-            }
             if (
               wsRef.current?.readyState === WebSocket.OPEN &&
               Date.now() - lastServerModeTimestampRef.current > 2000
@@ -1931,7 +2402,12 @@ export function useChat() {
         })
         .catch(() => {});
     },
-    [bindActiveSession, resetMainChatState, setContextUsage],
+    [
+      applyMainSessionMeta,
+      bindActiveSession,
+      clearSessionObservationState,
+      resetMainChatState,
+    ],
   );
 
   // Start a new chat conversation, optionally with a specific agent
@@ -1939,21 +2415,21 @@ export function useChat() {
     (agentName?: string) => {
       const effectiveAgent = agentName || "default-web-chat";
       setActiveAgent(effectiveAgent);
+      clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
-      void ensureMainSession({
-        projectId: projectIdRef.current,
-        provider: selectedProviderRef.current,
-        forceNew: true,
-      });
     },
-    [bindActiveSession, ensureMainSession, resetMainChatState],
+    [bindActiveSession, clearSessionObservationState, resetMainChatState],
   );
 
-  // Switch provider by starting a new server-owned web-chat session.
+  // Switch provider. Existing conversations fork to a new server-owned session;
+  // a blank draft stays local until the first user send.
   const switchProvider = useCallback(
-    (newProvider: string) => {
+    (
+      newProvider: string,
+      options?: { model?: string | null; reasoningEffort?: string | null },
+    ) => {
       if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -1962,16 +2438,34 @@ export function useChat() {
           }),
         );
       }
+      clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
+
+      // Keep fresh-chat provider changes local until the first user send
+      // actually creates the backing web chat session.
+      if (!dbSessionIdRef.current && messagesRef.current.length === 0) {
+        setSelectedProvider(newProvider);
+        return;
+      }
+
       void ensureMainSession({
         projectId: projectIdRef.current,
         provider: newProvider,
+        model: options?.model ?? null,
+        reasoningEffort: options?.reasoningEffort ?? null,
         forceNew: true,
       });
     },
-    [bindActiveSession, ensureMainSession, isStreaming, resetMainChatState],
+    [
+      bindActiveSession,
+      clearSessionObservationState,
+      ensureMainSession,
+      isStreaming,
+      resetMainChatState,
+      setSelectedProvider,
+    ],
   );
 
   // Resume a CLI session (e.g., Claude) — sets the conversation ID
@@ -2002,32 +2496,92 @@ export function useChat() {
     async (
       sourceDbSessionId: string,
       projectId?: string,
-      options?: { provider?: string | null; model?: string | null },
+      options?: {
+        provider?: string | null;
+        model?: string | null;
+        reasoningEffort?: string | null;
+      },
     ): Promise<string> => {
-      resetMainChatState();
-      bindActiveSession(null);
-      setConversationSwitchKey((k) => k + 1);
-      setViewingSessionId(null);
-      setViewingSessionMeta(null);
-      setObservedSessionId(null);
-      observedSessionMetaRef.current = null;
-      setAttachedSessionId(null);
-      setAttachedSessionMeta(null);
-      setSessionInteractionMode("none");
-      setProxyDeliveryNotice(null);
-
-      const newConversationId = await ensureMainSession({
-        projectId: projectId ?? projectIdRef.current,
-        provider: options?.provider ?? selectedProviderRef.current,
-        model: options?.model ?? null,
-        forceNew: true,
-      });
-      if (!newConversationId) {
+      const reasoningEffort = normalizeReasoningEffort(
+        options?.reasoningEffort ?? null,
+      );
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        return "";
+      }
+      if (continuingSessionIdRef.current) {
         return "";
       }
 
-      // Fetch source session's messages for display
+      continuationRollbackRef.current = {
+        sourceSessionId: sourceDbSessionId,
+        conversationId,
+        dbSessionId,
+        mainSessionMeta,
+        sessionTitle,
+        sessionRef,
+        selectedProvider,
+        messages,
+        contextUsage,
+        currentMode: currentModeRef.current,
+        currentBranch,
+        worktreePath,
+        viewingSessionId,
+        viewingSessionMeta,
+        observedSessionId,
+        observedSessionMeta: observedSessionMetaRef.current,
+        attachedSessionId,
+        attachedSessionMeta,
+        sessionInteractionMode,
+        proxyDeliveryNotice,
+      };
+
+      clearSessionObservationState();
+      resetMainChatState();
+      bindActiveSession(sourceDbSessionId);
+      setConversationSwitchKey((k) => k + 1);
+      continuingSessionIdRef.current = sourceDbSessionId;
+      setIsContinuingSession(true);
+
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      let sourceSession: Record<string, unknown> | null = null;
+      try {
+        const sessionRes = await fetch(
+          `${baseUrl}/api/sessions/${sourceDbSessionId}`,
+        );
+        if (sessionRes.ok) {
+          const sessionData = await sessionRes.json();
+          sourceSession =
+            (sessionData?.session as Record<string, unknown>) ?? null;
+        }
+      } catch {
+        sourceSession = null;
+      }
+
+      const continuationProvider =
+        options?.provider ??
+        (isChatProvider(sourceSession?.source) ? sourceSession.source : null) ??
+        selectedProviderRef.current;
+      const continuationModel =
+        options?.model ??
+        (typeof sourceSession?.model === "string" ? sourceSession.model : null);
+      // Propagate the source session's chat mode into the new continuation
+      // session BEFORE calling ensureMainSession — otherwise the server-side
+      // session is created with whatever local mode happened to be active.
+      const sourceChatMode =
+        typeof sourceSession?.chat_mode === "string"
+          ? (sourceSession.chat_mode as ChatMode)
+          : null;
+
+      applyMainSessionMeta(sourceSession);
+      if (continuationProvider) {
+        setSelectedProvider(continuationProvider);
+      }
+      if (sourceChatMode) {
+        currentModeRef.current = sourceChatMode;
+        onModeChangedRef.current?.(sourceChatMode);
+      }
+
+      // Fetch source session's messages for display
       try {
         const res = await fetch(
           `${baseUrl}/api/sessions/${sourceDbSessionId}/messages?limit=100`,
@@ -2044,57 +2598,56 @@ export function useChat() {
       }
 
       // Hydrate context usage and chat mode from source session
-      try {
-        const sessionRes = await fetch(
-          `${baseUrl}/api/sessions/${sourceDbSessionId}`,
-        );
-        if (sessionRes.ok) {
-          const sessionData = await sessionRes.json();
-          const s = sessionData?.session;
-          if (
-            s &&
-            (s.usage_input_tokens > 0 ||
-              s.usage_output_tokens > 0 ||
-              s.context_window)
-          ) {
-            const totalIn = s.usage_input_tokens ?? 0;
-            const cacheRead = s.usage_cache_read_tokens ?? 0;
-            const cacheCreation = s.usage_cache_creation_tokens ?? 0;
-            setContextUsage({
-              totalInputTokens: totalIn,
-              outputTokens: s.usage_output_tokens ?? 0,
-              contextWindow: s.context_window ?? null,
-              uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-              cacheReadTokens: cacheRead,
-              cacheCreationTokens: cacheCreation,
-            });
-          }
-          // Restore chat mode from source session
-          if (s?.chat_mode) {
-            onModeChangedRef.current?.(s.chat_mode as ChatMode);
-          }
-        }
-      } catch {
-        // Best-effort — don't block continuation
+      const s = sourceSession;
+      if (hasSessionUsage(s)) {
+        setContextUsage(computeContextUsageFromSessionData(s));
       }
+      // chat_mode was already propagated above before the backend handoff.
 
       // Tell backend to prepare the continuation session
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "continue_in_chat",
-            conversation_id: newConversationId,
-            source_session_id: sourceDbSessionId,
-            project_id: projectId,
-            provider: options?.provider,
-            model: options?.model,
-          }),
-        );
-      }
+      wsRef.current.send(
+        JSON.stringify({
+          type: "continue_in_chat",
+          conversation_id: sourceDbSessionId,
+          source_session_id: sourceDbSessionId,
+          project_id:
+            projectId ??
+            (typeof sourceSession?.project_id === "string"
+              ? sourceSession.project_id
+              : undefined),
+          provider: continuationProvider,
+          model: continuationModel,
+          reasoning_effort: reasoningEffort,
+        }),
+      );
 
-      return newConversationId;
+      return sourceDbSessionId;
     },
-    [bindActiveSession, ensureMainSession, resetMainChatState, setContextUsage],
+    [
+      applyMainSessionMeta,
+      attachedSessionId,
+      attachedSessionMeta,
+      bindActiveSession,
+      clearSessionObservationState,
+      contextUsage,
+      conversationId,
+      currentBranch,
+      dbSessionId,
+      mainSessionMeta,
+      messages,
+      observedSessionId,
+      proxyDeliveryNotice,
+      resetMainChatState,
+      selectedProvider,
+      setContextUsage,
+      setSelectedProvider,
+      sessionInteractionMode,
+      sessionRef,
+      sessionTitle,
+      viewingSessionId,
+      viewingSessionMeta,
+      worktreePath,
+    ],
   );
 
   // Clear chat history — notifies backend to teardown session, then resets frontend.
@@ -2224,6 +2777,7 @@ export function useChat() {
       files?: QueuedFile[],
       projectId?: string | null,
       injectContext?: string,
+      reasoningEffort?: string | null,
     ): boolean => {
       console.log(
         "sendMessage called:",
@@ -2233,6 +2787,11 @@ export function useChat() {
         "files:",
         files?.length,
       );
+      const normalizedReasoningEffort = normalizeReasoningEffort(reasoningEffort);
+
+      if (continuingSessionIdRef.current) {
+        return false;
+      }
 
       const needsSession =
         !conversationIdRef.current || !dbSessionIdRef.current;
@@ -2246,6 +2805,7 @@ export function useChat() {
           projectId: projectId ?? projectIdRef.current,
           provider: selectedProviderRef.current,
           model: model ?? null,
+          reasoningEffort: normalizedReasoningEffort,
         }).then((sessionId) => {
           if (!sessionId) return;
           sendMessageRef.current?.(
@@ -2254,6 +2814,7 @@ export function useChat() {
             files,
             projectId,
             injectContext,
+            normalizedReasoningEffort,
           );
         });
         return true;
@@ -2262,7 +2823,12 @@ export function useChat() {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         // Queue the message to send on reconnect
         console.warn("WebSocket disconnected — queuing message for reconnect");
-        pendingMessagesRef.current.push({ content, projectId });
+        pendingMessagesRef.current.push({
+          content,
+          model,
+          projectId,
+          reasoningEffort: normalizedReasoningEffort,
+        });
         // Still add the user message to the UI so it's visible
         const queuedId = `user-${uuid()}`;
         setMessages((prev) => [
@@ -2335,6 +2901,10 @@ export function useChat() {
 
       if (injectContext) {
         payload.inject_context = injectContext;
+      }
+
+      if (normalizedReasoningEffort) {
+        payload.reasoning_effort = normalizedReasoningEffort;
       }
 
       if (selectedProviderRef.current) {
@@ -2484,114 +3054,122 @@ export function useChat() {
   }, []);
 
   // View a CLI session (read-only, no WS subscription — loads via REST)
-  const viewSession = useCallback((sessionId: string) => {
-    // Skip if already viewing/attached to this session
-    if (
-      viewingSessionIdRef.current === sessionId ||
-      observedSessionIdRef.current === sessionId
-    ) {
-      return;
-    }
-
-    // Detach from any active WS subscription first
-    if (observedSessionIdRef.current) {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "detach_from_session",
-            session_id: observedSessionIdRef.current,
-          }),
-        );
+  const viewSession = useCallback(
+    (sessionId: string) => {
+      // Skip if already viewing/attached to this session
+      if (
+        (viewingSessionIdRef.current === sessionId &&
+          (viewingSessionMetaRef.current || messagesRef.current.length > 0)) ||
+        observedSessionIdRef.current === sessionId
+      ) {
+        return;
       }
-      setObservedSessionId(null);
-      observedSessionMetaRef.current = null;
-      setAttachedSessionId(null);
-      setAttachedSessionMeta(null);
-      setSessionInteractionMode("none");
-    }
 
-    // Reset chat state
-    lastSeqRef.current = 0;
-    activeRequestIdRef.current = null;
-    setIsStreaming(false);
-    setIsThinking(false);
-    setMessages([]);
-    setIsLoadingMessages(true);
-    setProxyDeliveryNotice(null);
-
-    // Set viewing state
-    setViewingSessionId(sessionId);
-
-    // Fetch messages via REST
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data?.messages?.length) return;
-        if (viewingSessionIdRef.current !== sessionId) return;
-        const mapped = mapApiMessages(data.messages);
-        setMessages(mapped);
-      })
-      .catch((err) => console.error("Failed to fetch session messages:", err))
-      .finally(() => setIsLoadingMessages(false));
-
-    // Fetch session metadata
-    fetch(`${baseUrl}/api/sessions/${sessionId}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const s = data?.session;
-        if (!s || viewingSessionIdRef.current !== sessionId) return;
-        const ref = s.seq_num ? `#${s.seq_num}` : null;
-        setSessionRef(ref);
-        const nextMeta: SessionObservationMeta = {
-          ref,
-          source: s.source || "unknown",
-          title: s.title || null,
-          status: s.status || "unknown",
-          model: s.model || null,
-          externalId: s.external_id || "",
-          chatMode: s.chat_mode || null,
-          gitBranch: s.git_branch || null,
-          contextWindow: s.context_window || null,
-          agentRunId: s.agent_run_id || null,
-          workflowName: s.workflow_name || null,
-          agentName: null,
-          sessionType: s.session_type || null,
-        };
-        setViewingSessionMeta(nextMeta);
-        if (nextMeta.agentRunId) {
-          void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
-            if (!agentName || viewingSessionIdRef.current !== sessionId) return;
-            setViewingSessionMeta((prev) =>
-              prev && viewingSessionIdRef.current === sessionId
-                ? { ...prev, agentName }
-                : prev,
-            );
-          });
+      // Detach from any active WS subscription first
+      if (observedSessionIdRef.current) {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "detach_from_session",
+              session_id: observedSessionIdRef.current,
+            }),
+          );
         }
-        // Populate context usage from session metadata
-        if (
-          s.usage_input_tokens > 0 ||
-          s.usage_output_tokens > 0 ||
-          s.context_window
-        ) {
-          const totalIn = s.usage_input_tokens ?? 0;
-          const cacheRead = s.usage_cache_read_tokens ?? 0;
-          const cacheCreation = s.usage_cache_creation_tokens ?? 0;
-          setContextUsage({
-            totalInputTokens: totalIn,
-            outputTokens: s.usage_output_tokens ?? 0,
-            contextWindow: s.context_window ?? null,
-            uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-            cacheReadTokens: cacheRead,
-            cacheCreationTokens: cacheCreation,
-          });
-        }
-      })
-      .catch((err) => console.error("Failed to fetch session metadata:", err));
-    // resolveAgentName is a stable useCallback (its own deps are []) — safe
-    // to reference here without re-creating the callback every render.
-  }, [resolveAgentName, setContextUsage]);
+        setObservedSessionId(null);
+        observedSessionMetaRef.current = null;
+        setAttachedSessionId(null);
+        setAttachedSessionMeta(null);
+        setSessionInteractionMode("none");
+      }
+
+      // Reset chat state
+      lastSeqRef.current = 0;
+      activeRequestIdRef.current = null;
+      setIsStreaming(false);
+      setIsThinking(false);
+      setMessages([]);
+      setIsLoadingMessages(true);
+      setProxyDeliveryNotice(null);
+
+      // Set viewing state
+      viewingSessionIdRef.current = sessionId;
+      setViewingSessionId(sessionId);
+
+      // Fetch messages via REST
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data?.messages?.length) return;
+          if (viewingSessionIdRef.current !== sessionId) return;
+          const mapped = mapApiMessages(data.messages);
+          setMessages(mapped);
+        })
+        .catch((err) => console.error("Failed to fetch session messages:", err))
+        .finally(() => setIsLoadingMessages(false));
+
+      // Fetch session metadata
+      fetch(`${baseUrl}/api/sessions/${sessionId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const s = data?.session;
+          if (!s || viewingSessionIdRef.current !== sessionId) return;
+          const ref = s.seq_num ? `#${s.seq_num}` : null;
+          setSessionRef(ref);
+          const nextMeta: SessionObservationMeta = {
+            ref,
+            source: s.source || "unknown",
+            title: s.title || null,
+            status: s.status || "unknown",
+            model: s.model || null,
+            externalId: s.external_id || "",
+            chatMode: s.chat_mode || null,
+            gitBranch: s.git_branch || null,
+            contextWindow: s.context_window || null,
+            agentRunId: s.agent_run_id || null,
+            workflowName: s.workflow_name || null,
+            agentName: null,
+            sessionType: normalizeSessionType(s.session_type),
+          };
+          setViewingSessionMeta(nextMeta);
+          if (nextMeta.agentRunId) {
+            void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
+              if (!agentName || viewingSessionIdRef.current !== sessionId)
+                return;
+              setViewingSessionMeta((prev) =>
+                prev && viewingSessionIdRef.current === sessionId
+                  ? { ...prev, agentName }
+                  : prev,
+              );
+            });
+          }
+          // Populate context usage from session metadata
+          if (
+            s.usage_input_tokens > 0 ||
+            s.usage_output_tokens > 0 ||
+            s.context_window
+          ) {
+            const totalIn = s.usage_input_tokens ?? 0;
+            const cacheRead = s.usage_cache_read_tokens ?? 0;
+            const cacheCreation = s.usage_cache_creation_tokens ?? 0;
+            setContextUsage({
+              totalInputTokens: totalIn,
+              outputTokens: s.usage_output_tokens ?? 0,
+              contextWindow: s.context_window ?? null,
+              uncachedInputTokens: totalIn - cacheRead - cacheCreation,
+              cacheReadTokens: cacheRead,
+              cacheCreationTokens: cacheCreation,
+            });
+          }
+        })
+        .catch((err) =>
+          console.error("Failed to fetch session metadata:", err),
+        );
+      // resolveAgentName is a stable useCallback (its own deps are []) — safe
+      // to reference here without re-creating the callback every render.
+    },
+    [resolveAgentName, setContextUsage],
+  );
 
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {
@@ -2615,16 +3193,38 @@ export function useChat() {
     setViewingSessionId(null);
     setViewingSessionMeta(null);
     setMessages([]);
-    setSessionRef(null);
     setProxyDeliveryNotice(null);
-    setContextUsage({
-      totalInputTokens: 0,
-      outputTokens: 0,
-      contextWindow: null,
-      uncachedInputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-    });
+
+    if (mainSessionMeta) {
+      setSessionRef(mainSessionMeta.ref);
+      setSessionTitle(mainSessionMeta.title ?? null);
+      if (mainSessionMeta.contextWindow) {
+        setContextUsage((prev) => ({
+          ...prev,
+          contextWindow: mainSessionMeta.contextWindow ?? null,
+        }));
+      } else {
+        setContextUsage({
+          totalInputTokens: 0,
+          outputTokens: 0,
+          contextWindow: null,
+          uncachedInputTokens: 0,
+          cacheReadTokens: 0,
+          cacheCreationTokens: 0,
+        });
+      }
+    } else {
+      setSessionRef(null);
+      setSessionTitle(null);
+      setContextUsage({
+        totalInputTokens: 0,
+        outputTokens: 0,
+        contextWindow: null,
+        uncachedInputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      });
+    }
 
     // Restore previous conversation messages and chat mode from DB
     const prevDbSid = loadDbSessionId();
@@ -2652,7 +3252,7 @@ export function useChat() {
         })
         .catch(() => {});
     }
-  }, [setContextUsage]);
+  }, [mainSessionMeta, setContextUsage]);
 
   // Attach to a CLI session (interactive mode with WS subscription)
   const attachToSession = useCallback(
@@ -2687,24 +3287,44 @@ export function useChat() {
     [setContextUsage],
   );
 
+  useEffect(() => {
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (!restoredViewingSessionId || initialViewingRestoreRef.current) {
+      return;
+    }
+    initialViewingRestoreRef.current = true;
+    viewSession(restoredViewingSessionId);
+  }, [viewSession]);
+
+  useEffect(() => {
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (
+      !restoredViewingSessionId ||
+      initialViewingModeRef.current !== "observe" ||
+      !isConnected ||
+      viewingSessionIdRef.current !== restoredViewingSessionId ||
+      observedSessionIdRef.current === restoredViewingSessionId
+    ) {
+      return;
+    }
+    attachToSession(restoredViewingSessionId, "observe");
+    initialViewingModeRef.current = "none";
+  }, [attachToSession, isConnected, viewingSessionId]);
+
   // Attach to the currently viewed session (button click from view-only mode)
   const attachToViewed = useCallback(() => {
     const sid = viewingSessionIdRef.current;
-    if (sid) {
-      const viewedMeta = viewingSessionMetaRef.current;
-      if (viewedMeta?.sessionType && viewedMeta.sessionType !== "terminal") {
-        return;
-      }
-      if (observedSessionIdRef.current === sid) {
-        setAttachedSessionId(sid);
-        setAttachedSessionMeta(
-          observedSessionMetaRef.current ?? viewingSessionMetaRef.current,
-        );
-        setSessionInteractionMode("proxy");
-        return;
-      }
-      attachToSession(sid, "proxy");
+    if (!sid) {
+      return;
     }
+    const viewedMeta = viewingSessionMetaRef.current;
+    if (
+      viewedMeta?.sessionType !== "terminal" ||
+      viewedMeta.agentRunId
+    ) {
+      return;
+    }
+    attachToSession(sid, "proxy");
   }, [attachToSession]);
 
   // Disable proxy mode but keep the live observation subscription.
@@ -2713,7 +3333,9 @@ export function useChat() {
 
     setAttachedSessionId(null);
     setAttachedSessionMeta(null);
-    setSessionInteractionMode(observedSessionIdRef.current ? "observe" : "none");
+    setSessionInteractionMode(
+      observedSessionIdRef.current ? "observe" : "none",
+    );
   }, []);
 
   // Add a local system message to the chat (no backend round-trip)
@@ -2733,7 +3355,7 @@ export function useChat() {
   useEffect(() => {
     // Restore chat messages from server if we have an existing conversation
     const existingConvId = conversationIdRef.current;
-    if (existingConvId) {
+    if (existingConvId && !initialViewingSessionIdRef.current) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       setIsLoadingMessages(true);
       fetch(`${baseUrl}/api/chat/${existingConvId}/messages`)
@@ -2755,7 +3377,10 @@ export function useChat() {
             }) => ({
               id: m.id,
               role: m.role as "user" | "assistant" | "system",
-              content: [{ type: "text" as const, content: m.content }],
+              content: m.content,
+              contentBlocks: m.content
+                ? [{ type: "text" as const, content: m.content }]
+                : [],
               toolCalls: m.tool_calls ?? [],
               timestamp: new Date(m.created_at),
             }),
@@ -2863,8 +3488,10 @@ export function useChat() {
     addSystemMessage,
     viewSession,
     clearViewingSession,
+    mainSessionMeta,
     viewingSessionId,
     viewingSessionMeta,
+    isContinuingSession,
     observeSession: attachToSession,
     attachToViewed,
     detachFromSession,
