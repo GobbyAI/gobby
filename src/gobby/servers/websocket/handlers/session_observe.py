@@ -37,6 +37,47 @@ def _as_int(value: Any, default: int | None = None) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
+async def _release_source_session(
+    mixin: SessionControlMixin,
+    source_session_id: str,
+    source_session: Any,
+) -> None:
+    """Stop the active terminal/agent runtime before resuming in web chat."""
+    killed = False
+    session_manager = getattr(mixin, "session_manager", None)
+
+    try:
+        from gobby.agents.kill import kill_agent
+        from gobby.storage.agents import LocalAgentRunManager
+
+        if session_manager:
+            arm = LocalAgentRunManager(session_manager.db)
+            run = arm.get_by_session(source_session_id)
+            if run:
+                logger.info("Killing agent %s before resume", run.id)
+                await kill_agent(run, session_manager.db, close_terminal=True)
+                killed = True
+                await asyncio.sleep(0.5)
+    except Exception as exc:
+        logger.warning("Failed to kill running agent before resume: %s", exc)
+
+    if killed:
+        return
+
+    terminal_ctx = getattr(source_session, "terminal_context", None)
+    if not terminal_ctx:
+        return
+
+    try:
+        term_killed = await kill_terminal_session(terminal_ctx, source_session_id)
+    except Exception as exc:
+        logger.warning("Failed to kill terminal session before resume: %s", exc)
+        return
+
+    if term_killed:
+        await asyncio.sleep(0.5)
+
+
 async def _resolve_agent_name_for_session(
     mixin: SessionControlMixin,
     session_id: str,
@@ -104,6 +145,11 @@ async def handle_continue_in_chat(
         except Exception as e:
             logger.warning(f"Failed to look up source session {source_session_id}: {e}")
 
+    resume_in_place = bool(source_session and _is_terminal_session(source_session))
+    if resume_in_place:
+        # Resuming a tmux session preserves the same durable session identity.
+        conversation_id = source_session_id
+
     # --- Resume guard: reject if source session is actively in use ---
     if source_session:
         blocked_reason = await check_resume_blocked(mixin, source_session)
@@ -125,6 +171,7 @@ async def handle_continue_in_chat(
         _as_str(getattr(source_session, "chat_mode", None)) if source_session else None
     )
     source_model = _as_str(getattr(source_session, "model", None)) if source_session else None
+    effective_model = target_model or source_model
     can_sdk_resume = (
         not effective_provider or not source_provider or effective_provider == source_provider
     )
@@ -145,45 +192,10 @@ async def handle_continue_in_chat(
             except Exception as e:
                 logger.warning(f"Failed to look up sdk_session_id: {e}")
 
-    # 3. Kill running agent/terminal that owns this session before resuming
-    if sdk_resume_id:
-        killed = False
-        # Check DB for active agent run on this session
-        try:
-            from gobby.agents.kill import kill_agent
-            from gobby.storage.agents import LocalAgentRunManager
-
-            session_manager = getattr(mixin, "session_manager", None)
-            if session_manager:
-                arm = LocalAgentRunManager(session_manager.db)
-                run = arm.get_by_session(source_session_id)
-                if run:
-                    logger.info(
-                        f"Killing agent {run.id} before resume",
-                    )
-                    await kill_agent(run, session_manager.db, close_terminal=True)
-                    killed = True
-                    await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.warning(f"Failed to kill running agent before resume: {e}")
-
-        # Fallback: kill plain terminal session (user's own CLI, not agent-spawned)
-        if not killed and source_session:
-            terminal_ctx = source_session.terminal_context
-            if terminal_ctx:
-                term_killed = await kill_terminal_session(terminal_ctx, source_session_id)
-                if term_killed:
-                    await asyncio.sleep(0.5)
-                    # Mark source session as expired
-                    if session_manager:
-                        try:
-                            await asyncio.to_thread(
-                                session_manager.update_status,
-                                source_session_id,
-                                "expired",
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to expire source session: {e}")
+    # 3. Kill the terminal/agent runtime that currently owns the session so the
+    #    resumed web chat can take over the same durable session identity.
+    if resume_in_place and source_session:
+        await _release_source_session(mixin, source_session_id, source_session)
 
     # --- Restore transcript from backup if original is missing ---
     if sdk_resume_id and source_session:
@@ -202,30 +214,46 @@ async def handle_continue_in_chat(
                     )
                     sdk_resume_id = None
 
+    if session_manager and source_session and resume_in_place:
+        try:
+            source_session = await asyncio.to_thread(
+                session_manager.update,
+                source_session_id,
+                source=effective_provider,
+                model=effective_model,
+                chat_mode=source_chat_mode,
+                session_type="web_chat",
+                status="active",
+                title=source_title,
+                project_id=project_id,
+            )
+        except Exception as e:
+            logger.error("Failed to convert resumed session %s to web_chat: %s", source_session_id, e)
+            await mixin._send_error(websocket, f"Failed to resume session: {e}")
+            return
     # If the client pre-created a web-chat row with a stale provider, correct
     # it before booting the continuation session so provider restore is
     # source-authoritative by default.
-    if session_manager and effective_provider:
+    elif session_manager and effective_provider:
         try:
             target_session = await asyncio.to_thread(session_manager.get, conversation_id)
             if target_session and getattr(target_session, "session_type", None) == "web_chat":
-                updates: dict[str, Any] = {}
-                if getattr(target_session, "source", None) != effective_provider:
-                    updates["source"] = effective_provider
-                if target_model and getattr(target_session, "model", None) != target_model:
-                    updates["model"] = target_model
-                if source_title and getattr(target_session, "title", None) != source_title:
-                    updates["title"] = source_title
                 if (
-                    source_chat_mode
-                    and getattr(target_session, "chat_mode", None) != source_chat_mode
+                    getattr(target_session, "source", None) != effective_provider
+                    or (effective_model and getattr(target_session, "model", None) != effective_model)
+                    or (source_title and getattr(target_session, "title", None) != source_title)
+                    or (
+                        source_chat_mode
+                        and getattr(target_session, "chat_mode", None) != source_chat_mode
+                    )
                 ):
-                    updates["chat_mode"] = source_chat_mode
-                if updates:
                     await asyncio.to_thread(
                         session_manager.update,
                         conversation_id,
-                        **updates,
+                        source=effective_provider,
+                        model=effective_model,
+                        title=source_title,
+                        chat_mode=source_chat_mode,
                     )
         except Exception as e:
             logger.warning(
@@ -238,17 +266,24 @@ async def handle_continue_in_chat(
         try:
             session = await mixin._create_chat_session(
                 conversation_id,
-                model=target_model,
+                model=effective_model,
                 project_id=project_id,
                 resume_session_id=sdk_resume_id,
                 provider=effective_provider,
             )
-            if session_manager and session.db_session_id and (source_title or source_chat_mode):
+            if (
+                session_manager
+                and session.db_session_id
+                and not resume_in_place
+                and (source_title or source_chat_mode or effective_model)
+            ):
                 session_updates: dict[str, Any] = {}
                 if source_title:
                     session_updates["title"] = source_title
                 if source_chat_mode:
                     session_updates["chat_mode"] = source_chat_mode
+                if effective_model:
+                    session_updates["model"] = effective_model
                 if session_updates:
                     await asyncio.to_thread(
                         session_manager.update,
@@ -263,7 +298,7 @@ async def handle_continue_in_chat(
     # History injection via message_manager removed (session_messages table dropped)
 
     # Set parent_session_id on the DB record for lineage tracking
-    if session.db_session_id and session_manager:
+    if session.db_session_id and session_manager and session.db_session_id != source_session_id:
         try:
             await asyncio.to_thread(
                 session_manager.update_parent_session_id,
@@ -282,10 +317,13 @@ async def handle_continue_in_chat(
                 "source_session_id": source_session_id,
                 "db_session_id": session.db_session_id,
                 "resumed": bool(sdk_resume_id),
+                "ref": f"#{session.seq_num}" if session.seq_num is not None else None,
                 "title": source_title,
                 "source": effective_provider,
-                "model": target_model or source_model,
+                "model": effective_model,
                 "chat_mode": source_chat_mode,
+                "session_type": "web_chat",
+                "status": "active",
             }
         )
     )

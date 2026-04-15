@@ -636,12 +636,17 @@ class LocalSessionManager:
         )
         return self.get(session_id)
 
+    _VALID_SESSION_TYPES: ClassVar[set[str]] = {"terminal", "web_chat"}
+
     def update(
         self,
         session_id: str,
         *,
         external_id: str | None = None,
         source: str | None = None,
+        model: str | None = None,
+        chat_mode: str | None = None,
+        session_type: str | None = None,
         transcript_path: str | None = None,
         status: str | None = None,
         title: str | None = None,
@@ -656,6 +661,9 @@ class LocalSessionManager:
             session_id: Session ID to update
             external_id: New external ID (optional)
             source: New provider/source (optional)
+            model: New model identifier (optional)
+            chat_mode: New chat mode (optional)
+            session_type: New session type (optional)
             transcript_path: New transcript path (optional)
             status: New status (optional)
             title: New title (optional)
@@ -672,6 +680,20 @@ class LocalSessionManager:
             values["external_id"] = external_id
         if source is not None:
             values["source"] = source
+        if model is not None:
+            values["model"] = model
+        if chat_mode is not None:
+            if chat_mode not in self._VALID_CHAT_MODES:
+                raise ValueError(
+                    f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
+                )
+            values["chat_mode"] = chat_mode
+        if session_type is not None:
+            if session_type not in self._VALID_SESSION_TYPES:
+                raise ValueError(
+                    f"Invalid session_type {session_type!r}. Must be one of: {', '.join(sorted(self._VALID_SESSION_TYPES))}"
+                )
+            values["session_type"] = session_type
         if transcript_path is not None:
             values["transcript_path"] = transcript_path
         if status is not None:

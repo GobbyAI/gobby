@@ -26,10 +26,22 @@ vi.mock("../MessageList", async () => {
 });
 
 vi.mock("../ChatInput", () => ({
-  ChatInput: ({ proxyDeliveryNotice, disabled }: { proxyDeliveryNotice?: string | null; disabled?: boolean }) => (
+  ChatInput: ({
+    proxyDeliveryNotice,
+    disabled,
+    provider,
+    currentModel,
+  }: {
+    proxyDeliveryNotice?: string | null;
+    disabled?: boolean;
+    provider?: string | null;
+    currentModel?: string;
+  }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
       <span data-testid="chat-input-notice">{proxyDeliveryNotice ?? ""}</span>
+      <span data-testid="chat-input-provider">{provider ?? ""}</span>
+      <span data-testid="chat-input-model">{currentModel ?? ""}</span>
     </div>
   ),
 }));
@@ -55,10 +67,15 @@ vi.mock("../ActiveSessionsModal", () => ({
 vi.mock("../../activity/ActivityPanel", () => ({
   ActivityPanel: ({
     onSwapSession,
+    chatSessionId,
   }: {
     onSwapSession?: (target: { sessionId: string; sessionType: "terminal" | "web_chat" | null; agentRunId: string | null }) => void
+    chatSessionId?: string | null
   }) => (
     <div data-testid="activity-panel">
+      <span data-testid="activity-panel-chat-session-id">
+        {chatSessionId ?? ""}
+      </span>
       <button
         type="button"
         data-testid="swap-terminal-session"
@@ -221,11 +238,33 @@ describe("ChatPage", () => {
     vi.clearAllMocks();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ providers: [] }), {
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/providers/models")) {
+          return new Response(
+            JSON.stringify({
+              providers: [
+                {
+                  provider: "claude",
+                  available: true,
+                  models: [{ value: "sonnet", label: "Sonnet", is_default: true }],
+                  source: "static",
+                },
+                {
+                  provider: "codex",
+                  available: true,
+                  models: [{ value: "gpt-5.4", label: "gpt-5.4", is_default: true }],
+                  source: "static",
+                },
+              ],
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ providers: [] }), {
           headers: { "Content-Type": "application/json" },
-        }),
-      ),
+        });
+      }),
     );
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       callback(0);
@@ -325,6 +364,66 @@ describe("ChatPage", () => {
       statusBar.compareDocumentPosition(chatInput) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("treats a read-only swapped terminal as the main session for the activity panel", async () => {
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            dbSessionId: "web-main-1",
+            viewingSessionId: "terminal-2",
+            viewingSessionMeta: {
+              ref: "#52",
+              source: "claude",
+              title: "Observed Terminal",
+              status: "active",
+              model: "claude-sonnet-4-6",
+              externalId: "term-52",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+    });
+
+    expect(
+      screen.getByTestId("activity-panel-chat-session-id"),
+    ).toHaveTextContent("terminal-2");
+  });
+
+  it("normalizes the input chip to a valid model for the active provider", async () => {
+    render(
+      <ChatPage
+        chat={createChat({
+          provider: "claude",
+          mainSessionMeta: {
+            ref: "#77",
+            source: "claude",
+            title: "Claude Session",
+            status: "active",
+            model: null,
+            externalId: "session-77",
+            sessionType: "web_chat",
+          },
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+        currentModel="gpt-5.4"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-input-provider")).toHaveTextContent(
+        "claude",
+      );
+      expect(screen.getByTestId("chat-input-model")).toHaveTextContent(
+        "sonnet",
+      );
+    });
   });
 
   it("keeps non-autonomous terminal swaps in observe mode", async () => {

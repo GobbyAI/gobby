@@ -102,6 +102,21 @@ describe('ChatInput', () => {
     expect(textarea).toHaveAttribute('aria-label', 'Message input — connecting')
   })
 
+  it('uses the provided disabled placeholder and aria label', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        disabled={true}
+        disabledPlaceholder="Resuming session in web chat..."
+        disabledAriaLabel="Message input — resuming session"
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    expect(textarea).toHaveAttribute('placeholder', 'Resuming session in web chat...')
+    expect(textarea).toHaveAttribute('aria-label', 'Message input — resuming session')
+  })
+
   it('shows streaming placeholder when streaming', () => {
     render(<ChatInput {...defaultProps} isStreaming={true} />)
 

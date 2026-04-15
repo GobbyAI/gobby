@@ -180,17 +180,25 @@ class TestContinueInChatTerminalKill:
         ws.send = AsyncMock()
 
         source_session = MagicMock()
+        source_session.session_type = "terminal"
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
+        source_session.source = "claude"
+        source_session.model = "sonnet"
+        source_session.chat_mode = "accept_edits"
+        source_session.title = "CLI Session"
         source_session.terminal_context = {"tmux_pane": "%5", "parent_pid": "999"}
 
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
+        session_manager.update = MagicMock(return_value=source_session)
         session_manager.update_status = MagicMock()
+        session_manager.update_parent_session_id = MagicMock()
 
         mock_chat_session = MagicMock()
-        mock_chat_session.db_session_id = "new-db-id"
+        mock_chat_session.db_session_id = "source-uuid"
+        mock_chat_session.seq_num = 42
 
         # Build a host that looks enough like the mixin
         host = self._make_host()
@@ -201,7 +209,13 @@ class TestContinueInChatTerminalKill:
         mock_registry = MagicMock()
         mock_registry.get_by_session.return_value = None
 
-        async def fake_create_chat_session(conv_id, project_id=None, resume_session_id=None):
+        async def fake_create_chat_session(
+            conv_id,
+            model=None,
+            project_id=None,
+            resume_session_id=None,
+            provider=None,
+        ):
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
@@ -237,8 +251,18 @@ class TestContinueInChatTerminalKill:
             {"tmux_pane": "%5", "parent_pid": "999"},
             "source-uuid",
         )
-        # Verify session was expired
-        session_manager.update_status.assert_called_once_with("source-uuid", "expired")
+        session_manager.update_status.assert_not_called()
+        session_manager.update.assert_any_call(
+            "source-uuid",
+            source="claude",
+            model="sonnet",
+            chat_mode="accept_edits",
+            session_type="web_chat",
+            status="active",
+            title="CLI Session",
+            project_id="proj-1",
+        )
+        session_manager.update_parent_session_id.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_skips_terminal_kill_when_agent_found(self) -> None:
@@ -249,16 +273,24 @@ class TestContinueInChatTerminalKill:
         ws.send = AsyncMock()
 
         source_session = MagicMock()
+        source_session.session_type = "terminal"
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
+        source_session.source = "claude"
+        source_session.model = "sonnet"
+        source_session.chat_mode = "accept_edits"
+        source_session.title = "CLI Session"
         source_session.terminal_context = {"tmux_pane": "%5"}
 
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
+        session_manager.update = MagicMock(return_value=source_session)
+        session_manager.update_parent_session_id = MagicMock()
 
         mock_chat_session = MagicMock()
-        mock_chat_session.db_session_id = "new-db-id"
+        mock_chat_session.db_session_id = "source-uuid"
+        mock_chat_session.seq_num = 42
 
         host = self._make_host()
         host.session_manager = session_manager
@@ -268,7 +300,13 @@ class TestContinueInChatTerminalKill:
         mock_run.id = "agent-1"
         mock_run.mode = "interactive"
 
-        async def fake_create_chat_session(conv_id, project_id=None, resume_session_id=None):
+        async def fake_create_chat_session(
+            conv_id,
+            model=None,
+            project_id=None,
+            resume_session_id=None,
+            provider=None,
+        ):
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
@@ -305,6 +343,7 @@ class TestContinueInChatTerminalKill:
         # DB-driven kill_agent should have been used instead of terminal kill
         mock_kill_agent.assert_called_once()
         mock_kill_terminal.assert_not_called()
+        session_manager.update_parent_session_id.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_defaults_to_source_provider_and_normalizes_target_row(self) -> None:
@@ -380,11 +419,110 @@ class TestContinueInChatTerminalKill:
             )
 
         assert captured["provider"] == "codex"
-        session_manager.update.assert_any_call("new-conv", source="codex")
+        session_manager.update.assert_any_call(
+            "new-conv",
+            source="codex",
+            model=None,
+            title=None,
+            chat_mode=None,
+        )
         session_manager.update_parent_session_id.assert_called_once_with(
             "new-db-id",
             "source-uuid",
         )
+
+    @pytest.mark.asyncio
+    async def test_continue_in_chat_reuses_terminal_session_identity(self) -> None:
+        """Terminal attach should convert the source session into the active web chat."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "terminal"
+        source_session.external_id = "cli-session-123"
+        source_session.project_id = "proj-1"
+        source_session.transcript_path = None
+        source_session.source = "codex"
+        source_session.title = "Terminal Session"
+        source_session.chat_mode = "accept_edits"
+        source_session.model = "gpt-5.4"
+        source_session.terminal_context = None
+
+        converted_session = MagicMock()
+        converted_session.id = "source-uuid"
+        converted_session.session_type = "web_chat"
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.update = MagicMock(return_value=converted_session)
+        session_manager.update_parent_session_id = MagicMock()
+
+        mock_chat_session = MagicMock()
+        mock_chat_session.db_session_id = "source-uuid"
+        mock_chat_session.seq_num = 88
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.agent_run_manager = None
+        host._send_error = AsyncMock()
+
+        captured: dict[str, object] = {}
+
+        async def fake_create_chat_session(
+            conv_id,
+            model=None,
+            project_id=None,
+            resume_session_id=None,
+            provider=None,
+        ):
+            captured["conversation_id"] = conv_id
+            captured["provider"] = provider
+            captured["model"] = model
+            captured["project_id"] = project_id
+            captured["resume_session_id"] = resume_session_id
+            return mock_chat_session
+
+        host._create_chat_session = fake_create_chat_session
+
+        with patch(
+            "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await SessionControlMixin._handle_continue_in_chat(
+                host,
+                ws,
+                {
+                    "source_session_id": "source-uuid",
+                    "conversation_id": "new-conv-id",
+                },
+            )
+
+        assert captured["conversation_id"] == "source-uuid"
+        assert captured["provider"] == "codex"
+        assert captured["model"] == "gpt-5.4"
+        session_manager.update.assert_called_once_with(
+            "source-uuid",
+            source="codex",
+            model="gpt-5.4",
+            chat_mode="accept_edits",
+            session_type="web_chat",
+            status="active",
+            title="Terminal Session",
+            project_id="proj-1",
+        )
+        session_manager.update_parent_session_id.assert_not_called()
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["type"] == "session_continued"
+        assert response["conversation_id"] == "source-uuid"
+        assert response["db_session_id"] == "source-uuid"
+        assert response["session_type"] == "web_chat"
+        assert response["model"] == "gpt-5.4"
 
     @pytest.mark.asyncio
     async def test_attach_to_session_returns_extended_metadata(self) -> None:

@@ -16,6 +16,8 @@ import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
+const VIEWING_SESSION_ID_KEY = "gobby-viewing-session-id";
+const VIEWING_SESSION_MODE_KEY = "gobby-viewing-session-mode";
 const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex"]);
 
 interface WebSocketMessage {
@@ -131,6 +133,31 @@ function saveDbSessionId(id: string | null): void {
     localStorage.setItem(DB_SESSION_ID_KEY, id);
   } else {
     localStorage.removeItem(DB_SESSION_ID_KEY);
+  }
+}
+
+function loadViewingSessionId(): string | null {
+  return localStorage.getItem(VIEWING_SESSION_ID_KEY);
+}
+
+function saveViewingSessionId(id: string | null): void {
+  if (id) {
+    localStorage.setItem(VIEWING_SESSION_ID_KEY, id);
+  } else {
+    localStorage.removeItem(VIEWING_SESSION_ID_KEY);
+  }
+}
+
+function loadViewingSessionMode(): "none" | "observe" {
+  const persisted = localStorage.getItem(VIEWING_SESSION_MODE_KEY);
+  return persisted === "observe" ? "observe" : "none";
+}
+
+function saveViewingSessionMode(mode: "none" | "observe"): void {
+  if (mode === "observe") {
+    localStorage.setItem(VIEWING_SESSION_MODE_KEY, mode);
+  } else {
+    localStorage.removeItem(VIEWING_SESSION_MODE_KEY);
   }
 }
 
@@ -787,11 +814,16 @@ export function useChat() {
   }, [selectedProvider]);
 
   // Session viewing tracking (read-only observation of CLI sessions via REST)
-  const [viewingSessionId, setViewingSessionId] = useState<string | null>(null);
+  const [viewingSessionId, setViewingSessionId] = useState<string | null>(() =>
+    loadViewingSessionId(),
+  );
   const viewingSessionIdRef = useRef<string | null>(null);
   const [viewingSessionMeta, setViewingSessionMeta] =
     useState<SessionObservationMeta | null>(null);
   const viewingSessionMetaRef = useRef<SessionObservationMeta | null>(null);
+  const initialViewingSessionIdRef = useRef<string | null>(loadViewingSessionId());
+  const initialViewingModeRef = useRef<"none" | "observe">(loadViewingSessionMode());
+  const initialViewingRestoreRef = useRef(false);
 
   // Live terminal observation is distinct from interactive proxy mode.
   const [observedSessionId, setObservedSessionId] = useState<string | null>(null);
@@ -814,6 +846,8 @@ export function useChat() {
   const [attachedSessionMeta, setAttachedSessionMeta] =
     useState<SessionObservationMeta | null>(null);
   const attachedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
+  const [isContinuingSession, setIsContinuingSession] = useState(false);
+  const continuingSessionIdRef = useRef<string | null>(null);
 
   // Keep a ref so onopen/reconnect can read the current agent
   const activeAgentRef = useRef(activeAgent);
@@ -826,6 +860,10 @@ export function useChat() {
   const projectIdRef = useRef<string | null>(null);
   const setProjectIdRef = useCallback((id: string | null) => {
     projectIdRef.current = id;
+  }, []);
+  const clearContinuingSession = useCallback(() => {
+    continuingSessionIdRef.current = null;
+    setIsContinuingSession(false);
   }, []);
 
   const resolveAgentName = useCallback(async (agentRunId: string) => {
@@ -1182,6 +1220,7 @@ export function useChat() {
         fetch(`${baseUrl}/api/chat/${convId}/messages?after_seq=${afterSeq}`)
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
+            if (viewingSessionIdRef.current) return;
             if (!data?.messages?.length) return;
             const backfilled: ChatMessage[] = data.messages.map(
               (m: {
@@ -1447,18 +1486,33 @@ export function useChat() {
           if (agentName) setActiveAgent(agentName);
         } else if (data.type === "session_continued") {
           const continued = data as Record<string, unknown>;
+          clearContinuingSession();
+          const nextConversationId =
+            (continued.conversation_id as string | undefined) ?? null;
           const nextDbSessionId = (continued.db_session_id as string) ?? null;
+          if (nextConversationId && nextConversationId !== conversationIdRef.current) {
+            conversationIdRef.current = nextConversationId;
+            setConversationId(nextConversationId);
+            saveConversationId(nextConversationId);
+          }
           setDbSessionId(nextDbSessionId);
           dbSessionIdRef.current = nextDbSessionId;
           saveDbSessionId(nextDbSessionId);
           const continuedMeta = toSessionObservationMeta(continued, {
-            ref: sessionRefRef.current,
-            status: "active",
-            sessionType: "web_chat",
+            ref:
+              (continued.ref as string | undefined) ??
+              sessionRefRef.current,
+            status: (continued.status as string | undefined) ?? "active",
+            sessionType:
+              ((continued.session_type as "terminal" | "web_chat" | null | undefined) ??
+                "web_chat"),
           });
           if (continuedMeta) {
             setMainSessionMeta(continuedMeta);
             setSessionTitle(continuedMeta.title ?? null);
+            if (continuedMeta.ref) {
+              setSessionRef(continuedMeta.ref);
+            }
             if (continuedMeta.source && isChatProvider(continuedMeta.source)) {
               setSelectedProvider(continuedMeta.source);
             }
@@ -1480,6 +1534,22 @@ export function useChat() {
               .catch(() => {});
           }
           console.log("Session continued:", data);
+        } else if (data.type === "error") {
+          const err = data as Record<string, unknown>;
+          if (continuingSessionIdRef.current) {
+            clearContinuingSession();
+          }
+          const errorMessage =
+            typeof err.message === "string" ? err.message : "Unknown error";
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `system-error-${uuid()}`,
+              role: "system" as const,
+              content: errorMessage,
+              timestamp: new Date(),
+            },
+          ]);
         } else if (data.type === "connection_established") {
           const serverConversations = (data.conversation_ids as string[]) || [];
           if (serverConversations.includes(conversationIdRef.current)) {
@@ -1587,10 +1657,13 @@ export function useChat() {
               sessionType: null,
             } satisfies SessionObservationMeta);
           setObservedSessionId(sid);
+          observedSessionIdRef.current = sid;
           observedSessionMetaRef.current = meta;
           // Also set viewing state (attached implies viewing)
           setViewingSessionId(sid);
+          viewingSessionIdRef.current = sid;
           setViewingSessionMeta(meta);
+          viewingSessionMetaRef.current = meta;
           const requestedMode = pendingSessionInteractionModeRef.current;
           const proxyCapable =
             meta.sessionType === "terminal" && meta.status === "active";
@@ -1729,7 +1802,7 @@ export function useChat() {
     };
     // resolveAgentName is a stable useCallback (its own deps are []) — safe
     // to reference here without re-creating connect every render.
-  }, [applyMainSessionMeta, resolveAgentName, setSelectedProvider]);
+  }, [applyMainSessionMeta, clearContinuingSession, resolveAgentName, setSelectedProvider]);
 
   // Handle streaming chat chunks
   const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
@@ -2015,6 +2088,19 @@ export function useChat() {
 
   // Handle model switch notifications
   const handleModelSwitched = useCallback((msg: ModelSwitchedMessage) => {
+    const matchesActiveConversation =
+      msg.conversation_id === conversationIdRef.current ||
+      msg.conversation_id === dbSessionIdRef.current;
+    if (matchesActiveConversation) {
+      setMainSessionMeta((prev) =>
+        prev
+          ? {
+              ...prev,
+              model: msg.new_model,
+            }
+          : prev,
+      );
+    }
     setMessages((prev) => [
       ...prev,
       {
@@ -2048,6 +2134,16 @@ export function useChat() {
     }
     saveDbSessionId(dbSessionId);
   }, [dbSessionId, viewingSessionMeta?.sessionType]);
+  useEffect(() => {
+    saveViewingSessionId(viewingSessionId);
+  }, [viewingSessionId]);
+  useEffect(() => {
+    saveViewingSessionMode(
+      viewingSessionId && sessionInteractionMode === "observe"
+        ? "observe"
+        : "none",
+    );
+  }, [sessionInteractionMode, viewingSessionId]);
 
   // Keep refs in sync
   useEffect(() => {
@@ -2071,36 +2167,42 @@ export function useChat() {
 
   // Switch to an existing server-owned web-chat session by DB session ID.
   const switchConversation = useCallback(
-    (id: string) => {
+    (id: string, options?: { preserveViewing?: boolean }) => {
       if (!id) return;
-      if (id === dbSessionIdRef.current && messagesRef.current.length > 0) {
+      const preserveViewing = options?.preserveViewing ?? false;
+      if (id === dbSessionIdRef.current && !preserveViewing && messagesRef.current.length > 0) {
         return;
       }
 
-      clearSessionObservationState();
-      resetMainChatState();
+      if (!preserveViewing) {
+        clearSessionObservationState();
+        resetMainChatState();
+      }
       bindActiveSession(id);
       setConversationSwitchKey((k) => k + 1);
 
-      setIsLoadingMessages(true);
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (!data?.messages?.length || conversationIdRef.current !== id) return;
-          const mapped = data.messages.map(
-            (m: Record<string, unknown>) =>
-              mapRenderedMessageToChatMessage(m),
-          );
-          if (mapped.length > 0) {
-            setMessages(mapped);
-          }
-          if (data.max_seq) {
-            lastSeqRef.current = data.max_seq as number;
-          }
-        })
-        .catch((err) => console.error("Failed to fetch chat messages:", err))
-        .finally(() => setIsLoadingMessages(false));
+      if (!preserveViewing) {
+        setIsLoadingMessages(true);
+        fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (viewingSessionIdRef.current) return;
+            if (!data?.messages?.length || conversationIdRef.current !== id) return;
+            const mapped = data.messages.map(
+              (m: Record<string, unknown>) =>
+                mapRenderedMessageToChatMessage(m),
+            );
+            if (mapped.length > 0) {
+              setMessages(mapped);
+            }
+            if (data.max_seq) {
+              lastSeqRef.current = data.max_seq as number;
+            }
+          })
+          .catch((err) => console.error("Failed to fetch chat messages:", err))
+          .finally(() => setIsLoadingMessages(false));
+      }
 
       fetch(`${baseUrl}/api/sessions/${id}`)
         .then((res) => (res.ok ? res.json() : null))
@@ -2217,10 +2319,16 @@ export function useChat() {
       projectId?: string,
       options?: { provider?: string | null; model?: string | null },
     ): Promise<string> => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        return "";
+      }
+
       clearSessionObservationState();
       resetMainChatState();
-      bindActiveSession(null);
+      bindActiveSession(sourceDbSessionId);
       setConversationSwitchKey((k) => k + 1);
+      continuingSessionIdRef.current = sourceDbSessionId;
+      setIsContinuingSession(true);
 
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       let sourceSession: Record<string, unknown> | null = null;
@@ -2251,29 +2359,13 @@ export function useChat() {
           ? (sourceSession.chat_mode as ChatMode)
           : null;
 
+      applyMainSessionMeta(sourceSession);
       if (continuationProvider) {
         setSelectedProvider(continuationProvider);
       }
       if (sourceChatMode) {
         currentModeRef.current = sourceChatMode;
         onModeChangedRef.current?.(sourceChatMode);
-      }
-
-      const newConversationId = await ensureMainSession({
-        projectId:
-          projectId ??
-          (typeof sourceSession?.project_id === "string"
-            ? sourceSession.project_id
-            : projectIdRef.current),
-        provider: continuationProvider,
-        model: continuationModel,
-        chatMode: sourceChatMode,
-        title:
-          typeof sourceSession?.title === "string" ? sourceSession.title : null,
-        forceNew: true,
-      });
-      if (!newConversationId) {
-        return "";
       }
 
       // Fetch source session's messages for display
@@ -2297,32 +2389,30 @@ export function useChat() {
       if (hasSessionUsage(s)) {
         setContextUsage(computeContextUsageFromSessionData(s));
       }
-      // chat_mode was already propagated above, before ensureMainSession.
+      // chat_mode was already propagated above before the backend handoff.
 
       // Tell backend to prepare the continuation session
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "continue_in_chat",
-            conversation_id: newConversationId,
-            source_session_id: sourceDbSessionId,
-            project_id:
-              projectId ??
-              (typeof sourceSession?.project_id === "string"
-                ? sourceSession.project_id
-                : undefined),
-            provider: continuationProvider,
-            model: continuationModel,
-          }),
-        );
-      }
+      wsRef.current.send(
+        JSON.stringify({
+          type: "continue_in_chat",
+          conversation_id: sourceDbSessionId,
+          source_session_id: sourceDbSessionId,
+          project_id:
+            projectId ??
+            (typeof sourceSession?.project_id === "string"
+              ? sourceSession.project_id
+              : undefined),
+          provider: continuationProvider,
+          model: continuationModel,
+        }),
+      );
 
-      return newConversationId;
+      return sourceDbSessionId;
     },
     [
+      applyMainSessionMeta,
       bindActiveSession,
       clearSessionObservationState,
-      ensureMainSession,
       resetMainChatState,
       setContextUsage,
       setSelectedProvider,
@@ -2465,6 +2555,10 @@ export function useChat() {
         "files:",
         files?.length,
       );
+
+      if (continuingSessionIdRef.current) {
+        return false;
+      }
 
       const needsSession =
         !conversationIdRef.current || !dbSessionIdRef.current;
@@ -2719,7 +2813,10 @@ export function useChat() {
   const viewSession = useCallback((sessionId: string) => {
     // Skip if already viewing/attached to this session
     if (
-      viewingSessionIdRef.current === sessionId ||
+      (
+        viewingSessionIdRef.current === sessionId &&
+        (viewingSessionMetaRef.current || messagesRef.current.length > 0)
+      ) ||
       observedSessionIdRef.current === sessionId
     ) {
       return;
@@ -2752,6 +2849,7 @@ export function useChat() {
     setProxyDeliveryNotice(null);
 
     // Set viewing state
+    viewingSessionIdRef.current = sessionId;
     setViewingSessionId(sessionId);
 
     // Fetch messages via REST
@@ -2941,6 +3039,30 @@ export function useChat() {
     [setContextUsage],
   );
 
+  useEffect(() => {
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (!restoredViewingSessionId || initialViewingRestoreRef.current) {
+      return;
+    }
+    initialViewingRestoreRef.current = true;
+    viewSession(restoredViewingSessionId);
+  }, [viewSession]);
+
+  useEffect(() => {
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (
+      !restoredViewingSessionId ||
+      initialViewingModeRef.current !== "observe" ||
+      !isConnected ||
+      viewingSessionIdRef.current !== restoredViewingSessionId ||
+      observedSessionIdRef.current === restoredViewingSessionId
+    ) {
+      return;
+    }
+    attachToSession(restoredViewingSessionId, "observe");
+    initialViewingModeRef.current = "none";
+  }, [attachToSession, isConnected, viewingSessionId]);
+
   // Attach to the currently viewed session (button click from view-only mode)
   const attachToViewed = useCallback(() => {
     const sid = viewingSessionIdRef.current;
@@ -2980,7 +3102,7 @@ export function useChat() {
   useEffect(() => {
     // Restore chat messages from server if we have an existing conversation
     const existingConvId = conversationIdRef.current;
-    if (existingConvId) {
+    if (existingConvId && !initialViewingSessionIdRef.current) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       setIsLoadingMessages(true);
       fetch(`${baseUrl}/api/chat/${existingConvId}/messages`)
@@ -3116,6 +3238,7 @@ export function useChat() {
     mainSessionMeta,
     viewingSessionId,
     viewingSessionMeta,
+    isContinuingSession,
     observeSession: attachToSession,
     attachToViewed,
     detachFromSession,

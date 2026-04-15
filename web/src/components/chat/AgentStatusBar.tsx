@@ -29,6 +29,10 @@ function formatChatMode(chatMode: string | null | undefined): string | null {
   }
 }
 
+function formatSessionType(sessionType: SessionObservationMeta['sessionType']): string {
+  return sessionType === 'web_chat' ? 'Web Chat' : 'tmux'
+}
+
 export function AgentStatusBar({
   viewingMeta,
   interactionMode,
@@ -43,67 +47,75 @@ export function AgentStatusBar({
     sourceConfig?.dotClassName ?? 'chat-session-status__dot--default'
   const modeLabel = formatChatMode(viewingMeta.chatMode)
   const isLive = viewingMeta.status === 'active'
-  const status =
-    interactionMode === 'proxy' || isAttached ? 'Attached' : 'Observing'
-  const actionButton = (() => {
-    if (isAutonomousSession && !isAttached) return null
-    if (isAttached && onDetach) {
-      return (
-        <button
-          type="button"
-          className="chat-session-status__action"
-          onClick={onDetach}
-        >
-          Detach
-        </button>
-      )
-    }
-    if (!isAttached && onAttach) {
-      return (
-        <button
-          type="button"
-          className="chat-session-status__action chat-session-status__action--attach"
-          onClick={onAttach}
-        >
-          Attach
-        </button>
-      )
-    }
-    return null
-  })()
+  const statusLabel =
+    interactionMode === 'proxy' || isAttached ? 'Attached' : 'Watching'
+  const sessionTypeLabel = formatSessionType(viewingMeta.sessionType)
+  const title = viewingMeta.title ?? 'Observed Session'
 
   return (
-    <div className="agent-status-bar">
-      {(viewingMeta.agentName || viewingMeta.workflowName) && (
-        <div className="agent-status-bar__identity">
-          <span aria-hidden="true">{"\uD83E\uDD16"}</span>
-          <span className="agent-status-bar__name">
-            {viewingMeta.agentName ?? 'Agent'}
+    <div className="agent-status-bar" data-testid="agent-status-bar">
+      <div className="agent-status-bar__summary">
+        <div className="agent-status-bar__session">
+          {viewingMeta.ref && (
+            <span className="agent-status-bar__ref">{viewingMeta.ref}</span>
+          )}
+          <span className="agent-status-bar__title">{title}</span>
+          <span className="agent-status-bar__status">
+            {statusLabel}
+            {statusLabel === 'Watching' && isLive ? ' live' : ''}
           </span>
-          {viewingMeta.workflowName && (
-            <span className="agent-status-bar__workflow">
-              {viewingMeta.workflowName}
+        </div>
+        <div className="chat-session-status">
+          <span
+            className={`chat-session-status__dot ${sourceDotClassName}`}
+            aria-hidden="true"
+          />
+          <span className="chat-session-status__label">{sourceLabel}</span>
+          {viewingMeta.model && (
+            <span className="chat-session-status__model">{viewingMeta.model}</span>
+          )}
+          <span className="chat-session-status__kind">{sessionTypeLabel}</span>
+          {modeLabel && (
+            <span className="chat-session-status__mode">
+              {modeLabel}
+            </span>
+          )}
+          {(viewingMeta.agentName || viewingMeta.workflowName) && (
+            <span className="chat-session-status__agent">
+              {viewingMeta.agentName ?? viewingMeta.workflowName}
             </span>
           )}
         </div>
-      )}
-      <div className="chat-session-status">
-        <span
-          className={`chat-session-status__dot ${sourceDotClassName}`}
-          aria-hidden="true"
-        />
-        <span className="chat-session-status__label">{sourceLabel}</span>
-        {modeLabel && (
-          <span className="chat-session-status__mode">
-            {modeLabel}
-          </span>
-        )}
-        <span className="chat-session-status__status">
-          {status}
-          {status === 'Observing' && isLive ? ' (live)' : ''}
-        </span>
       </div>
-      {actionButton}
+      <div className="agent-status-bar__actions">
+        {!isAttached && onDetach && (
+          <button
+            type="button"
+            className="chat-session-status__action"
+            onClick={onDetach}
+          >
+            Back
+          </button>
+        )}
+        {!isAttached && !isAutonomousSession && onAttach && (
+          <button
+            type="button"
+            className="chat-session-status__action chat-session-status__action--attach"
+            onClick={onAttach}
+          >
+            Resume
+          </button>
+        )}
+        {isAttached && onDetach && (
+          <button
+            type="button"
+            className="chat-session-status__action"
+            onClick={onDetach}
+          >
+            Detach
+          </button>
+        )}
+      </div>
     </div>
   )
 }

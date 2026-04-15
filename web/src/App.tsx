@@ -35,6 +35,11 @@ import { Button } from "./components/chat/ui/Button";
 import type { GobbySession } from "./hooks/useSessions";
 import type { CommandPaletteAction } from "./components/chat/CommandPalette";
 import { FilesProvider } from "./contexts/FilesContext";
+import {
+  fetchProviderModelCatalog,
+  getPreferredModelForProvider,
+  type ProviderModelEntry,
+} from "./lib/providerModels";
 import { cn } from "./lib/utils";
 
 const CONVERSATION_ID_STORAGE_KEY = "gobby-conversation-id";
@@ -299,6 +304,7 @@ export default function App() {
     observeSession,
     viewingSessionId,
     viewingSessionMeta,
+    isContinuingSession,
     attachToViewed,
     detachFromSession,
     attachedSessionId,
@@ -329,6 +335,9 @@ export default function App() {
     updateVoiceInputMode,
     resetSettings,
   } = useSettings();
+  const [providerModelCatalog, setProviderModelCatalog] = useState<
+    ProviderModelEntry[]
+  >([]);
   const voice = useVoice(
     wsRef,
     conversationId,
@@ -493,6 +502,51 @@ export default function App() {
     "Personal";
   const agentDefs = useAgentDefinitions(effectiveProjectId, selectedProvider ?? undefined);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchProviderModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) {
+          setProviderModelCatalog(catalog);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProviderModelCatalog([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const activeProvider = mainSessionMeta?.source ?? selectedProvider;
+    if (!activeProvider) {
+      return;
+    }
+
+    const nextModel =
+      mainSessionMeta?.source === activeProvider && mainSessionMeta.model
+        ? mainSessionMeta.model
+        : getPreferredModelForProvider(
+            providerModelCatalog,
+            activeProvider,
+            settings.model,
+          );
+
+    if (nextModel && nextModel !== settings.model) {
+      updateModel(nextModel);
+    }
+  }, [
+    mainSessionMeta?.model,
+    mainSessionMeta?.source,
+    providerModelCatalog,
+    selectedProvider,
+    settings.model,
+    updateModel,
+  ]);
+
   // On mount: fetch persisted project from API (DB is source of truth)
   useEffect(() => {
     let cancelled = false;
@@ -598,7 +652,12 @@ export default function App() {
         : undefined);
 
     if (match) {
-      switchConversation(match.id);
+      switchConversation(match.id, {
+        preserveViewing: Boolean(viewingSessionId),
+      });
+    } else if (viewingSessionId && !persistedDbSessionId) {
+      // Restored read-only session view with no parked main-chat session.
+      return;
     } else if (persistedConversationId && !persistedDbSessionId) {
       // Preserve an explicit local fresh-chat ID so reloads do not jump back
       // to the most recent saved session before the user sends a first message.
@@ -617,6 +676,7 @@ export default function App() {
     sessionsHook.isLoading,
     webChatSessions,
     dbSessionId,
+    viewingSessionId,
     switchConversation,
     startNewChat,
   ]);
@@ -1234,6 +1294,7 @@ export default function App() {
                   mainSessionMeta,
                   viewingSessionId,
                   viewingSessionMeta,
+                  isContinuingSession,
                   observeSession,
                   attachedSessionId,
                   attachedSessionMeta,

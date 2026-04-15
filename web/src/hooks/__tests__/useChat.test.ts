@@ -304,16 +304,6 @@ describe('useChat', () => {
     mockFetch.mockJsonResponse('/api/sessions/source-session/messages?limit=100', {
       messages: [],
     })
-    mockFetch.mockJsonResponse('/api/sessions/web-chat', {
-      session: {
-        id: 'resumed-web-chat',
-        source: 'codex',
-        model: 'gpt-5.4',
-        chat_mode: null,
-        seq_num: 77,
-        title: null,
-      },
-    })
 
     await loadModule()
     const { result } = renderHook(() => useChat())
@@ -328,19 +318,82 @@ describe('useChat', () => {
       await result.current.continueSessionInChat('source-session', 'proj-source')
     })
 
-    const sessionCalls = mockFetch.fn.mock.calls.filter(([url]) =>
-      typeof url === 'string' && url.includes('/api/sessions/web-chat'),
-    )
-    expect(sessionCalls.length).toBeGreaterThan(0)
-    const body = JSON.parse(sessionCalls[sessionCalls.length - 1][1].body as string)
-    expect(body.provider).toBe('codex')
+    expect(result.current.dbSessionId).toBe('source-session')
+    expect(result.current.conversationId).toBe('source-session')
     expect(result.current.selectedProvider).toBe('codex')
+    expect(result.current.isContinuingSession).toBe(true)
 
     const continueMsg = ws.send.mock.calls
       .map(([raw]) => JSON.parse(raw))
       .find((msg) => msg.type === 'continue_in_chat')
+    expect(continueMsg?.conversation_id).toBe('source-session')
+    expect(continueMsg?.source_session_id).toBe('source-session')
     expect(continueMsg?.provider).toBe('codex')
     expect(continueMsg?.model).toBe('gpt-5.4')
+  })
+
+  it('restores a watched session on mount without hydrating the parked main chat over it', async () => {
+    localStorage.setItem('gobby-viewing-session-id', 'sess-view')
+    localStorage.setItem('gobby-viewing-session-mode', 'observe')
+
+    mockFetch.mockJsonResponse('/api/sessions/sess-view/messages?limit=100&offset=0', {
+      messages: [
+        {
+          id: 'sess-msg-1',
+          role: 'assistant',
+          content: 'Watched output',
+          timestamp: '2026-04-14T00:00:00Z',
+          content_blocks: [{ type: 'text', content: 'Watched output' }],
+        },
+      ],
+    })
+    mockFetch.mockJsonResponse('/api/sessions/sess-view', {
+      session: {
+        id: 'sess-view',
+        seq_num: 321,
+        source: 'claude',
+        title: 'Watched Terminal',
+        status: 'active',
+        model: 'sonnet',
+        external_id: 'sess-view-ext',
+        chat_mode: 'accept_edits',
+        git_branch: 'main',
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: 'terminal',
+      },
+    })
+
+    await loadModule()
+    const { result } = renderHook(() => useChat())
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+
+    await waitFor(() => {
+      expect(result.current.viewingSessionId).toBe('sess-view')
+      expect(result.current.messages[0].content).toBe('Watched output')
+    })
+
+    const requestedUrls = mockFetch.fn.mock.calls.map(([input]) =>
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url,
+    )
+    expect(
+      requestedUrls.some((url) =>
+        url.includes('/api/chat/test-conversation-id/messages'),
+      ),
+    ).toBe(false)
+
+    const attachMsg = ws.send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .find((msg) => msg.type === 'attach_to_session')
+    expect(attachMsg?.session_id).toBe('sess-view')
   })
 
   it('switchProvider creates a new server-owned session with the requested provider for an existing chat', async () => {
@@ -1118,15 +1171,19 @@ describe('useChat', () => {
         conversation_id: result.current.conversationId,
         db_session_id: 'db-session-continued',
         source_session_id: 'source-session',
+        ref: '#88',
         title: 'Continued Session',
         source: 'codex',
         model: 'gpt-5.4',
         chat_mode: 'accept_edits',
+        status: 'active',
+        session_type: 'web_chat',
       })
     })
 
     await waitFor(() => {
       expect(result.current.dbSessionId).toBe('db-session-continued')
+      expect(result.current.sessionRef).toBe('#88')
       expect(result.current.sessionTitle).toBe('Continued Session')
       expect(result.current.selectedProvider).toBe('codex')
       expect(result.current.mainSessionMeta?.title).toBe('Continued Session')

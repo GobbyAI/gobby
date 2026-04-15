@@ -53,6 +53,8 @@ interface SessionContextMenu {
   entry: SessionEntry;
 }
 
+const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
+
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
@@ -105,9 +107,13 @@ export const SessionsTab = memo(function SessionsTab({
   const [activitySessions, setActivitySessions] = useState<GobbySession[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    null,
-  );
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(WATCHING_SESSION_ID_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [topHeight, setTopHeight] = useState(35);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
@@ -288,6 +294,18 @@ export const SessionsTab = memo(function SessionsTab({
     onFocusHandled,
     selectedSessionId,
   ]);
+
+  useEffect(() => {
+    try {
+      if (selectedSessionId) {
+        localStorage.setItem(WATCHING_SESSION_ID_KEY, selectedSessionId);
+      } else {
+        localStorage.removeItem(WATCHING_SESSION_ID_KEY);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [selectedSessionId]);
 
   // Fetch selected session messages
   const { messages, isLoading, transcriptStatus } =

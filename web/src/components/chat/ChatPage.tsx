@@ -24,6 +24,11 @@ import { AgentStatusBar } from "./AgentStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
+import {
+  fetchProviderModelCatalog,
+  resolveProviderModelPair,
+  type ProviderModelEntry,
+} from "../../lib/providerModels";
 
 const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
@@ -207,6 +212,11 @@ export function ChatPage({
     }
   }, [chat]);
 
+  // Available LLM providers — fetched from daemon API
+  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
+  const [providerModelCatalog, setProviderModelCatalog] = useState<
+    ProviderModelEntry[]
+  >([]);
   const viewingMeta = chat.viewingSessionMeta ?? chat.attachedSessionMeta ?? null;
   const isSwappedTerminal = viewingMeta?.sessionType === "terminal";
   const isAutonomousSession = Boolean(
@@ -221,12 +231,62 @@ export function ChatPage({
       ? "Cannot change provider on a pipeline-managed session"
       : "Observing autonomous session"
     : null;
+  const mainInputSelection = resolveProviderModelPair(
+    providerModelCatalog,
+    {
+      provider: mainSessionMeta?.source ?? null,
+      model: mainSessionMeta?.model ?? null,
+    },
+    {
+      provider: chat.provider ?? null,
+      model: currentModel,
+    },
+  );
+  const viewedInputSelection = resolveProviderModelPair(
+    providerModelCatalog,
+    {
+      provider: viewingMeta?.source ?? null,
+      model: viewingMeta?.model ?? null,
+    },
+    {
+      provider: mainSessionMeta?.source ?? chat.provider ?? null,
+      model: mainSessionMeta?.model ?? currentModel,
+    },
+  );
   const effectiveInputProvider = isSwappedTerminal
-    ? viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider
-    : mainSessionMeta?.source ?? chat.provider;
+    ? viewedInputSelection.provider
+    : mainInputSelection.provider;
   const effectiveInputModel = isSwappedTerminal
-    ? viewingMeta?.model ?? mainSessionMeta?.model ?? currentModel
-    : mainSessionMeta?.model ?? currentModel;
+    ? viewedInputSelection.model ?? ""
+    : mainInputSelection.model ?? "";
+  const isReadOnlySession =
+    isSwappedTerminal && chat.sessionInteractionMode !== "proxy";
+  const chatInputDisabled =
+    !chat.isConnected || Boolean(chat.isContinuingSession) || isReadOnlySession;
+  const chatInputDisabledPlaceholder = !chat.isConnected
+    ? chat.isReconnecting
+      ? "Reconnecting to server..."
+      : "Connecting to server..."
+    : chat.isContinuingSession
+      ? "Resuming session in web chat..."
+      : isReadOnlySession
+        ? viewingMeta?.status === "paused"
+          ? "Resume session to send messages..."
+          : "Read-only while watching this session..."
+        : undefined;
+  const chatInputDisabledAriaLabel = !chat.isConnected
+    ? chat.isReconnecting
+      ? "Message input — reconnecting"
+      : "Message input — connecting"
+    : chat.isContinuingSession
+      ? "Message input — resuming session"
+      : isReadOnlySession
+        ? viewingMeta?.status === "paused"
+          ? "Message input — resume required"
+          : "Message input — watching read only"
+        : undefined;
+  const activityPanelChatSessionId =
+    isReadOnlySession ? chat.viewingSessionId ?? chat.dbSessionId : chat.dbSessionId;
 
   const handleSwappedSessionProviderSelection = useCallback(
     async (provider: string, model: string) => {
@@ -278,8 +338,6 @@ export function ChatPage({
     [conversations, parkCurrentSession],
   );
 
-  // Available LLM providers — fetched from daemon API
-  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   useEffect(() => {
     fetch("/api/providers")
       .then((r) => {
@@ -296,6 +354,23 @@ export function ChatPage({
       })
       .catch(() => setAvailableProviders([effectiveInputProvider || "claude"]));
   }, [effectiveInputProvider]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchProviderModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) {
+          setProviderModelCatalog(catalog);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProviderModelCatalog([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Modals
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -575,10 +650,9 @@ export function ChatPage({
             onSend={onSend}
             onStop={chat.onStop}
             isStreaming={chat.isStreaming}
-            disabled={
-              !chat.isConnected ||
-              (isSwappedTerminal && chat.sessionInteractionMode !== "proxy")
-            }
+            disabled={chatInputDisabled}
+            disabledPlaceholder={chatInputDisabledPlaceholder}
+            disabledAriaLabel={chatInputDisabledAriaLabel}
             viewingSession={showObserveOverlay}
             onInputChange={chat.onInputChange}
             paletteItems={chat.paletteItems}
@@ -654,7 +728,7 @@ export function ChatPage({
         projectId={projectId}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
-        chatSessionId={chat.dbSessionId}
+        chatSessionId={activityPanelChatSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
         onSwapSession={handleSwapSession}

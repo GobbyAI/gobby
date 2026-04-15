@@ -17,6 +17,8 @@ interface ChatInputProps {
   onStop?: () => void
   isStreaming?: boolean
   disabled?: boolean
+  disabledPlaceholder?: string
+  disabledAriaLabel?: string
   viewingSession?: boolean
   onInputChange?: (value: string) => void
   paletteItems?: PaletteItem[]
@@ -76,7 +78,10 @@ function formatProviderLabel(provider: string | null | undefined): string {
     codex: 'Codex',
     openai: 'OpenAI',
   }
-  const normalized = provider?.toLowerCase() ?? 'claude'
+  const normalized = provider?.trim().toLowerCase()
+  if (!normalized) {
+    return ''
+  }
   const knownLabel = providerLabels[normalized]
   if (knownLabel) {
     return knownLabel
@@ -95,6 +100,8 @@ export function ChatInput({
   onStop,
   isStreaming = false,
   disabled = false,
+  disabledPlaceholder,
+  disabledAriaLabel,
   viewingSession = false,
   onInputChange,
   paletteItems = [],
@@ -309,7 +316,9 @@ export function ChatInput({
     : canSwitchProvider
       ? 'Select provider and model'
       : 'Select model'
-  const providerSummary = `${formatProviderLabel(provider)} ${currentModel}`
+  const providerSummary = [formatProviderLabel(provider), currentModel?.trim() || '']
+    .filter(Boolean)
+    .join(' ') || pickerLabel
 
   type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
 
@@ -602,8 +611,8 @@ export function ChatInput({
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={viewingSession ? 'Attach to send messages...' : disabled ? 'Connecting...' : isStreaming ? 'Interrupt...' : 'Message or /command...'}
-              aria-label={disabled ? 'Message input — connecting' : isStreaming ? 'Message input — streaming' : 'Message input'}
+              placeholder={disabled ? (disabledPlaceholder ?? (viewingSession ? 'Attach to send messages...' : 'Connecting...')) : isStreaming ? 'Interrupt...' : 'Message or /command...'}
+              aria-label={disabled ? (disabledAriaLabel ?? 'Message input — connecting') : isStreaming ? 'Message input — streaming' : 'Message input'}
               disabled={disabled}
               rows={1}
               autoComplete="off"
@@ -652,7 +661,7 @@ export function ChatInput({
                     title={pickerLabel}
                     aria-label={pickerLabel}
                   >
-                    <SourceIcon source={provider || 'claude'} size={14} />
+                    <SourceIcon source={provider || 'default'} size={14} />
                     <span className="chat-input-provider__text">{providerSummary}</span>
                     <span className="chat-input-provider__caret" aria-hidden="true">
                       ▾

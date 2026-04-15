@@ -842,6 +842,36 @@ class TestLocalSessionManager:
         assert updated.title == "New Title"
         assert updated.git_branch == "feature/branch"
 
+    def test_update_resume_metadata_fields(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating session_type/model/chat_mode together for tmux resume."""
+        session = session_manager.register(
+            external_id="resume-ext",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            session_type="terminal",
+        )
+
+        updated = session_manager.update(
+            session.id,
+            source="codex",
+            model="gpt-5.4",
+            chat_mode="accept_edits",
+            session_type="web_chat",
+            status="active",
+        )
+
+        assert updated is not None
+        assert updated.source == "codex"
+        assert updated.model == "gpt-5.4"
+        assert updated.chat_mode == "accept_edits"
+        assert updated.session_type == "web_chat"
+        assert updated.status == "active"
+
     def test_update_single_field(
         self,
         session_manager: LocalSessionManager,

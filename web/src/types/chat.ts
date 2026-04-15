@@ -226,6 +226,7 @@ export interface ChatState {
   mainSessionMeta?: SessionObservationMeta | null;
   viewingSessionId?: string | null;
   viewingSessionMeta?: SessionObservationMeta | null;
+  isContinuingSession?: boolean;
   attachedSessionId?: string | null;
   attachedSessionMeta?: SessionObservationMeta | null;
   sessionInteractionMode?: SessionInteractionMode;

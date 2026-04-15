@@ -409,6 +409,7 @@ class ChatSessionMixin:
                 and existing_db_session.usage_output_tokens > 0
                 and existing_db_session.external_id
                 and not _is_bootstrap_external_id(existing_db_session.external_id)
+                and existing_db_session.source == provider_name
             ):
                 session.resume_session_id = existing_db_session.external_id
 
