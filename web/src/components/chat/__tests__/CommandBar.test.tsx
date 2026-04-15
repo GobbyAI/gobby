@@ -18,6 +18,8 @@ describe("CommandBar", () => {
       />,
     );
 
+    expect(screen.getByText("#42")).toHaveClass("command-bar-ref");
+    expect(screen.getByText("Viewed web chat")).toHaveClass("command-bar-title");
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent("#42");
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
       "Viewed web chat",
