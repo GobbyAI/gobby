@@ -32,6 +32,9 @@ vi.mock('../MetricsChartsCard', () => ({
 vi.mock('../UsageCard', () => ({
   UsageCard: () => <div data-testid="usage-card">Usage</div>,
 }))
+vi.mock('../TokenEfficiencyCard', () => ({
+  TokenEfficiencyCard: () => <div data-testid="token-efficiency-card">Token Efficiency</div>,
+}))
 
 import { DashboardPage } from '../DashboardPage'
 import { useDashboard } from '../../../hooks/useDashboard'
