@@ -95,11 +95,20 @@ describe('ChatInput', () => {
     expect(textarea).toHaveAttribute('aria-label', 'Message input')
   })
 
-  it('shows connecting placeholder when disabled', () => {
+  it('shows an unavailable placeholder when disabled without state-specific copy', () => {
     render(<ChatInput {...defaultProps} disabled={true} />)
 
     const textarea = screen.getByRole('textbox')
-    expect(textarea).toHaveAttribute('aria-label', 'Message input — connecting')
+    expect(textarea).toHaveAttribute('placeholder', 'Message input unavailable...')
+    expect(textarea).toHaveAttribute('aria-label', 'Message input — unavailable')
+  })
+
+  it('defaults to read-only copy when disabled while viewing a session', () => {
+    render(<ChatInput {...defaultProps} disabled={true} viewingSession={true} />)
+
+    const textarea = screen.getByRole('textbox')
+    expect(textarea).toHaveAttribute('placeholder', 'Read-only while watching this session...')
+    expect(textarea).toHaveAttribute('aria-label', 'Message input — watching read only')
   })
 
   it('uses the provided disabled placeholder and aria label', () => {

@@ -29,16 +29,22 @@ vi.mock("../ChatInput", () => ({
   ChatInput: ({
     proxyDeliveryNotice,
     disabled,
+    disabledPlaceholder,
+    disabledAriaLabel,
     provider,
     currentModel,
   }: {
     proxyDeliveryNotice?: string | null;
     disabled?: boolean;
+    disabledPlaceholder?: string;
+    disabledAriaLabel?: string;
     provider?: string | null;
     currentModel?: string;
   }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
+      <span data-testid="chat-input-placeholder">{disabledPlaceholder ?? ""}</span>
+      <span data-testid="chat-input-aria-label">{disabledAriaLabel ?? ""}</span>
       <span data-testid="chat-input-notice">{proxyDeliveryNotice ?? ""}</span>
       <span data-testid="chat-input-provider">{provider ?? ""}</span>
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
@@ -393,6 +399,38 @@ describe("ChatPage", () => {
     expect(
       screen.getByTestId("activity-panel-chat-session-id"),
     ).toHaveTextContent("terminal-2");
+  });
+
+  it("passes read-only observe copy to the chat input instead of generic connecting text", async () => {
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            viewingSessionId: "terminal-2",
+            viewingSessionMeta: {
+              ref: "#52",
+              source: "claude",
+              title: "Observed Terminal",
+              status: "active",
+              model: "claude-sonnet-4-6",
+              externalId: "term-52",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+    });
+
+    expect(screen.getByTestId("chat-input-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-placeholder")).toHaveTextContent(
+      "Read-only while watching this session...",
+    );
+    expect(screen.getByTestId("chat-input-aria-label")).toHaveTextContent(
+      "Message input — watching read only",
+    );
   });
 
   it("normalizes the input chip to a valid model for the active provider", async () => {

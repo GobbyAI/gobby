@@ -462,6 +462,16 @@ export function ChatInput({
         : primaryButtonKind === 'mic-recording'
           ? 'Push to talk recording'
           : 'Start push to talk'
+  const disabledInputPlaceholder =
+    disabledPlaceholder ??
+    (viewingSession
+      ? 'Read-only while watching this session...'
+      : 'Message input unavailable...')
+  const disabledInputAriaLabel =
+    disabledAriaLabel ??
+    (viewingSession
+      ? 'Message input — watching read only'
+      : 'Message input — unavailable')
 
   const primaryButtonClassName = cn(
     'inline-flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
@@ -611,8 +621,20 @@ export function ChatInput({
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={disabled ? (disabledPlaceholder ?? (viewingSession ? 'Attach to send messages...' : 'Connecting...')) : isStreaming ? 'Interrupt...' : 'Message or /command...'}
-              aria-label={disabled ? (disabledAriaLabel ?? 'Message input — connecting') : isStreaming ? 'Message input — streaming' : 'Message input'}
+              placeholder={
+                disabled
+                  ? disabledInputPlaceholder
+                  : isStreaming
+                    ? 'Interrupt...'
+                    : 'Message or /command...'
+              }
+              aria-label={
+                disabled
+                  ? disabledInputAriaLabel
+                  : isStreaming
+                    ? 'Message input — streaming'
+                    : 'Message input'
+              }
               disabled={disabled}
               rows={1}
               autoComplete="off"

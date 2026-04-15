@@ -3060,38 +3060,7 @@
   flex-wrap: wrap;
 }
 
-.chat-session-status__dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 999px;
-  flex-shrink: 0;
-}
-
-.chat-session-status__dot--claude {
-  background: #d97706;
-}
-
-.chat-session-status__dot--gemini {
-  background: #10b981;
-}
-
-.chat-session-status__dot--qwen {
-  background: #0284c7;
-}
-
-.chat-session-status__dot--codex {
-  background: #2563eb;
-}
-
-.chat-session-status__dot--default {
-  background: var(--text-muted);
-}
-
-.chat-session-status__label {
-  color: var(--text-secondary);
-  font-size: calc(var(--font-size-base) * 0.75);
-}
-
+.chat-session-status__source,
 .chat-session-status__model,
 .chat-session-status__kind,
 .chat-session-status__mode,
@@ -3106,39 +3075,43 @@
   white-space: nowrap;
 }
 
+.chat-session-status__source {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.chat-session-status__source--claude {
+  border-color: color-mix(in srgb, #d97706 45%, transparent);
+  background: color-mix(in srgb, #d97706 12%, var(--bg-primary));
+  color: #b45309;
+}
+
+.chat-session-status__source--gemini {
+  border-color: color-mix(in srgb, #10b981 45%, transparent);
+  background: color-mix(in srgb, #10b981 12%, var(--bg-primary));
+  color: #047857;
+}
+
+.chat-session-status__source--qwen {
+  border-color: color-mix(in srgb, #0284c7 45%, transparent);
+  background: color-mix(in srgb, #0284c7 12%, var(--bg-primary));
+  color: #0369a1;
+}
+
+.chat-session-status__source--codex {
+  border-color: color-mix(in srgb, #2563eb 45%, transparent);
+  background: color-mix(in srgb, #2563eb 12%, var(--bg-primary));
+  color: #1d4ed8;
+}
+
+.chat-session-status__source--default {
+  color: var(--text-secondary);
+}
+
 .chat-session-status__mode {
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-}
-
-.chat-session-status__action {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem 0.5rem;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: 0.25rem;
-  font-size: calc(var(--font-size-base) * 0.75);
-  cursor: pointer;
-  transition:
-    background 0.1s,
-    color 0.1s;
-}
-
-.chat-session-status__action:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.chat-session-status__action--attach {
-  color: var(--accent);
-}
-
-.chat-session-status__action--attach:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 @media (max-width: 768px) {

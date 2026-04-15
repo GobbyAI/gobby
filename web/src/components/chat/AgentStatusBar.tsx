@@ -9,11 +9,11 @@ interface AgentStatusBarProps {
   onDetach?: () => void
 }
 
-const SOURCE_CONFIG: Record<string, { label: string; dotClassName: string }> = {
-  claude: { label: 'Claude', dotClassName: 'chat-session-status__dot--claude' },
-  gemini: { label: 'Gemini', dotClassName: 'chat-session-status__dot--gemini' },
-  qwen: { label: 'Qwen', dotClassName: 'chat-session-status__dot--qwen' },
-  codex: { label: 'Codex', dotClassName: 'chat-session-status__dot--codex' },
+const SOURCE_CONFIG: Record<string, { label: string; badgeClassName: string }> = {
+  claude: { label: 'Claude', badgeClassName: 'chat-session-status__source--claude' },
+  gemini: { label: 'Gemini', badgeClassName: 'chat-session-status__source--gemini' },
+  qwen: { label: 'Qwen', badgeClassName: 'chat-session-status__source--qwen' },
+  codex: { label: 'Codex', badgeClassName: 'chat-session-status__source--codex' },
 }
 
 function formatChatMode(chatMode: string | null | undefined): string | null {
@@ -43,8 +43,8 @@ export function AgentStatusBar({
 }: AgentStatusBarProps) {
   const sourceConfig = SOURCE_CONFIG[viewingMeta.source]
   const sourceLabel = sourceConfig?.label ?? viewingMeta.source
-  const sourceDotClassName =
-    sourceConfig?.dotClassName ?? 'chat-session-status__dot--default'
+  const sourceBadgeClassName =
+    sourceConfig?.badgeClassName ?? 'chat-session-status__source--default'
   const modeLabel = formatChatMode(viewingMeta.chatMode)
   const isLive = viewingMeta.status === 'active'
   const statusLabel =
@@ -66,18 +66,16 @@ export function AgentStatusBar({
           </span>
         </div>
         <div className="chat-session-status">
-          <span
-            className={`chat-session-status__dot ${sourceDotClassName}`}
-            aria-hidden="true"
-          />
-          <span className="chat-session-status__label">{sourceLabel}</span>
+          <span className={`chat-session-status__source ${sourceBadgeClassName}`}>
+            {sourceLabel}
+          </span>
           {viewingMeta.model && (
             <span className="chat-session-status__model">{viewingMeta.model}</span>
           )}
           <span className="chat-session-status__kind">{sessionTypeLabel}</span>
           {modeLabel && (
             <span className="chat-session-status__mode">
-              {modeLabel}
+              Mode: {modeLabel}
             </span>
           )}
           {(viewingMeta.agentName || viewingMeta.workflowName) && (
@@ -91,7 +89,7 @@ export function AgentStatusBar({
         {!isAttached && onDetach && (
           <button
             type="button"
-            className="chat-session-status__action"
+            className="session-pane-action"
             onClick={onDetach}
           >
             Back
@@ -100,7 +98,7 @@ export function AgentStatusBar({
         {!isAttached && !isAutonomousSession && onAttach && (
           <button
             type="button"
-            className="chat-session-status__action chat-session-status__action--attach"
+            className="session-pane-action session-pane-action--primary"
             onClick={onAttach}
           >
             Resume
@@ -109,7 +107,7 @@ export function AgentStatusBar({
         {isAttached && onDetach && (
           <button
             type="button"
-            className="chat-session-status__action"
+            className="session-pane-action"
             onClick={onDetach}
           >
             Detach
