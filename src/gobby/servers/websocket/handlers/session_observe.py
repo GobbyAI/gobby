@@ -216,7 +216,10 @@ async def handle_continue_in_chat(
                     updates["model"] = target_model
                 if source_title and getattr(target_session, "title", None) != source_title:
                     updates["title"] = source_title
-                if source_chat_mode and getattr(target_session, "chat_mode", None) != source_chat_mode:
+                if (
+                    source_chat_mode
+                    and getattr(target_session, "chat_mode", None) != source_chat_mode
+                ):
                     updates["chat_mode"] = source_chat_mode
                 if updates:
                     await asyncio.to_thread(
@@ -241,16 +244,16 @@ async def handle_continue_in_chat(
                 provider=effective_provider,
             )
             if session_manager and session.db_session_id and (source_title or source_chat_mode):
-                updates: dict[str, Any] = {}
+                session_updates: dict[str, Any] = {}
                 if source_title:
-                    updates["title"] = source_title
+                    session_updates["title"] = source_title
                 if source_chat_mode:
-                    updates["chat_mode"] = source_chat_mode
-                if updates:
+                    session_updates["chat_mode"] = source_chat_mode
+                if session_updates:
                     await asyncio.to_thread(
                         session_manager.update,
                         session.db_session_id,
-                        **updates,
+                        **session_updates,
                     )
         except Exception as e:
             logger.error(f"Failed to create continuation session: {e}")

@@ -99,7 +99,7 @@ class Memory:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        data = {
+        data: dict[str, Any] = {
             "id": self.id,
             "memory_type": self.memory_type,
             "content": self.content,
