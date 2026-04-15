@@ -1,3 +1,7 @@
+> Superseded on April 14, 2026 by [Rust Migration Epic](../rust-migration-epic.md).
+> Preserved as historical input only. Do not use this file as the active
+> migration plan.
+
 # Gobby Rust Rewrite — Strategic Roadmap
 
 ## Context
