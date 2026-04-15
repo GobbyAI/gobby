@@ -76,7 +76,7 @@ class TaskUpdateRequest(BaseModel):
 class TaskClaimRequest(BaseModel):
     """Request body for claiming a task."""
 
-    session_id: str = Field(..., description="Owning session ID")
+    session_id: str = Field(..., description="Owning session reference or UUID")
     force: bool = Field(default=False, description="Override an existing claim")
 
 
@@ -108,7 +108,10 @@ class TaskCloseRequest(BaseModel):
 
     reason: str | None = Field(default=None, description="Reason for closing")
     commit_sha: str | None = Field(default=None, description="Git commit SHA to link")
-    session_id: str | None = Field(default=None, description="Session that closed the task")
+    session_id: str | None = Field(
+        default=None,
+        description="Session reference or UUID that closed the task",
+    )
 
 
 class TaskReopenRequest(BaseModel):
@@ -173,6 +176,12 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 )
             except Exception as e:
                 logger.debug(f"Failed to broadcast task event {event}: {e}")
+
+    def _resolve_session_ref(session_ref: str, *, project_id: str | None) -> str:
+        """Resolve session references to canonical UUIDs before storage writes."""
+        if server.session_manager is None:
+            return session_ref
+        return str(server.session_manager.resolve_session_reference(session_ref, project_id))
 
     # -----------------------------------------------------------------
     # List / Stats
@@ -351,9 +360,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         try:
             task = server.task_manager.get_task(task_id)
             resolved_id = task.id
+            resolved_session_id = _resolve_session_ref(
+                request_data.session_id,
+                project_id=task.project_id,
+            )
             claimed_task = server.task_manager.claim_task(
                 resolved_id,
-                session_id=request_data.session_id,
+                session_id=resolved_session_id,
                 force=request_data.force,
             )
             result = claimed_task.to_dict()
@@ -446,6 +459,11 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             task = server.task_manager.get_task(task_id)
             resolved_id = task.id
             body = request_data or TaskCloseRequest()
+            resolved_session_id = (
+                _resolve_session_ref(body.session_id, project_id=task.project_id)
+                if body.session_id is not None
+                else None
+            )
 
             if body.commit_sha:
                 server.task_manager.link_commit(resolved_id, body.commit_sha)
@@ -453,7 +471,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             closed = server.task_manager.close_task(
                 resolved_id,
                 reason=body.reason,
-                closed_in_session_id=body.session_id,
+                closed_in_session_id=resolved_session_id,
                 closed_commit_sha=body.commit_sha,
             )
             result = closed.to_dict()
