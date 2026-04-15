@@ -85,9 +85,7 @@ def register_terminal_tools(
         keys: str,
         literal: bool = True,
     ) -> dict[str, Any]:
-        target, tmux, error = _resolve_tmux_target(
-            session_id, session_manager, agent_run_manager
-        )
+        target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
         if error:
             return {"success": False, "error": error}
 
@@ -113,9 +111,7 @@ def register_terminal_tools(
         session_id: str,
         lines: int = 50,
     ) -> dict[str, Any]:
-        target, tmux, error = _resolve_tmux_target(
-            session_id, session_manager, agent_run_manager
-        )
+        target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
         if error:
             return {"success": False, "error": error}
 

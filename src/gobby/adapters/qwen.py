@@ -12,4 +12,3 @@ class QwenAdapter(GeminiAdapter):
     """Adapter for Qwen CLI hook translation."""
 
     source = SessionSource.QWEN
-

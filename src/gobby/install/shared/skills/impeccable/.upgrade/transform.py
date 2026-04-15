@@ -54,16 +54,28 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-UPSTREAM_BASE = (
-    "https://raw.githubusercontent.com/pbakaus/impeccable/main/source/skills"
-)
+UPSTREAM_BASE = "https://raw.githubusercontent.com/pbakaus/impeccable/main/source/skills"
 
 DST_DIR = Path(__file__).resolve().parent.parent / "references"
 
 COMMANDS = [
-    "adapt", "animate", "audit", "bolder", "clarify", "colorize",
-    "critique", "delight", "distill", "harden", "layout", "optimize",
-    "overdrive", "polish", "quieter", "shape", "typeset",
+    "adapt",
+    "animate",
+    "audit",
+    "bolder",
+    "clarify",
+    "colorize",
+    "critique",
+    "delight",
+    "distill",
+    "harden",
+    "layout",
+    "optimize",
+    "overdrive",
+    "polish",
+    "quieter",
+    "shape",
+    "typeset",
 ]
 
 COMMAND_SET = set(COMMANDS)

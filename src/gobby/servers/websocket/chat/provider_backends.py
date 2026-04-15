@@ -555,7 +555,9 @@ class GeminiWebChatBackend:
             try:
                 await self._client.stop()
             except Exception:
-                logger.debug("%s backend cleanup after failed startup", self._display_name, exc_info=True)
+                logger.debug(
+                    "%s backend cleanup after failed startup", self._display_name, exc_info=True
+                )
             self._health = ProviderBackendHealth(
                 provider=self.provider,
                 available=False,
@@ -606,7 +608,9 @@ class GeminiWebChatBackend:
 
         await self.start()
         if not self._health.available:
-            raise RuntimeError(self._health.startup_error or f"{self._display_name} backend unavailable")
+            raise RuntimeError(
+                self._health.startup_error or f"{self._display_name} backend unavailable"
+            )
 
         session_id = session.sdk_session_id or session.resume_session_id
         cwd = session.project_path or "."
@@ -644,7 +648,9 @@ class GeminiWebChatBackend:
         prompt: str,
     ) -> AsyncIterator[StreamEvent]:
         if not self._health.available:
-            raise RuntimeError(self._health.startup_error or f"{self._display_name} backend unavailable")
+            raise RuntimeError(
+                self._health.startup_error or f"{self._display_name} backend unavailable"
+            )
         if not session.sdk_session_id:
             raise RuntimeError(f"{self._display_name} session missing sessionId")
 

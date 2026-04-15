@@ -148,9 +148,7 @@ class SessionStartMixin(EventHandlersBase):
         # Fallback: most recent session file
         all_sessions = sorted(chats_dir.glob("session-*.json"), reverse=True)
         if all_sessions:
-            self.logger.debug(
-                "Found %s transcript (most recent): %s", cli_label, all_sessions[0]
-            )
+            self.logger.debug("Found %s transcript (most recent): %s", cli_label, all_sessions[0])
             return str(all_sessions[0])
 
         self.logger.debug("No %s session files in %s", cli_label, chats_dir)
