@@ -13,11 +13,23 @@ if TYPE_CHECKING:
 
 # Static model catalog per provider. Dynamic probing can augment this
 # later without breaking the contract.
-_BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
+_BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
     "claude": [
-        {"value": "opus", "label": "Opus"},
-        {"value": "sonnet", "label": "Sonnet"},
-        {"value": "haiku", "label": "Haiku"},
+        {
+            "value": "opus",
+            "label": "Opus",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+        },
+        {
+            "value": "sonnet",
+            "label": "Sonnet",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+        },
+        {
+            "value": "haiku",
+            "label": "Haiku",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+        },
     ],
     "gemini": [
         {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},

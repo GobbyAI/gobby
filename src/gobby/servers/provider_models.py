@@ -22,13 +22,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PROVIDERS = ("claude", "gemini", "qwen", "codex")
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _CLAUDE_ALIASES: tuple[tuple[str, str], ...] = (
     ("haiku", "Haiku"),
     ("sonnet", "Sonnet"),
     ("opus", "Opus"),
 )
+_CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "max")
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 
 
@@ -524,6 +525,7 @@ class ProviderModelCatalog:
             "value": alias,
             "label": label,
             "canonical_id": str(canonical_id),
+            "reasoning": {"supported_efforts": list(_CLAUDE_REASONING_EFFORTS)},
         }
 
     async def _get_cli_version(self, provider: str) -> str | None:

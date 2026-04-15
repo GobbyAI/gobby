@@ -37,6 +37,9 @@ const catalog: ProviderModelEntry[] = [
         value: "opus",
         label: "Opus",
         canonical_id: "claude-opus-4-6",
+        reasoning: {
+          supported_efforts: ["low", "medium", "high", "max"],
+        },
       },
     ],
   },
@@ -112,7 +115,11 @@ describe("providerModels", () => {
   it("dedupes friendly labels and keeps the newest matching model", () => {
     const models = getModelsForProvider(catalog, "claude");
 
-    expect(models.map((model) => model.label)).toEqual(["Opus 4.6", "Sonnet 4.5", "Haiku 4.5"]);
+    expect(models.map((model) => model.label)).toEqual([
+      "Opus 4.6",
+      "Sonnet 4.5",
+      "Haiku 4.5",
+    ]);
     expect(models.find((model) => model.label === "Sonnet 4.5")?.value).toBe(
       "claude-sonnet-4-5-20251001",
     );
@@ -128,12 +135,18 @@ describe("providerModels", () => {
       { value: "high", label: "High" },
     ]);
     expect(
-      getPreferredReasoningEffort(
-        catalog,
-        "gemini",
-        "gemini-3.1-pro-preview",
-      ),
+      getPreferredReasoningEffort(catalog, "gemini", "gemini-3.1-pro-preview"),
     ).toBe("medium");
+  });
+
+  it("exposes Claude reasoning levels when the catalog provides them", () => {
+    expect(getReasoningOptionsForModel(catalog, "claude", "opus")).toEqual([
+      { value: "auto", label: "Auto" },
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
+      { value: "max", label: "Max" },
+    ]);
   });
 
   it("renders friendly labels for parsed model identifiers", () => {
@@ -143,12 +156,12 @@ describe("providerModels", () => {
   });
 
   it("renders shorter codex labels without raw dash-separated ids", () => {
-    expect(getModelsForProvider(catalog, "codex").map((model) => model.label)).toEqual([
-      "GPT 5.4",
+    expect(
+      getModelsForProvider(catalog, "codex").map((model) => model.label),
+    ).toEqual(["GPT 5.4", "GPT 5.4 Mini", "GPT 5.3 Codex Spark"]);
+    expect(getModelLabel(catalog, "codex", "gpt-5.4-mini")).toBe(
       "GPT 5.4 Mini",
-      "GPT 5.3 Codex Spark",
-    ]);
-    expect(getModelLabel(catalog, "codex", "gpt-5.4-mini")).toBe("GPT 5.4 Mini");
+    );
   });
 
   it("logs and returns an empty catalog when the fetch fails", async () => {

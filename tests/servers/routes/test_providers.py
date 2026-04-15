@@ -120,6 +120,9 @@ class TestProviderModelsRoute:
         # Claude should have opus, sonnet, haiku
         claude_values = [m["value"] for m in providers["claude"]["models"]]
         assert claude_values == ["opus", "sonnet", "haiku"]
+        assert providers["claude"]["models"][0]["reasoning"] == {
+            "supported_efforts": ["low", "medium", "high", "max"]
+        }
 
         # Gemini should expose the hardcoded web-chat defaults
         gemini = providers["gemini"]["models"]

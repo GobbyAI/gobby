@@ -43,6 +43,7 @@ class TestProviderModelCatalog:
             "value": "sonnet",
             "label": "Sonnet",
             "canonical_id": "claude-sonnet-4-6-20260410",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
         }
 
     @pytest.mark.asyncio
@@ -113,7 +114,7 @@ class TestProviderModelCatalog:
         assert status["codex"]["error"] == "codex probe failed"
 
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
-        assert payload["version"] == 1
+        assert payload["version"] == 2
         assert payload["providers"]["codex"]["source"] == "cache"
 
     @pytest.mark.asyncio
