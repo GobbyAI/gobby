@@ -2,31 +2,28 @@
 
 ## Summary
 
-This is the canonical Rust migration plan for Gobby. It supersedes the earlier
-`rust-port` drafts and defines the actual migration model we will execute:
+This is the active Rust migration plan for Gobby. It replaces the earlier
+`rust-port` drafts with an execution-focused epic that is structured around
+phases, gates, and backlog-ready atomic work items.
 
-- Rust migration code lives in the existing `~/Projects/gobby-cli` workspace
-- Migration follows an HTTP/API strangler-fig pattern
-- Python in `~/Projects/gobby` remains the behavioral reference
-  implementation until explicit cutover
-- No long-lived Rust migration branch will be used
-- Parity and rollback safety come before redesign
+This is not a monolithic rewrite. It is an incremental strangler migration for
+a live Python daemon:
 
-This is not a monolithic rewrite plan. It is an incremental replacement plan
-for a live Python system heading into the `0.4.0` launch.
+- Rust migration code lives in `~/Projects/gobby-cli`
+- Python in `~/Projects/gobby` remains the behavioral reference until explicit
+  cutover
+- Traffic shifts by route family or boundary, not by big-bang daemon swap
+- Parity, observability, and rollback safety come before redesign
+- The atomic work items below are planning inventory only; they are not created
+  as Gobby tasks by this document
 
 ## Current State
 
 - `~/Projects/gobby` is the product repo and current source of truth
-- `src/gobby` currently contains about 277K LOC across 1,553 files
-- `src/gobby/storage/migrations.py` currently sets `BASELINE_VERSION = 211`
-- `src/gobby/storage/baseline_schema.sql` currently contains 67 `CREATE TABLE`
-  statements and 176 index statements
-- FTS setup is partly managed by callable migration helpers, not only by the
-  baseline schema
-- `~/Projects/gobby-cli` is an existing Rust workspace with three crates:
+- `~/Projects/gobby-cli` is the long-lived Rust workspace and already contains
   `gcode`, `gsqz`, and `gloc`
-- `gobby-cli` does not yet have a shared core crate or a daemon crate
+- Python owns the live daemon, schema policy, fixtures, and rollout control
+- Rust does not yet have a shared `gobby-core` crate or a `gobby-daemon` crate
 
 ## Non-Negotiable Decisions
 
@@ -34,20 +31,20 @@ for a live Python system heading into the `0.4.0` launch.
 
 - `~/Projects/gobby` owns current behavior, compatibility fixtures, rollout
   gates, and the authoritative Python implementation
-- `~/Projects/gobby-cli` owns Rust crates, binaries, shared Rust extraction,
-  and replacement implementations
+- `~/Projects/gobby-cli` owns Rust crates, binaries, shared extractions, and
+  replacement implementations
 
 ### Migration Shape
 
 - Migration is boundary-first, not storage-first
 - The public daemon stays Python-fronted during migration
-- Rust replacements run beside Python and are cut in behind explicit routing
-  or feature flags
-- We do not start with a full storage port or a full workflow/rule rewrite
+- Rust runs beside Python on alternate internal ports and is cut in behind
+  explicit routing or feature flags
+- We do not start with a full storage port or a workflow/rule rewrite
 
 ### Branching
 
-- No long-lived migration branch in `gobby`
+- No long-lived Rust migration branch in `gobby`
 - Migration work lands continuously in the mainline of each repo
 - Cross-repo behavior is stabilized with fixtures and parity checks, not with a
   giant integration branch
@@ -56,8 +53,8 @@ for a live Python system heading into the `0.4.0` launch.
 
 - Python is authoritative until a boundary passes parity, observability, and
   rollback gates
-- A Rust component is not considered "migrated" merely because it exists; it
-  must prove equivalent behavior against the Python contract
+- A Rust component is not considered migrated because it exists; it must prove
+  equivalent behavior against the Python contract
 
 ## Migration Principles
 
@@ -68,24 +65,49 @@ for a live Python system heading into the `0.4.0` launch.
 5. Do not mix migration work with speculative architecture cleanup.
 6. Keep existing Rust utilities healthy while extracting shared foundations.
 
+## Atomic Task Standard
+
+Every migration work item in this epic should be small enough to become a
+single real Gobby task and a single focused PR.
+
+An atomic item should satisfy all of the following:
+
+- One repo owns the change
+- One primary boundary or shared seam is being changed
+- One rollback story exists
+- One validation target is clear
+- If the title naturally needs `and`, it should usually be split
+
+If a proposed task includes multiple routes, multiple repos, or multiple
+rollback mechanisms, split it.
+
 ## Readiness Gate
 
 Rust implementation work beyond low-risk extraction and prototyping starts only
-after the `0.4.0` hardening pass establishes a stable contract for the first
+after the `0.4.0` hardening pass establishes stable contracts for the first
 migration boundaries.
 
-The gate is met when all of the following are true:
+The readiness gate is met when all of the following are true:
 
-- `0.4.0` launch blockers are resolved and remaining Python work is bug-fix
-  hardening, not major feature churn
-- The first migration surfaces are frozen as contracts:
-  `GET /api/health`, `GET /api/status`, selected task/session read endpoints,
-  selected config endpoints, and the hook execution request/response contract
+- `0.4.0` launch blockers are resolved and remaining Python work is hardening,
+  not major feature churn
+- The first migration surfaces are frozen as exact contracts:
+  - `GET /api/admin/health`
+  - `GET /api/config/schema`
+  - `GET /api/config/values`
+  - `GET /api/tasks`
 - Golden fixtures exist for success, error, and degraded-daemon behavior on
   those surfaces
-- The Python daemon exposes enough logging and comparison hooks to detect Rust
-  mismatches before any cutover
+- Python exposes enough comparison hooks and logging to detect Rust mismatches
+  before any cutover
 - Rollback to the pure Python path is verified for the first migration stage
+
+The following boundaries are explicitly deferred until later phases:
+
+- `GET /api/admin/status`
+- `POST /api/hooks/execute`
+- `GET /api/sessions` with `include_resumability=true`
+- Storage-first migration of unrelated tables or managers
 
 ## Repository Contracts
 
@@ -94,9 +116,8 @@ The gate is met when all of the following are true:
 - Define the behavioral contract for each migrated boundary
 - Own the canonical schema and migration policy until final cutover
 - Host parity fixtures and acceptance criteria
-- Remain the public listener on `:60887` and `:60888` during the strangler
-  phases
-- Provide feature flags or explicit delegation/proxy points for migrated
+- Remain the public listener on `:60887` and `:60888` during strangler phases
+- Provide feature flags or explicit delegation and proxy points for migrated
   boundaries
 
 ### Rust Workspace Responsibilities
@@ -112,7 +133,7 @@ The gate is met when all of the following are true:
 
 - Python remains the public daemon on `:60887` and `:60888`
 - Rust runs on alternate internal ports during migration
-  `:60889` for HTTP is the default first choice
+- `:60889` is the default first HTTP port for a Rust sidecar daemon
 - The first unit of traffic shifting is a route family or hook boundary, not an
   all-or-nothing daemon swap
 
@@ -121,189 +142,325 @@ The gate is met when all of the following are true:
 - Unmigrated routes stay in Python
 - Migrated routes can be delegated from Python to Rust behind explicit feature
   flags
-- Shadow/compare mode should call Rust, compare results, and still return the
-  Python response until parity is proven
-- Any parity mismatch disables the route flag and falls back to Python without
-  a release rollback
+- Compare mode calls Rust, compares results, and still returns the Python
+  response until parity is proven
+- Any mismatch disables the route flag and falls back to Python without a full
+  release rollback
 
 ### Hook Integration
 
 - Hook migration stays behind the existing hook API contract
 - If a Rust `gobby-hook` binary is introduced, it still targets the public
   daemon contract first
-- Hook cutover is allowed only after HTTP-side parity and degraded-daemon
-  behavior are proven
+- Hook cutover is allowed only after HTTP-side parity and degraded behavior are
+  proven
 
-## Sub-Epic 1: Contracts and Parity Harness
+## Phase Overview
 
-**Goal:** Freeze the first migration boundaries and make Python behavior
-replayable.
+- Phase 0 freezes contracts and builds the fixture corpus
+- Phase 1 adds Python-side compare and delegation plumbing
+- Phase 2 extracts shared Rust foundations in `gobby-cli`
+- Phase 3 migrates low-risk read-only boundaries
+- Phase 4 migrates the first DB-backed task read boundary
+- Phase 5 migrates reduced session reads
+- Phase 6 handles late complex boundaries
+- Phase 7 covers cutover, fallback, and retirement of migration scaffolding
 
-### Contracts and Parity Harness Scope
+## Phase 0: Contract Freeze and Fixture Corpus
 
-- Define boundary contracts for health/status, first task/session read routes,
-  first config routes, and hook execution
-- Capture golden request/response fixtures
-- Capture error behavior, timeout behavior, and degraded-daemon behavior
-- Add a compare harness that can replay fixtures against Python and Rust
+**Goal:** Turn the first migration surfaces into exact replayable contracts
+owned by Python.
 
-### Contracts and Parity Harness Non-goals
+### Scope
+
+- Freeze exact contracts for the first four migration surfaces
+- Record success, error, and degraded-daemon fixtures
+- Build a Python-baseline replay harness
+
+### Non-goals
 
 - Serving production traffic from Rust
 - Porting storage internals
+- Defining hook execution parity in full
 
-### Contracts and Parity Harness Exit Criteria
+### Backlog-Ready Atomic Items
 
-- Fixtures are committed and stable
-- Compare harness passes against Python as the baseline
+- `R0-01` Define the exact contract for `GET /api/admin/health`
+- `R0-02` Define the exact contract for `GET /api/config/schema`
+- `R0-03` Define the exact contract for `GET /api/config/values`
+- `R0-04` Define the reduced v1 contract for `GET /api/tasks`
+- `R0-05` Capture success fixtures for `GET /api/admin/health`
+- `R0-06` Capture success fixtures for `GET /api/config/schema`
+- `R0-07` Capture success fixtures for `GET /api/config/values`
+- `R0-08` Capture success fixtures for `GET /api/tasks`
+- `R0-09` Capture error fixtures for `GET /api/admin/health`
+- `R0-10` Capture error fixtures for `GET /api/config/schema`
+- `R0-11` Capture error fixtures for `GET /api/config/values`
+- `R0-12` Capture error fixtures for `GET /api/tasks`
+- `R0-13` Capture degraded-daemon fixtures for `GET /api/admin/health`
+- `R0-14` Capture degraded-daemon fixtures for `GET /api/config/schema`
+- `R0-15` Capture degraded-daemon fixtures for `GET /api/config/values`
+- `R0-16` Capture degraded-daemon fixtures for `GET /api/tasks`
+- `R0-17` Build a replay harness that runs the fixture corpus against Python
+
+### Exit Criteria
+
 - The first migration surfaces are explicitly named and frozen
+- Fixtures are committed and stable
+- The replay harness passes against Python as the baseline
 
-## Sub-Epic 2: `gobby-cli` Foundation Extraction
+## Phase 1: Python Compare and Delegation Plumbing
 
-**Goal:** Turn the existing Rust utilities into a reusable migration
-foundation.
+**Goal:** Make Python capable of comparing and delegating individual route
+families to a Rust sidecar without surrendering authority.
 
-### `gobby-cli` Foundation Extraction Scope
+### Scope
+
+- Route-scoped feature flags
+- Compare-mode invocation and mismatch handling
+- Route-scoped rollback to Python
+- Structured observability for side-by-side execution
+
+### Non-goals
+
+- Implementing Rust route handlers
+- Switching the public listener to Rust
+
+### Backlog-Ready Atomic Items
+
+- `R1-01` Add route-scoped Rust target configuration in Python
+- `R1-02` Add a reusable compare wrapper for delegated GET routes
+- `R1-03` Add mismatch logging for compare-mode responses
+- `R1-04` Add metrics for compare-mode requests, mismatches, and fallbacks
+- `R1-05` Add route-scoped fallback behavior when Rust is unavailable
+- `R1-06` Add developer smoke coverage for dual-daemon compare mode
+
+### Exit Criteria
+
+- Python can compare and delegate route families individually
+- Mismatches are observable
+- Route-scoped rollback is immediate and tested
+
+## Phase 2: `gobby-cli` Foundation Extraction
+
+**Goal:** Turn the existing Rust utilities into a reusable foundation for the
+daemon migration without destabilizing them.
+
+### Scope
 
 - Add `gobby-core` to `gobby-cli`
-- Extract shared bootstrap, daemon-client, project, DB helper, and secret
-  resolution code from `gcode` and `gsqz`
-- Keep `gloc` unchanged unless a shared extraction clearly benefits it
-- Define stable APIs in `gobby-core` for later daemon and hook crates
+- Extract only the shared seams required by current crates or near-term daemon
+  work
+- Keep `gcode`, `gsqz`, and `gloc` healthy while extractions land
 
-### `gobby-cli` Foundation Extraction Non-goals
+### Non-goals
 
 - Building the daemon itself
-- Changing product behavior in `gcode` or `gsqz`
+- Porting schema ownership to Rust
+- Extracting speculative abstractions that no boundary needs yet
 
-### `gobby-cli` Foundation Extraction Exit Criteria
+### Backlog-Ready Atomic Items
 
-- `gcode` and `gsqz` depend on `gobby-core` for shared concerns
-- Existing Rust utility tests stay green
-- The extracted APIs are sufficient to bootstrap new Rust services and binaries
+- `R2-01` Scaffold the `gobby-core` crate
+- `R2-02` Extract bootstrap resolution into `gobby-core`
+- `R2-03` Extract daemon URL resolution into `gobby-core`
+- `R2-04` Extract project root helpers into `gobby-core`
+- `R2-05` Extract project metadata helpers into `gobby-core`
+- `R2-06` Extract daemon HTTP client utilities into `gobby-core`
+- `R2-07` Extract SQLite connection helpers into `gobby-core`
+- `R2-08` Migrate `gcode` to the extracted `gobby-core` helpers
+- `R2-09` Migrate `gsqz` to the extracted `gobby-core` helpers
+- `R2-10` Verify `gcode` and `gsqz` test coverage stays green after extraction
 
-## Sub-Epic 3: Rust Daemon Shell and Front-Door Strangler
+### Exit Criteria
 
-**Goal:** Introduce a Rust daemon process that can be exercised beside Python
-without taking public traffic directly.
+- `gcode` and `gsqz` use `gobby-core` for shared concerns
+- Existing Rust utility behavior is preserved
+- The extracted APIs are sufficient to bootstrap `gobby-daemon`
 
-### Rust Daemon Shell and Front-Door Strangler Scope
+## Phase 3: Rust Daemon Shell and Low-Risk Reads
+
+**Goal:** Introduce a Rust daemon process beside Python and cut in the safest
+read-only boundaries first.
+
+### Scope
 
 - Add `gobby-daemon` to `gobby-cli`
 - Run it on an alternate internal port
-- Implement `GET /api/health`, `GET /api/status`, and the first read-only HTTP
-  surfaces
-- Add Python-side delegation or proxy points for migrated HTTP boundaries
-- Add compare mode that logs mismatches while Python remains authoritative
+- Implement the first low-risk read-only surfaces
+- Wire compare mode and opt-in delegation per route
 
-### Rust Daemon Shell and Front-Door Strangler Non-goals
+### Non-goals
 
 - Porting all endpoints
-- Swapping the public port to Rust
+- Migrating the task or session write paths
+- Migrating `/api/admin/status`
 
-### Rust Daemon Shell and Front-Door Strangler Exit Criteria
+### Backlog-Ready Atomic Items
 
-- Rust serves the initial contract surfaces on its own port
-- Python can delegate or compare selected routes against Rust
-- Mismatches are observable and route-scoped rollback is immediate
+- `R3-01` Scaffold the `gobby-daemon` crate and basic HTTP server
+- `R3-02` Implement shared request context and JSON error behavior in Rust
+- `R3-03` Implement `GET /api/admin/health` in Rust
+- `R3-04` Implement `GET /api/config/schema` in Rust
+- `R3-05` Implement `GET /api/config/values` in Rust
+- `R3-06` Enable compare mode for `GET /api/admin/health`
+- `R3-07` Enable compare mode for `GET /api/config/schema`
+- `R3-08` Enable compare mode for `GET /api/config/values`
+- `R3-09` Enable opt-in delegation for `GET /api/admin/health`
+- `R3-10` Enable opt-in delegation for `GET /api/config/schema`
+- `R3-11` Enable opt-in delegation for `GET /api/config/values`
+- `R3-12` Prove route-scoped rollback for `GET /api/admin/health`
+- `R3-13` Prove route-scoped rollback for `GET /api/config/schema`
+- `R3-14` Prove route-scoped rollback for `GET /api/config/values`
 
-## Sub-Epic 4: Early Boundary Migrations
+### Exit Criteria
 
-**Goal:** Cut over the safest externally visible boundaries first.
-
-### Early Boundary Migrations Scope
-
-- Health/status endpoints
-- Read-only task and session query surfaces
-- Low-risk config reads, then tightly scoped writes after parity proves out
-- Optional hook-dispatcher binary work only after the daemon shell is stable
-
-### Early Boundary Migrations Non-goals
-
-- Workflow engine replacement
-- Agent/pipeline/process lifecycle replacement
-- Storage-first migration of unrelated tables
-
-### Early Boundary Migrations Exit Criteria
-
-- Selected route families can run from Rust in developer-only or opt-in mode
+- Rust serves the low-risk route set on its own port
+- Python can compare and delegate those routes selectively
 - Rollback to Python is immediate and proven
-- Parity holds under normal, error, and degraded-daemon scenarios
 
-## Sub-Epic 5: Internal Subsystem Migrations
+## Phase 4: First DB-Backed Boundary
 
-**Goal:** Move deeper internals only after the corresponding service boundary
-is stable under Rust.
+**Goal:** Migrate the first read-only route that exercises live product data
+without opening the full storage-first trap.
 
-### Internal Subsystem Migrations Scope
+### Scope
 
-- Rust storage logic for already-migrated boundaries
-- Config-store internals, then task/session storage paths behind migrated APIs
-- Rule-engine and hook-evaluation parity only after boundary fixtures exist
-- MCP transport or other hot-path internals only when they support a migrated
-  external boundary
+- `GET /api/tasks` as the first DB-backed route family
+- A deliberately reduced v1 contract if needed
+- Compare mode first, then opt-in delegation
 
-### Internal Subsystem Migration Rules
+### Non-goals
 
-- Rust may read/write live SQLite tables only for boundaries already under Rust
-  control or in compare-only mode with explicit safeguards
-- Schema ownership remains in the Python repo until near-final cutover
-- No subsystem is migrated purely because it is "easy" if it does not advance
-  a real strangler boundary
+- Porting all task endpoints
+- Porting task mutations
+- Porting unrelated storage managers because they are nearby
 
-### Internal Subsystem Migrations Non-goals
+### Backlog-Ready Atomic Items
+
+- `R4-01` Narrow the supported v1 contract for `GET /api/tasks`
+- `R4-02` Capture the `GET /api/tasks` fixture matrix for filters, paging, and
+  error cases
+- `R4-03` Implement `GET /api/tasks` in Rust
+- `R4-04` Enable compare mode for `GET /api/tasks`
+- `R4-05` Enable opt-in delegation for `GET /api/tasks`
+- `R4-06` Prove route-scoped rollback for `GET /api/tasks`
+- `R4-07` Define the exact contract for `GET /api/tasks/{task_id}`
+- `R4-08` Implement `GET /api/tasks/{task_id}` in Rust after list parity is
+  stable
+
+### Exit Criteria
+
+- The first DB-backed route family runs from Rust in compare mode and opt-in
+  mode
+- Parity holds for normal, empty, invalid, and degraded scenarios
+- Rollback remains route-scoped and immediate
+
+## Phase 5: Reduced Session Read Migration
+
+**Goal:** Migrate session reads only after the simpler task boundary is stable,
+and only for a reduced contract at first.
+
+### Scope
+
+- `GET /api/sessions` with a reduced v1 surface
+- No resumability enrichment in the first pass
+- Compare mode first, then opt-in delegation
+
+### Non-goals
+
+- Porting session writes
+- Porting resumability logic in the first session-read pass
+- Porting statusline ingestion or websocket-side behavior
+
+### Backlog-Ready Atomic Items
+
+- `R5-01` Define the reduced v1 contract for `GET /api/sessions`
+- `R5-02` Capture fixtures for reduced `GET /api/sessions`
+- `R5-03` Implement reduced `GET /api/sessions` in Rust
+- `R5-04` Enable compare mode for reduced `GET /api/sessions`
+- `R5-05` Enable opt-in delegation for reduced `GET /api/sessions`
+- `R5-06` Decide whether resumability stays Python-only or becomes a later
+  boundary
+
+### Exit Criteria
+
+- Reduced session reads are stable under compare mode and opt-in delegation
+- Resumability remains explicitly deferred or separately planned
+
+## Phase 6: Late Complex Boundaries
+
+**Goal:** Migrate the boundaries that are too coupled or behavior-heavy to be
+good early candidates.
+
+### Scope
+
+- `/api/admin/status`
+- Hook execution and degraded behavior
+- Session resumability enrichment if it still needs migration
+- Any internal subsystem work required by those externally visible boundaries
+
+### Non-goals
 
 - A wholesale storage port before API parity
-- A speculative rewrite of workflows, agents, or memory systems
+- A speculative rewrite of workflows, agents, memory, or pipelines
 
-### Internal Subsystem Migrations Exit Criteria
+### Backlog-Ready Atomic Items
 
-- Rust owns the full internal stack for each cut-over boundary
-- Database coexistence and parity checks are in place for every Rust-owned
-  persistence path
+- `R6-01` Define a reduced or decomposed contract for `GET /api/admin/status`
+- `R6-02` Capture success, error, and degraded fixtures for
+  `GET /api/admin/status`
+- `R6-03` Implement the agreed `GET /api/admin/status` contract in Rust
+- `R6-04` Freeze the `POST /api/hooks/execute` contract
+- `R6-05` Capture hook allow, block, error, and degraded-daemon fixtures
+- `R6-06` Implement hook adapter-selection parity in Rust
+- `R6-07` Implement graceful hook-error parity in Rust
+- `R6-08` Define the parity contract for web-chat hold-open behavior
+- `R6-09` Implement web-chat hold-open parity in Rust
+- `R6-10` Implement session resumability parity only if it is still needed
 
-## Sub-Epic 6: Cutover and Python Retirement
+### Exit Criteria
 
-**Goal:** Promote Rust from delegated implementation to primary runtime.
+- The remaining complex externally visible boundaries are explicit, tested, and
+  no longer hidden inside vague "selected routes" language
+- Every Rust-owned persistence path has coexistence and rollback checks
 
-### Cutover and Python Retirement Scope
+## Phase 7: Cutover, Fallback, and Retirement
 
-- Expand route coverage until the remaining Python-only surface is small and
-  intentional
-- Shift default traffic to Rust once parity, observability, and rollback gates
-  are satisfied
-- Keep Python fallback available for at least one stabilization window after
-  default cutover
+**Goal:** Promote Rust from delegated implementation to default runtime for the
+migrated surface while preserving a real fallback window.
 
-### Cutover and Python Retirement Non-goals
+### Scope
 
-- Removing Python immediately after the first successful cutover
+- Expand migrated route coverage until the remaining Python-only surface is
+  small and intentional
+- Shift default traffic to Rust once parity and rollback gates are met
+- Keep Python fallback available during a stabilization window
+- Remove migration-only scaffolding after the fallback window closes
 
-### Cutover and Python Retirement Exit Criteria
+### Non-goals
 
-- Rust is the default implementation for the migrated boundaries
-- Python fallback is still available but no longer authoritative
-- Remaining Python-only responsibilities are explicitly tracked
-
-## Sub-Epic 7: Post-Cutover Simplification
-
-**Goal:** Remove migration scaffolding and legacy duplication.
-
-### Post-Cutover Simplification Scope
-
-- Remove obsolete Python proxy/delegation paths
-- Remove superseded docs and temporary compare-only code
-- Collapse duplicate behavior that only existed for side-by-side operation
-- Decide final ownership of schema management and remaining packaging concerns
-
-### Post-Cutover Simplification Non-goals
-
+- Removing Python immediately after first successful cutover
 - Large redesigns unrelated to migration debt
 
-### Post-Cutover Simplification Exit Criteria
+### Backlog-Ready Atomic Items
 
-- No production traffic depends on migration scaffolding
-- The architecture reflects the new steady state instead of the transition
+- `R7-01` Enumerate the remaining Python-only boundary set before default
+  cutover
+- `R7-02` Shift default traffic to Rust for the migrated route set
+- `R7-03` Keep Python fallback enabled for a defined stabilization window
+- `R7-04` Remove obsolete Python compare and proxy paths after stabilization
+- `R7-05` Remove temporary compare-only code and superseded migration docs
+- `R7-06` Decide final schema-management ownership
+- `R7-07` Decide remaining packaging responsibilities
+
+### Exit Criteria
+
+- Rust is the default implementation for the migrated boundaries
+- Python fallback is no longer authoritative but remains available during the
+  agreed stabilization window
+- No production traffic depends on temporary migration scaffolding after final
+  cleanup
 
 ## First-Wave Non-Goals
 
@@ -320,23 +477,24 @@ Every migrated boundary must satisfy all of the following before cutover:
 
 - Fixture parity against the Python baseline
 - Error-path parity, including invalid input and daemon-unavailable cases
-- Side-by-side execution on separate ports/processes
+- Side-by-side execution on separate ports and processes
 - Route-scoped rollback without a release rollback
 - Observability strong enough to detect mismatches quickly
 - Regression protection for `gcode` and `gsqz` after shared extraction
 
 At minimum, the migration test corpus must cover:
 
-- HTTP success responses for the first route families
+- HTTP success responses for each migrated route family
 - HTTP error semantics and status codes
-- Hook allow/block/error/degraded-daemon behavior
+- Degraded-daemon behavior for each migrated boundary
+- Hook allow, block, error, and degraded behavior once hooks enter scope
 - Database coexistence for any Rust-owned storage path
-- Startup/shutdown behavior for side-by-side daemons
+- Startup and shutdown behavior for side-by-side daemons
 
 ## Assumptions
 
 - `0.4.0` is a launch hardening phase, not a new feature wave
 - `gobby-cli` is the long-lived Rust home for migration work
-- The old `rust-port` docs are useful as historical notes, not active plans
+- The old `rust-port` docs remain historical notes, not active plans
 - Shared Rust extraction should be driven by current code in `gcode` and
-  `gsqz`, not by stale estimates from earlier drafts
+  `gsqz`, not by stale estimates
