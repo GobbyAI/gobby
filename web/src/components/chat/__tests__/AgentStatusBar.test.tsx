@@ -27,14 +27,17 @@ describe('AgentStatusBar', () => {
       />,
     )
 
+    expect(screen.getByText('Watching live')).toBeInTheDocument()
     expect(screen.getByText('Codex')).toHaveClass('chat-session-status__source')
     expect(screen.getByText('gpt-5.4')).toBeInTheDocument()
     expect(screen.getByText('tmux')).toBeInTheDocument()
     expect(screen.getByText('Mode: Plan')).toBeInTheDocument()
     expect(screen.getByText('triage-agent')).toBeInTheDocument()
+    expect(screen.queryByText('#77')).toBeNull()
+    expect(screen.queryByText('Observed Session')).toBeNull()
   })
 
-  it('uses the shared primary session action styling for resume', async () => {
+  it('uses the shared neutral session action styling for resume', async () => {
     const onAttach = vi.fn()
     const onDetach = vi.fn()
 
@@ -62,12 +65,15 @@ describe('AgentStatusBar', () => {
     )
 
     const resumeButton = screen.getByRole('button', { name: 'Resume' })
-    expect(resumeButton).toHaveClass('session-pane-action--primary')
+    expect(resumeButton).toHaveClass('session-pane-action')
+    expect(resumeButton).not.toHaveClass('session-pane-action--primary')
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull()
+    expect(screen.queryByText('#88')).toBeNull()
+    expect(screen.queryByText('Observed Session')).toBeNull()
 
     await userEvent.click(resumeButton)
-    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
 
     expect(onAttach).toHaveBeenCalledTimes(1)
-    expect(onDetach).toHaveBeenCalledTimes(1)
+    expect(onDetach).not.toHaveBeenCalled()
   })
 })

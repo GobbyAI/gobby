@@ -49,23 +49,14 @@ export function AgentStatusBar({
   const isLive = viewingMeta.status === 'active'
   const statusLabel =
     interactionMode === 'proxy' || isAttached ? 'Attached' : 'Watching'
+  const stateLabel = statusLabel === 'Watching' && isLive ? 'Watching live' : statusLabel
   const sessionTypeLabel = formatSessionType(viewingMeta.sessionType)
-  const title = viewingMeta.title ?? 'Observed Session'
 
   return (
     <div className="agent-status-bar" data-testid="agent-status-bar">
       <div className="agent-status-bar__summary">
-        <div className="agent-status-bar__session">
-          {viewingMeta.ref && (
-            <span className="agent-status-bar__ref">{viewingMeta.ref}</span>
-          )}
-          <span className="agent-status-bar__title">{title}</span>
-          <span className="agent-status-bar__status">
-            {statusLabel}
-            {statusLabel === 'Watching' && isLive ? ' live' : ''}
-          </span>
-        </div>
         <div className="chat-session-status">
+          <span className="chat-session-status__state">{stateLabel}</span>
           <span className={`chat-session-status__source ${sourceBadgeClassName}`}>
             {sourceLabel}
           </span>
@@ -86,19 +77,10 @@ export function AgentStatusBar({
         </div>
       </div>
       <div className="agent-status-bar__actions">
-        {!isAttached && onDetach && (
-          <button
-            type="button"
-            className="session-pane-action"
-            onClick={onDetach}
-          >
-            Back
-          </button>
-        )}
         {!isAttached && !isAutonomousSession && onAttach && (
           <button
             type="button"
-            className="session-pane-action session-pane-action--primary"
+            className="session-pane-action"
             onClick={onAttach}
           >
             Resume

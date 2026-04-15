@@ -1904,7 +1904,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 .command-bar-caret {
@@ -3016,35 +3017,6 @@
   flex-wrap: wrap;
 }
 
-.agent-status-bar__session {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-}
-
-.agent-status-bar__ref {
-  color: var(--accent);
-  font-size: calc(var(--font-size-base) * 0.8);
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
-.agent-status-bar__title {
-  color: var(--text-primary);
-  font-size: calc(var(--font-size-base) * 0.8);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-status-bar__status {
-  color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.75);
-  flex-shrink: 0;
-}
-
 .agent-status-bar__actions {
   display: flex;
   align-items: center;
@@ -3060,6 +3032,7 @@
   flex-wrap: wrap;
 }
 
+.chat-session-status__state,
 .chat-session-status__source,
 .chat-session-status__model,
 .chat-session-status__kind,
@@ -3073,6 +3046,11 @@
   font-size: 0.6875rem;
   font-weight: 500;
   white-space: nowrap;
+}
+
+.chat-session-status__state {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 .chat-session-status__source {
@@ -3122,9 +3100,5 @@
 
   .agent-status-bar__summary {
     gap: 0.5rem;
-  }
-
-  .agent-status-bar__title {
-    max-width: 50vw;
   }
 }
