@@ -12,8 +12,8 @@ from .gemini import install_gemini, uninstall_gemini
 from .git_hooks import install_git_hooks
 from .mcp_config import install_default_mcp_servers
 from .neo4j import install_neo4j, uninstall_neo4j
-from .qwen import install_qwen, uninstall_qwen
 from .qdrant import install_qdrant, uninstall_qdrant
+from .qwen import install_qwen, uninstall_qwen
 from .service import get_service_status, install_service, uninstall_service
 from .shared import (
     clean_project_hooks,
