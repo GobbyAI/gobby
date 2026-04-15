@@ -268,7 +268,12 @@ class CodexAdapter(BaseAdapter):
         if not raw_tool_name and item_type == "mcpToolCall":
             server_name = item_data.get("server")
             mcp_tool = item_data.get("tool")
-            if isinstance(server_name, str) and server_name and isinstance(mcp_tool, str) and mcp_tool:
+            if (
+                isinstance(server_name, str)
+                and server_name
+                and isinstance(mcp_tool, str)
+                and mcp_tool
+            ):
                 raw_tool_name = self._compose_mcp_tool_name(server_name, mcp_tool)
         if isinstance(raw_tool_name, str) and raw_tool_name:
             item_data.setdefault("tool_name", self.normalize_tool_name(raw_tool_name))

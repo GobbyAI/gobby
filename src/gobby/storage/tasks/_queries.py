@@ -154,8 +154,7 @@ def list_tasks(
         query += f" ORDER BY {order_clause} LIMIT ? OFFSET ?"
     else:
         query += (
-            f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC"
-            " LIMIT ? OFFSET ?"
+            f" ORDER BY {order_clause} {direction}, priority ASC, created_at DESC LIMIT ? OFFSET ?"
         )
     params.extend([limit, offset])
 
