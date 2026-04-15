@@ -366,22 +366,19 @@ export function ChatInput({
     ],
   )
 
-  const handleProviderSelect = useCallback(
-    (nextProvider: string) => {
-      const nextModel =
-        getPreferredModelForProvider(providerModelCatalog, nextProvider, null) ??
-        resolvedModelValue ??
-        'default'
-      const nextReasoning = getPreferredReasoningEffort(
-        providerModelCatalog,
-        nextProvider,
-        nextModel,
-        null,
-      )
-      applySelection(nextProvider, nextModel, nextReasoning)
-    },
-    [applySelection, providerModelCatalog, resolvedModelValue],
-  )
+  const handleProviderSelect = (nextProvider: string) => {
+    const nextModel =
+      getPreferredModelForProvider(providerModelCatalog, nextProvider, null) ??
+      resolvedModelValue ??
+      'default'
+    const nextReasoning = getPreferredReasoningEffort(
+      providerModelCatalog,
+      nextProvider,
+      nextModel,
+      null,
+    )
+    applySelection(nextProvider, nextModel, nextReasoning)
+  }
 
   const handleModelSelect = useCallback(
     (nextModel: string) => {
@@ -396,12 +393,9 @@ export function ChatInput({
     [applySelection, effectiveProvider, providerModelCatalog, resolvedReasoning],
   )
 
-  const handleReasoningSelect = useCallback(
-    (nextReasoning: string) => {
-      applySelection(effectiveProvider, resolvedModelValue, nextReasoning)
-    },
-    [applySelection, effectiveProvider, resolvedModelValue],
-  )
+  const handleReasoningSelect = (nextReasoning: string) => {
+    applySelection(effectiveProvider, resolvedModelValue, nextReasoning)
+  }
 
   type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
 

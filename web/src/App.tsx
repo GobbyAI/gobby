@@ -1127,6 +1127,7 @@ export default function App() {
       settings.model,
       settings.chatMode,
       effectiveProjectId,
+      currentMainReasoning,
       updateChatMode,
       sendMode,
       addSystemMessage,
@@ -1226,6 +1227,7 @@ export default function App() {
     sendMessage,
     settings.model,
     effectiveProjectId,
+    currentMainReasoning,
     addSystemMessage,
   ]);
 

@@ -1306,7 +1306,7 @@ export function useChat() {
         );
       }
     },
-    [setSelectedProvider],
+    [setContextUsage, setSelectedProvider],
   );
 
   /** Returns true if the chunk belongs to the currently active request. */

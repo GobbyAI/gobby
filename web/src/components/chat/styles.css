@@ -3057,12 +3057,6 @@
   color: var(--text-muted);
 }
 
-@media (max-width: 640px) {
-  .chat-input-model-controls {
-    width: 100%;
-  }
-}
-
 .agent-status-bar {
   display: flex;
   align-items: center;
