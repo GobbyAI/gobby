@@ -147,6 +147,19 @@ class TestStatusUtils:
         assert "3.4" in msg
         assert "2.44.0" in msg
 
+    def test_format_status_message_prefers_configured_embeddings_provider(self) -> None:
+        msg = format_status_message(
+            running=True,
+            deps_info={
+                "dependencies": {
+                    "embeddings_provider": "lmstudio",
+                    "ollama": {"version": "0.1.30", "running": True},
+                    "lmstudio": {"running": True},
+                },
+            },
+        )
+        assert "LM Studio (running)" in msg
+
     def test_format_status_message_config_issues(self) -> None:
         msg = format_status_message(
             running=True,

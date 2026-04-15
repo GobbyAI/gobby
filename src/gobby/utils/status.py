@@ -215,9 +215,29 @@ def format_status_message(
                 lines.append(f"  {'Neo4j:':<{_LW}}not installed")
 
         # Embeddings
+        configured_embeddings_provider = dep.get("embeddings_provider")
         ollama = dep.get("ollama")
         lmstudio = dep.get("lmstudio")
-        if isinstance(ollama, dict) and ollama.get("running"):
+        if configured_embeddings_provider == "ollama":
+            if isinstance(ollama, dict) and ollama.get("running"):
+                ver_str = f" (v{ollama['version']})" if ollama.get("version") else ""
+                lines.append(f"  {'Embeddings:':<{_LW}}Ollama{ver_str}")
+            elif isinstance(ollama, dict):
+                lines.append(f"  {'Embeddings:':<{_LW}}Ollama (stopped)")
+            else:
+                lines.append(f"  {'Embeddings:':<{_LW}}Ollama")
+        elif configured_embeddings_provider == "lmstudio":
+            if isinstance(lmstudio, dict) and lmstudio.get("running"):
+                lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (running)")
+            elif isinstance(lmstudio, dict):
+                lines.append(f"  {'Embeddings:':<{_LW}}LM Studio (stopped)")
+            else:
+                lines.append(f"  {'Embeddings:':<{_LW}}LM Studio")
+        elif configured_embeddings_provider == "openai":
+            lines.append(f"  {'Embeddings:':<{_LW}}OpenAI")
+        elif configured_embeddings_provider == "none":
+            lines.append(f"  {'Embeddings:':<{_LW}}disabled")
+        elif isinstance(ollama, dict) and ollama.get("running"):
             ver_str = f" (v{ollama['version']})" if ollama.get("version") else ""
             lines.append(f"  {'Embeddings:':<{_LW}}Ollama{ver_str}")
         elif isinstance(lmstudio, dict) and lmstudio.get("running"):

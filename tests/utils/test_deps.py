@@ -223,6 +223,35 @@ def test_lmstudio_info_exception():
             assert deps.get_lmstudio_info() == {"running": False}
 
 
+def test_get_configured_embedding_provider():
+    config = MagicMock()
+    config.database_path = "/tmp/gobby-hub.db"
+    config.embeddings.api_base = None
+    db_ctx = MagicMock()
+    db_ctx.__enter__.return_value = MagicMock()
+    store = MagicMock()
+    store.get.return_value = "lmstudio"
+
+    with (
+        patch("gobby.config.app.load_config", return_value=config),
+        patch("gobby.storage.database.LocalDatabase", return_value=db_ctx),
+        patch("gobby.storage.config_store.ConfigStore", return_value=store),
+    ):
+        assert deps.get_configured_embedding_provider() == "lmstudio"
+
+
+def test_get_configured_embedding_provider_falls_back_to_api_base():
+    config = MagicMock()
+    config.database_path = "/tmp/gobby-hub.db"
+    config.embeddings.api_base = "http://localhost:1234/v1"
+
+    with (
+        patch("gobby.config.app.load_config", return_value=config),
+        patch("gobby.storage.database.LocalDatabase", side_effect=RuntimeError("db unavailable")),
+    ):
+        assert deps.get_configured_embedding_provider() == "lmstudio"
+
+
 def test_check_config_mismatches():
     config = MagicMock()
     config.llm_providers.claude = True
@@ -260,12 +289,14 @@ def test_collect_all_deps():
         patch("gobby.utils.deps.get_git_version", return_value="9"),
         patch("gobby.utils.deps.get_node_version", return_value="10"),
         patch("gobby.utils.deps.get_tailscale_info", return_value={}),
+        patch("gobby.utils.deps.get_configured_embedding_provider", return_value="lmstudio"),
         patch("gobby.utils.deps.get_ollama_info", return_value={}),
         patch("gobby.utils.deps.get_lmstudio_info", return_value={}),
     ):
         res = deps.collect_all_deps()
         assert res["gobby"]["gobby"] == "1"
         assert res["dependencies"]["docker_running"] is True
+        assert res["dependencies"]["embeddings_provider"] == "lmstudio"
 
 
 def test_file_read_exceptions(tmp_path):

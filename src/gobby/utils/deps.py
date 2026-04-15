@@ -283,6 +283,49 @@ def get_lmstudio_info() -> dict[str, Any] | None:
     return {"running": running}
 
 
+def _normalize_embedding_provider(provider: Any) -> str | None:
+    """Normalize a configured embeddings provider value."""
+    if not isinstance(provider, str):
+        return None
+    normalized = provider.strip().lower()
+    if normalized in {"lmstudio", "ollama", "openai", "none"}:
+        return normalized
+    return None
+
+
+def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
+    """Infer a local embeddings provider from the configured API base."""
+    if not isinstance(api_base, str):
+        return None
+    api_base_lower = api_base.lower()
+    if ":1234" in api_base_lower:
+        return "lmstudio"
+    if ":11434" in api_base_lower:
+        return "ollama"
+    return None
+
+
+def get_configured_embedding_provider() -> str | None:
+    """Get the configured embeddings provider from persisted config."""
+    api_base = None
+    try:
+        from gobby.config.app import load_config
+        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.database import LocalDatabase
+
+        config = load_config()
+        api_base = getattr(getattr(config, "embeddings", None), "api_base", None)
+        db_path = Path(config.database_path).expanduser()
+        with LocalDatabase(db_path) as db:
+            store = ConfigStore(db)
+            provider = _normalize_embedding_provider(store.get("embeddings.provider"))
+        if provider is not None:
+            return provider
+    except Exception:
+        pass
+    return _infer_embedding_provider_from_api_base(api_base)
+
+
 # ---------------------------------------------------------------------------
 # Config cross-reference (detect mismatches)
 # ---------------------------------------------------------------------------
@@ -374,6 +417,7 @@ def collect_all_deps() -> dict[str, Any]:
             "git": get_git_version(),
             "node": get_node_version(),
             "tailscale": get_tailscale_info(),
+            "embeddings_provider": get_configured_embedding_provider(),
             "ollama": get_ollama_info(),
             "lmstudio": get_lmstudio_info(),
         },
