@@ -212,16 +212,6 @@ export function ChatPage({
     [chat, conversations, isMobile, parkCurrentSession, setIsPinned],
   );
 
-  const handleAutonomousDetach = useCallback(() => {
-    if (chat.sessionInteractionMode === "proxy") {
-      chat.onDetachFromSession?.();
-      return;
-    }
-    if (chat.viewingSessionMeta?.sessionType === "terminal") {
-      chat.clearViewingSession?.();
-    }
-  }, [chat]);
-
   // Available LLM providers — fetched from daemon API
   const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   const [providerModelCatalog, setProviderModelCatalog] = useState<
@@ -232,9 +222,7 @@ export function ChatPage({
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
   );
-  const showObserveOverlay =
-    isAutonomousSession && chat.sessionInteractionMode !== "proxy";
-  const canAttachViewedSession =
+  const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
   const providerPickerDisabledReason = isAutonomousSession
     ? chat.sessionInteractionMode === "proxy"
@@ -283,32 +271,40 @@ export function ChatPage({
   );
   const isReadOnlySession =
     isSwappedTerminal && chat.sessionInteractionMode !== "proxy";
+  const showChatInput = !isReadOnlySession;
   const chatInputDisabled =
-    !chat.isConnected || Boolean(chat.isContinuingSession) || isReadOnlySession;
+    !chat.isConnected || Boolean(chat.isContinuingSession);
   const chatInputDisabledPlaceholder = !chat.isConnected
     ? chat.isReconnecting
       ? "Reconnecting to server..."
       : "Connecting to server..."
     : chat.isContinuingSession
       ? "Resuming session in web chat..."
-      : isReadOnlySession
-        ? viewingMeta?.status === "paused"
-          ? "Resume session to send messages..."
-          : "Read-only while watching this session..."
-        : undefined;
+      : undefined;
   const chatInputDisabledAriaLabel = !chat.isConnected
     ? chat.isReconnecting
       ? "Message input — reconnecting"
       : "Message input — connecting"
     : chat.isContinuingSession
       ? "Message input — resuming session"
-      : isReadOnlySession
-        ? viewingMeta?.status === "paused"
-          ? "Message input — resume required"
-          : "Message input — watching read only"
-        : undefined;
+      : undefined;
   const activityPanelChatSessionId =
     isReadOnlySession ? chat.viewingSessionId ?? chat.dbSessionId : chat.dbSessionId;
+
+  const handleResumeViewedSession = useCallback(() => {
+    if (
+      !isSwappedTerminal ||
+      isAutonomousSession ||
+      !chat.viewingSessionId ||
+      !chat.continueSessionInChat
+    ) {
+      return;
+    }
+    void chat.continueSessionInChat(
+      chat.viewingSessionId,
+      projectId ?? undefined,
+    );
+  }, [chat, isAutonomousSession, isSwappedTerminal, projectId]);
 
   const handleSwappedSessionProviderSelection = useCallback(
     async (provider: string, model: string, reasoningEffort: string | null) => {
@@ -693,79 +689,77 @@ export function ChatPage({
               interactionMode={chat.sessionInteractionMode ?? "none"}
               isAttached={!!chat.attachedSessionId}
               isAutonomousSession={isAutonomousSession}
-              onAttach={canAttachViewedSession ? chat.onAttachToViewed : undefined}
-              onDetach={
-                isAutonomousSession
-                  ? handleAutonomousDetach
-                  : chat.attachedSessionId
-                    ? chat.onDetachFromSession
-                    : chat.clearViewingSession
+              onAttach={
+                canControlViewedSession ? chat.onAttachToViewed : undefined
               }
+              onResume={
+                canControlViewedSession ? handleResumeViewedSession : undefined
+              }
+              onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
             />
           )}
 
           {/* Chat input */}
-          <ChatInput
-            onSend={onSend}
-            onStop={chat.onStop}
-            isStreaming={chat.isStreaming}
-            disabled={chatInputDisabled}
-            disabledPlaceholder={chatInputDisabledPlaceholder}
-            disabledAriaLabel={chatInputDisabledAriaLabel}
-            viewingSession={showObserveOverlay}
-            onInputChange={chat.onInputChange}
-            paletteItems={chat.paletteItems}
-            onPaletteSelect={handlePaletteSelect}
-            mode={chat.mode}
-            onModeChange={chat.onModeChange}
-            contextUsage={chat.contextUsage}
-            currentBranch={chat.currentBranch}
-            worktreePath={chat.worktreePath}
-            projectId={projectId ?? null}
-            onWorktreeChange={chat.onWorktreeChange}
-            agentName={chat.activeAgent}
-            onAgentChange={chat.onAgentChange}
-            agentDefinitions={agentDefinitions}
-            agentGlobalDefs={agentGlobalDefs}
-            agentProjectDefs={agentProjectDefs}
-            agentShowScopeToggle={agentShowScopeToggle}
-            agentHasGlobal={agentHasGlobal}
-            agentHasProject={agentHasProject}
-            sttEnabled={voice.sttEnabled}
-            voiceInputMode={voice.voiceInputMode}
-            isRecording={voice.isRecording}
-            startRecording={voice.startRecording}
-            stopRecording={voice.stopRecording}
-            cancelRecording={voice.cancelRecording}
-            isMobile={isMobile}
-            onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
-            provider={effectiveInputProvider}
-            availableProviders={availableProviders}
-            providerModelCatalog={providerModelCatalog}
-            currentModel={effectiveInputModel}
-            currentReasoning={effectiveInputReasoning}
-            onModelChange={onModelChange}
-            onReasoningChange={(reasoningEffort) => {
-              if (effectiveInputProvider && effectiveInputModel) {
-                onReasoningPreferenceChange?.(
-                  effectiveInputProvider,
-                  effectiveInputModel,
-                  reasoningEffort,
-                );
+          {showChatInput && (
+            <ChatInput
+              onSend={onSend}
+              onStop={chat.onStop}
+              isStreaming={chat.isStreaming}
+              disabled={chatInputDisabled}
+              disabledPlaceholder={chatInputDisabledPlaceholder}
+              disabledAriaLabel={chatInputDisabledAriaLabel}
+              onInputChange={chat.onInputChange}
+              paletteItems={chat.paletteItems}
+              onPaletteSelect={handlePaletteSelect}
+              mode={chat.mode}
+              onModeChange={chat.onModeChange}
+              contextUsage={chat.contextUsage}
+              currentBranch={chat.currentBranch}
+              worktreePath={chat.worktreePath}
+              projectId={projectId ?? null}
+              onWorktreeChange={chat.onWorktreeChange}
+              agentName={chat.activeAgent}
+              onAgentChange={chat.onAgentChange}
+              agentDefinitions={agentDefinitions}
+              agentGlobalDefs={agentGlobalDefs}
+              agentProjectDefs={agentProjectDefs}
+              agentShowScopeToggle={agentShowScopeToggle}
+              agentHasGlobal={agentHasGlobal}
+              agentHasProject={agentHasProject}
+              sttEnabled={voice.sttEnabled}
+              voiceInputMode={voice.voiceInputMode}
+              isRecording={voice.isRecording}
+              startRecording={voice.startRecording}
+              stopRecording={voice.stopRecording}
+              cancelRecording={voice.cancelRecording}
+              isMobile={isMobile}
+              onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
+              provider={effectiveInputProvider}
+              availableProviders={availableProviders}
+              providerModelCatalog={providerModelCatalog}
+              currentModel={effectiveInputModel}
+              currentReasoning={effectiveInputReasoning}
+              onModelChange={onModelChange}
+              onReasoningChange={(reasoningEffort) => {
+                if (effectiveInputProvider && effectiveInputModel) {
+                  onReasoningPreferenceChange?.(
+                    effectiveInputProvider,
+                    effectiveInputModel,
+                    reasoningEffort,
+                  );
+                }
+              }}
+              onProviderSelectionChange={
+                isSwappedTerminal
+                  ? handleSwappedSessionProviderSelection
+                  : handleMainProviderSelection
               }
-            }}
-            onProviderSelectionChange={
-              isSwappedTerminal
-                ? handleSwappedSessionProviderSelection
-                : handleMainProviderSelection
-            }
-            providerPickerDisabledReason={providerPickerDisabledReason}
-            hasMessages={chat.messages.length > 0}
-            proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
-            showObserveOverlay={showObserveOverlay}
-            onAttachObservedSession={chat.onAttachToViewed}
-            proxyDeliveryNotice={chat.proxyDeliveryNotice}
-          />
+              providerPickerDisabledReason={providerPickerDisabledReason}
+              hasMessages={chat.messages.length > 0}
+              proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
+              proxyDeliveryNotice={chat.proxyDeliveryNotice}
+            />
+          )}
         </ArtifactContext.Provider>
       </div>
 

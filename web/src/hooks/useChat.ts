@@ -3318,11 +3318,14 @@ export function useChat() {
       return;
     }
     const viewedMeta = viewingSessionMetaRef.current;
-    if (viewedMeta?.sessionType !== "terminal") {
+    if (
+      viewedMeta?.sessionType !== "terminal" ||
+      viewedMeta.agentRunId
+    ) {
       return;
     }
-    void continueSessionInChat(sid);
-  }, [continueSessionInChat]);
+    attachToSession(sid, "proxy");
+  }, [attachToSession]);
 
   // Disable proxy mode but keep the live observation subscription.
   const detachFromSession = useCallback(() => {

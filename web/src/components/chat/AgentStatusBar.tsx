@@ -6,6 +6,7 @@ interface AgentStatusBarProps {
   isAttached?: boolean
   isAutonomousSession?: boolean
   onAttach?: () => void
+  onResume?: () => void
   onDetach?: () => void
 }
 
@@ -39,6 +40,7 @@ export function AgentStatusBar({
   isAttached = false,
   isAutonomousSession = false,
   onAttach,
+  onResume,
   onDetach,
 }: AgentStatusBarProps) {
   const sourceConfig = SOURCE_CONFIG[viewingMeta.source]
@@ -82,6 +84,15 @@ export function AgentStatusBar({
             type="button"
             className="session-pane-action"
             onClick={onAttach}
+          >
+            Attach
+          </button>
+        )}
+        {!isAttached && !isAutonomousSession && onResume && (
+          <button
+            type="button"
+            className="session-pane-action"
+            onClick={onResume}
           >
             Resume
           </button>

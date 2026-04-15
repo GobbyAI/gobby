@@ -117,9 +117,37 @@ vi.mock("../VoiceStatusBar", () => ({
 }));
 
 vi.mock("../AgentStatusBar", () => ({
-  AgentStatusBar: ({ viewingMeta }: { viewingMeta: { title?: string | null; source: string } }) => (
+  AgentStatusBar: ({
+    viewingMeta,
+    isAttached,
+    onAttach,
+    onResume,
+    onDetach,
+  }: {
+    viewingMeta: { title?: string | null; source: string };
+    isAttached?: boolean;
+    onAttach?: () => void;
+    onResume?: () => void;
+    onDetach?: () => void;
+  }) => (
     <div data-testid="agent-status-bar">
-      {viewingMeta.title ?? viewingMeta.source}
+      <span>{viewingMeta.title ?? viewingMeta.source}</span>
+      <span data-testid="agent-status-attached">{String(Boolean(isAttached))}</span>
+      {onAttach && (
+        <button type="button" data-testid="agent-status-attach" onClick={onAttach}>
+          Attach
+        </button>
+      )}
+      {onResume && (
+        <button type="button" data-testid="agent-status-resume" onClick={onResume}>
+          Resume
+        </button>
+      )}
+      {isAttached && onDetach && (
+        <button type="button" data-testid="agent-status-detach" onClick={onDetach}>
+          Detach
+        </button>
+      )}
     </div>
   ),
 }));
@@ -333,10 +361,12 @@ describe("ChatPage", () => {
     expect(scrollToBottomSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the viewed-session status strip above the chat input", async () => {
+  it("renders the viewed-session status strip above the chat input for attached terminal sessions", async () => {
     render(
       <ChatPage
         chat={createChat({
+          viewingSessionId: "terminal-1",
+          attachedSessionId: "terminal-1",
           viewingSessionMeta: {
             ref: "#51",
             source: "claude",
@@ -346,6 +376,7 @@ describe("ChatPage", () => {
             externalId: "term-51",
             sessionType: "terminal",
           },
+          sessionInteractionMode: "proxy",
         })}
         conversations={createConversations()}
         voice={createVoice()}
@@ -357,6 +388,9 @@ describe("ChatPage", () => {
         "Observed Terminal",
       );
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      expect(screen.getByTestId("agent-status-attached")).toHaveTextContent(
+        "true",
+      );
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
@@ -401,7 +435,7 @@ describe("ChatPage", () => {
     ).toHaveTextContent("terminal-2");
   });
 
-  it("passes read-only observe copy to the chat input instead of generic connecting text", async () => {
+  it("hides the entire chat input pane while watching a swapped terminal", async () => {
     await act(async () => {
       render(
         <ChatPage
@@ -424,13 +458,76 @@ describe("ChatPage", () => {
       );
     });
 
-    expect(screen.getByTestId("chat-input-disabled")).toHaveTextContent("true");
-    expect(screen.getByTestId("chat-input-placeholder")).toHaveTextContent(
-      "Read-only while watching this session...",
-    );
-    expect(screen.getByTestId("chat-input-aria-label")).toHaveTextContent(
-      "Message input — watching read only",
-    );
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-attach")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
+  });
+
+  it("routes Attach to the viewed terminal attach handler", async () => {
+    const onAttachToViewed = vi.fn();
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            viewingSessionId: "terminal-2",
+            viewingSessionMeta: {
+              ref: "#52",
+              source: "claude",
+              title: "Observed Terminal",
+              status: "active",
+              model: "claude-sonnet-4-6",
+              externalId: "term-52",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+            onAttachToViewed,
+            continueSessionInChat,
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+          projectId="proj-1"
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("agent-status-attach"));
+
+    expect(onAttachToViewed).toHaveBeenCalledTimes(1);
+    expect(continueSessionInChat).not.toHaveBeenCalled();
+  });
+
+  it("routes Resume to the viewed terminal continuation flow", async () => {
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            viewingSessionId: "terminal-2",
+            viewingSessionMeta: {
+              ref: "#52",
+              source: "claude",
+              title: "Observed Terminal",
+              status: "active",
+              model: "claude-sonnet-4-6",
+              externalId: "term-52",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+            continueSessionInChat,
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+          projectId="proj-1"
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("agent-status-resume"));
+
+    expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1");
   });
 
   it("normalizes the input chip to a valid model for the active provider", async () => {

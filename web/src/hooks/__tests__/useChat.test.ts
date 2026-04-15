@@ -933,7 +933,79 @@ describe("useChat", () => {
     expect(result.current.messages[0].content).toBe("Updated output");
   });
 
-  it("keeps autonomous session observation read-only until explicitly attached", async () => {
+  it("attachToViewed upgrades an active watched terminal session into proxy mode", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-view/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-view", {
+      session: {
+        id: "sess-view",
+        seq_num: 2310,
+        source: "claude",
+        title: "Viewed Terminal",
+        status: "active",
+        model: "sonnet",
+        external_id: "claude-ext-view",
+        chat_mode: "accept_edits",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-view");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const sendCountBeforeAttach = ws.send.mock.calls.length;
+    act(() => {
+      result.current.attachToViewed?.();
+    });
+
+    const attachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeAttach][0]);
+    expect(attachMsg).toMatchObject({
+      type: "attach_to_session",
+      session_id: "sess-view",
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-view",
+        external_id: "claude-ext-view",
+        source: "claude",
+        title: "Viewed Terminal",
+        status: "active",
+        model: "sonnet",
+        ref: "#2310",
+        chat_mode: "accept_edits",
+        git_branch: "main",
+        context_window: 200000,
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    expect(result.current.sessionInteractionMode).toBe("proxy");
+    expect(result.current.attachedSessionId).toBe("sess-view");
+  });
+
+  it("keeps autonomous session observation read-only", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(
       "/api/sessions/sess-auto/messages?limit=100&offset=0",
@@ -968,17 +1040,6 @@ describe("useChat", () => {
     mockFetch.mockJsonResponse("/api/agents/runs/run-auto-1", {
       run: { agent_name: "code-reviewer", workflow_name: "release-checks" },
     });
-    mockFetch.mockJsonResponse("/api/sessions/web-chat", {
-      session: {
-        id: "resumed-auto-session",
-        source: "claude",
-        model: "sonnet",
-        chat_mode: "accept_edits",
-        seq_num: 2312,
-        title: "Autonomous session",
-      },
-    });
-
     const { result } = renderHook(() => useChat());
     const ws = mockWs.instances[0];
     act(() => ws.simulateOpen());
@@ -1014,28 +1075,17 @@ describe("useChat", () => {
 
     expect(result.current.sessionInteractionMode).toBe("observe");
     expect(result.current.attachedSessionId).toBeNull();
+    expect(result.current.viewingSessionMeta?.agentRunId).toBe("run-auto-1");
 
-    await act(async () => {
+    const sendCountBeforeAttach = ws.send.mock.calls.length;
+    act(() => {
       result.current.attachToViewed?.();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
     });
 
-    expect(result.current.sessionInteractionMode).toBe("none");
+    expect(result.current.sessionInteractionMode).toBe("observe");
     expect(result.current.attachedSessionId).toBeNull();
-    expect(result.current.viewingSessionId).toBeNull();
-    expect(result.current.selectedProvider).toBe("claude");
-
-    const continueMsg = ws.send.mock.calls
-      .map(([raw]) => JSON.parse(raw))
-      .find((msg) => msg.type === "continue_in_chat");
-    expect(continueMsg).toMatchObject({
-      type: "continue_in_chat",
-      source_session_id: "sess-auto",
-      provider: "claude",
-      model: "sonnet",
-    });
+    expect(result.current.viewingSessionId).toBe("sess-auto");
+    expect(ws.send.mock.calls).toHaveLength(sendCountBeforeAttach);
   });
 
   it("does not attach viewed web chat sessions into proxy mode", async () => {
