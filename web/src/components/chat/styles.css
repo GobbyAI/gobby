@@ -1687,6 +1687,10 @@
   background: #3b82f6;
 }
 
+.session-source-dot.qwen {
+  background: #f59e0b;
+}
+
 .session-source-dot.codex {
   background: #a855f7;
 }
@@ -3044,6 +3048,10 @@
 
 .chat-session-status__dot--gemini {
   background: #4ade80;
+}
+
+.chat-session-status__dot--qwen {
+  background: #f59e0b;
 }
 
 .chat-session-status__dot--codex {

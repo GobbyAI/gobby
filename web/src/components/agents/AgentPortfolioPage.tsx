@@ -99,7 +99,7 @@ function formatTokens(n: number): string {
 }
 
 function identifyAgent(session: SessionData): { id: string; name: string; source: string } {
-  // Group by source (claude, gemini, codex, web-chat)
+  // Group by source (claude, gemini, qwen, codex, web-chat)
   // For agent-depth > 0, prefix with "sub-"
   const prefix = session.agent_depth > 0 ? 'sub-' : ''
   const source = session.source || 'unknown'
@@ -179,7 +179,7 @@ function AgentCard({
     <div className={`agent-card ${isExpanded ? 'agent-card--expanded' : ''}`}>
       <button className="agent-card-header" onClick={onToggle}>
         <div className="agent-card-identity">
-          <span className="agent-card-icon">{agent.source === 'claude' ? '\u2728' : agent.source === 'gemini' ? '\u2666' : agent.source === 'codex' ? '\u{1F4E6}' : '\u{1F916}'}</span>
+          <span className="agent-card-icon">{agent.source === 'claude' ? '\u2728' : agent.source === 'gemini' ? '\u2666' : agent.source === 'qwen' ? '\u25C8' : agent.source === 'codex' ? '\u{1F4E6}' : '\u{1F916}'}</span>
           <span className="agent-card-name">{agent.name}</span>
           <span className="agent-card-sessions">{agent.sessionCount} sessions</span>
         </div>

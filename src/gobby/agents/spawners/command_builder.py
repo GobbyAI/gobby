@@ -1,6 +1,6 @@
 """CLI command building for agent spawning.
 
-Provides functions to construct CLI commands for Claude, Gemini, and Codex
+Provides functions to construct CLI commands for Claude, Gemini, Qwen, and Codex
 with proper flags for prompts, permissions, and session management.
 """
 
@@ -40,7 +40,7 @@ def build_cli_command(
     - codex --full-auto -C <dir> [PROMPT]
 
     Args:
-        cli: CLI name (claude, gemini, codex)
+        cli: CLI name (claude, gemini, qwen, codex)
         prompt: Optional prompt to pass (agent mode)
         session_id: Optional session ID
         auto_approve: If True, add flags to auto-approve actions/permissions
@@ -72,8 +72,8 @@ def build_cli_command(
             fmt = output_format or "stream-json"
             command.extend(["--output-format", fmt, "--verbose", "--input-format", fmt])
 
-    elif cli == "gemini":
-        # Gemini CLI flags
+    elif cli in {"gemini", "qwen"}:
+        # Gemini/Qwen CLI flags
         if model:
             command.extend(["--model", model])
         if auto_approve:
@@ -147,6 +147,36 @@ def build_gemini_command_with_resume(
         full_prompt = prompt or ""
 
     # Use -i for interactive mode with initial prompt
+    if full_prompt:
+        command.extend(["-i", full_prompt])
+
+    return command
+
+
+def build_qwen_command_with_resume(
+    qwen_external_id: str,
+    prompt: str | None = None,
+    auto_approve: bool = False,
+    gobby_session_id: str | None = None,
+    model: str | None = None,
+) -> list[str]:
+    """Build Qwen CLI command with session resume."""
+    command = ["qwen", "-r", qwen_external_id]
+
+    if model:
+        command.extend(["--model", model])
+    if auto_approve:
+        command.extend(["--approval-mode", "yolo"])
+
+    if gobby_session_id:
+        context_prefix = (
+            f"Your Gobby session_id is: {gobby_session_id}\n"
+            f"Use this when calling Gobby MCP tools.\n\n"
+        )
+        full_prompt = context_prefix + (prompt or "")
+    else:
+        full_prompt = prompt or ""
+
     if full_prompt:
         command.extend(["-i", full_prompt])
 

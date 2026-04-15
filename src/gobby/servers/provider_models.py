@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PROVIDERS = ("claude", "gemini", "codex")
+_PROVIDERS = ("claude", "gemini", "qwen", "codex")
 _CACHE_VERSION = 1
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _CLAUDE_ALIASES: tuple[tuple[str, str], ...] = (
@@ -227,6 +227,8 @@ class ProviderModelCatalog:
             return await self._discover_claude_models()
         if provider == "gemini":
             return await self._discover_gemini_models()
+        if provider == "qwen":
+            return await self._discover_qwen_models()
         if provider == "codex":
             return await self._discover_codex_models(codex_client=codex_client)
         raise ValueError(f"Unknown provider: {provider}")
@@ -274,12 +276,32 @@ class ProviderModelCatalog:
         return models
 
     async def _discover_gemini_models(self) -> list[dict[str, Any]]:
-        if not shutil.which("gemini"):
-            raise FileNotFoundError("gemini CLI not found in PATH")
+        return await self._discover_acp_models(provider="gemini", display_name="Gemini")
+
+    async def _discover_qwen_models(self) -> list[dict[str, Any]]:
+        return await self._discover_acp_models(
+            provider="qwen",
+            display_name="Qwen",
+            prompt_timeout_env="GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS",
+        )
+
+    async def _discover_acp_models(
+        self,
+        *,
+        provider: str,
+        display_name: str,
+        prompt_timeout_env: str = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS",
+    ) -> list[dict[str, Any]]:
+        if not shutil.which(provider):
+            raise FileNotFoundError(f"{provider} CLI not found in PATH")
 
         from gobby.adapters.gemini_acp_client import GeminiACPClient
 
-        client = GeminiACPClient()
+        client = GeminiACPClient(
+            cli_name=provider,
+            display_name=display_name,
+            prompt_timeout_env=prompt_timeout_env,
+        )
         await client.start()
         try:
             session_info = client.session_info

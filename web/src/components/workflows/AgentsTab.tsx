@@ -86,6 +86,7 @@ const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
     { value: 'haiku', label: 'Haiku' },
   ],
   gemini: [{ value: '', label: '(default)' }],
+  qwen: [{ value: '', label: '(default)' }],
   codex: [{ value: '', label: '(default)' }],
   cursor: [{ value: '', label: '(default)' }],
   windsurf: [{ value: '', label: '(default)' }],

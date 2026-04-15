@@ -72,6 +72,7 @@ function formatProviderLabel(provider: string | null | undefined): string {
   const providerLabels: Record<string, string> = {
     claude: 'Claude',
     gemini: 'Gemini',
+    qwen: 'Qwen',
     codex: 'Codex',
     openai: 'OpenAI',
   }

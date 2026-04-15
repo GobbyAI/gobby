@@ -16,7 +16,7 @@ import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
-const CHAT_PROVIDERS = new Set(["claude", "gemini", "codex"]);
+const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex"]);
 
 interface WebSocketMessage {
   type: string;

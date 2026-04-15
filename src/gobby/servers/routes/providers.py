@@ -23,6 +23,7 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
         {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},
         {"value": "gemini-3-flash-preview", "label": "flash-3"},
     ],
+    "qwen": [],
     "codex": [
         {"value": "gpt-5.4", "label": "codex-5.4"},
         {"value": "gpt-5.4-mini", "label": "mini-5.4"},
@@ -31,7 +32,12 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, str]]] = {
     ],
 }
 
-_PROVIDER_DEFS = [("claude", "claude"), ("gemini", "gemini"), ("codex", "codex")]
+_PROVIDER_DEFS = [
+    ("claude", "claude"),
+    ("gemini", "gemini"),
+    ("qwen", "qwen"),
+    ("codex", "codex"),
+]
 
 
 def _friendly_label(provider: str, model: str) -> str:

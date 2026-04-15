@@ -24,10 +24,13 @@ if TYPE_CHECKING:
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import LocalSessionManager
 
-    TranscriptParser = ClaudeTranscriptParser | GeminiTranscriptParser | CodexTranscriptParser
+    TranscriptParser = (
+        ClaudeTranscriptParser | GeminiTranscriptParser | QwenTranscriptParser | CodexTranscriptParser
+    )
 
 from pathlib import Path
 
@@ -54,6 +57,8 @@ def _detect_source_from_path(path: str | None) -> str | None:
         return "codex"
     if Path(normalized).name.startswith("rollout-") and lowered.endswith(".jsonl"):
         return "codex"
+    if ".qwen" in parts:
+        return "qwen"
     if ".gemini" in parts or lowered.endswith(".json"):
         return "gemini"
     if ".claude" in parts and "projects" in parts:
@@ -216,6 +221,17 @@ def _find_transcript_on_disk(
                 matches = sorted(chats_dir.glob(f"session-*-{prefix}.json"), reverse=True)
                 if matches:
                     return str(matches[0])
+    elif source == "qwen":
+        qwen_tmp = Path.home() / ".qwen" / "tmp"
+        prefix = external_id[:8] if external_id else ""
+        if qwen_tmp.exists() and prefix:
+            for proj_dir in qwen_tmp.iterdir():
+                chats_dir = proj_dir / "chats"
+                if not chats_dir.is_dir():
+                    continue
+                matches = sorted(chats_dir.glob(f"session-*-{prefix}.json"), reverse=True)
+                if matches:
+                    return str(matches[0])
 
     return None
 
@@ -246,9 +262,12 @@ def _get_parser(source: str, session_id: str | None = None) -> TranscriptParser:
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
     if source == "gemini":
         return GeminiTranscriptParser(session_id=session_id)
+    elif source == "qwen":
+        return QwenTranscriptParser(session_id=session_id)
     elif source == "codex":
         return CodexTranscriptParser(session_id=session_id)
     else:
@@ -266,11 +285,15 @@ def _parse_lines(
 def _parse_json_session(
     data: dict[str, Any], source: str, session_id: str | None = None
 ) -> list[ParsedMessage]:
-    """Parse a native JSON session file (e.g., Gemini format)."""
+    """Parse a native JSON session file (e.g., Gemini/Qwen format)."""
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+    from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
     if source == "gemini":
         parser = GeminiTranscriptParser(session_id=session_id)
+        return parser.parse_session_json(data)
+    if source == "qwen":
+        parser = QwenTranscriptParser(session_id=session_id)
         return parser.parse_session_json(data)
     # Fallback: wrap as single-line JSONL
     return _parse_lines([json.dumps(data)], source, session_id=session_id)

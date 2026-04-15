@@ -291,7 +291,7 @@ async def handle_set_provider(
     """Handle set_provider message to switch the provider for a conversation."""
     conversation_id = data.get("conversation_id")
     provider = data.get("provider")
-    valid_providers = {"claude", "gemini", "codex"}
+    valid_providers = {"claude", "gemini", "qwen", "codex"}
 
     if not conversation_id or not provider:
         await mixin._send_error(websocket, "set_provider requires conversation_id and provider")

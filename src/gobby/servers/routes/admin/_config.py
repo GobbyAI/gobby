@@ -44,7 +44,7 @@ def _fallback_models_from_config(server: "HTTPServer") -> dict[str, list[dict[st
     result: dict[str, list[dict[str, str]]] = {}
     if server.services.config and server.services.config.llm_providers:
         llm_config = server.services.config.llm_providers
-        for provider_name in ("claude", "codex", "gemini"):
+        for provider_name in ("claude", "codex", "gemini", "qwen"):
             provider_config = getattr(llm_config, provider_name, None)
             if provider_config:
                 models = provider_config.get_models_list()
@@ -62,7 +62,7 @@ def register_config_routes(router: APIRouter, server: "HTTPServer") -> None:
         Get available LLM models discovered from OpenRouter's model registry.
 
         Query params:
-            provider: Optional filter (e.g. "claude", "codex", "gemini")
+            provider: Optional filter (e.g. "claude", "codex", "gemini", "qwen")
 
         Returns:
             Dictionary with models grouped by provider, default_model

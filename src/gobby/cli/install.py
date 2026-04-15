@@ -15,6 +15,7 @@ from ._detectors import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
     _is_gemini_cli_installed,
+    _is_qwen_cli_installed,
 )
 from ._install_prompts import (
     _API_KEY_PROMPTS,
@@ -41,11 +42,13 @@ from .installers import (
     install_gemini,
     install_git_hooks,
     install_neo4j,
+    install_qwen,
     install_qdrant,
     uninstall_claude,
     uninstall_codex,
     uninstall_gemini,
     uninstall_neo4j,
+    uninstall_qwen,
 )
 from .utils import get_install_dir
 
@@ -59,6 +62,7 @@ __all__ = [
     "_is_claude_code_installed",
     "_is_codex_cli_installed",
     "_is_gemini_cli_installed",
+    "_is_qwen_cli_installed",
     "_echo_install_details",
     "_echo_uninstall_details",
     "_API_KEY_PROMPTS",
@@ -87,6 +91,12 @@ __all__ = [
     "codex_flag",
     is_flag=True,
     help="Configure Codex notify integration (interactive Codex)",
+)
+@click.option(
+    "--qwen",
+    "qwen_flag",
+    is_flag=True,
+    help="Install Qwen CLI hooks only",
 )
 @click.option(
     "--hooks",
@@ -144,6 +154,7 @@ def install(
     claude_flag: bool,
     gemini_flag: bool,
     codex_flag: bool,
+    qwen_flag: bool,
     hooks_flag: bool,
     all_flag: bool,
     no_ext_services_flag: bool,
@@ -157,13 +168,20 @@ def install(
 
     By default (no flags), installs hooks globally (one-time setup).
     Use --project to install per-project instead (legacy behavior).
-    Use --claude, --gemini, --codex to install only to specific CLIs.
+    Use --claude, --gemini, --qwen, --codex to install only to specific CLIs.
     Use --hooks to install Git hooks for task auto-sync.
     """
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
 
-    if not claude_flag and not gemini_flag and not codex_flag and not hooks_flag and not all_flag:
+    if (
+        not claude_flag
+        and not gemini_flag
+        and not qwen_flag
+        and not codex_flag
+        and not hooks_flag
+        and not all_flag
+    ):
         all_flag = True
 
     # Build list of CLIs to install
@@ -178,6 +196,8 @@ def install(
             clis_to_install.append("claude")
         if _is_gemini_cli_installed():
             clis_to_install.append("gemini")
+        if _is_qwen_cli_installed():
+            clis_to_install.append("qwen")
         if _is_codex_cli_installed():
             clis_to_install.append("codex")
 
@@ -190,9 +210,10 @@ def install(
             click.echo("\nSupported CLIs:")
             click.echo("  - Claude Code: npm install -g @anthropic-ai/claude-code")
             click.echo("  - Gemini CLI:  npm install -g @google/gemini-cli")
+            click.echo("  - Qwen CLI:    npm install -g @qwen-code/qwen-code")
             click.echo("  - Codex CLI:   npm install -g @openai/codex")
             click.echo(
-                "\nYou can still install manually with --claude, --gemini, or --codex flags."
+                "\nYou can still install manually with --claude, --gemini, --qwen, or --codex flags."
             )
             sys.exit(1)
     else:
@@ -200,6 +221,8 @@ def install(
             clis_to_install.append("claude")
         if gemini_flag:
             clis_to_install.append("gemini")
+        if qwen_flag:
+            clis_to_install.append("qwen")
         if codex_flag:
             clis_to_install.append("codex")
 
@@ -233,10 +256,11 @@ def install(
     # Track results
     results: dict[str, dict[str, Any]] = {}
 
-    # Standard CLIs (claude, gemini, codex)
+    # Standard CLIs (claude, gemini, qwen, codex)
     _standard_installers = {
         "claude": install_claude,
         "gemini": install_gemini,
+        "qwen": install_qwen,
         "codex": install_codex,
     }
     for cli_name, installer_fn in _standard_installers.items():
@@ -294,6 +318,12 @@ def install(
     help="Uninstall Codex notify integration",
 )
 @click.option(
+    "--qwen",
+    "qwen_flag",
+    is_flag=True,
+    help="Uninstall Qwen CLI hooks only",
+)
+@click.option(
     "--all",
     "all_flag",
     is_flag=True,
@@ -331,6 +361,7 @@ def uninstall(
     claude_flag: bool,
     gemini_flag: bool,
     codex_flag: bool,
+    qwen_flag: bool,
     all_flag: bool,
     neo4j_flag: bool,
     volumes_flag: bool,
@@ -341,12 +372,19 @@ def uninstall(
 
     By default (no flags), uninstalls global hooks from CLI settings and ~/.gobby/hooks/.
     Use --project to uninstall per-project hooks from the current directory.
-    Use --claude, --gemini, or --codex to uninstall only from specific CLIs.
+    Use --claude, --gemini, --qwen, or --codex to uninstall only from specific CLIs.
     """
     project_path = working_dir.resolve() if working_dir else Path.cwd()
 
     # Determine which CLIs to uninstall
-    if not claude_flag and not gemini_flag and not codex_flag and not all_flag and not neo4j_flag:
+    if (
+        not claude_flag
+        and not gemini_flag
+        and not qwen_flag
+        and not codex_flag
+        and not all_flag
+        and not neo4j_flag
+    ):
         all_flag = True
 
     # Build list of CLIs to uninstall
@@ -356,16 +394,20 @@ def uninstall(
         if project_flag:
             claude_settings = project_path / ".claude" / "settings.json"
             gemini_settings = project_path / ".gemini" / "settings.json"
+            qwen_settings = project_path / ".qwen" / "settings.json"
             codex_hooks = project_path / ".codex" / "hooks.json"
         else:
             claude_settings = Path.home() / ".claude" / "settings.json"
             gemini_settings = Path.home() / ".gemini" / "settings.json"
+            qwen_settings = Path.home() / ".qwen" / "settings.json"
             codex_hooks = Path.home() / ".codex" / "hooks.json"
 
         if claude_settings.exists():
             clis_to_uninstall.append("claude")
         if gemini_settings.exists():
             clis_to_uninstall.append("gemini")
+        if qwen_settings.exists():
+            clis_to_uninstall.append("qwen")
         if codex_hooks.exists():
             clis_to_uninstall.append("codex")
 
@@ -374,10 +416,12 @@ def uninstall(
             if project_flag:
                 click.echo(f"\nChecked: {project_path / '.claude'}")
                 click.echo(f"         {project_path / '.gemini'}")
+                click.echo(f"         {project_path / '.qwen'}")
                 click.echo(f"         {project_path / '.codex'}")
             else:
                 click.echo(f"\nChecked: {Path.home() / '.claude'}")
                 click.echo(f"         {Path.home() / '.gemini'}")
+                click.echo(f"         {Path.home() / '.qwen'}")
                 click.echo(f"         {Path.home() / '.codex'}")
             sys.exit(0)
     else:
@@ -385,6 +429,8 @@ def uninstall(
             clis_to_uninstall.append("claude")
         if gemini_flag:
             clis_to_uninstall.append("gemini")
+        if qwen_flag:
+            clis_to_uninstall.append("qwen")
         if codex_flag:
             clis_to_uninstall.append("codex")
 
@@ -404,10 +450,11 @@ def uninstall(
     # Track results
     results: dict[str, dict[str, Any]] = {}
 
-    # Standard CLIs (claude, gemini, codex)
+    # Standard CLIs (claude, gemini, qwen, codex)
     _standard_uninstallers: dict[str, Callable[..., dict[str, Any]]] = {
         "claude": uninstall_claude,
         "gemini": uninstall_gemini,
+        "qwen": uninstall_qwen,
         "codex": uninstall_codex,
     }
     for cli_name, uninstaller_fn in _standard_uninstallers.items():

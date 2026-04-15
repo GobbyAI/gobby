@@ -786,6 +786,16 @@ class TestInstallProviderHooks:
             assert result is False
             assert "Failed" in caplog.text
 
+    def test_qwen_hooks_success(self, tmp_path) -> None:
+        """Test Qwen hooks installation success with project mode."""
+        from gobby.cli.installers import qwen as qwen_mod
+
+        with patch.object(qwen_mod, "install_qwen") as mock_install:
+            mock_install.return_value = {"success": True}
+            result = _install_provider_hooks("qwen", tmp_path)
+            assert result is True
+            mock_install.assert_called_once_with(tmp_path, mode="project")
+
     def test_hooks_install_exception(self, tmp_path, caplog) -> None:
         """Test hooks installation handles exceptions."""
         from gobby.cli.installers import claude as claude_mod

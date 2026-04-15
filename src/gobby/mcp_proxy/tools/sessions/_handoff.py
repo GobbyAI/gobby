@@ -194,7 +194,7 @@ def register_handoff_tools(
         Args:
             session_id: Session reference - supports #N, N (seq_num), UUID, or prefix (optional)
             project_id: Project ID to find parent session in (optional)
-            source: Filter by CLI source - claude, gemini, codex (optional)
+            source: Filter by CLI source - claude, gemini, qwen, codex (optional)
             link_child_session_id: Session to link as child - supports #N, N, UUID, or prefix (optional)
 
         Returns:

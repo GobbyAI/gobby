@@ -62,7 +62,7 @@ async def _read_last_turn_from_transcript(transcript_path: str, source: str) -> 
 
     Args:
         transcript_path: Path to the JSONL transcript file
-        source: CLI source (claude, gemini, codex, etc.)
+        source: CLI source (claude, gemini, qwen, codex, etc.)
 
     Returns:
         Tuple of (prompt_text, response_text). Empty strings if not found.
@@ -117,7 +117,7 @@ async def _read_undigested_turns(
 
     Args:
         transcript_path: Path to the JSONL transcript file
-        source: CLI source (claude, gemini, codex, etc.)
+        source: CLI source (claude, gemini, qwen, codex, etc.)
         digested_count: Number of pairs already digested
 
     Returns:

@@ -49,6 +49,7 @@ function getModelsForProvider(
 ): { value: string; label: string }[] {
   const entry = catalog.find((e) => e.provider === provider);
   if (entry?.models?.length) return entry.models;
+  if (entry) return [{ value: "default", label: "Default" }];
   return [{ value: currentModel, label: currentModel || "Default" }];
 }
 

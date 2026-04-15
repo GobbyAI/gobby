@@ -6,7 +6,7 @@ directories so those prompts never appear.
 
 Each CLI has a different trust mechanism:
 - Claude Code: ~/.claude/projects/<encoded-path>/ (directory existence = trust)
-- Gemini CLI: ~/.gemini/trustedFolders.json + ~/.gemini/projects.json
+- Gemini/Qwen CLI: ~/.gemini|.qwen/trustedFolders.json + projects.json
 - Codex CLI: sandboxed via --full-auto, no trust needed
 """
 
@@ -41,7 +41,7 @@ def pre_approve_directory(cli: str, directory: str) -> None:
     and resolved paths to cover all cases.
 
     Args:
-        cli: CLI name (claude, gemini, codex)
+        cli: CLI name (claude, gemini, qwen, codex)
         directory: Absolute path to the workspace directory
     """
     # Resolve symlinks — on macOS /tmp -> /private/tmp, and CLIs resolve
@@ -52,9 +52,9 @@ def pre_approve_directory(cli: str, directory: str) -> None:
     if cli in _CLAUDE_COMPATIBLE_CLIS:
         for path in paths:
             _pre_approve_claude(path)
-    elif cli == "gemini":
+    elif cli in {"gemini", "qwen"}:
         for path in paths:
-            _pre_approve_gemini(path)
+            _pre_approve_gemini_compatible(cli, path)
     # Codex uses --full-auto sandbox; no trust pre-approval needed
 
 
@@ -78,8 +78,8 @@ def _pre_approve_claude(directory: str) -> None:
         logger.warning(f"Failed to pre-approve Claude trust for {directory}: {e}", exc_info=True)
 
 
-def _pre_approve_gemini(directory: str) -> None:
-    """Pre-approve a directory for Gemini CLI.
+def _pre_approve_gemini_compatible(cli: str, directory: str) -> None:
+    """Pre-approve a directory for a Gemini-compatible CLI.
 
     Writes to both:
     - ~/.gemini/projects.json — workspace registry
@@ -88,17 +88,17 @@ def _pre_approve_gemini(directory: str) -> None:
     Without the trustedFolders entry, Gemini shows an interactive trust
     prompt that blocks headless agent execution.
     """
-    gemini_home = Path.home() / ".gemini"
-    gemini_home.mkdir(parents=True, exist_ok=True)
+    cli_home = Path.home() / f".{cli}"
+    cli_home.mkdir(parents=True, exist_ok=True)
 
     # 1. Register in projects.json
-    projects_file = gemini_home / "projects.json"
+    projects_file = cli_home / "projects.json"
     try:
         if projects_file.exists():
             data = json.loads(projects_file.read_text())
             if not isinstance(data, dict):
                 logger.warning(
-                    f"Gemini projects.json root is not a dict, resetting: {projects_file}"
+                    f"{cli.title()} projects.json root is not a dict, resetting: {projects_file}"
                 )
                 data = {"projects": {}}
         else:
@@ -114,16 +114,19 @@ def _pre_approve_gemini(directory: str) -> None:
             data["projects"] = projects
             projects_file.write_text(json.dumps(data, indent=2) + "\n")
     except (OSError, json.JSONDecodeError) as e:
-        logger.warning(f"Failed to update Gemini projects.json for {directory}: {e}", exc_info=True)
+        logger.warning(
+            f"Failed to update {cli.title()} projects.json for {directory}: {e}",
+            exc_info=True,
+        )
 
     # 2. Pre-trust in trustedFolders.json (the actual trust gate)
-    trust_file = gemini_home / "trustedFolders.json"
+    trust_file = cli_home / "trustedFolders.json"
     try:
         if trust_file.exists():
             raw = json.loads(trust_file.read_text())
             if not isinstance(raw, dict):
                 logger.warning(
-                    f"Gemini trustedFolders.json root is not a dict, resetting: {trust_file}"
+                    f"{cli.title()} trustedFolders.json root is not a dict, resetting: {trust_file}"
                 )
             trusted: dict[str, str] = raw if isinstance(raw, dict) else {}
         else:
@@ -134,8 +137,9 @@ def _pre_approve_gemini(directory: str) -> None:
 
         trusted[directory] = "TRUST_PARENT"
         trust_file.write_text(json.dumps(trusted, indent=2) + "\n")
-        logger.info(f"Pre-approved Gemini folder trust for {directory}")
+        logger.info(f"Pre-approved {cli.title()} folder trust for {directory}")
     except (OSError, json.JSONDecodeError) as e:
         logger.warning(
-            f"Failed to update Gemini trustedFolders.json for {directory}: {e}", exc_info=True
+            f"Failed to update {cli.title()} trustedFolders.json for {directory}: {e}",
+            exc_info=True,
         )

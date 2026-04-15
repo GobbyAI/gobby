@@ -55,6 +55,33 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
           />
         </svg>
       );
+    case "qwen":
+      return (
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          className="source-icon source-icon-qwen"
+          aria-labelledby={titleId}
+        >
+          <title id={titleId}>Qwen</title>
+          <path
+            d="M12 4a8 8 0 1 0 5.657 13.657"
+            stroke={color}
+            strokeWidth="2.25"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M14.5 14.5 20 20"
+            stroke={color}
+            strokeWidth="2.25"
+            strokeLinecap="round"
+          />
+          <circle cx="12" cy="12" r="2.5" fill={color} />
+        </svg>
+      );
     case "codex":
       return (
         <svg

@@ -1,7 +1,7 @@
 """Unified hook event models for multi-CLI session management.
 
 This module defines the unified internal representation for hook events across
-all supported CLIs (Claude Code, Gemini CLI, Codex CLI). Adapters translate
+all supported CLIs (Claude Code, Gemini CLI, Qwen CLI, Codex CLI). Adapters translate
 between CLI-specific formats and these unified types.
 
 Design Decision: This file coexists with hook_types.py. The existing HookType enum
@@ -60,6 +60,7 @@ class SessionSource(str, Enum):
 
     CLAUDE = "claude"
     GEMINI = "gemini"
+    QWEN = "qwen"
     CODEX = "codex"
 
 
@@ -145,76 +146,91 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     HookEventType.SESSION_START: {
         "claude": "SessionStart",
         "gemini": "SessionStart",
+        "qwen": "SessionStart",
         "codex": "thread/started",
     },
     HookEventType.SESSION_END: {
         "claude": "SessionEnd",
         "gemini": "SessionEnd",
+        "qwen": "SessionEnd",
         "codex": "thread/archive",
     },
     HookEventType.BEFORE_AGENT: {
         "claude": "UserPromptSubmit",
         "gemini": "BeforeAgent",
+        "qwen": "BeforeAgent",
         "codex": "turn/started",
     },
     HookEventType.AFTER_AGENT: {
         "claude": "Stop",
         "gemini": "AfterAgent",
+        "qwen": "AfterAgent",
         "codex": "turn/completed",
     },
     HookEventType.STOP: {
         "claude": "Stop",
         "gemini": None,
+        "qwen": None,
         "codex": None,
     },
     HookEventType.BEFORE_TOOL: {
         "claude": "PreToolUse",
         "gemini": "BeforeTool",
+        "qwen": "BeforeTool",
         "codex": "requestApproval",
     },
     HookEventType.AFTER_TOOL: {
         "claude": "PostToolUse",
         "gemini": "AfterTool",
+        "qwen": "AfterTool",
         "codex": "item/completed",
     },
     HookEventType.BEFORE_TOOL_SELECTION: {
         "claude": None,
         "gemini": "BeforeToolSelection",
+        "qwen": "BeforeToolSelection",
         "codex": None,
     },
     HookEventType.BEFORE_MODEL: {
         "claude": None,
         "gemini": "BeforeModel",
+        "qwen": "BeforeModel",
         "codex": None,
     },
     HookEventType.AFTER_MODEL: {
         "claude": None,
         "gemini": "AfterModel",
+        "qwen": "AfterModel",
         "codex": None,
     },
     HookEventType.PRE_COMPACT: {
         "claude": "PreCompact",
         "gemini": "PreCompress",
+        "qwen": "PreCompress",
         "codex": "contextCompaction",
     },
     HookEventType.SUBAGENT_START: {
         "claude": "SubagentStart",
         "gemini": None,
+        "qwen": None,
         "codex": None,
     },
     HookEventType.SUBAGENT_STOP: {
         "claude": "SubagentStop",
         "gemini": None,
+        "qwen": None,
         "codex": None,
     },
     HookEventType.PERMISSION_REQUEST: {
         "claude": "PermissionRequest",
         "gemini": None,
+        "qwen": None,
         "codex": None,
     },
     HookEventType.NOTIFICATION: {
         "claude": "Notification",
         "gemini": "Notification",
+        "qwen": "Notification",
         "codex": None,
     },
 }

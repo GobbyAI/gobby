@@ -9,7 +9,7 @@
 # ///
 """Unified Hook Dispatcher - Routes CLI hooks to Gobby daemon.
 
-Supports Claude Code, Gemini CLI, and Codex.
+Supports Claude Code, Gemini CLI, Qwen CLI, and Codex.
 CLI is identified via --cli flag (primary) or path-based detection (fallback).
 
 Usage:
@@ -86,6 +86,16 @@ CLI_CONFIGS: dict[str, CLIConfig] = {
         terminal_context_hooks=frozenset({"SessionStart"}),
         json_error_exit_code=1,
         logger_name="gobby.hooks.gemini.dispatcher",
+        suppress_logs=False,
+        has_source_detection=False,
+    ),
+    "qwen": CLIConfig(
+        source="qwen",
+        critical_hooks=frozenset({"SessionStart"}),
+        session_start_hooks=frozenset({"SessionStart"}),
+        terminal_context_hooks=frozenset({"SessionStart"}),
+        json_error_exit_code=1,
+        logger_name="gobby.hooks.qwen.dispatcher",
         suppress_logs=False,
         has_source_detection=False,
     ),
@@ -393,7 +403,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--cli",
         default=None,
-        help="CLI name (claude, gemini, codex)",
+        help="CLI name (claude, gemini, qwen, codex)",
     )
     parser.add_argument(
         "--debug",
@@ -722,7 +732,7 @@ async def main() -> int:
                 # failed", not "tool blocked"). Stop hooks are the
                 # exception — they use exit code 2 to block, same as
                 # Claude. Exit 0 would allow the stop.
-                if config.source in ("gemini", "codex") and hook_type != "Stop":
+                if config.source in ("gemini", "qwen", "codex") and hook_type != "Stop":
                     print(json.dumps(result))
                     return 0
 

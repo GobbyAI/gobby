@@ -17,6 +17,7 @@ from gobby.servers.websocket.chat.provider_backends import (
     CodexWebChatBackend,
     GeminiManagedChatSession,
     GeminiWebChatBackend,
+    QwenManagedChatSession,
 )
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 
@@ -37,10 +38,12 @@ class TestWebChatRuntimeManager:
 
         claude_session = manager.create_session(provider="claude", conversation_id="conv-1")
         gemini_session = manager.create_session(provider="gemini", conversation_id="conv-2")
-        codex_session = manager.create_session(provider="codex", conversation_id="conv-3")
+        qwen_session = manager.create_session(provider="qwen", conversation_id="conv-3")
+        codex_session = manager.create_session(provider="codex", conversation_id="conv-4")
 
         assert isinstance(claude_session, ChatSession)
         assert isinstance(gemini_session, GeminiManagedChatSession)
+        assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
 
     def test_create_session_applies_codex_transcript_retry_config(self) -> None:

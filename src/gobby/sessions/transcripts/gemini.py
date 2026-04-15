@@ -80,6 +80,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
         self,
         session_id: str | None = None,
         logger_instance: logging.Logger | None = None,
+        cli_name: str = "gemini",
     ):
         """
         Initialize GeminiTranscriptParser.
@@ -88,7 +89,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             session_id: Optional session identifier.
             logger_instance: Optional logger instance.
         """
-        super().__init__(cli_name="gemini", session_id=session_id, logger_instance=logger_instance)
+        super().__init__(cli_name=cli_name, session_id=session_id, logger_instance=logger_instance)
         # Counter for generating synthetic tool_use_ids when not present in data
         self._tool_use_counter = 0
         # Track last generated tool_use_id for JSONL sequential pairing

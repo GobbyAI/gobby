@@ -538,15 +538,15 @@ class ChatSessionMixin:
             try:
                 cli_source = effective_provider or "claude"
                 context_parts: list[str] = []
-                if effective_provider == "gemini":
+                if effective_provider in {"gemini", "qwen"}:
                     preamble = _build_agent_identity_preamble(agent_body)
                 else:
                     preamble = agent_body.build_prompt_preamble()
                 if preamble:
                     context_parts.append(preamble)
-                # Gemini web chat defers instructions + skills to BEFORE_AGENT
+                # Gemini/Qwen web chat defer instructions + skills to BEFORE_AGENT
                 # so the first prompt does not duplicate heavy context blocks.
-                if effective_provider != "gemini":
+                if effective_provider not in {"gemini", "qwen"}:
                     skills_text = await asyncio.to_thread(
                         _inject_agent_skills,
                         agent_body,

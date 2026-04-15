@@ -12,6 +12,7 @@ interface AgentStatusBarProps {
 const SOURCE_CONFIG: Record<string, { label: string; dotClassName: string }> = {
   claude: { label: 'Claude', dotClassName: 'chat-session-status__dot--claude' },
   gemini: { label: 'Gemini', dotClassName: 'chat-session-status__dot--gemini' },
+  qwen: { label: 'Qwen', dotClassName: 'chat-session-status__dot--qwen' },
   codex: { label: 'Codex', dotClassName: 'chat-session-status__dot--codex' },
 }
 

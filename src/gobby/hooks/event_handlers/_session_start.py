@@ -107,26 +107,34 @@ class SessionStartMixin(EventHandlersBase):
             Path to transcript file, or None if not derivable.
         """
         if cli_source == "gemini":
-            return self._find_gemini_transcript(input_data, external_id)
+            return self._find_json_session_transcript("gemini", "Gemini", input_data, external_id)
+        if cli_source == "qwen":
+            return self._find_json_session_transcript("qwen", "Qwen", input_data, external_id)
         return None
 
     def _find_gemini_transcript(self, input_data: dict[str, Any], external_id: str) -> str | None:
-        """Find the Gemini session JSON file.
+        """Backwards-compatible wrapper for Gemini transcript lookup."""
+        return self._find_json_session_transcript("gemini", "Gemini", input_data, external_id)
 
-        Gemini stores sessions at:
-        ~/.gemini/tmp/{SHA256(cwd)}/chats/session-{date}T{time}-{session_id[:8]}.json
-        """
+    def _find_json_session_transcript(
+        self,
+        cli_name: str,
+        cli_label: str,
+        input_data: dict[str, Any],
+        external_id: str,
+    ) -> str | None:
+        """Find a Gemini-compatible session JSON file."""
         cwd = input_data.get("cwd")
         if not cwd:
-            self.logger.debug("Cannot derive Gemini transcript: no cwd")
+            self.logger.debug("Cannot derive %s transcript: no cwd", cli_label)
             return None
 
         session_id = input_data.get("session_id") or external_id or ""
         project_hash = hashlib.sha256(cwd.encode()).hexdigest()
-        chats_dir = Path.home() / ".gemini" / "tmp" / project_hash / "chats"
+        chats_dir = Path.home() / f".{cli_name}" / "tmp" / project_hash / "chats"
 
         if not chats_dir.exists():
-            self.logger.debug(f"Gemini chats dir not found: {chats_dir}")
+            self.logger.debug("%s chats dir not found: %s", cli_label, chats_dir)
             return None
 
         # Try to match by session_id prefix (first 8 chars)
@@ -134,16 +142,18 @@ class SessionStartMixin(EventHandlersBase):
         if prefix:
             matches = sorted(chats_dir.glob(f"session-*-{prefix}.json"), reverse=True)
             if matches:
-                self.logger.debug(f"Found Gemini transcript by prefix: {matches[0]}")
+                self.logger.debug("Found %s transcript by prefix: %s", cli_label, matches[0])
                 return str(matches[0])
 
         # Fallback: most recent session file
         all_sessions = sorted(chats_dir.glob("session-*.json"), reverse=True)
         if all_sessions:
-            self.logger.debug(f"Found Gemini transcript (most recent): {all_sessions[0]}")
+            self.logger.debug(
+                "Found %s transcript (most recent): %s", cli_label, all_sessions[0]
+            )
             return str(all_sessions[0])
 
-        self.logger.debug(f"No Gemini session files in {chats_dir}")
+        self.logger.debug("No %s session files in %s", cli_label, chats_dir)
         return None
 
     def handle_session_start(self, event: HookEvent) -> HookResponse:

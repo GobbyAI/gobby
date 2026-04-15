@@ -294,8 +294,8 @@ export function ChatPage({
           .map((p: { name: string }) => p.name);
         setAvailableProviders(names);
       })
-      .catch(() => setAvailableProviders(["claude"]));
-  }, []);
+      .catch(() => setAvailableProviders([effectiveInputProvider || "claude"]));
+  }, [effectiveInputProvider]);
 
   // Modals
   const [showCommandPalette, setShowCommandPalette] = useState(false);
