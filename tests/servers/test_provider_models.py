@@ -101,7 +101,7 @@ class TestProviderModelCatalog:
             patch.object(
                 catalog,
                 "_get_cli_version",
-                new=AsyncMock(side_effect=["1.0.12", "0.37.1", "0.118.0"]),
+                new=AsyncMock(side_effect=["1.0.12", "0.37.1", "0.14.3", "0.118.0"]),
             ),
         ):
             status = await catalog.refresh()
@@ -145,3 +145,112 @@ class TestProviderModelCatalog:
         catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
 
         assert catalog.status_snapshot()["codex"]["model_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_discover_qwen_models_merges_acp_and_configured_models(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+
+        with (
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/local/bin/qwen"),
+            patch.object(
+                catalog,
+                "_discover_acp_models",
+                new=AsyncMock(
+                    return_value=[
+                        {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+                        {"value": "gpt-5(openai)", "label": "gpt-5"},
+                    ]
+                ),
+            ),
+            patch.object(
+                catalog,
+                "_discover_qwen_configured_models",
+                return_value=[
+                    {"value": "gpt-5(openai)", "label": "gpt-5"},
+                    {"value": "claude-sonnet-4-5(anthropic)", "label": "claude-sonnet-4-5"},
+                ],
+            ),
+        ):
+            models = await catalog._discover_qwen_models()
+
+        assert models == [
+            {"value": "coder-model(qwen-oauth)", "label": "coder-model (qwen-oauth)"},
+            {"value": "gpt-5(openai)", "label": "gpt-5 (openai)"},
+            {
+                "value": "claude-sonnet-4-5(anthropic)",
+                "label": "claude-sonnet-4-5 (anthropic)",
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_discover_qwen_models_can_fall_back_to_settings_catalog(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+
+        with (
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/local/bin/qwen"),
+            patch.object(
+                catalog,
+                "_discover_acp_models",
+                new=AsyncMock(side_effect=RuntimeError("ACP auth required")),
+            ),
+            patch.object(
+                catalog,
+                "_discover_qwen_configured_models",
+                return_value=[{"value": "gpt-5(openai)", "label": "gpt-5"}],
+            ),
+        ):
+            models = await catalog._discover_qwen_models()
+
+        assert models == [{"value": "gpt-5(openai)", "label": "gpt-5"}]
+
+    def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
+        global_settings = temp_dir / ".qwen" / "settings.json"
+        global_settings.parent.mkdir(parents=True)
+        global_settings.write_text(
+            json.dumps(
+                {
+                    "security": {"auth": {"selectedType": "openai"}},
+                    "modelProviders": {
+                        "openai": [{"id": "gpt-5", "name": "gpt-5"}],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        project_dir = temp_dir / "project"
+        project_settings = project_dir / ".qwen" / "settings.json"
+        project_settings.parent.mkdir(parents=True)
+        project_settings.write_text(
+            json.dumps(
+                {
+                    "security": {"auth": {"selectedType": "anthropic"}},
+                    "modelProviders": {
+                        "anthropic": [{"id": "claude-sonnet-4-5", "name": "claude-sonnet-4-5"}],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+
+        with (
+            patch.object(Path, "home", return_value=temp_dir),
+            patch.object(Path, "cwd", return_value=project_dir),
+        ):
+            settings = catalog._load_qwen_settings()
+
+        assert settings["security"]["auth"]["selectedType"] == "anthropic"
+        assert settings["modelProviders"]["openai"][0]["id"] == "gpt-5"
+        assert settings["modelProviders"]["anthropic"][0]["id"] == "claude-sonnet-4-5"

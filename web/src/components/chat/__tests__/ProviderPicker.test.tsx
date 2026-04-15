@@ -3,50 +3,58 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProviderPicker } from "../ProviderPicker";
 
+function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
+  return {
+    providers: [
+      {
+        provider: "claude",
+        available: true,
+        models: [
+          { value: "opus", label: "Opus" },
+          { value: "sonnet", label: "Sonnet" },
+        ],
+        source: "static",
+      },
+      {
+        provider: "gemini",
+        available: true,
+        models: [
+          { value: "gemini-3.1-pro-preview", label: "pro-3.1" },
+          { value: "gemini-3-flash-preview", label: "flash-3" },
+        ],
+        source: "static",
+      },
+      {
+        provider: "qwen",
+        available: true,
+        models: qwenModels,
+        source: "live",
+      },
+      {
+        provider: "codex",
+        available: true,
+        models: [
+          { value: "gpt-5.4", label: "codex-5.4" },
+          { value: "gpt-5.4-mini", label: "mini-5.4" },
+          { value: "gpt-5.3-codex", label: "codex-5.3" },
+        ],
+        source: "static",
+      },
+    ],
+  };
+}
+
 describe("ProviderPicker", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        providers: [
-          {
-            provider: "claude",
-            available: true,
-            models: [
-              { value: "opus", label: "Opus" },
-              { value: "sonnet", label: "Sonnet" },
-            ],
-            source: "static",
-          },
-          {
-            provider: "gemini",
-            available: true,
-            models: [
-              { value: "gemini-3.1-pro-preview", label: "pro-3.1" },
-              { value: "gemini-3-flash-preview", label: "flash-3" },
-            ],
-            source: "static",
-          },
-          {
-            provider: "qwen",
-            available: true,
-            models: [],
-            source: "static",
-          },
-          {
-            provider: "codex",
-            available: true,
-            models: [
-              { value: "gpt-5.4", label: "codex-5.4" },
-              { value: "gpt-5.4-mini", label: "mini-5.4" },
-              { value: "gpt-5.3-codex", label: "codex-5.3" },
-            ],
-            source: "static",
-          },
-        ],
-      }),
+      json: async () =>
+        buildCatalog([
+          { value: "coder-model(qwen-oauth)", label: "coder-model (qwen-oauth)" },
+          { value: "gpt-5(openai)", label: "gpt-5 (openai)" },
+        ]),
     }) as typeof fetch;
   });
 
@@ -55,7 +63,7 @@ describe("ProviderPicker", () => {
     vi.clearAllMocks();
   });
 
-  it("shows friendly Gemini and Codex labels plus the Qwen default fallback", async () => {
+  it("shows friendly Gemini and Codex labels plus Qwen catalog entries", async () => {
     render(
       <ProviderPicker
         open={true}
@@ -76,7 +84,8 @@ describe("ProviderPicker", () => {
       expect(screen.getByText("codex-5.4")).toBeTruthy();
       expect(screen.getByText("mini-5.4")).toBeTruthy();
       expect(screen.getByText("codex-5.3")).toBeTruthy();
-      expect(screen.getByText("Default")).toBeTruthy();
+      expect(screen.getByText("coder-model (qwen-oauth)")).toBeTruthy();
+      expect(screen.getByText("gpt-5 (openai)")).toBeTruthy();
     });
   });
 
@@ -110,6 +119,11 @@ describe("ProviderPicker", () => {
     const onModelChange = vi.fn();
     const onProviderChange = vi.fn();
     const onSwitchProvider = vi.fn();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(9_999_999_999_999);
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildCatalog([]),
+    }) as typeof fetch;
 
     render(
       <ProviderPicker
@@ -130,5 +144,6 @@ describe("ProviderPicker", () => {
     expect(onProviderChange).toHaveBeenCalledWith("qwen");
     expect(onModelChange).toHaveBeenCalledWith("default");
     expect(onSwitchProvider).toHaveBeenCalledWith("qwen");
+    nowSpy.mockRestore();
   });
 });

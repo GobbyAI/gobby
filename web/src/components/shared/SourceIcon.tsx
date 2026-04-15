@@ -1,3 +1,7 @@
+import claudeLogo from "../../assets/provider-logos/claude-symbol.svg";
+import geminiLogo from "../../assets/provider-logos/gemini-icon-2025.svg";
+import codexLogo from "../../assets/provider-logos/openai-symbol-2025.svg";
+import qwenLogo from "../../assets/provider-logos/qwen-logo.svg";
 import { SOURCE_COLORS } from "./sourceTheme";
 import type { SourceType } from "./sourceIconUtils";
 
@@ -7,98 +11,31 @@ interface SourceIconProps {
 }
 
 export function SourceIcon({ source, size = 14 }: SourceIconProps) {
+  const providerLogo =
+    {
+      claude: claudeLogo,
+      gemini: geminiLogo,
+      qwen: qwenLogo,
+      codex: codexLogo,
+    }[source as "claude" | "gemini" | "qwen" | "codex"] || null;
+
+  if (providerLogo) {
+    return (
+      <img
+        src={providerLogo}
+        width={size}
+        height={size}
+        className={`source-icon source-icon-${source}`}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+      />
+    );
+  }
+
   const color = SOURCE_COLORS[source] || SOURCE_COLORS.default;
-  const titleId = `source-icon-${source}`;
 
   switch (source) {
-    case "claude":
-      return (
-        <svg
-          width={size}
-          height={size}
-          viewBox="100 130 320 250"
-          fill="none"
-          className="source-icon source-icon-claude"
-          aria-labelledby={titleId}
-        >
-          <title id={titleId}>Claude</title>
-          <path
-            fillRule="nonzero"
-            d="M318.663 149.787h-43.368l78.952 212.423 43.368.004z"
-            fill={color}
-          />
-          <path
-            fillRule="nonzero"
-            d="m193.337 149.787-78.952 212.427h44.255l15.932-44.608 82.846-.004 16.107 44.612h44.255l-79.126-212.427zm-4.251 128.341 26.91-74.701 27.083 74.701z"
-            fill={color}
-          />
-        </svg>
-      );
-    case "gemini":
-      return (
-        <svg
-          width={size}
-          height={size}
-          viewBox="0 0 256 258"
-          fill="none"
-          className="source-icon source-icon-gemini"
-          aria-labelledby={titleId}
-        >
-          <title id={titleId}>Gemini</title>
-          <path
-            d="m122.062 172.77-10.27 23.52c-3.947 9.042-16.459 9.042-20.406 0l-10.27-23.52c-9.14-20.933-25.59-37.595-46.108-46.703L6.74 113.52c-8.987-3.99-8.987-17.064 0-21.053l27.385-12.156C55.172 70.97 71.917 53.69 80.9 32.043L91.303 6.977c3.86-9.303 16.712-9.303 20.573 0l10.403 25.066c8.983 21.646 25.728 38.926 46.775 48.268l27.384 12.156c8.987 3.99 8.987 17.063 0 21.053l-28.267 12.547c-20.52 9.108-36.97 25.77-46.109 46.703"
-            fill={color}
-          />
-          <path
-            d="m217.5 246.937-2.888 6.62c-2.114 4.845-8.824 4.845-10.937 0l-2.889-6.62c-5.148-11.803-14.42-21.2-25.992-26.34l-8.898-3.954c-4.811-2.137-4.811-9.131 0-11.269l8.4-3.733c11.87-5.273 21.308-15.017 26.368-27.22l2.966-7.154c2.067-4.985 8.96-4.985 11.027 0l2.966 7.153c5.06 12.204 14.499 21.948 26.368 27.221l8.4 3.733c4.812 2.138 4.812 9.132 0 11.27l-8.898 3.953c-11.571 5.14-20.844 14.537-25.992 26.34Z"
-            fill={color}
-          />
-        </svg>
-      );
-    case "qwen":
-      return (
-        <svg
-          width={size}
-          height={size}
-          viewBox="0 0 24 24"
-          fill="none"
-          className="source-icon source-icon-qwen"
-          aria-labelledby={titleId}
-        >
-          <title id={titleId}>Qwen</title>
-          <path
-            d="M12 4a8 8 0 1 0 5.657 13.657"
-            stroke={color}
-            strokeWidth="2.25"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <path
-            d="M14.5 14.5 20 20"
-            stroke={color}
-            strokeWidth="2.25"
-            strokeLinecap="round"
-          />
-          <circle cx="12" cy="12" r="2.5" fill={color} />
-        </svg>
-      );
-    case "codex":
-      return (
-        <svg
-          width={size}
-          height={size}
-          viewBox="0 0 100 100"
-          fill="none"
-          className="source-icon source-icon-codex"
-          aria-labelledby={titleId}
-        >
-          <title id={titleId}>Codex</title>
-          <path
-            fill={color}
-            d="M93.06 40.937c1.25-3.437 1.563-6.875 1.25-10.312-.312-3.438-1.562-6.875-3.125-10C88.373 15.937 84.31 12.187 79.623 10c-5-2.188-10.313-2.813-15.625-1.563-2.5-2.5-5.313-4.687-8.438-6.25S48.685 0 45.248 0c-5.313 0-10.625 1.562-15 4.687a24.16 24.16 0 0 0-9.063 12.5c-3.75.938-6.875 2.5-10 4.375-2.812 2.188-5 5-6.875 7.813-2.812 4.687-3.75 10-3.125 15.312a27.2 27.2 0 0 0 6.25 14.375c-1.25 3.438-1.562 6.875-1.25 10.313.313 3.437 1.563 6.875 3.125 10 2.813 4.687 6.875 8.437 11.563 10.625 5 2.187 10.312 2.812 15.625 1.562 2.5 2.5 5.312 4.688 8.437 6.25S51.81 100 55.248 100c5.312 0 10.625-1.563 15-4.688s7.5-7.5 9.062-12.5c3.438-.625 6.875-2.187 9.688-4.375 2.812-2.187 5.312-4.687 6.875-7.812 2.812-4.688 3.75-10 3.125-15.313C98.373 50 96.498 45 93.06 40.937m-37.5 52.5c-5 0-8.75-1.562-12.187-4.375 0 0 .312-.312.625-.312l20-11.563c.625-.312.937-.625 1.25-1.25s.312-.937.312-1.562V46.25l8.438 5v23.125c.312 10.937-8.438 19.062-18.438 19.062M15.248 76.25c-2.188-3.75-3.125-8.125-2.188-12.5 0 0 .313.312.625.312L40.625 64.3a1.81 1.81 0 0 0 1.832 0l13.598-7.852v5.438l.004.008a.18.18 0 0 1-.07.136l-11.259 6.5a10.506 10.506 0 0 1-14.324-3.836m-2.93-24.321a10.44 10.44 0 0 1 5.458-4.594c0 .094-.004.266-.004.383v12.879c0 .652.347 1.25.914 1.574L47.44 58.47l-4.707 2.718a.16.16 0 0 1-.156.012l-11.262-6.504a10.5 10.5 0 0 1-5.238-9.082c0-1.84.485-3.644 1.399-5.234Zm38.684 9.004-13.597-7.852 4.707-2.718a.17.17 0 0 1 .156-.016l11.261 6.504a10.48 10.48 0 0 1 5.243 9.078c0 4.395-2.743 8.324-6.86 9.84V50.949c0-.648-.347-1.25-.91-1.57m4.688-7.055q-.167-.1-.332-.195l-11.141-6.434a1.8 1.8 0 0 0-1.828 0l-13.602 7.852v-5.445a.17.17 0 0 1 .07-.137l11.258-6.496a10.5 10.5 0 0 1 5.239-1.403c5.789 0 10.484 4.696 10.484 10.485q0 .892-.148 1.773m-29.461 9.692-4.707-2.72a.17.17 0 0 1-.094-.128V36.164c.004-5.789 4.7-10.48 10.484-10.48 2.453.003 4.825.859 6.711 2.43a9 9 0 0 0-.332.187l-11.14 6.433c-.563.32-.914.922-.914 1.575v.007Zm2.558-5.512 6.055-3.5 6.059 3.496v6.996L50 56.992l-6.055-3.496Zm0 0"
-          />
-        </svg>
-      );
     default:
       return (
         <svg
@@ -107,7 +44,7 @@ export function SourceIcon({ source, size = 14 }: SourceIconProps) {
           viewBox="0 0 24 24"
           fill="none"
           className="source-icon"
-          stroke="currentColor"
+          stroke={color}
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"

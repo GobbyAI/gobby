@@ -139,7 +139,7 @@ The gate is met when all of the following are true:
 **Goal:** Freeze the first migration boundaries and make Python behavior
 replayable.
 
-**Scope**
+### Contracts and Parity Harness Scope
 
 - Define boundary contracts for health/status, first task/session read routes,
   first config routes, and hook execution
@@ -147,12 +147,12 @@ replayable.
 - Capture error behavior, timeout behavior, and degraded-daemon behavior
 - Add a compare harness that can replay fixtures against Python and Rust
 
-**Non-goals**
+### Contracts and Parity Harness Non-goals
 
 - Serving production traffic from Rust
 - Porting storage internals
 
-**Exit criteria**
+### Contracts and Parity Harness Exit Criteria
 
 - Fixtures are committed and stable
 - Compare harness passes against Python as the baseline
@@ -163,7 +163,7 @@ replayable.
 **Goal:** Turn the existing Rust utilities into a reusable migration
 foundation.
 
-**Scope**
+### `gobby-cli` Foundation Extraction Scope
 
 - Add `gobby-core` to `gobby-cli`
 - Extract shared bootstrap, daemon-client, project, DB helper, and secret
@@ -171,12 +171,12 @@ foundation.
 - Keep `gloc` unchanged unless a shared extraction clearly benefits it
 - Define stable APIs in `gobby-core` for later daemon and hook crates
 
-**Non-goals**
+### `gobby-cli` Foundation Extraction Non-goals
 
 - Building the daemon itself
 - Changing product behavior in `gcode` or `gsqz`
 
-**Exit criteria**
+### `gobby-cli` Foundation Extraction Exit Criteria
 
 - `gcode` and `gsqz` depend on `gobby-core` for shared concerns
 - Existing Rust utility tests stay green
@@ -187,7 +187,7 @@ foundation.
 **Goal:** Introduce a Rust daemon process that can be exercised beside Python
 without taking public traffic directly.
 
-**Scope**
+### Rust Daemon Shell and Front-Door Strangler Scope
 
 - Add `gobby-daemon` to `gobby-cli`
 - Run it on an alternate internal port
@@ -196,12 +196,12 @@ without taking public traffic directly.
 - Add Python-side delegation or proxy points for migrated HTTP boundaries
 - Add compare mode that logs mismatches while Python remains authoritative
 
-**Non-goals**
+### Rust Daemon Shell and Front-Door Strangler Non-goals
 
 - Porting all endpoints
 - Swapping the public port to Rust
 
-**Exit criteria**
+### Rust Daemon Shell and Front-Door Strangler Exit Criteria
 
 - Rust serves the initial contract surfaces on its own port
 - Python can delegate or compare selected routes against Rust
@@ -211,20 +211,20 @@ without taking public traffic directly.
 
 **Goal:** Cut over the safest externally visible boundaries first.
 
-**Scope**
+### Early Boundary Migrations Scope
 
 - Health/status endpoints
 - Read-only task and session query surfaces
 - Low-risk config reads, then tightly scoped writes after parity proves out
 - Optional hook-dispatcher binary work only after the daemon shell is stable
 
-**Non-goals**
+### Early Boundary Migrations Non-goals
 
 - Workflow engine replacement
 - Agent/pipeline/process lifecycle replacement
 - Storage-first migration of unrelated tables
 
-**Exit criteria**
+### Early Boundary Migrations Exit Criteria
 
 - Selected route families can run from Rust in developer-only or opt-in mode
 - Rollback to Python is immediate and proven
@@ -235,7 +235,7 @@ without taking public traffic directly.
 **Goal:** Move deeper internals only after the corresponding service boundary
 is stable under Rust.
 
-**Scope**
+### Internal Subsystem Migrations Scope
 
 - Rust storage logic for already-migrated boundaries
 - Config-store internals, then task/session storage paths behind migrated APIs
@@ -243,7 +243,7 @@ is stable under Rust.
 - MCP transport or other hot-path internals only when they support a migrated
   external boundary
 
-**Rules**
+### Internal Subsystem Migration Rules
 
 - Rust may read/write live SQLite tables only for boundaries already under Rust
   control or in compare-only mode with explicit safeguards
@@ -251,12 +251,12 @@ is stable under Rust.
 - No subsystem is migrated purely because it is "easy" if it does not advance
   a real strangler boundary
 
-**Non-goals**
+### Internal Subsystem Migrations Non-goals
 
 - A wholesale storage port before API parity
 - A speculative rewrite of workflows, agents, or memory systems
 
-**Exit criteria**
+### Internal Subsystem Migrations Exit Criteria
 
 - Rust owns the full internal stack for each cut-over boundary
 - Database coexistence and parity checks are in place for every Rust-owned
@@ -266,7 +266,7 @@ is stable under Rust.
 
 **Goal:** Promote Rust from delegated implementation to primary runtime.
 
-**Scope**
+### Cutover and Python Retirement Scope
 
 - Expand route coverage until the remaining Python-only surface is small and
   intentional
@@ -275,11 +275,11 @@ is stable under Rust.
 - Keep Python fallback available for at least one stabilization window after
   default cutover
 
-**Non-goals**
+### Cutover and Python Retirement Non-goals
 
 - Removing Python immediately after the first successful cutover
 
-**Exit criteria**
+### Cutover and Python Retirement Exit Criteria
 
 - Rust is the default implementation for the migrated boundaries
 - Python fallback is still available but no longer authoritative
@@ -289,18 +289,18 @@ is stable under Rust.
 
 **Goal:** Remove migration scaffolding and legacy duplication.
 
-**Scope**
+### Post-Cutover Simplification Scope
 
 - Remove obsolete Python proxy/delegation paths
 - Remove superseded docs and temporary compare-only code
 - Collapse duplicate behavior that only existed for side-by-side operation
 - Decide final ownership of schema management and remaining packaging concerns
 
-**Non-goals**
+### Post-Cutover Simplification Non-goals
 
 - Large redesigns unrelated to migration debt
 
-**Exit criteria**
+### Post-Cutover Simplification Exit Criteria
 
 - No production traffic depends on migration scaffolding
 - The architecture reflects the new steady state instead of the transition
