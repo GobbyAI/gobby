@@ -36,14 +36,18 @@ import type { GobbySession } from "./hooks/useSessions";
 import type { CommandPaletteAction } from "./components/chat/CommandPalette";
 import { FilesProvider } from "./contexts/FilesContext";
 import {
+  buildReasoningPreferenceKey,
   fetchProviderModelCatalog,
   getPreferredModelForProvider,
+  getPreferredReasoningEffort,
+  resolveModelValueForProvider,
   type ProviderModelEntry,
 } from "./lib/providerModels";
 import { cn } from "./lib/utils";
 
 const CONVERSATION_ID_STORAGE_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_STORAGE_KEY = "gobby-db-session-id";
+const REASONING_PREFERENCES_STORAGE_KEY = "gobby-reasoning-preferences";
 
 
 function loadPersistedConversationId(): string | null {
@@ -63,6 +67,19 @@ function loadPersistedDbSessionId(): string | null {
     return localStorage.getItem(DB_SESSION_ID_STORAGE_KEY);
   } catch {
     return null;
+  }
+}
+
+function loadReasoningPreferences(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(REASONING_PREFERENCES_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
   }
 }
 
@@ -338,6 +355,9 @@ export default function App() {
   const [providerModelCatalog, setProviderModelCatalog] = useState<
     ProviderModelEntry[]
   >([]);
+  const [reasoningPreferences, setReasoningPreferences] = useState<
+    Record<string, string>
+  >(() => loadReasoningPreferences());
   const voice = useVoice(
     wsRef,
     conversationId,
@@ -521,19 +541,33 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const activeProvider = mainSessionMeta?.source ?? selectedProvider;
-    if (!activeProvider) {
-      return;
+    try {
+      localStorage.setItem(
+        REASONING_PREFERENCES_STORAGE_KEY,
+        JSON.stringify(reasoningPreferences),
+      );
+    } catch {
+      // Best-effort local preference cache
     }
+  }, [reasoningPreferences]);
+
+  useEffect(() => {
+    const activeProvider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
+    const selectedModelForProvider = resolveModelValueForProvider(
+      providerModelCatalog,
+      activeProvider,
+      settings.model,
+    );
+    const persistedModelForProvider = resolveModelValueForProvider(
+      providerModelCatalog,
+      activeProvider,
+      mainSessionMeta?.model ?? null,
+    );
 
     const nextModel =
-      mainSessionMeta?.source === activeProvider && mainSessionMeta.model
-        ? mainSessionMeta.model
-        : getPreferredModelForProvider(
-            providerModelCatalog,
-            activeProvider,
-            settings.model,
-          );
+      selectedModelForProvider ??
+      persistedModelForProvider ??
+      getPreferredModelForProvider(providerModelCatalog, activeProvider, null);
 
     if (nextModel && nextModel !== settings.model) {
       updateModel(nextModel);
@@ -545,6 +579,46 @@ export default function App() {
     selectedProvider,
     settings.model,
     updateModel,
+  ]);
+
+  const updateReasoningPreference = useCallback(
+    (
+      provider: string | null | undefined,
+      model: string | null | undefined,
+      reasoningEffort: string | null | undefined,
+    ) => {
+      const key = buildReasoningPreferenceKey(provider, model);
+      if (!key || !reasoningEffort) {
+        return;
+      }
+      setReasoningPreferences((prev) => {
+        if (prev[key] === reasoningEffort) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [key]: reasoningEffort,
+        };
+      });
+    },
+    [],
+  );
+
+  const currentMainReasoning = useMemo(() => {
+    const provider = mainSessionMeta?.source ?? selectedProvider ?? "claude";
+    const preferenceKey = buildReasoningPreferenceKey(provider, settings.model);
+    return getPreferredReasoningEffort(
+      providerModelCatalog,
+      provider,
+      settings.model,
+      preferenceKey ? reasoningPreferences[preferenceKey] : null,
+    );
+  }, [
+    mainSessionMeta?.source,
+    providerModelCatalog,
+    reasoningPreferences,
+    selectedProvider,
+    settings.model,
   ]);
 
   // On mount: fetch persisted project from API (DB is source of truth)
@@ -683,7 +757,12 @@ export default function App() {
 
   // Wrap sendMessage to include the selected model + colon command interception
   const handleSendMessage = useCallback(
-    async (content: string, files?: QueuedFile[]) => {
+    async (
+      content: string,
+      files?: QueuedFile[],
+      options?: { reasoningEffort?: string | null },
+    ) => {
+      const reasoningEffort = options?.reasoningEffort ?? currentMainReasoning;
       const parsed = parseColonCommand(content);
       if (parsed) {
         const ctx = await resolveInjectContext(parsed);
@@ -695,12 +774,21 @@ export default function App() {
           files,
           effectiveProjectId,
           ctx ?? undefined,
+          reasoningEffort,
         );
       } else {
-        sendMessage(content, settings.model, files, effectiveProjectId);
+        sendMessage(
+          content,
+          settings.model,
+          files,
+          effectiveProjectId,
+          undefined,
+          reasoningEffort,
+        );
       }
     },
     [
+      currentMainReasoning,
       sendMessage,
       settings.model,
       effectiveProjectId,
@@ -885,7 +973,14 @@ export default function App() {
             console.warn("Cannot ask Gobby: disconnected");
             return;
           }
-          const sent = sendMessage(context, settings.model);
+          const sent = sendMessage(
+            context,
+            settings.model,
+            undefined,
+            undefined,
+            undefined,
+            currentMainReasoning,
+          );
           if (!sent) {
             console.error("Failed to send message to Gobby");
           }
@@ -894,7 +989,7 @@ export default function App() {
         }
       }, 0);
     },
-    [sendMessage, settings.model, isConnected],
+    [currentMainReasoning, sendMessage, settings.model, isConnected],
   );
 
   /* "Resume Session" from Sessions page — continue CLI session in web chat */
@@ -989,7 +1084,14 @@ export default function App() {
         return;
       }
       if (item.action === "compact_chat") {
-        sendMessage("/compact", settings.model, undefined, effectiveProjectId);
+        sendMessage(
+          "/compact",
+          settings.model,
+          undefined,
+          effectiveProjectId,
+          undefined,
+          currentMainReasoning,
+        );
         return;
       }
       if (item.action === "resume_session") {
@@ -1073,6 +1175,8 @@ export default function App() {
             settings.model,
             undefined,
             effectiveProjectId,
+            undefined,
+            currentMainReasoning,
           ),
       },
       {
@@ -1332,6 +1436,8 @@ export default function App() {
                 }}
                 currentModel={settings.model}
                 onModelChange={updateModel}
+                reasoningPreferences={reasoningPreferences}
+                onReasoningPreferenceChange={updateReasoningPreference}
                 agentDefinitions={agentDefs.definitions}
                 agentGlobalDefs={agentDefs.globalDefs}
                 agentProjectDefs={agentDefs.projectDefs}
@@ -1462,6 +1568,7 @@ export default function App() {
             undefined,
             effectiveProjectId,
             context,
+            currentMainReasoning,
           );
         }}
       />

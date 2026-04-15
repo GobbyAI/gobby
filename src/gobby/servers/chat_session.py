@@ -97,6 +97,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _connected: bool = field(default=False, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _model: str | None = field(default=None, repr=False)
+    reasoning_effort: str | None = field(default=None, repr=False)
     _pending_question: dict[str, Any] | None = field(default=None, repr=False)
     _pending_answer_event: asyncio.Event | None = field(default=None, repr=False)
     _pending_answers: dict[str, str] | None = field(default=None, repr=False)

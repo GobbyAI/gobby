@@ -394,12 +394,14 @@ class TestContinueInChatTerminalKill:
             project_id=None,
             resume_session_id=None,
             provider=None,
+            reasoning_effort=None,
         ):
             captured["conversation_id"] = conv_id
             captured["provider"] = provider
             captured["model"] = model
             captured["project_id"] = project_id
             captured["resume_session_id"] = resume_session_id
+            captured["reasoning_effort"] = reasoning_effort
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
@@ -477,12 +479,14 @@ class TestContinueInChatTerminalKill:
             project_id=None,
             resume_session_id=None,
             provider=None,
+            reasoning_effort=None,
         ):
             captured["conversation_id"] = conv_id
             captured["provider"] = provider
             captured["model"] = model
             captured["project_id"] = project_id
             captured["resume_session_id"] = resume_session_id
+            captured["reasoning_effort"] = reasoning_effort
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session

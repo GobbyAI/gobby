@@ -120,6 +120,7 @@ class ManagedChatSessionBase:
     _connected: bool = field(default=False, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _model: str | None = field(default=None, repr=False)
+    reasoning_effort: str | None = field(default=None, repr=False)
     _tool_approval_config: Any | None = field(default=None, repr=False)
     _tool_approval_callback: Any | None = field(default=None, repr=False)
     _session_manager_ref: Any | None = field(default=None, repr=False)
@@ -614,11 +615,13 @@ class GeminiWebChatBackend:
                 session_id,
                 model=session._model,
                 cwd=cwd,
+                reasoning_effort=session.reasoning_effort,
             )
         else:
             session_info = await self._client.create_session(
                 model=session._model,
                 cwd=cwd,
+                reasoning_effort=session.reasoning_effort,
             )
 
         resolved_session_id = (
@@ -649,6 +652,7 @@ class GeminiWebChatBackend:
             prompt,
             session_id=session.sdk_session_id,
             model=session._model,
+            reasoning_effort=session.reasoning_effort,
         ):
             yield event
 
@@ -860,6 +864,7 @@ class CodexWebChatBackend:
                 prompt,
                 context_prefix=context_prefix,
                 model=session._model,
+                reasoningEffort=session.reasoning_effort,
             )
             session._turn_id = turn.id or session._turn_id
 

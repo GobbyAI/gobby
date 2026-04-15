@@ -31,6 +31,7 @@ class ChatSessionProtocol(Protocol):
     resume_session_id: str | None
     last_activity: datetime
     provider: str
+    reasoning_effort: str | None
 
     # Lifecycle callbacks
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None

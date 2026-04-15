@@ -13,6 +13,7 @@ import { classifyTool } from "../types/chat";
 import type { QueuedFile } from "../types/chat";
 import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
+import { AUTO_REASONING_EFFORT } from "../lib/providerModels";
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
@@ -173,6 +174,17 @@ function normalizeSessionType(value: unknown): "terminal" | "web_chat" | null {
   return isValidSessionType(value) ? value : null;
 }
 
+function normalizeReasoningEffort(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === AUTO_REASONING_EFFORT) {
+    return null;
+  }
+  return normalized;
+}
+
 interface CreatedWebChatSession extends Record<string, unknown> {
   id: string;
   source: string;
@@ -220,10 +232,12 @@ async function createWebChatSession(params?: {
   projectId?: string | null;
   provider?: string | null;
   model?: string | null;
+  reasoningEffort?: string | null;
   chatMode?: ChatMode | null;
   title?: string | null;
 }): Promise<CreatedWebChatSession> {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+  const reasoningEffort = normalizeReasoningEffort(params?.reasoningEffort ?? null);
   const response = await fetch(`${baseUrl}/api/sessions/web-chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -231,6 +245,7 @@ async function createWebChatSession(params?: {
       project_id: params?.projectId ?? null,
       provider: params?.provider ?? null,
       model: params?.model ?? null,
+      reasoning_effort: reasoningEffort,
       chat_mode: params?.chatMode ?? null,
       title: params?.title ?? null,
     }),
@@ -1024,6 +1039,7 @@ export function useChat() {
         files?: QueuedFile[],
         projectId?: string | null,
         injectContext?: string,
+        reasoningEffort?: string | null,
       ) => boolean)
     | null
   >(null);
@@ -1130,6 +1146,7 @@ export function useChat() {
       projectId?: string | null;
       provider?: string | null;
       model?: string | null;
+      reasoningEffort?: string | null;
       chatMode?: ChatMode | null;
       title?: string | null;
       forceNew?: boolean;
@@ -1145,6 +1162,7 @@ export function useChat() {
         projectId: options?.projectId ?? projectIdRef.current,
         provider: options?.provider ?? selectedProviderRef.current,
         model: options?.model ?? null,
+        reasoningEffort: options?.reasoningEffort ?? null,
         chatMode: options?.chatMode ?? currentModeRef.current,
         title: options?.title ?? null,
       })
@@ -1220,7 +1238,12 @@ export function useChat() {
 
   // Queue for messages sent while disconnected — flushed on reconnect
   const pendingMessagesRef = useRef<
-    { content: string; projectId?: string | null }[]
+    {
+      content: string;
+      model?: string | null;
+      projectId?: string | null;
+      reasoningEffort?: string | null;
+    }[]
   >([]);
 
   const clearContinuationRollback = useCallback(() => {
@@ -1336,9 +1359,11 @@ export function useChat() {
           for (const msg of queued) {
             sendMessageRef.current?.(
               msg.content,
-              null,
+              msg.model ?? null,
               undefined,
               msg.projectId,
+              undefined,
+              msg.reasoningEffort,
             );
           }
         }, 500);
@@ -2401,7 +2426,10 @@ export function useChat() {
   // Switch provider. Existing conversations fork to a new server-owned session;
   // a blank draft stays local until the first user send.
   const switchProvider = useCallback(
-    (newProvider: string) => {
+    (
+      newProvider: string,
+      options?: { model?: string | null; reasoningEffort?: string | null },
+    ) => {
       if (isStreaming && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
@@ -2425,6 +2453,8 @@ export function useChat() {
       void ensureMainSession({
         projectId: projectIdRef.current,
         provider: newProvider,
+        model: options?.model ?? null,
+        reasoningEffort: options?.reasoningEffort ?? null,
         forceNew: true,
       });
     },
@@ -2466,8 +2496,15 @@ export function useChat() {
     async (
       sourceDbSessionId: string,
       projectId?: string,
-      options?: { provider?: string | null; model?: string | null },
+      options?: {
+        provider?: string | null;
+        model?: string | null;
+        reasoningEffort?: string | null;
+      },
     ): Promise<string> => {
+      const reasoningEffort = normalizeReasoningEffort(
+        options?.reasoningEffort ?? null,
+      );
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         return "";
       }
@@ -2580,6 +2617,7 @@ export function useChat() {
               : undefined),
           provider: continuationProvider,
           model: continuationModel,
+          reasoning_effort: reasoningEffort,
         }),
       );
 
@@ -2739,6 +2777,7 @@ export function useChat() {
       files?: QueuedFile[],
       projectId?: string | null,
       injectContext?: string,
+      reasoningEffort?: string | null,
     ): boolean => {
       console.log(
         "sendMessage called:",
@@ -2748,6 +2787,7 @@ export function useChat() {
         "files:",
         files?.length,
       );
+      const normalizedReasoningEffort = normalizeReasoningEffort(reasoningEffort);
 
       if (continuingSessionIdRef.current) {
         return false;
@@ -2765,6 +2805,7 @@ export function useChat() {
           projectId: projectId ?? projectIdRef.current,
           provider: selectedProviderRef.current,
           model: model ?? null,
+          reasoningEffort: normalizedReasoningEffort,
         }).then((sessionId) => {
           if (!sessionId) return;
           sendMessageRef.current?.(
@@ -2773,6 +2814,7 @@ export function useChat() {
             files,
             projectId,
             injectContext,
+            normalizedReasoningEffort,
           );
         });
         return true;
@@ -2781,7 +2823,12 @@ export function useChat() {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         // Queue the message to send on reconnect
         console.warn("WebSocket disconnected — queuing message for reconnect");
-        pendingMessagesRef.current.push({ content, projectId });
+        pendingMessagesRef.current.push({
+          content,
+          model,
+          projectId,
+          reasoningEffort: normalizedReasoningEffort,
+        });
         // Still add the user message to the UI so it's visible
         const queuedId = `user-${uuid()}`;
         setMessages((prev) => [
@@ -2854,6 +2901,10 @@ export function useChat() {
 
       if (injectContext) {
         payload.inject_context = injectContext;
+      }
+
+      if (normalizedReasoningEffort) {
+        payload.reasoning_effort = normalizedReasoningEffort;
       }
 
       if (selectedProviderRef.current) {

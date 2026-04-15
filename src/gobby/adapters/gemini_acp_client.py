@@ -232,6 +232,7 @@ class GeminiACPClient:
         *,
         model: str | None = None,
         cwd: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Create a new ACP session on an already-started shared backend."""
         session_params = {
@@ -240,6 +241,8 @@ class GeminiACPClient:
         }
         if model:
             session_params["model"] = model
+        if reasoning_effort:
+            session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/new", session_params)
         self._session_info = result if isinstance(result, dict) else {}
         self._session_id = _extract_session_id(self._session_info)
@@ -251,6 +254,7 @@ class GeminiACPClient:
         *,
         model: str | None = None,
         cwd: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Load an existing ACP session on an already-started shared backend."""
         session_params = {
@@ -260,6 +264,8 @@ class GeminiACPClient:
         }
         if model:
             session_params["model"] = model
+        if reasoning_effort:
+            session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/load", session_params)
         self._session_info = result if isinstance(result, dict) else {}
         self._session_id = _extract_session_id(self._session_info) or session_id
@@ -345,6 +351,7 @@ class GeminiACPClient:
         *,
         session_id: str | None = None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send a prompt and yield normalized stream events.
 
@@ -392,6 +399,8 @@ class GeminiACPClient:
             }
             if model:
                 request["params"]["model"] = model
+            if reasoning_effort:
+                request["params"]["reasoningEffort"] = reasoning_effort
 
             request_line = json.dumps(request) + "\n"
             self._process.stdin.write(request_line.encode())

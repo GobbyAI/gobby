@@ -89,6 +89,7 @@ class WebChatRuntimeManager:
         provider: str,
         conversation_id: str,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create a provider-specific session wrapper for web chat."""
         if provider == "gemini":
@@ -96,18 +97,21 @@ class WebChatRuntimeManager:
                 conversation_id=conversation_id,
                 _backend=self._gemini_backend,
                 _model=model,
+                reasoning_effort=reasoning_effort,
             )
         if provider == "qwen":
             return QwenManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._qwen_backend,
                 _model=model,
+                reasoning_effort=reasoning_effort,
             )
         if provider == "codex":
             return CodexManagedChatSession(
                 conversation_id=conversation_id,
                 _backend=self._codex_backend,
                 _model=model,
+                reasoning_effort=reasoning_effort,
                 _transcript_retry_attempts=self._codex_backend.transcript_retry_attempts,
                 _transcript_retry_delay_seconds=self._codex_backend.transcript_retry_delay_seconds,
             )
@@ -115,4 +119,6 @@ class WebChatRuntimeManager:
         session: ChatSessionProtocol = self._claude_backend.create_session(conversation_id)
         if isinstance(session, ChatSession) and model:
             session._model = model
+        if isinstance(session, ChatSession):
+            session.reasoning_effort = reasoning_effort
         return session

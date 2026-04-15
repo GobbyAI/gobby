@@ -48,7 +48,7 @@ function PTTHarness({
   onStopRecording = vi.fn(),
   onCancelRecording = vi.fn(),
 }: {
-  onSend?: (message: string, files?: unknown) => void
+  onSend?: (message: string, files?: unknown, options?: { reasoningEffort?: string | null }) => void
   onStopRecording?: () => void
   onCancelRecording?: () => void
 }) {
@@ -159,7 +159,9 @@ describe('ChatInput', () => {
     await userEvent.type(textarea, 'Hello world')
     await userEvent.keyboard('{Enter}')
 
-    expect(onSend).toHaveBeenCalledWith('Hello world', undefined)
+    expect(onSend).toHaveBeenCalledWith('Hello world', undefined, {
+      reasoningEffort: 'auto',
+    })
   })
 
   it('does not send empty messages', async () => {
@@ -354,7 +356,9 @@ describe('ChatInput', () => {
     await userEvent.type(textarea, 'Hello')
     await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
 
-    expect(onSend).toHaveBeenCalledWith('Hello', undefined)
+    expect(onSend).toHaveBeenCalledWith('Hello', undefined, {
+      reasoningEffort: 'auto',
+    })
   })
 
   it('shows model selection in the toolbar for a single-provider setup', () => {
@@ -384,7 +388,9 @@ describe('ChatInput', () => {
       />,
     )
 
-    expect(screen.getByText('OpenAI local')).toBeTruthy()
+    expect(screen.getByText('OpenAI')).toBeTruthy()
+    expect(screen.getByText('Local')).toBeTruthy()
+    expect(screen.getByLabelText('Select reasoning effort')).toBeTruthy()
   })
 
   it('forwards non-local slash commands in proxy mode', async () => {
@@ -407,7 +413,9 @@ describe('ChatInput', () => {
     await userEvent.type(textarea, '/plan')
     await userEvent.keyboard('{Enter}')
 
-    expect(onSend).toHaveBeenCalledWith('/plan', undefined)
+    expect(onSend).toHaveBeenCalledWith('/plan', undefined, {
+      reasoningEffort: 'auto',
+    })
     expect(onPaletteSelect).not.toHaveBeenCalled()
   })
 

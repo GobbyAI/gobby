@@ -25,7 +25,9 @@ import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
 import { useFileChanges } from "../../hooks/useFileChanges";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import {
+  buildReasoningPreferenceKey,
   fetchProviderModelCatalog,
+  getPreferredReasoningEffort,
   resolveProviderModelPair,
   type ProviderModelEntry,
 } from "../../lib/providerModels";
@@ -47,6 +49,12 @@ interface ChatPageProps {
   // Model selection
   currentModel?: string;
   onModelChange?: (model: string) => void;
+  reasoningPreferences?: Record<string, string>;
+  onReasoningPreferenceChange?: (
+    provider: string,
+    model: string,
+    reasoningEffort: string,
+  ) => void;
   // Command palette actions from App.tsx
   paletteActions?: CommandPaletteAction[];
   // Active sessions modal
@@ -71,6 +79,8 @@ export function ChatPage({
   agentHasProject = false,
   currentModel = "opus",
   onModelChange,
+  reasoningPreferences = {},
+  onReasoningPreferenceChange,
   paletteActions = [],
   onViewAgent,
 }: ChatPageProps) {
@@ -259,6 +269,18 @@ export function ChatPage({
   const effectiveInputModel = isSwappedTerminal
     ? viewedInputSelection.model ?? ""
     : mainInputSelection.model ?? "";
+  const effectiveReasoningPreferenceKey = buildReasoningPreferenceKey(
+    effectiveInputProvider,
+    effectiveInputModel,
+  );
+  const effectiveInputReasoning = getPreferredReasoningEffort(
+    providerModelCatalog,
+    effectiveInputProvider,
+    effectiveInputModel,
+    effectiveReasoningPreferenceKey
+      ? reasoningPreferences[effectiveReasoningPreferenceKey]
+      : null,
+  );
   const isReadOnlySession =
     isSwappedTerminal && chat.sessionInteractionMode !== "proxy";
   const chatInputDisabled =
@@ -289,7 +311,7 @@ export function ChatPage({
     isReadOnlySession ? chat.viewingSessionId ?? chat.dbSessionId : chat.dbSessionId;
 
   const handleSwappedSessionProviderSelection = useCallback(
-    async (provider: string, model: string) => {
+    async (provider: string, model: string, reasoningEffort: string | null) => {
       if (
         !isSwappedTerminal ||
         isAutonomousSession ||
@@ -313,9 +335,13 @@ export function ChatPage({
 
       chat.onProviderChange?.(provider);
       onModelChange?.(model);
+      if (reasoningEffort) {
+        onReasoningPreferenceChange?.(provider, model, reasoningEffort);
+      }
       await chat.continueSessionInChat(chat.viewingSessionId, projectId ?? undefined, {
         provider,
         model,
+        reasoningEffort,
       });
     },
     [
@@ -324,8 +350,41 @@ export function ChatPage({
       isAutonomousSession,
       isSwappedTerminal,
       onModelChange,
+      onReasoningPreferenceChange,
       projectId,
       viewingMeta?.status,
+    ],
+  );
+
+  const handleMainProviderSelection = useCallback(
+    (provider: string, model: string, reasoningEffort: string | null) => {
+      const providerChanged =
+        provider !== (effectiveInputProvider ?? chat.provider ?? "claude");
+
+      onModelChange?.(model);
+      if (reasoningEffort) {
+        onReasoningPreferenceChange?.(provider, model, reasoningEffort);
+      }
+
+      if (!providerChanged) {
+        return;
+      }
+
+      if (chat.onSwitchProvider) {
+        chat.onSwitchProvider(provider, {
+          model,
+          reasoningEffort,
+        });
+        return;
+      }
+
+      chat.onProviderChange?.(provider);
+    },
+    [
+      chat,
+      effectiveInputProvider,
+      onModelChange,
+      onReasoningPreferenceChange,
     ],
   );
 
@@ -682,12 +741,23 @@ export function ChatPage({
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
             provider={effectiveInputProvider}
             availableProviders={availableProviders}
+            providerModelCatalog={providerModelCatalog}
             currentModel={effectiveInputModel}
+            currentReasoning={effectiveInputReasoning}
             onModelChange={onModelChange}
-            onProviderChange={chat.onProviderChange}
-            onSwitchProvider={chat.onSwitchProvider}
+            onReasoningChange={(reasoningEffort) => {
+              if (effectiveInputProvider && effectiveInputModel) {
+                onReasoningPreferenceChange?.(
+                  effectiveInputProvider,
+                  effectiveInputModel,
+                  reasoningEffort,
+                );
+              }
+            }}
             onProviderSelectionChange={
-              isSwappedTerminal ? handleSwappedSessionProviderSelection : undefined
+              isSwappedTerminal
+                ? handleSwappedSessionProviderSelection
+                : handleMainProviderSelection
             }
             providerPickerDisabledReason={providerPickerDisabledReason}
             hasMessages={chat.messages.length > 0}

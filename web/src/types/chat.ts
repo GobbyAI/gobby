@@ -123,6 +123,10 @@ export interface QueuedFile {
   base64: string | null;
 }
 
+export interface ChatSendOptions {
+  reasoningEffort?: string | null;
+}
+
 export interface ProjectOption {
   id: string;
   name: string;
@@ -177,7 +181,11 @@ export interface ChatState {
   isConnected: boolean;
   isReconnecting: boolean;
   contextUsage?: ContextUsage;
-  onSend: (content: string, files?: QueuedFile[]) => void;
+  onSend: (
+    content: string,
+    files?: QueuedFile[],
+    options?: ChatSendOptions,
+  ) => void;
   onStop: () => void;
   onRespondToQuestion: (
     toolCallId: string,
@@ -199,11 +207,18 @@ export interface ChatState {
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
   activeAgent?: string;
   onAgentChange?: (agentName: string) => void;
-  onSwitchProvider?: (provider: string) => void;
+  onSwitchProvider?: (
+    provider: string,
+    options?: { model?: string | null; reasoningEffort?: string | null },
+  ) => void;
   continueSessionInChat?: (
     sourceDbSessionId: string,
     projectId?: string,
-    options?: { provider?: string | null; model?: string | null },
+    options?: {
+      provider?: string | null;
+      model?: string | null;
+      reasoningEffort?: string | null;
+    },
   ) => Promise<string>;
   planPendingApproval: boolean;
   onApprovePlan: () => void;

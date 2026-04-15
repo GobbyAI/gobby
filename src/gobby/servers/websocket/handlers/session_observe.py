@@ -135,6 +135,7 @@ async def handle_continue_in_chat(
     project_id = data.get("project_id")
     target_provider = data.get("provider")
     target_model = data.get("model")
+    target_reasoning_effort = _as_str(data.get("reasoning_effort"))
 
     # Look up source session for project_id and SDK session ID
     session_manager = getattr(mixin, "session_manager", None)
@@ -277,6 +278,7 @@ async def handle_continue_in_chat(
                 project_id=project_id,
                 resume_session_id=sdk_resume_id,
                 provider=effective_provider,
+                reasoning_effort=target_reasoning_effort,
             )
             if (
                 session_manager
@@ -301,6 +303,8 @@ async def handle_continue_in_chat(
             logger.error(f"Failed to create continuation session: {e}")
             await mixin._send_error(websocket, f"Failed to create session: {e}")
             return
+    elif target_reasoning_effort is not None:
+        session.reasoning_effort = target_reasoning_effort
 
     # History injection via message_manager removed (session_messages table dropped)
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ContextUsage } from '../../types/chat'
+import type { QueuedFile, ChatMode, ContextUsage, ChatSendOptions } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
@@ -9,11 +9,26 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { ProviderPicker } from './ProviderPicker'
+import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/Select'
 import { SourceIcon } from '../shared/SourceIcon'
+import {
+  AUTO_REASONING_EFFORT,
+  getModelLabel,
+  getModelsForProvider,
+  getOrderedProviders,
+  getPreferredModelForProvider,
+  getPreferredReasoningEffort,
+  getProviderDisplayName,
+  getReasoningOptionsForModel,
+  type ProviderModelEntry,
+} from '../../lib/providerModels'
 
 interface ChatInputProps {
-  onSend: (message: string, files?: QueuedFile[]) => void
+  onSend: (
+    message: string,
+    files?: QueuedFile[],
+    options?: ChatSendOptions,
+  ) => void
   onStop?: () => void
   isStreaming?: boolean
   disabled?: boolean
@@ -48,12 +63,22 @@ interface ChatInputProps {
   onScrollToBottom?: () => void
   provider?: string | null
   availableProviders?: string[]
+  providerModelCatalog?: ProviderModelEntry[]
   currentModel?: string
+  currentReasoning?: string
   onModelChange?: (model: string) => void
+  onReasoningChange?: (effort: string) => void
   onProviderChange?: (provider: string | null) => void
-  onSwitchProvider?: (provider: string) => void
+  onSwitchProvider?: (
+    provider: string,
+    options?: { model?: string | null; reasoningEffort?: string | null },
+  ) => void
   hasMessages?: boolean
-  onProviderSelectionChange?: (provider: string, model: string) => void
+  onProviderSelectionChange?: (
+    provider: string,
+    model: string,
+    reasoningEffort: string | null,
+  ) => void
   providerPickerDisabledReason?: string | null
   proxySlashMode?: boolean
   showObserveOverlay?: boolean
@@ -68,31 +93,6 @@ function shouldHandleSlashCommandLocally(input: string): boolean {
   const commandToken = input.slice(1).split(/\s/)[0] || ''
   const topLevelCommand = commandToken.split(':')[0] || commandToken
   return LOCAL_ONLY_SLASH_COMMANDS.has(topLevelCommand)
-}
-
-function formatProviderLabel(provider: string | null | undefined): string {
-  const providerLabels: Record<string, string> = {
-    claude: 'Claude',
-    gemini: 'Gemini',
-    qwen: 'Qwen',
-    codex: 'Codex',
-    openai: 'OpenAI',
-  }
-  const normalized = provider?.trim().toLowerCase()
-  if (!normalized) {
-    return ''
-  }
-  const knownLabel = providerLabels[normalized]
-  if (knownLabel) {
-    return knownLabel
-  }
-
-  const rawProvider = provider?.trim()
-  if (!rawProvider) {
-    return providerLabels.claude
-  }
-
-  return rawProvider.charAt(0).toUpperCase() + rawProvider.slice(1)
 }
 
 export function ChatInput({
@@ -131,11 +131,13 @@ export function ChatInput({
   onScrollToBottom,
   provider,
   availableProviders = [],
+  providerModelCatalog = [],
   currentModel = 'opus',
+  currentReasoning = AUTO_REASONING_EFFORT,
   onModelChange,
+  onReasoningChange,
   onProviderChange,
   onSwitchProvider,
-  hasMessages = false,
   onProviderSelectionChange,
   providerPickerDisabledReason = null,
   proxySlashMode = false,
@@ -145,7 +147,6 @@ export function ChatInput({
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
-  const [pickerOpen, setPickerOpen] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -211,12 +212,14 @@ export function ChatInput({
     const trimmed = input.trim()
     const hasFiles = queuedFiles.length > 0
     if ((trimmed || hasFiles) && !disabled) {
-      onSend(trimmed, hasFiles ? queuedFiles : undefined)
+      onSend(trimmed, hasFiles ? queuedFiles : undefined, {
+        reasoningEffort: currentReasoning,
+      })
       setInput('')
       setQueuedFiles([])
       onScrollToBottom?.()
     }
-  }, [input, disabled, onSend, queuedFiles, onScrollToBottom])
+  }, [currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
 
   const handleChange = useCallback((value: string) => {
     setInput(value)
@@ -307,18 +310,98 @@ export function ChatInput({
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
-  const pickerProviders = availableProviders.length > 0 ? availableProviders : [provider ?? 'claude']
+  const effectiveProvider = provider ?? 'claude'
+  const pickerProviders =
+    availableProviders.length > 0 ? availableProviders : [effectiveProvider]
+  const orderedProviders = getOrderedProviders(pickerProviders)
+  const visibleModels = getModelsForProvider(providerModelCatalog, effectiveProvider)
+  const modelOptions =
+    visibleModels.length > 0
+      ? visibleModels
+      : [{ value: currentModel || 'default', label: getModelLabel(providerModelCatalog, effectiveProvider, currentModel) }]
+  const resolvedModelValue = currentModel || modelOptions[0]?.value || 'default'
+  const reasoningOptions = getReasoningOptionsForModel(
+    providerModelCatalog,
+    effectiveProvider,
+    resolvedModelValue,
+  )
+  const resolvedReasoning =
+    currentReasoning ||
+    getPreferredReasoningEffort(
+        providerModelCatalog,
+        effectiveProvider,
+        resolvedModelValue,
+        AUTO_REASONING_EFFORT,
+      )
   const canSelectModel = Boolean(onModelChange)
-  const canSwitchProvider = pickerProviders.length >= 2 && Boolean(onSwitchProvider)
-  const providerButtonDisabled = disabled || Boolean(providerPickerDisabledReason)
-  const pickerLabel = providerPickerDisabledReason
-    ? providerPickerDisabledReason
-    : canSwitchProvider
-      ? 'Select provider and model'
-      : 'Select model'
-  const providerSummary = [formatProviderLabel(provider), currentModel?.trim() || '']
-    .filter(Boolean)
-    .join(' ') || pickerLabel
+  const selectionDisabled = disabled || Boolean(providerPickerDisabledReason)
+
+  const applySelection = useCallback(
+    (nextProvider: string, nextModel: string, nextReasoning: string) => {
+      if (onProviderSelectionChange) {
+        onProviderSelectionChange(nextProvider, nextModel, nextReasoning)
+        return
+      }
+
+      const providerChanged = nextProvider !== effectiveProvider
+      if (providerChanged) {
+        onProviderChange?.(nextProvider)
+      }
+      onModelChange?.(nextModel)
+      onReasoningChange?.(nextReasoning)
+      if (providerChanged) {
+        onSwitchProvider?.(nextProvider, {
+          model: nextModel,
+          reasoningEffort: nextReasoning,
+        })
+      }
+    },
+    [
+      effectiveProvider,
+      onModelChange,
+      onProviderChange,
+      onProviderSelectionChange,
+      onReasoningChange,
+      onSwitchProvider,
+    ],
+  )
+
+  const handleProviderSelect = useCallback(
+    (nextProvider: string) => {
+      const nextModel =
+        getPreferredModelForProvider(providerModelCatalog, nextProvider, null) ??
+        resolvedModelValue ??
+        'default'
+      const nextReasoning = getPreferredReasoningEffort(
+        providerModelCatalog,
+        nextProvider,
+        nextModel,
+        null,
+      )
+      applySelection(nextProvider, nextModel, nextReasoning)
+    },
+    [applySelection, providerModelCatalog, resolvedModelValue],
+  )
+
+  const handleModelSelect = useCallback(
+    (nextModel: string) => {
+      const nextReasoning = getPreferredReasoningEffort(
+        providerModelCatalog,
+        effectiveProvider,
+        nextModel,
+        resolvedReasoning,
+      )
+      applySelection(effectiveProvider, nextModel, nextReasoning)
+    },
+    [applySelection, effectiveProvider, providerModelCatalog, resolvedReasoning],
+  )
+
+  const handleReasoningSelect = useCallback(
+    (nextReasoning: string) => {
+      applySelection(effectiveProvider, resolvedModelValue, nextReasoning)
+    },
+    [applySelection, effectiveProvider, resolvedModelValue],
+  )
 
   type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
 
@@ -673,35 +756,89 @@ export function ChatInput({
                 <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
               )}
               {canSelectModel && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="chat-input-provider"
-                    onClick={() => setPickerOpen(true)}
-                    disabled={providerButtonDisabled}
-                    title={pickerLabel}
-                    aria-label={pickerLabel}
+                <div className="chat-input-model-controls">
+                  <Select
+                    value={effectiveProvider}
+                    onValueChange={handleProviderSelect}
+                    disabled={selectionDisabled}
                   >
-                    <SourceIcon source={provider || 'default'} size={14} />
-                    <span className="chat-input-provider__text">{providerSummary}</span>
-                    <span className="chat-input-provider__caret" aria-hidden="true">
-                      ▾
-                    </span>
-                  </Button>
-                  <ProviderPicker
-                    open={pickerOpen}
-                    onClose={() => setPickerOpen(false)}
-                    currentProvider={provider ?? null}
-                    currentModel={currentModel}
-                    availableProviders={pickerProviders}
-                    onModelChange={onModelChange ?? (() => {})}
-                    onProviderChange={(nextProvider) => onProviderChange?.(nextProvider)}
-                    onSwitchProvider={onSwitchProvider}
-                    onSelect={onProviderSelectionChange}
-                    hasMessages={hasMessages}
-                  />
-                </>
+                    <SelectTrigger
+                      className="chat-input-select chat-input-select--provider !w-auto"
+                      aria-label="Select provider and model"
+                      title={providerPickerDisabledReason ?? 'Select provider'}
+                    >
+                      <div className="chat-input-select__value">
+                        <SourceIcon source={effectiveProvider} size={14} />
+                        <span className="chat-input-select__text">
+                          {getProviderDisplayName(effectiveProvider)}
+                        </span>
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent side="top" className="chat-input-select__content">
+                      {orderedProviders.map((candidateProvider) => (
+                        <SelectItem key={candidateProvider} value={candidateProvider}>
+                          <span className="chat-input-select__item">
+                            <SourceIcon source={candidateProvider} size={14} />
+                            <span>{getProviderDisplayName(candidateProvider)}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select
+                    value={resolvedModelValue}
+                    onValueChange={handleModelSelect}
+                    disabled={selectionDisabled}
+                  >
+                    <SelectTrigger
+                      className="chat-input-select chat-input-select--model !w-auto"
+                      aria-label="Select model"
+                      title={providerPickerDisabledReason ?? 'Select model'}
+                    >
+                      <div className="chat-input-select__value">
+                        <span className="chat-input-select__text">
+                          {getModelLabel(providerModelCatalog, effectiveProvider, resolvedModelValue)}
+                        </span>
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent side="top" className="chat-input-select__content">
+                      {modelOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select
+                    value={resolvedReasoning}
+                    onValueChange={handleReasoningSelect}
+                    disabled={
+                      selectionDisabled ||
+                      (reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled))
+                    }
+                  >
+                    <SelectTrigger
+                      className="chat-input-select chat-input-select--reasoning !w-auto"
+                      aria-label="Select reasoning effort"
+                      title={providerPickerDisabledReason ?? 'Select reasoning effort'}
+                    >
+                      <div className="chat-input-select__value">
+                        <span className="chat-input-select__text">
+                          {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
+                        </span>
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent side="top" className="chat-input-select__content">
+                      {reasoningOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               )}
             </div>
           )}

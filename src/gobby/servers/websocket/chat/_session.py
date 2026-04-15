@@ -220,6 +220,7 @@ class ChatSessionMixin:
         project_id: str | None = None,
         resume_session_id: str | None = None,
         provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create and bootstrap a new ChatSession with lifecycle hooks wired.
 
@@ -231,9 +232,16 @@ class ChatSessionMixin:
             # Double-check: another coroutine may have created it while we waited
             existing = self._chat_sessions.get(conversation_id)
             if existing is not None:
+                if reasoning_effort is not None:
+                    existing.reasoning_effort = reasoning_effort
                 return existing
             return await self._create_chat_session_inner(
-                conversation_id, model, project_id, resume_session_id, provider
+                conversation_id,
+                model,
+                project_id,
+                resume_session_id,
+                provider,
+                reasoning_effort,
             )
 
     async def _create_chat_session_inner(
@@ -243,6 +251,7 @@ class ChatSessionMixin:
         project_id: str | None = None,
         resume_session_id: str | None = None,
         provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Inner implementation — must be called under the per-conversation lock from _session_create_locks."""
         session_key = conversation_id
@@ -307,9 +316,14 @@ class ChatSessionMixin:
                 provider=provider_name,
                 conversation_id=conversation_id,
                 model=model,
+                reasoning_effort=reasoning_effort,
             )
         else:
             session = ChatSession(conversation_id=conversation_id)
+            session.reasoning_effort = reasoning_effort
+
+        if reasoning_effort is not None:
+            session.reasoning_effort = reasoning_effort
 
         if resume_session_id:
             session.resume_session_id = resume_session_id

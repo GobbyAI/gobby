@@ -45,4 +45,7 @@ class WebChatSessionRequest(BaseModel):
     )
     title: str | None = Field(None, description="Optional session title")
     model: str | None = Field(None, description="Optional model override")
+    reasoning_effort: str | None = Field(
+        None, description="Optional reasoning effort override for supported providers/models"
+    )
     chat_mode: str | None = Field(None, description="Optional chat mode override")
