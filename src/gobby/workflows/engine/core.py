@@ -185,10 +185,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 # Initialized early so hardcoded turn-start rules can append.
                 mcp_calls: list[dict[str, Any]] = []
 
-                # Auto-track consecutive tool blocks (universal safety — not configurable)
-                # Only escalate when the SAME tool is retried — different tools reset the counter
-                # so the agent can recover by using other tools (Read, Bash, etc.).
-                if is_before_tool and variables.get("tool_block_pending"):
+                # Auto-track consecutive retries after a blocked BEFORE_TOOL.
+                # _last_blocked_tool is only set by pre-execution gate/enforcement blocks.
+                # tool_block_pending is reserved for real tool execution failures.
+                if is_before_tool and variables.get("_last_blocked_tool"):
                     tool_name = _get_tool_identity(event.data)
                     last_blocked = variables.get("_last_blocked_tool", "")
                     if tool_name == last_blocked:
@@ -269,7 +269,6 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if is_before_tool:
                     agent_block = self._check_agent_tool_enforcement(event, session_id, variables)
                     if agent_block is not None:
-                        variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
@@ -282,7 +281,6 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if is_before_tool:
                     step_block = self._check_step_tool_enforcement(event, session_id)
                     if step_block is not None:
-                        variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
@@ -340,8 +338,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         _clear_edit_write_state(variables)
 
                 if not rules:
-                    # Auto-manage tool_block_pending on after_tool
-                    # (Symmetric with auto-set on before_tool block at line ~164)
+                    # Auto-manage tool_block_pending on after_tool execution results.
                     if is_after_tool:
                         is_failure = event.metadata.get("is_failure", False) or event.data.get(
                             "is_error", False
@@ -388,8 +385,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             span.set_attribute("block_reason", resp.reason)
                     return resp
 
-                # Auto-manage tool_block_pending on after_tool before rule eval
-                # (Symmetric with auto-set on before_tool block at line ~164)
+                # Auto-manage tool_block_pending on after_tool before rule eval.
                 if is_after_tool:
                     is_failure = event.metadata.get("is_failure", False) or event.data.get(
                         "is_error", False
@@ -485,9 +481,9 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             block_reason = deferred_block.reason or "Blocked by rule"
                             block_reason = self._render_template(block_reason, ctx, allowed_funcs)
                             block_reason = f"Rule enforced by Gobby: [{_row.name}]\n{block_reason}"
-                            # Auto-set tool_block_pending on before_tool blocks
+                            # Track the blocked tool so repeated retries can escalate,
+                            # but do not mark this as a tool execution failure.
                             if is_before_tool:
-                                variables["tool_block_pending"] = True
                                 variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                                 # Blocked edit/write never executed — nothing to recover
                                 if _is_write_like_event_data(event.data):
