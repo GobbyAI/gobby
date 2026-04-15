@@ -5,6 +5,7 @@ import {
   buildChainSummary,
   computeLineDiff,
   formatToolName,
+  getToolDisplayName,
   getLanguageFromPath,
   getToolSummary,
   parseGrepOutput,
@@ -126,6 +127,15 @@ describe('getToolSummary', () => {
       arguments: { command: 'echo hello' },
     })
     expect(getToolSummary(call)).toBe('echo hello')
+  })
+
+  it('returns cmd-based command summaries for exec_command', () => {
+    const call = makeCall({
+      id: '1',
+      tool_name: 'exec_command',
+      arguments: { cmd: 'git status --short' },
+    })
+    expect(getToolSummary(call)).toBe('git status --short')
   })
 
   it('returns pattern for Grep without path', () => {
@@ -491,5 +501,25 @@ describe('buildChainSummary', () => {
       makeCall({ id: '2', tool_name: 'mcp__gobby__call_tool' }),
     ]
     expect(buildChainSummary(calls)).toBe('list_tools, call_tool')
+  })
+
+  it('canonicalizes exec_command groups as Bash', () => {
+    const calls = [
+      makeCall({ id: '1', tool_name: 'exec_command' }),
+      makeCall({ id: '2', tool_name: 'exec_command' }),
+    ]
+    expect(buildChainSummary(calls)).toBe('2 Bash')
+  })
+})
+
+describe('getToolDisplayName', () => {
+  it('canonicalizes exec_command to Bash', () => {
+    const call = makeCall({ id: '1', tool_name: 'exec_command' })
+    expect(getToolDisplayName(call)).toBe('Bash')
+  })
+
+  it('preserves non-shell tool names', () => {
+    const call = makeCall({ id: '1', tool_name: 'Read' })
+    expect(getToolDisplayName(call)).toBe('Read')
   })
 })

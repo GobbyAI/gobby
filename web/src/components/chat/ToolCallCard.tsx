@@ -21,6 +21,7 @@ import {
   extractResultMetadata,
   FILE_TOOL_TYPES,
   formatToolName,
+  getToolDisplayName,
   getLanguageFromPath,
   getToolSummary,
   groupToolCalls,
@@ -363,7 +364,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
 const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void; canvasSurfaces?: Map<string, A2UISurfaceState>; onCanvasInteraction?: (canvasId: string, action: UserAction) => void; nested?: boolean }) {
   const isActive = call.status === 'calling' || call.status === 'pending_approval'
   const [expanded, setExpanded] = useState(isActive)
-  const displayName = formatToolName(call.tool_name)
+  const displayName = getToolDisplayName(call)
   const toolType = resolveToolType(call)
   const summary = getToolSummary(call)
   const isCompact = summary !== null && (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
@@ -462,7 +463,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
 })
 
 function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void }) {
-  const displayName = formatToolName(call.tool_name)
+  const displayName = getToolDisplayName(call)
   const isLive = onRespondToApproval && call.status === 'pending_approval'
   const [sendError, setSendError] = useState<string | null>(null)
 

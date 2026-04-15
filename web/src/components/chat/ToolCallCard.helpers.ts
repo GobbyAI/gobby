@@ -5,6 +5,16 @@ const FILE_TOOL_TYPES = new Set(['read', 'edit'])
 const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob'])
 const COMPACT_HEADER_NAMES = new Set(['list_mcp_servers', 'ExitPlanMode'])
 const UNGROUPABLE_TOOLS = new Set(['render_surface', 'AskUserQuestion'])
+const SHELL_ALIAS_NAMES = new Set([
+  'bash',
+  'shell',
+  'run_command',
+  'run_shell_command',
+  'runshellcommand',
+  'shelltool',
+  'commandexecution',
+  'exec_command',
+])
 const EXT_TO_LANGUAGE: Record<string, string> = {
   py: 'python', tsx: 'tsx', ts: 'typescript', jsx: 'jsx', js: 'javascript',
   json: 'json', yaml: 'yaml', yml: 'yaml', md: 'markdown', css: 'css',
@@ -32,6 +42,24 @@ export function pathBasename(path: string): string {
 export function resolveToolType(call: ToolCall): string {
   if (call.tool_type) return call.tool_type
   return classifyTool(formatToolName(call.tool_name))
+}
+
+function getShellCommand(args: Record<string, unknown>): string | null {
+  const command = args.command
+  if (typeof command === 'string' && command.trim()) return command
+
+  const cmd = args.cmd
+  if (typeof cmd === 'string' && cmd.trim()) return cmd
+
+  return null
+}
+
+export function getToolDisplayName(call: ToolCall): string {
+  const name = formatToolName(call.tool_name)
+  if (resolveToolType(call) === 'bash' && SHELL_ALIAS_NAMES.has(name.toLowerCase())) {
+    return 'Bash'
+  }
+  return name
 }
 
 function isTypedResult(result: unknown): result is ToolResult {
@@ -62,7 +90,7 @@ export function getToolSummary(call: ToolCall): string | null {
     case 'edit':
       return (args.file_path as string) || null
     case 'bash':
-      return truncStr(args.command as string, 80)
+      return truncStr(getShellCommand(args), 80)
     case 'grep': {
       const pattern = args.pattern as string
       const path = args.path as string
@@ -164,7 +192,7 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
       segments.push({
         kind: 'group',
         toolName: call.tool_name,
-        displayName: formatToolName(call.tool_name),
+        displayName: getToolDisplayName(call),
         tool_calls: calls,
         hasErrors: calls.some((entry) => entry.status === 'error'),
         allCompleted: calls.every((entry) => entry.status === 'completed'),
@@ -326,7 +354,7 @@ export function extractBase64Image(result: unknown): string | null {
 export function buildChainSummary(toolCalls: ToolCall[]): string {
   const counts = new Map<string, number>()
   for (const toolCall of toolCalls) {
-    const name = formatToolName(toolCall.tool_name)
+    const name = getToolDisplayName(toolCall)
     counts.set(name, (counts.get(name) || 0) + 1)
   }
 

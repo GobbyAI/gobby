@@ -58,7 +58,22 @@ export function classifyTool(toolName: string | null | undefined): string {
   const name = toolName.toLowerCase();
 
   // Built-in tools
-  if (["bash", "sh", "terminal", "shell"].includes(name)) return "bash";
+  if (
+    [
+      "bash",
+      "sh",
+      "terminal",
+      "shell",
+      "run_command",
+      "run_shell_command",
+      "runshellcommand",
+      "shelltool",
+      "commandexecution",
+      "exec_command",
+    ].includes(name)
+  ) {
+    return "bash";
+  }
   if (["read", "read_file", "cat"].includes(name)) return "read";
   if (["edit", "write", "multiedit", "patch", "sed"].includes(name))
     return "edit";
@@ -66,7 +81,7 @@ export function classifyTool(toolName: string | null | undefined): string {
   if (["glob", "ls", "list_files", "find"].includes(name)) return "glob";
 
   // MCP tools: mcp__server__tool
-  if (toolName.startsWith("mcp__")) return "mcp";
+  if (name.startsWith("mcp__")) return "mcp";
 
   return "unknown";
 }
