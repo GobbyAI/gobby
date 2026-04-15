@@ -339,7 +339,18 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
 
 
 async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
-    """Spawn Qwen agent in terminal with direct spawn (no preflight)."""
+    """
+    Spawn Qwen agent in terminal with direct spawn (no preflight).
+
+    Session linkage approach:
+    1. Pre-create Gobby session with parent linkage (no external_id yet)
+    2. Pass GOBBY_SESSION_ID and other env vars to the terminal
+    3. Qwen's hook dispatcher reads env vars and includes in SessionStart
+    4. Daemon updates external_id when SessionStart fires with Qwen's native session_id
+
+    This avoids the preflight+resume approach which failed because Qwen
+    doesn't persist sessions when terminated.
+    """
     if request.session_manager is None:
         return SpawnResult(
             success=False,

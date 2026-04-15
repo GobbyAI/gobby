@@ -2713,7 +2713,7 @@ class TestCodexAdapterApprovalHandling:
 
     @pytest.mark.asyncio
     async def test_handle_approval_without_hook_manager(self) -> None:
-        """Without hook manager, defaults to accept."""
+        """Without hook manager, approval requests fail closed."""
         adapter = CodexAdapter()
 
         result = await adapter.handle_approval_request(
@@ -2721,11 +2721,11 @@ class TestCodexAdapterApprovalHandling:
             {"threadId": "thr-1", "parsedCmd": "ls"},
         )
 
-        assert result == {"decision": "accept"}
+        assert result == {"decision": "decline"}
 
     @pytest.mark.asyncio
     async def test_handle_approval_unknown_method(self) -> None:
-        """Unknown approval method defaults to accept."""
+        """Unknown approval methods fail closed."""
         mock_hm = MagicMock()
         adapter = CodexAdapter(hook_manager=mock_hm)
 
@@ -2734,7 +2734,7 @@ class TestCodexAdapterApprovalHandling:
             {"threadId": "thr-1"},
         )
 
-        assert result == {"decision": "accept"}
+        assert result == {"decision": "decline"}
         mock_hm.handle.assert_not_called()
 
     @pytest.mark.asyncio
@@ -3299,8 +3299,8 @@ class TestCodexApprovalDeclineFormat:
         assert result == {"decision": "accept"}
 
     @pytest.mark.asyncio
-    async def test_hook_error_defaults_to_accept(self) -> None:
-        """Hook processing error defaults to accept (fail-open)."""
+    async def test_hook_error_defaults_to_decline(self) -> None:
+        """Hook processing errors fail closed."""
         mock_hm = MagicMock()
         mock_hm.handle.side_effect = RuntimeError("Handler crashed")
         adapter = CodexAdapter(hook_manager=mock_hm)
@@ -3310,7 +3310,56 @@ class TestCodexApprovalDeclineFormat:
             {"threadId": "thr-err", "parsedCmd": "ls"},
         )
 
-        assert result == {"decision": "accept"}
+        assert result == {"decision": "decline"}
+
+    @pytest.mark.asyncio
+    async def test_unknown_approval_method_fails_closed(self) -> None:
+        """Unknown approval methods fail closed instead of auto-accepting."""
+        adapter = CodexAdapter(hook_manager=MagicMock())
+
+        result = await adapter.handle_approval_request(
+            "item/unknown/requestApproval",
+            {"threadId": "thr-unknown"},
+        )
+
+        assert result == {"decision": "decline"}
+
+    @pytest.mark.asyncio
+    async def test_missing_hook_manager_fails_closed(self) -> None:
+        """Approval requests fail closed when no hook manager is configured."""
+        adapter = CodexAdapter(hook_manager=None)
+
+        result = await adapter.handle_approval_request(
+            "item/commandExecution/requestApproval",
+            {"threadId": "thr-nohm", "parsedCmd": "ls"},
+        )
+
+        assert result == {"decision": "decline"}
+
+    @pytest.mark.asyncio
+    async def test_mcp_elicitation_failures_cancel(self) -> None:
+        """MCP elicitation requests fail closed with cancel."""
+        mock_hm = MagicMock()
+        mock_hm.handle.side_effect = RuntimeError("Handler crashed")
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "mcpServer/elicitation/request",
+            {
+                "threadId": "thr-mcp",
+                "turnId": "turn-1",
+                "serverName": "gobby",
+                "mode": "form",
+                "message": 'Allow the gobby MCP server to run tool "call_tool"?',
+                "requestedSchema": {"type": "object", "properties": {}},
+                "_meta": {
+                    "codex_approval_kind": "mcp_tool_call",
+                    "tool_params": {"server_name": "gobby-tasks", "tool_name": "claim_task"},
+                },
+            },
+        )
+
+        assert result == {"action": "cancel", "content": None, "_meta": None}
 
     def test_translate_block_to_decline(self) -> None:
         """translate_from_hook_response maps 'block' decision correctly."""

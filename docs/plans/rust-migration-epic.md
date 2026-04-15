@@ -85,7 +85,8 @@ rollback mechanisms, split it.
 
 Rust implementation work beyond low-risk extraction and prototyping starts only
 after the `0.4.0` hardening pass establishes stable contracts for the first
-migration boundaries.
+migration boundaries. Phase 0 contract-freezing and Phase 2 low-risk extraction
+may proceed in parallel with `0.4.0` hardening.
 
 The readiness gate is met when all of the following are true:
 
@@ -202,6 +203,7 @@ owned by Python.
 - `R0-15` Capture degraded-daemon fixtures for `GET /api/config/values`
 - `R0-16` Capture degraded-daemon fixtures for `GET /api/tasks`
 - `R0-17` Build a replay harness that runs the fixture corpus against Python
+- `R0-18` Define fixture storage format, directory layout, and schema version field
 
 ### Exit Criteria
 

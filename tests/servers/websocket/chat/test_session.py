@@ -365,7 +365,7 @@ class TestCreateChatSessionInner:
     @pytest.mark.asyncio
     async def test_existing_web_chat_source_wins_over_stale_message_provider(
         self, mixin: DummyMixin
-    ):
+    ) -> None:
         existing_db_sess = MagicMock()
         existing_db_sess.id = "db-existing"
         existing_db_sess.seq_num = 88

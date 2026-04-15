@@ -29,7 +29,10 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import LocalSessionManager
 
     TranscriptParser = (
-        ClaudeTranscriptParser | GeminiTranscriptParser | QwenTranscriptParser | CodexTranscriptParser
+        ClaudeTranscriptParser
+        | GeminiTranscriptParser
+        | QwenTranscriptParser
+        | CodexTranscriptParser
     )
 
 from pathlib import Path
@@ -222,14 +225,13 @@ def _find_transcript_on_disk(
                 if matches:
                     return str(matches[0])
     elif source == "qwen":
-        qwen_tmp = Path.home() / ".qwen" / "tmp"
-        prefix = external_id[:8] if external_id else ""
-        if qwen_tmp.exists() and prefix:
-            for proj_dir in qwen_tmp.iterdir():
+        qwen_projects = Path.home() / ".qwen" / "projects"
+        if qwen_projects.exists():
+            for proj_dir in qwen_projects.iterdir():
                 chats_dir = proj_dir / "chats"
                 if not chats_dir.is_dir():
                     continue
-                matches = sorted(chats_dir.glob(f"session-*-{prefix}.json"), reverse=True)
+                matches = sorted(chats_dir.glob(f"*{external_id}*.jsonl"), reverse=True)
                 if matches:
                     return str(matches[0])
 

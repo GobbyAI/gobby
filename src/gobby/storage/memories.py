@@ -237,6 +237,33 @@ class LocalMemoryManager:
             raise ValueError(f"Memory {memory_id} not found")
         return Memory.from_row(row)
 
+    def get_memories(
+        self,
+        memory_ids: list[str],
+        project_id: str | None = None,
+    ) -> list[Memory]:
+        """Return multiple memories, preserving the requested order."""
+        if not memory_ids:
+            return []
+
+        placeholders = ", ".join("?" for _ in memory_ids)
+        if project_id:
+            rows = self.db.fetchall(
+                f"SELECT * FROM memories WHERE id IN ({placeholders}) "
+                "AND (project_id = ? OR project_id IS NULL)",
+                (*memory_ids, project_id),
+            )
+        else:
+            rows = self.db.fetchall(
+                f"SELECT * FROM memories WHERE id IN ({placeholders})",
+                tuple(memory_ids),
+            )
+
+        memories_by_id = {row["id"]: Memory.from_row(row) for row in rows}
+        return [
+            memories_by_id[memory_id] for memory_id in memory_ids if memory_id in memories_by_id
+        ]
+
     def memory_exists(self, memory_id: str) -> bool:
         """Check if a memory with the given ID exists."""
         row = self.db.fetchone("SELECT 1 FROM memories WHERE id = ?", (memory_id,))

@@ -178,12 +178,33 @@ class TestProviderModelCatalog:
             models = await catalog._discover_qwen_models()
 
         assert models == [
-            {"value": "coder-model(qwen-oauth)", "label": "coder-model (qwen-oauth)"},
-            {"value": "gpt-5(openai)", "label": "gpt-5 (openai)"},
+            {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+            {"value": "gpt-5(openai)", "label": "gpt-5"},
             {
                 "value": "claude-sonnet-4-5(anthropic)",
-                "label": "claude-sonnet-4-5 (anthropic)",
+                "label": "claude-sonnet-4-5",
             },
+        ]
+
+    def test_normalize_qwen_model_labels_only_disambiguates_duplicate_base_ids(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+
+        normalized = catalog._normalize_qwen_model_labels(
+            [
+                {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+                {"value": "gpt-5(openai)", "label": "gpt-5"},
+                {"value": "gpt-5(anthropic)", "label": "gpt-5"},
+            ]
+        )
+
+        assert normalized == [
+            {"value": "coder-model(qwen-oauth)", "label": "coder-model"},
+            {"value": "gpt-5(openai)", "label": "gpt-5 (openai)"},
+            {"value": "gpt-5(anthropic)", "label": "gpt-5 (anthropic)"},
         ]
 
     @pytest.mark.asyncio

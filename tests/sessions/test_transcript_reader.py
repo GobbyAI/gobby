@@ -4,7 +4,7 @@ import gzip
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -530,6 +530,47 @@ class TestTranscriptReaderRendered:
         assert rendered[1].role == "assistant"
         assert "archived assistant" in rendered[1].content
         assert count == 2
+
+    @pytest.mark.asyncio
+    async def test_rederives_qwen_transcript_from_projects_layout(self, tmp_path: Path):
+        external_id = "ext-qwen-123"
+        transcript_path = (
+            tmp_path / ".qwen" / "projects" / "project-slug" / "chats" / f"{external_id}.jsonl"
+        )
+        _write_jsonl_file(
+            transcript_path,
+            [
+                {
+                    "type": "user",
+                    "content": "hello from qwen",
+                },
+                {
+                    "type": "model",
+                    "content": "qwen reply",
+                },
+            ],
+        )
+
+        session = MagicMock()
+        session.external_id = external_id
+        session.source = "qwen"
+        session.transcript_path = None
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        reader = TranscriptReader(session_manager)
+
+        with patch.object(Path, "home", return_value=tmp_path):
+            rendered = await reader.get_rendered_messages("sess-1")
+
+        assert len(rendered) == 2
+        assert "hello from qwen" in rendered[0].content
+        assert session_manager.update.call_count >= 1
+        assert session_manager.update.call_args_list[-1] == (
+            ("sess-1",),
+            {"transcript_path": str(transcript_path)},
+        )
 
     @pytest.mark.asyncio
     async def test_reports_unparseable_transcript_status(self, tmp_path: Path):

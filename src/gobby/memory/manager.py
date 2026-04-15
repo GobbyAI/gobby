@@ -575,15 +575,19 @@ class MemoryManager:
                 rrf_applied: bool = False,
             ) -> list[Memory]:
                 scored: list[tuple[Memory, float, float | None]] = []
+                memories_by_id = {
+                    mem.id: mem
+                    for mem in self.storage.get_memories(merged_ids, project_id=project_id)
+                }
 
                 for memory_id in merged_ids:
-                    try:
-                        mem = self.storage.get_memory(memory_id)
-                    except ValueError:
-                        continue
+                    mem = memories_by_id.get(memory_id)
+                    if mem is None:
+                        try:
+                            mem = self.storage.get_memory(memory_id, project_id=project_id)
+                        except ValueError:
+                            continue
 
-                    if project_id and mem.project_id and mem.project_id != project_id:
-                        continue
                     if memory_type and mem.memory_type != memory_type:
                         continue
                     if tags_all and not all(t in (mem.tags or []) for t in tags_all):

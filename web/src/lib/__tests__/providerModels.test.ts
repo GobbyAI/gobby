@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  clearProviderModelCache,
+  fetchProviderModelCatalog,
   getPreferredModelForProvider,
   resolveProviderModelPair,
   type ProviderModelEntry,
@@ -32,6 +34,16 @@ const catalog: ProviderModelEntry[] = [
 ];
 
 describe("providerModels", () => {
+  beforeEach(() => {
+    clearProviderModelCache();
+  });
+
+  afterEach(() => {
+    clearProviderModelCache();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("normalizes canonical model identifiers to the provider alias", () => {
     expect(
       getPreferredModelForProvider(catalog, "claude", "claude-opus-4-6"),
@@ -48,5 +60,52 @@ describe("providerModels", () => {
       provider: "claude",
       model: "opus",
     });
+  });
+
+  it("logs and returns an empty catalog when the fetch fails", async () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([]);
+    expect(debugSpy).toHaveBeenCalledWith(
+      "Failed to load provider catalog",
+      expect.any(Error),
+    );
+  });
+
+  it("clearProviderModelCache resets the cached catalog", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          providers: [
+            { provider: "claude", available: true, source: "live", models: [] },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          providers: [
+            { provider: "codex", available: true, source: "live", models: [] },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([
+      { provider: "claude", available: true, source: "live", models: [] },
+    ]);
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([
+      { provider: "claude", available: true, source: "live", models: [] },
+    ]);
+
+    clearProviderModelCache();
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([
+      { provider: "codex", available: true, source: "live", models: [] },
+    ]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });

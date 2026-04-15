@@ -1551,6 +1551,42 @@ class TestCloseTaskTool:
             )
 
     @pytest.mark.asyncio
+    async def test_close_task_fails_when_commit_sha_cannot_be_resolved(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test close_task surfaces git SHA resolution failures on commit-backed closes."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = ["abc123"]
+        mock_task.project_id = "proj-1"
+        mock_task.validation_criteria = None
+        mock_task.requires_user_review = False
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.utils.git.run_git_command", return_value=None),
+            patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+        ):
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "changes_summary": "test changes",
+                },
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "Could not resolve commit SHA for close - git rev-parse failed"
+
+    @pytest.mark.asyncio
     async def test_close_task_out_of_repo_blocked_when_session_had_edits(
         self, mock_task_manager, mock_sync_manager
     ):

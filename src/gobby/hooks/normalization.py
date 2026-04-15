@@ -287,7 +287,7 @@ def _has_sed_inplace_option(parts: list[str]) -> bool:
     for part in parts[1:]:
         if part in {"-i", "--in-place"}:
             return True
-        if part.startswith("-i") and part != "-":
+        if part.startswith("-i"):
             return True
         if part.startswith("--in-place="):
             return True
@@ -389,10 +389,32 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
             repo_mutation=True,
         )
 
-    if cmd in {"cp", "mv", "install", "truncate"}:
+    if cmd in {"cp", "mv", "install"}:
         positional = _shell_positional_args(parts)
         candidate = positional[-1] if positional else None
         paths = [candidate] if candidate and _looks_path_target(candidate) else []
+        return _build_canonical_tool_metadata(
+            "write",
+            paths=paths or None,
+            repo_mutation=True,
+        )
+
+    if cmd == "truncate":
+        truncate_positional: list[str] = []
+        skip_next = False
+        for part in parts[1:]:
+            if skip_next:
+                skip_next = False
+                continue
+            if part in _SHELL_CONTROL_TOKENS or not part:
+                continue
+            if part in {"-s", "--size"}:
+                skip_next = True
+                continue
+            if part.startswith("--size=") or part.startswith("-"):
+                continue
+            truncate_positional.append(part)
+        paths = [candidate for candidate in truncate_positional if _looks_path_target(candidate)]
         return _build_canonical_tool_metadata(
             "write",
             paths=paths or None,

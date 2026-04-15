@@ -256,11 +256,19 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # an explicit commit, prefer its normalized short SHA over current HEAD.
         from gobby.utils.git import normalize_commit_sha, run_git_command
 
-        current_commit_sha = (
-            normalize_commit_sha(commit_sha, cwd=cwd)
-            if commit_sha
-            else run_git_command(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
-        )
+        requires_closed_commit_sha = bool(commit_sha or session_had_edits or task.commits)
+        current_commit_sha: str | None = None
+        if requires_closed_commit_sha:
+            current_commit_sha = (
+                normalize_commit_sha(commit_sha, cwd=cwd)
+                if commit_sha
+                else run_git_command(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
+            )
+            if current_commit_sha is None:
+                return {
+                    "success": False,
+                    "error": "Could not resolve commit SHA for close - git rev-parse failed",
+                }
 
         if route_to_escalation:
             escalation_reason = (

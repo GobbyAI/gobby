@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_POST_KILL_SETTLE_SECONDS = 0.5
+
 
 def _is_terminal_session(session: Any) -> bool:
     """Return True when a session supports live attach/proxy semantics."""
@@ -57,7 +59,7 @@ async def _release_source_session(
                 logger.info("Killing agent %s before resume", run.id)
                 await kill_agent(run, session_manager.db, close_terminal=True)
                 killed = True
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
     except Exception as exc:
         logger.warning("Failed to kill running agent before resume: %s", exc)
 
@@ -75,7 +77,7 @@ async def _release_source_session(
         return
 
     if term_killed:
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
 
 
 async def _resolve_agent_name_for_session(
@@ -228,7 +230,9 @@ async def handle_continue_in_chat(
                 project_id=project_id,
             )
         except Exception as e:
-            logger.error("Failed to convert resumed session %s to web_chat: %s", source_session_id, e)
+            logger.error(
+                "Failed to convert resumed session %s to web_chat: %s", source_session_id, e
+            )
             await mixin._send_error(websocket, f"Failed to resume session: {e}")
             return
     # If the client pre-created a web-chat row with a stale provider, correct
@@ -240,7 +244,10 @@ async def handle_continue_in_chat(
             if target_session and getattr(target_session, "session_type", None) == "web_chat":
                 if (
                     getattr(target_session, "source", None) != effective_provider
-                    or (effective_model and getattr(target_session, "model", None) != effective_model)
+                    or (
+                        effective_model
+                        and getattr(target_session, "model", None) != effective_model
+                    )
                     or (source_title and getattr(target_session, "title", None) != source_title)
                     or (
                         source_chat_mode

@@ -165,6 +165,14 @@ function isChatProvider(value: unknown): value is string {
   return typeof value === "string" && CHAT_PROVIDERS.has(value);
 }
 
+function isValidSessionType(value: unknown): value is "terminal" | "web_chat" {
+  return value === "terminal" || value === "web_chat";
+}
+
+function normalizeSessionType(value: unknown): "terminal" | "web_chat" | null {
+  return isValidSessionType(value) ? value : null;
+}
+
 interface CreatedWebChatSession extends Record<string, unknown> {
   id: string;
   source: string;
@@ -176,6 +184,36 @@ interface CreatedWebChatSession extends Record<string, unknown> {
   external_id?: string | null;
   git_branch?: string | null;
   context_window?: number | null;
+}
+
+interface ContinuationRollbackSnapshot {
+  sourceSessionId: string;
+  conversationId: string;
+  dbSessionId: string | null;
+  mainSessionMeta: SessionObservationMeta | null;
+  sessionTitle: string | null;
+  sessionRef: string | null;
+  selectedProvider: string | null;
+  messages: ChatMessage[];
+  contextUsage: {
+    totalInputTokens: number;
+    outputTokens: number;
+    contextWindow: number | null;
+    uncachedInputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  };
+  currentMode: ChatMode;
+  currentBranch: string | null;
+  worktreePath: string | null;
+  viewingSessionId: string | null;
+  viewingSessionMeta: SessionObservationMeta | null;
+  observedSessionId: string | null;
+  observedSessionMeta: SessionObservationMeta | null;
+  attachedSessionId: string | null;
+  attachedSessionMeta: SessionObservationMeta | null;
+  sessionInteractionMode: SessionInteractionMode;
+  proxyDeliveryNotice: string | null;
 }
 
 async function createWebChatSession(params?: {
@@ -206,7 +244,9 @@ async function createWebChatSession(params?: {
   return data.session as CreatedWebChatSession;
 }
 
-function computeContextUsageFromSessionData(session: Record<string, unknown> | null): {
+function computeContextUsageFromSessionData(
+  session: Record<string, unknown> | null,
+): {
   totalInputTokens: number;
   outputTokens: number;
   contextWindow: number | null;
@@ -215,9 +255,13 @@ function computeContextUsageFromSessionData(session: Record<string, unknown> | n
   cacheCreationTokens: number;
 } {
   const totalInputTokens =
-    typeof session?.usage_input_tokens === "number" ? session.usage_input_tokens : 0;
+    typeof session?.usage_input_tokens === "number"
+      ? session.usage_input_tokens
+      : 0;
   const outputTokens =
-    typeof session?.usage_output_tokens === "number" ? session.usage_output_tokens : 0;
+    typeof session?.usage_output_tokens === "number"
+      ? session.usage_output_tokens
+      : 0;
   const cacheReadTokens =
     typeof session?.usage_cache_read_tokens === "number"
       ? session.usage_cache_read_tokens
@@ -285,19 +329,22 @@ function toSessionObservationMeta(
       (typeof session.git_branch === "string" ? session.git_branch : null),
     contextWindow:
       overrides?.contextWindow ??
-      (typeof session.context_window === "number" ? session.context_window : null),
+      (typeof session.context_window === "number"
+        ? session.context_window
+        : null),
     agentRunId:
       overrides?.agentRunId ??
       (typeof session.agent_run_id === "string" ? session.agent_run_id : null),
     workflowName:
       overrides?.workflowName ??
-      (typeof session.workflow_name === "string" ? session.workflow_name : null),
+      (typeof session.workflow_name === "string"
+        ? session.workflow_name
+        : null),
     agentName:
       overrides?.agentName ??
       (typeof session.agent_name === "string" ? session.agent_name : null),
     sessionType:
-      overrides?.sessionType ??
-      ((session.session_type as "terminal" | "web_chat" | null | undefined) ?? null),
+      overrides?.sessionType ?? normalizeSessionType(session.session_type),
   };
 }
 
@@ -707,10 +754,14 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
   return result;
 }
 
-function mapRenderedMessageToChatMessage(message: Record<string, unknown>): ChatMessage {
+function mapRenderedMessageToChatMessage(
+  message: Record<string, unknown>,
+): ChatMessage {
   const chatMsg: ChatMessage = {
     id: String(message.id ?? `ws-${Date.now()}`),
-    role: ((message.role as string) as "user" | "assistant" | "system") || "assistant",
+    role:
+      (message.role as string as "user" | "assistant" | "system") ||
+      "assistant",
     content: (message.content as string) ?? "",
     timestamp: new Date((message.timestamp as string) ?? Date.now()),
     contentBlocks: message.content_blocks as ContentBlock[] | undefined,
@@ -821,12 +872,18 @@ export function useChat() {
   const [viewingSessionMeta, setViewingSessionMeta] =
     useState<SessionObservationMeta | null>(null);
   const viewingSessionMetaRef = useRef<SessionObservationMeta | null>(null);
-  const initialViewingSessionIdRef = useRef<string | null>(loadViewingSessionId());
-  const initialViewingModeRef = useRef<"none" | "observe">(loadViewingSessionMode());
+  const initialViewingSessionIdRef = useRef<string | null>(
+    loadViewingSessionId(),
+  );
+  const initialViewingModeRef = useRef<"none" | "observe">(
+    loadViewingSessionMode(),
+  );
   const initialViewingRestoreRef = useRef(false);
 
   // Live terminal observation is distinct from interactive proxy mode.
-  const [observedSessionId, setObservedSessionId] = useState<string | null>(null);
+  const [observedSessionId, setObservedSessionId] = useState<string | null>(
+    null,
+  );
   const observedSessionIdRef = useRef<string | null>(null);
   const observedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
   const [sessionInteractionMode, setSessionInteractionMode] =
@@ -848,6 +905,9 @@ export function useChat() {
   const attachedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
   const [isContinuingSession, setIsContinuingSession] = useState(false);
   const continuingSessionIdRef = useRef<string | null>(null);
+  const continuationRollbackRef = useRef<ContinuationRollbackSnapshot | null>(
+    null,
+  );
 
   // Keep a ref so onopen/reconnect can read the current agent
   const activeAgentRef = useRef(activeAgent);
@@ -958,13 +1018,14 @@ export function useChat() {
   // Stable ref to sendMessage for use inside WS handlers / callbacks
   // defined before sendMessage itself. Updated after sendMessage is created.
   const sendMessageRef = useRef<
-    ((
-      content: string,
-      model?: string | null,
-      files?: QueuedFile[],
-      projectId?: string | null,
-      injectContext?: string,
-    ) => boolean) | null
+    | ((
+        content: string,
+        model?: string | null,
+        files?: QueuedFile[],
+        projectId?: string | null,
+        injectContext?: string,
+      ) => boolean)
+    | null
   >(null);
 
   const bindActiveSession = useCallback((sessionId: string | null) => {
@@ -1007,7 +1068,10 @@ export function useChat() {
 
   const clearSessionObservationState = useCallback(
     ({ preserveViewing = false }: { preserveViewing?: boolean } = {}) => {
-      if (observedSessionIdRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+      if (
+        observedSessionIdRef.current &&
+        wsRef.current?.readyState === WebSocket.OPEN
+      ) {
         wsRef.current.send(
           JSON.stringify({
             type: "detach_from_session",
@@ -1155,7 +1219,72 @@ export function useChat() {
   const activeRequestIdRef = useRef<string | null>(null);
 
   // Queue for messages sent while disconnected — flushed on reconnect
-  const pendingMessagesRef = useRef<{ content: string; projectId?: string | null }[]>([]);
+  const pendingMessagesRef = useRef<
+    { content: string; projectId?: string | null }[]
+  >([]);
+
+  const clearContinuationRollback = useCallback(() => {
+    continuationRollbackRef.current = null;
+  }, []);
+
+  const restoreContinuationState = useCallback(
+    (snapshot: ContinuationRollbackSnapshot) => {
+      conversationIdRef.current = snapshot.conversationId;
+      setConversationId(snapshot.conversationId);
+      saveConversationId(snapshot.conversationId);
+      dbSessionIdRef.current = snapshot.dbSessionId;
+      setDbSessionId(snapshot.dbSessionId);
+      saveDbSessionId(snapshot.dbSessionId);
+      setMessages(snapshot.messages);
+      setMainSessionMeta(snapshot.mainSessionMeta);
+      setSessionTitle(snapshot.sessionTitle);
+      setSessionRef(snapshot.sessionRef);
+      setSelectedProvider(snapshot.selectedProvider);
+      setContextUsage(snapshot.contextUsage);
+      setCurrentBranch(snapshot.currentBranch);
+      setWorktreePath(snapshot.worktreePath);
+      setViewingSessionId(snapshot.viewingSessionId);
+      viewingSessionIdRef.current = snapshot.viewingSessionId;
+      saveViewingSessionId(snapshot.viewingSessionId);
+      setViewingSessionMeta(snapshot.viewingSessionMeta);
+      viewingSessionMetaRef.current = snapshot.viewingSessionMeta;
+      observedSessionIdRef.current = snapshot.observedSessionId;
+      observedSessionMetaRef.current = snapshot.observedSessionMeta;
+      setObservedSessionId(snapshot.observedSessionId);
+      attachedSessionIdRef.current = snapshot.attachedSessionId;
+      setAttachedSessionId(snapshot.attachedSessionId);
+      attachedSessionMetaRef.current = snapshot.attachedSessionMeta;
+      setAttachedSessionMeta(snapshot.attachedSessionMeta);
+      sessionInteractionModeRef.current = snapshot.sessionInteractionMode;
+      setSessionInteractionMode(snapshot.sessionInteractionMode);
+      saveViewingSessionMode(
+        snapshot.viewingSessionId &&
+          snapshot.sessionInteractionMode === "observe"
+          ? "observe"
+          : "none",
+      );
+      setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
+      setIsLoadingMessages(false);
+      currentModeRef.current = snapshot.currentMode;
+      onModeChangedRef.current?.(snapshot.currentMode);
+
+      if (
+        snapshot.observedSessionId &&
+        snapshot.sessionInteractionMode !== "none" &&
+        wsRef.current?.readyState === WebSocket.OPEN
+      ) {
+        pendingSessionInteractionModeRef.current =
+          snapshot.sessionInteractionMode === "proxy" ? "proxy" : "observe";
+        wsRef.current.send(
+          JSON.stringify({
+            type: "attach_to_session",
+            session_id: snapshot.observedSessionId,
+          }),
+        );
+      }
+    },
+    [setSelectedProvider],
+  );
 
   /** Returns true if the chunk belongs to the currently active request. */
   function isActiveRequest(requestId?: string): boolean {
@@ -1179,9 +1308,7 @@ export function useChat() {
   const handleVoiceMessageRef = useRef<(data: Record<string, unknown>) => void>(
     () => {},
   );
-  const handleBinaryMessageRef = useRef<(data: ArrayBuffer) => void>(
-    () => {},
-  );
+  const handleBinaryMessageRef = useRef<(data: ArrayBuffer) => void>(() => {});
 
   // Connect to WebSocket
   const connect = useCallback(() => {
@@ -1192,7 +1319,7 @@ export function useChat() {
 
     console.log("Connecting to WebSocket:", wsUrl);
     const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';  // For TTS audio binary frames
+    ws.binaryType = "arraybuffer"; // For TTS audio binary frames
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -1207,7 +1334,12 @@ export function useChat() {
         // Send each queued message after a brief delay to let WS fully initialize
         setTimeout(() => {
           for (const msg of queued) {
-            sendMessageRef.current?.(msg.content, null, undefined, msg.projectId);
+            sendMessageRef.current?.(
+              msg.content,
+              null,
+              undefined,
+              msg.projectId,
+            );
           }
         }, 500);
       }
@@ -1335,7 +1467,7 @@ export function useChat() {
         try {
           handleBinaryMessageRef.current(event.data);
         } catch (err) {
-          console.error('TTS binary message error:', err);
+          console.error("TTS binary message error:", err);
         }
         return;
       }
@@ -1490,7 +1622,10 @@ export function useChat() {
           const nextConversationId =
             (continued.conversation_id as string | undefined) ?? null;
           const nextDbSessionId = (continued.db_session_id as string) ?? null;
-          if (nextConversationId && nextConversationId !== conversationIdRef.current) {
+          if (
+            nextConversationId &&
+            nextConversationId !== conversationIdRef.current
+          ) {
             conversationIdRef.current = nextConversationId;
             setConversationId(nextConversationId);
             saveConversationId(nextConversationId);
@@ -1499,13 +1634,10 @@ export function useChat() {
           dbSessionIdRef.current = nextDbSessionId;
           saveDbSessionId(nextDbSessionId);
           const continuedMeta = toSessionObservationMeta(continued, {
-            ref:
-              (continued.ref as string | undefined) ??
-              sessionRefRef.current,
+            ref: (continued.ref as string | undefined) ?? sessionRefRef.current,
             status: (continued.status as string | undefined) ?? "active",
             sessionType:
-              ((continued.session_type as "terminal" | "web_chat" | null | undefined) ??
-                "web_chat"),
+              normalizeSessionType(continued.session_type) ?? "web_chat",
           });
           if (continuedMeta) {
             setMainSessionMeta(continuedMeta);
@@ -1528,16 +1660,24 @@ export function useChat() {
               .then((res) => (res.ok ? res.json() : null))
               .then((payload) => {
                 const session = payload?.session;
-                if (!session || dbSessionIdRef.current !== nextDbSessionId) return;
+                if (!session || dbSessionIdRef.current !== nextDbSessionId)
+                  return;
                 applyMainSessionMeta(session);
               })
               .catch(() => {});
           }
+          clearContinuationRollback();
           console.log("Session continued:", data);
         } else if (data.type === "error") {
           const err = data as Record<string, unknown>;
           if (continuingSessionIdRef.current) {
+            const activeContinuationId = continuingSessionIdRef.current;
             clearContinuingSession();
+            const rollback = continuationRollbackRef.current;
+            if (rollback && rollback.sourceSessionId === activeContinuationId) {
+              clearContinuationRollback();
+              restoreContinuationState(rollback);
+            }
           }
           const errorMessage =
             typeof err.message === "string" ? err.message : "Unknown error";
@@ -1668,9 +1808,7 @@ export function useChat() {
           const proxyCapable =
             meta.sessionType === "terminal" && meta.status === "active";
           const nextMode =
-            requestedMode === "proxy" && !proxyCapable
-              ? "none"
-              : requestedMode;
+            requestedMode === "proxy" && !proxyCapable ? "none" : requestedMode;
           setSessionInteractionMode(nextMode);
           if (nextMode === "proxy") {
             setAttachedSessionId(sid);
@@ -1802,7 +1940,14 @@ export function useChat() {
     };
     // resolveAgentName is a stable useCallback (its own deps are []) — safe
     // to reference here without re-creating connect every render.
-  }, [applyMainSessionMeta, clearContinuingSession, resolveAgentName, setSelectedProvider]);
+  }, [
+    applyMainSessionMeta,
+    clearContinuingSession,
+    clearContinuationRollback,
+    resolveAgentName,
+    restoreContinuationState,
+    setSelectedProvider,
+  ]);
 
   // Handle streaming chat chunks
   const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
@@ -2170,7 +2315,11 @@ export function useChat() {
     (id: string, options?: { preserveViewing?: boolean }) => {
       if (!id) return;
       const preserveViewing = options?.preserveViewing ?? false;
-      if (id === dbSessionIdRef.current && !preserveViewing && messagesRef.current.length > 0) {
+      if (
+        id === dbSessionIdRef.current &&
+        !preserveViewing &&
+        messagesRef.current.length > 0
+      ) {
         return;
       }
 
@@ -2188,10 +2337,10 @@ export function useChat() {
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (viewingSessionIdRef.current) return;
-            if (!data?.messages?.length || conversationIdRef.current !== id) return;
-            const mapped = data.messages.map(
-              (m: Record<string, unknown>) =>
-                mapRenderedMessageToChatMessage(m),
+            if (!data?.messages?.length || conversationIdRef.current !== id)
+              return;
+            const mapped = data.messages.map((m: Record<string, unknown>) =>
+              mapRenderedMessageToChatMessage(m),
             );
             if (mapped.length > 0) {
               setMessages(mapped);
@@ -2322,6 +2471,32 @@ export function useChat() {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         return "";
       }
+      if (continuingSessionIdRef.current) {
+        return "";
+      }
+
+      continuationRollbackRef.current = {
+        sourceSessionId: sourceDbSessionId,
+        conversationId,
+        dbSessionId,
+        mainSessionMeta,
+        sessionTitle,
+        sessionRef,
+        selectedProvider,
+        messages,
+        contextUsage,
+        currentMode: currentModeRef.current,
+        currentBranch,
+        worktreePath,
+        viewingSessionId,
+        viewingSessionMeta,
+        observedSessionId,
+        observedSessionMeta: observedSessionMetaRef.current,
+        attachedSessionId,
+        attachedSessionMeta,
+        sessionInteractionMode,
+        proxyDeliveryNotice,
+      };
 
       clearSessionObservationState();
       resetMainChatState();
@@ -2338,7 +2513,8 @@ export function useChat() {
         );
         if (sessionRes.ok) {
           const sessionData = await sessionRes.json();
-          sourceSession = (sessionData?.session as Record<string, unknown>) ?? null;
+          sourceSession =
+            (sessionData?.session as Record<string, unknown>) ?? null;
         }
       } catch {
         sourceSession = null;
@@ -2411,11 +2587,28 @@ export function useChat() {
     },
     [
       applyMainSessionMeta,
+      attachedSessionId,
+      attachedSessionMeta,
       bindActiveSession,
       clearSessionObservationState,
+      contextUsage,
+      conversationId,
+      currentBranch,
+      dbSessionId,
+      mainSessionMeta,
+      messages,
+      observedSessionId,
+      proxyDeliveryNotice,
       resetMainChatState,
+      selectedProvider,
       setContextUsage,
       setSelectedProvider,
+      sessionInteractionMode,
+      sessionRef,
+      sessionTitle,
+      viewingSessionId,
+      viewingSessionMeta,
+      worktreePath,
     ],
   );
 
@@ -2810,118 +3003,122 @@ export function useChat() {
   }, []);
 
   // View a CLI session (read-only, no WS subscription — loads via REST)
-  const viewSession = useCallback((sessionId: string) => {
-    // Skip if already viewing/attached to this session
-    if (
-      (
-        viewingSessionIdRef.current === sessionId &&
-        (viewingSessionMetaRef.current || messagesRef.current.length > 0)
-      ) ||
-      observedSessionIdRef.current === sessionId
-    ) {
-      return;
-    }
-
-    // Detach from any active WS subscription first
-    if (observedSessionIdRef.current) {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "detach_from_session",
-            session_id: observedSessionIdRef.current,
-          }),
-        );
+  const viewSession = useCallback(
+    (sessionId: string) => {
+      // Skip if already viewing/attached to this session
+      if (
+        (viewingSessionIdRef.current === sessionId &&
+          (viewingSessionMetaRef.current || messagesRef.current.length > 0)) ||
+        observedSessionIdRef.current === sessionId
+      ) {
+        return;
       }
-      setObservedSessionId(null);
-      observedSessionMetaRef.current = null;
-      setAttachedSessionId(null);
-      setAttachedSessionMeta(null);
-      setSessionInteractionMode("none");
-    }
 
-    // Reset chat state
-    lastSeqRef.current = 0;
-    activeRequestIdRef.current = null;
-    setIsStreaming(false);
-    setIsThinking(false);
-    setMessages([]);
-    setIsLoadingMessages(true);
-    setProxyDeliveryNotice(null);
-
-    // Set viewing state
-    viewingSessionIdRef.current = sessionId;
-    setViewingSessionId(sessionId);
-
-    // Fetch messages via REST
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data?.messages?.length) return;
-        if (viewingSessionIdRef.current !== sessionId) return;
-        const mapped = mapApiMessages(data.messages);
-        setMessages(mapped);
-      })
-      .catch((err) => console.error("Failed to fetch session messages:", err))
-      .finally(() => setIsLoadingMessages(false));
-
-    // Fetch session metadata
-    fetch(`${baseUrl}/api/sessions/${sessionId}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const s = data?.session;
-        if (!s || viewingSessionIdRef.current !== sessionId) return;
-        const ref = s.seq_num ? `#${s.seq_num}` : null;
-        setSessionRef(ref);
-        const nextMeta: SessionObservationMeta = {
-          ref,
-          source: s.source || "unknown",
-          title: s.title || null,
-          status: s.status || "unknown",
-          model: s.model || null,
-          externalId: s.external_id || "",
-          chatMode: s.chat_mode || null,
-          gitBranch: s.git_branch || null,
-          contextWindow: s.context_window || null,
-          agentRunId: s.agent_run_id || null,
-          workflowName: s.workflow_name || null,
-          agentName: null,
-          sessionType: s.session_type || null,
-        };
-        setViewingSessionMeta(nextMeta);
-        if (nextMeta.agentRunId) {
-          void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
-            if (!agentName || viewingSessionIdRef.current !== sessionId) return;
-            setViewingSessionMeta((prev) =>
-              prev && viewingSessionIdRef.current === sessionId
-                ? { ...prev, agentName }
-                : prev,
-            );
-          });
+      // Detach from any active WS subscription first
+      if (observedSessionIdRef.current) {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "detach_from_session",
+              session_id: observedSessionIdRef.current,
+            }),
+          );
         }
-        // Populate context usage from session metadata
-        if (
-          s.usage_input_tokens > 0 ||
-          s.usage_output_tokens > 0 ||
-          s.context_window
-        ) {
-          const totalIn = s.usage_input_tokens ?? 0;
-          const cacheRead = s.usage_cache_read_tokens ?? 0;
-          const cacheCreation = s.usage_cache_creation_tokens ?? 0;
-          setContextUsage({
-            totalInputTokens: totalIn,
-            outputTokens: s.usage_output_tokens ?? 0,
-            contextWindow: s.context_window ?? null,
-            uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-            cacheReadTokens: cacheRead,
-            cacheCreationTokens: cacheCreation,
-          });
-        }
-      })
-      .catch((err) => console.error("Failed to fetch session metadata:", err));
-    // resolveAgentName is a stable useCallback (its own deps are []) — safe
-    // to reference here without re-creating the callback every render.
-  }, [resolveAgentName, setContextUsage]);
+        setObservedSessionId(null);
+        observedSessionMetaRef.current = null;
+        setAttachedSessionId(null);
+        setAttachedSessionMeta(null);
+        setSessionInteractionMode("none");
+      }
+
+      // Reset chat state
+      lastSeqRef.current = 0;
+      activeRequestIdRef.current = null;
+      setIsStreaming(false);
+      setIsThinking(false);
+      setMessages([]);
+      setIsLoadingMessages(true);
+      setProxyDeliveryNotice(null);
+
+      // Set viewing state
+      viewingSessionIdRef.current = sessionId;
+      setViewingSessionId(sessionId);
+
+      // Fetch messages via REST
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
+      fetch(`${baseUrl}/api/sessions/${sessionId}/messages?limit=100&offset=0`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data?.messages?.length) return;
+          if (viewingSessionIdRef.current !== sessionId) return;
+          const mapped = mapApiMessages(data.messages);
+          setMessages(mapped);
+        })
+        .catch((err) => console.error("Failed to fetch session messages:", err))
+        .finally(() => setIsLoadingMessages(false));
+
+      // Fetch session metadata
+      fetch(`${baseUrl}/api/sessions/${sessionId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const s = data?.session;
+          if (!s || viewingSessionIdRef.current !== sessionId) return;
+          const ref = s.seq_num ? `#${s.seq_num}` : null;
+          setSessionRef(ref);
+          const nextMeta: SessionObservationMeta = {
+            ref,
+            source: s.source || "unknown",
+            title: s.title || null,
+            status: s.status || "unknown",
+            model: s.model || null,
+            externalId: s.external_id || "",
+            chatMode: s.chat_mode || null,
+            gitBranch: s.git_branch || null,
+            contextWindow: s.context_window || null,
+            agentRunId: s.agent_run_id || null,
+            workflowName: s.workflow_name || null,
+            agentName: null,
+            sessionType: normalizeSessionType(s.session_type),
+          };
+          setViewingSessionMeta(nextMeta);
+          if (nextMeta.agentRunId) {
+            void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
+              if (!agentName || viewingSessionIdRef.current !== sessionId)
+                return;
+              setViewingSessionMeta((prev) =>
+                prev && viewingSessionIdRef.current === sessionId
+                  ? { ...prev, agentName }
+                  : prev,
+              );
+            });
+          }
+          // Populate context usage from session metadata
+          if (
+            s.usage_input_tokens > 0 ||
+            s.usage_output_tokens > 0 ||
+            s.context_window
+          ) {
+            const totalIn = s.usage_input_tokens ?? 0;
+            const cacheRead = s.usage_cache_read_tokens ?? 0;
+            const cacheCreation = s.usage_cache_creation_tokens ?? 0;
+            setContextUsage({
+              totalInputTokens: totalIn,
+              outputTokens: s.usage_output_tokens ?? 0,
+              contextWindow: s.context_window ?? null,
+              uncachedInputTokens: totalIn - cacheRead - cacheCreation,
+              cacheReadTokens: cacheRead,
+              cacheCreationTokens: cacheCreation,
+            });
+          }
+        })
+        .catch((err) =>
+          console.error("Failed to fetch session metadata:", err),
+        );
+      // resolveAgentName is a stable useCallback (its own deps are []) — safe
+      // to reference here without re-creating the callback every render.
+    },
+    [resolveAgentName, setContextUsage],
+  );
 
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {
@@ -3070,7 +3267,7 @@ export function useChat() {
       return;
     }
     const viewedMeta = viewingSessionMetaRef.current;
-    if (viewedMeta?.sessionType && viewedMeta.sessionType !== "terminal") {
+    if (viewedMeta?.sessionType !== "terminal") {
       return;
     }
     void continueSessionInChat(sid);
@@ -3082,7 +3279,9 @@ export function useChat() {
 
     setAttachedSessionId(null);
     setAttachedSessionMeta(null);
-    setSessionInteractionMode(observedSessionIdRef.current ? "observe" : "none");
+    setSessionInteractionMode(
+      observedSessionIdRef.current ? "observe" : "none",
+    );
   }, []);
 
   // Add a local system message to the chat (no backend round-trip)

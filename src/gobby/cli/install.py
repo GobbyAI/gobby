@@ -459,7 +459,16 @@ def uninstall(
     }
     for cli_name, uninstaller_fn in _standard_uninstallers.items():
         if cli_name in clis_to_uninstall:
-            _run_standard_cli_uninstall(cli_name, uninstaller_fn, uninstall_base, results)
+            uninstall_kwargs: dict[str, Any] = {}
+            if cli_name == "qwen":
+                uninstall_kwargs["mode"] = "project" if project_flag else "global"
+            _run_standard_cli_uninstall(
+                cli_name,
+                uninstaller_fn,
+                uninstall_base,
+                results,
+                **uninstall_kwargs,
+            )
 
     # Remove global hooks directory for global uninstall
     if not project_flag and all_flag:

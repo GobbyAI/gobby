@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Gobby is a **local-first daemon and workflow control plane for AI coding tools**. It unifies AI coding CLIs (Claude Code, Gemini CLI, Codex) under a single persistent platform with shared sessions, memory, tasks, workflows, and guardrails.
+Gobby is a **local-first daemon and workflow control plane for AI coding tools**. It unifies AI coding CLIs (Claude Code, Gemini CLI, Qwen CLI, Codex) under a single persistent platform with shared sessions, memory, tasks, workflows, and guardrails.
 
 **Key characteristics:**
 - Python 3.13+ package, distributed via PyPI

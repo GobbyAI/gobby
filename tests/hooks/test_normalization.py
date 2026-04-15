@@ -580,6 +580,19 @@ class TestCanonicalToolMetadata:
         assert data["canonical_file_path"] == "src/main.py"
         assert data["canonical_file_paths"] == ["src/main.py", "docs/plan.md"]
 
+    def test_exec_command_truncate_sets_all_canonical_write_paths(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "truncate -s 0 a.txt b.txt c.txt"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_path"] == "a.txt"
+        assert data["canonical_file_paths"] == ["a.txt", "b.txt", "c.txt"]
+
 
 class TestToolErrorDetection:
     """Tests for Phase 3: shell tool error detection from output text."""

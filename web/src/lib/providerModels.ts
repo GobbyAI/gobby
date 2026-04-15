@@ -18,7 +18,9 @@ let cachedModelsTimestamp = 0;
 
 const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 
-export async function fetchProviderModelCatalog(): Promise<ProviderModelEntry[]> {
+export async function fetchProviderModelCatalog(): Promise<
+  ProviderModelEntry[]
+> {
   const now = Date.now();
   const cacheFresh =
     cachedModels !== null && now - cachedModelsTimestamp < MODELS_CACHE_TTL_MS;
@@ -36,11 +38,16 @@ export async function fetchProviderModelCatalog(): Promise<ProviderModelEntry[]>
         return cachedModels;
       }
     }
-  } catch {
-    // Use empty catalog when the daemon is unavailable.
+  } catch (err) {
+    console.debug("Failed to load provider catalog", err);
   }
 
   return [];
+}
+
+export function clearProviderModelCache(): void {
+  cachedModels = null;
+  cachedModelsTimestamp = 0;
 }
 
 export function getModelsForProvider(
@@ -109,7 +116,8 @@ export function resolveProviderModelPair(
   primary: { provider?: string | null; model?: string | null },
   fallback?: { provider?: string | null; model?: string | null },
 ): { provider: string | null; model: string | null } {
-  const provider = primary.provider?.trim() || fallback?.provider?.trim() || null;
+  const provider =
+    primary.provider?.trim() || fallback?.provider?.trim() || null;
   if (!provider) {
     return {
       provider: null,
@@ -118,7 +126,9 @@ export function resolveProviderModelPair(
   }
 
   const sameProviderFallbackModel =
-    fallback?.provider?.trim() === provider ? fallback.model?.trim() || null : null;
+    fallback?.provider?.trim() === provider
+      ? fallback.model?.trim() || null
+      : null;
 
   return {
     provider,

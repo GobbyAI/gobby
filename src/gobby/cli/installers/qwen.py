@@ -87,8 +87,9 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
         try:
             with open(settings_file) as f:
                 existing_settings = json.load(f)
-        except json.JSONDecodeError:
-            existing_settings = {}
+        except json.JSONDecodeError as exc:
+            result["error"] = f"settings.json is malformed: {exc}"
+            return result
     else:
         existing_settings = {}
 
@@ -154,7 +155,7 @@ def _install_agent_scripts(install_dir: Path) -> list[str]:
     return scripts_installed
 
 
-def uninstall_qwen(project_path: Path) -> dict[str, Any]:
+def uninstall_qwen(project_path: Path, mode: str = "project") -> dict[str, Any]:
     """Uninstall Gobby integration from Qwen CLI."""
     hooks_removed: list[str] = []
     files_removed: list[str] = []
@@ -166,7 +167,7 @@ def uninstall_qwen(project_path: Path) -> dict[str, Any]:
         "error": None,
     }
 
-    qwen_path = project_path / ".qwen"
+    qwen_path = Path.home() / ".qwen" if mode == "global" else project_path / ".qwen"
     settings_file = qwen_path / "settings.json"
     hooks_dir = qwen_path / "hooks"
 

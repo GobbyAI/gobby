@@ -1579,10 +1579,7 @@ class TestEditWritePending:
             data={
                 "tool_name": "apply_patch",
                 "tool_input": (
-                    "*** Begin Patch\n"
-                    "*** Update File: src/main.py\n"
-                    "@@\n"
-                    "*** End Patch\n"
+                    "*** Begin Patch\n*** Update File: src/main.py\n@@\n*** End Patch\n"
                 ),
             },
         )
@@ -1645,10 +1642,7 @@ class TestEditWritePending:
             data={
                 "tool_name": "apply_patch",
                 "tool_input": (
-                    "*** Begin Patch\n"
-                    "*** Update File: src/main.py\n"
-                    "@@\n"
-                    "*** End Patch\n"
+                    "*** Begin Patch\n*** Update File: src/main.py\n@@\n*** End Patch\n"
                 ),
             },
         )
@@ -2291,7 +2285,7 @@ class TestUnmappedEventType:
 class TestTurnEndResolution:
     @pytest.mark.asyncio
     async def test_before_agent_resolves_to_raw_and_semantic_start(
-        self, db: LocalDatabase, manager
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -2319,7 +2313,7 @@ class TestTurnEndResolution:
 
     @pytest.mark.asyncio
     async def test_turn_start_rule_fires_for_before_agent(
-        self, db: LocalDatabase, manager
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,

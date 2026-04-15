@@ -84,6 +84,7 @@ class CodeIndexTrigger:
             logger.warning("gcode not installed — skipping incremental index. Run `gobby install`.")
             return
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 str(gcode_bin),
@@ -103,16 +104,18 @@ class CodeIndexTrigger:
                 logger.warning(f"gcode index exited {proc.returncode}: {detail}")
         except asyncio.CancelledError:
             try:
-                proc.kill()
-                await proc.wait()
+                if proc is not None:
+                    proc.kill()
+                    await proc.wait()
             except ProcessLookupError:
                 pass
             raise
         except TimeoutError:
             logger.warning("gcode index timed out after 30s")
             try:
-                proc.kill()
-                await proc.wait()
+                if proc is not None:
+                    proc.kill()
+                    await proc.wait()
             except ProcessLookupError:
                 pass
         except Exception as e:

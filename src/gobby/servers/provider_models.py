@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import shutil
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -393,20 +394,20 @@ class ProviderModelCatalog:
         self,
         models: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        auth_types = {
-            auth_type
+        base_id_counts = Counter(
+            model_id
             for model in models
-            if (auth_type := _split_qwen_model_value(str(model.get("value") or ""))[1])
-        }
-        if len(auth_types) < 2:
+            if (model_id := _split_qwen_model_value(str(model.get("value") or ""))[0])
+        )
+        if not any(count > 1 for count in base_id_counts.values()):
             return models
 
         normalized: list[dict[str, Any]] = []
         for model in models:
             entry = copy.deepcopy(model)
             value = str(entry.get("value") or "")
-            _model_id, auth_type = _split_qwen_model_value(value)
-            if not auth_type:
+            model_id, auth_type = _split_qwen_model_value(value)
+            if not auth_type or base_id_counts[model_id] <= 1:
                 normalized.append(entry)
                 continue
             label = str(entry.get("label") or value)

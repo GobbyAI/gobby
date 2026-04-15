@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import LocalSessionManager
 
+_SUPPORTED_SESSION_SOURCES = ("claude", "gemini", "qwen", "codex")
+
 
 def register_crud_tools(
     registry: InternalToolRegistry,
@@ -241,7 +243,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
 
         # Count by source
         by_source: dict[str, int] = {}
-        for src in ["claude", "gemini", "qwen", "codex"]:
+        for src in _SUPPORTED_SESSION_SOURCES:
             count = session_manager.count(project_id=project_id, source=src)
             if count > 0:
                 by_source[src] = count

@@ -198,6 +198,13 @@ class CodexAdapter(BaseAdapter):
         return {"action": action, "content": None, "_meta": None}
 
     @staticmethod
+    def _fail_closed_approval_response(method: str) -> dict[str, Any]:
+        """Return the safest denial shape when approval handling is unavailable."""
+        if method == "mcpServer/elicitation/request":
+            return {"action": "cancel", "content": None, "_meta": None}
+        return {"decision": "decline"}
+
+    @staticmethod
     def _extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
         """Return the best-effort tool item payload from an item/completed event."""
         item = params.get("item")
@@ -412,16 +419,12 @@ class CodexAdapter(BaseAdapter):
         """
         hook_event = self._translate_approval_event(method, params)
         if not hook_event:
-            # Unknown method - default to accept
-            if method == "mcpServer/elicitation/request":
-                return self._translate_mcp_elicitation_response()
-            return {"decision": "accept"}
+            logger.warning("Approval request %s could not be translated; failing closed", method)
+            return self._fail_closed_approval_response(method)
 
         if not self._hook_manager:
-            # No hook manager - default to accept
-            if method == "mcpServer/elicitation/request":
-                return self._translate_mcp_elicitation_response()
-            return {"decision": "accept"}
+            logger.warning("Approval request %s has no hook manager; failing closed", method)
+            return self._fail_closed_approval_response(method)
 
         if self._is_safe_auto_approved_tool(hook_event):
             if method == "mcpServer/elicitation/request":
@@ -435,9 +438,7 @@ class CodexAdapter(BaseAdapter):
             return self.translate_from_hook_response(hook_response)
         except Exception as e:
             logger.error(f"Error processing approval request {method}: {e}")
-            if method == "mcpServer/elicitation/request":
-                return self._translate_mcp_elicitation_response()
-            return {"decision": "accept"}
+            return self._fail_closed_approval_response(method)
 
     def _is_safe_auto_approved_tool(self, hook_event: HookEvent) -> bool:
         """Return True for safe MCP discovery/UI-only tool calls."""
