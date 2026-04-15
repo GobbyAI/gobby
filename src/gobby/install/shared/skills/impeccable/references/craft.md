@@ -4,9 +4,7 @@ Build a feature with impeccable UX and UI quality through a structured process: 
 
 ## Step 1: Shape the Design
 
-Work with the user to produce a confirmed design brief before writing any code. The brief is your blueprint, and every implementation decision should trace back to it.
-
-> **Note (Gobby install):** The upstream impeccable bundle ships a sibling `shape` command that drives this step interactively. It is not vendored with Gobby. Instead, interview the user directly: capture the feature's purpose, target users, core states, content/data shape, and recommended references. Summarize the brief back to the user and wait for explicit confirmation before proceeding.
+Before writing any code, load and follow the `shape` steering command with whatever feature description the user provided. Call `get_skill_file(name="impeccable", path="references/shape.md")` on `gobby-skills` and run the discovery interview it defines. Wait for the design brief to be fully confirmed before proceeding. The brief is your blueprint, and every implementation decision should trace back to it.
 
 If the user already has a confirmed design brief for this feature, skip the interview and use the existing brief.
 

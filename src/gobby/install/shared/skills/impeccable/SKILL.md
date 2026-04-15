@@ -45,6 +45,53 @@ Individual skills may require additional context. Check the skill's preparation 
 
 ---
 
+## Sub-command Dispatch
+
+This skill is a **router** over 17 steering commands plus three inline modes. Evaluate the argument the user passed (after `/gobby impeccable`) and take the matching action below. If **no argument** was passed, render the menu at the bottom of this section and ask the user which one they want — do NOT start design work automatically.
+
+### Inline modes (handled later in this file)
+| Argument | What it does | See section |
+|----------|--------------|-------------|
+| `craft` | Shape-then-build flow: interview → design brief → implement → iterate | `## Craft Mode` |
+| `teach` | One-time design-context setup — writes `.impeccable.md` | `## Teach Mode` |
+| `extract` | Pull reusable components/tokens into the design system | `## Extract Mode` |
+
+For these three, skip the rest of this dispatch section and jump to the named section below.
+
+### Steering commands (load the reference file, then follow it)
+
+When the argument matches one of the commands below, call `get_skill_file(name="impeccable", path="references/<cmd>.md")` on `gobby-skills` and follow that file's instructions. Treat any remaining words in the user's argument as the target of the operation (a file path, component name, or feature).
+
+| Argument | Purpose |
+|----------|---------|
+| `shape` | Plan UX/UI for a feature before writing code |
+| `polish` | Final-pass detail work against the design system |
+| `audit` | Structured review against impeccable's anti-patterns |
+| `critique` | Adversarial multi-persona design review |
+| `distill` | Strip a design to its essential elements |
+| `animate` | Add purposeful motion |
+| `layout` | Rework spatial composition and hierarchy |
+| `bolder` | Push aesthetic intensity up |
+| `quieter` | Pull aesthetic intensity down |
+| `harden` | Edge-state, i18n, overflow, and error handling |
+| `optimize` | Performance and payload pass |
+| `adapt` | Responsive/contextual adaptation |
+| `clarify` | UX-writing and hierarchy cleanup |
+| `colorize` | Color system rework |
+| `delight` | Targeted moments of interaction charm |
+| `overdrive` | Maximalist creative push |
+| `typeset` | Typography and type-scale pass |
+
+### Fallback
+
+- If the argument does not match any inline mode or steering command, tell the user the argument was not recognized and show them the menu above.
+- If `get_skill_file` returns `{"success": false, ...}`, surface the error and show the menu again.
+- If **no argument** was provided, introduce yourself as `impeccable`, explain that you have the modes and steering commands above, and ask which one the user wants. Do not silently proceed into design work.
+
+The rest of this file (below the `---` separator) is the design reference that grounds every mode and steering command. Keep it loaded: it's what `impeccable audit`, `impeccable polish`, etc. check against.
+
+---
+
 ## Design Direction
 
 Commit to a BOLD aesthetic direction:
