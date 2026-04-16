@@ -230,7 +230,20 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         # Handle web_chat mode — return conversation_id for frontend to open
         if req.web_chat:
-            conversation_id = str(uuid.uuid4())
+            session_manager = server.services.session_manager
+            if session_manager is None:
+                return AgentSpawnResponse(success=False, error="Session manager unavailable")
+
+            from gobby.utils.machine_id import get_machine_id
+
+            conversation = session_manager.create_web_chat_session(
+                machine_id=get_machine_id() or "web",
+                project_id=effective_project_id,
+                source=req.provider or "claude",
+                title=task.title,
+                model=req.model,
+            )
+            conversation_id = conversation.id
             task_updated = False
 
             # Update task ownership/status conservatively.
@@ -243,13 +256,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                             req.task_id,
                             current_owner,
                         )
-                    elif task.status == "open":
-                        task_manager.update_task(
-                            req.task_id, status="in_progress", assignee=conversation_id
-                        )
-                        task_updated = True
                     else:
-                        task_manager.update_task(req.task_id, assignee=conversation_id)
+                        task_manager.claim_task(req.task_id, conversation_id)
                         task_updated = True
                 else:
                     logger.info(

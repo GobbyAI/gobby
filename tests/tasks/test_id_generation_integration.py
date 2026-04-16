@@ -9,6 +9,7 @@ These tests verify the full task ID generation system:
 
 import pytest
 
+from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -30,8 +31,15 @@ def project_id(sample_project):
 class TestCompleteIDGenerationFlow:
     """Integration tests for the complete ID generation flow."""
 
-    def test_full_task_lifecycle(self, task_manager, project_id) -> None:
+    def test_full_task_lifecycle(self, task_manager, project_id, temp_db) -> None:
         """Test complete lifecycle: create -> verify ID/seq/path -> update -> close."""
+        session = LocalSessionManager(temp_db).register(
+            external_id="id-flow-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+
         # Create a task
         task = task_manager.create_task(
             project_id=project_id,
@@ -56,8 +64,8 @@ class TestCompleteIDGenerationFlow:
         assert retrieved.seq_num == task.seq_num
         assert retrieved.path_cache == task.path_cache
 
-        # Update task status
-        updated = task_manager.update_task(task.id, status="in_progress")
+        # Claim task
+        updated = task_manager.claim_task(task.id, session.id)
         assert updated.status == "in_progress"
         # ID, seq_num, path_cache should be unchanged
         assert updated.id == task.id

@@ -29,6 +29,7 @@ def mock_task_manager():
     manager = MagicMock()
     manager.create_task = MagicMock()
     manager.update_task = MagicMock()
+    manager.reconcile_task_state = MagicMock()
     manager.get_task = MagicMock()
     manager.list_tasks = MagicMock(return_value=[])
     # Default: no existing tasks (dedup check returns None)

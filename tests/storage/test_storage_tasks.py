@@ -53,10 +53,52 @@ class TestLocalTaskManager:
 
     def test_update_task(self, task_manager, project_id) -> None:
         task = task_manager.create_task(project_id=project_id, title="Original Title")
-        updated = task_manager.update_task(task.id, title="New Title", status="in_progress")
+        updated = task_manager.update_task(task.id, title="New Title")
         assert updated.title == "New Title"
-        assert updated.status == "in_progress"
+        assert updated.status == "open"
         assert updated.updated_at > task.updated_at
+
+    def test_update_task_rejects_lifecycle_fields(self, task_manager, project_id) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Original Title")
+
+        with pytest.raises(ValueError, match="does not allow lifecycle or ownership fields"):
+            task_manager.update_task(task.id, status="in_progress")
+
+    def test_update_task_rejects_mixed_metadata_and_lifecycle_fields(
+        self, task_manager, project_id
+    ) -> None:
+        task = task_manager.create_task(project_id=project_id, title="Original Title")
+
+        with pytest.raises(ValueError, match="Blocked fields: status, assignee"):
+            task_manager.update_task(
+                task.id,
+                title="New Title",
+                status="in_progress",
+                assignee="sess-123",
+            )
+
+    def test_reconcile_task_state_sets_ownerless_in_progress(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        session = session_manager.register(
+            external_id="reconcile-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id=project_id, title="Original Title")
+        task_manager.claim_task(task.id, session.id)
+
+        updated = task_manager.reconcile_task_state(
+            task.id,
+            status="in_progress",
+            title="From Linear",
+        )
+
+        assert updated.title == "From Linear"
+        assert updated.status == "in_progress"
+        assert updated.assignee is None
+        assert updated.claimed_by_session_id is None
 
     def test_status_projects_from_canonical_lifecycle_stage(self, task_manager, project_id) -> None:
         """Raw legacy status should no longer drive task projection."""
@@ -90,7 +132,8 @@ class TestLocalTaskManager:
     ) -> None:
         """Closed tasks keep their last lifecycle stage as latent context."""
         task = task_manager.create_task(project_id=project_id, title="To Close Cleanly")
-        reviewed = task_manager.update_task(task.id, status="review_approved")
+        task_manager.mark_task_needs_review(task.id)
+        reviewed = task_manager.mark_task_review_approved(task.id)
 
         closed = task_manager.close_task(reviewed.id, reason="Merged")
 
@@ -317,13 +360,13 @@ class TestLocalTaskManager:
         blocker = task_manager.create_task(project_id, "Blocker")
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
-        task_manager.update_task(blocker.id, status="needs_review")
+        task_manager.mark_task_needs_review(blocker.id)
         assert blocked.id not in {
             t.id for t in task_manager.list_ready_tasks(project_id=project_id)
         }
         assert blocked.id in {t.id for t in task_manager.list_blocked_tasks(project_id=project_id)}
 
-        task_manager.update_task(blocker.id, status="review_approved")
+        task_manager.mark_task_review_approved(blocker.id)
         assert blocked.id not in {
             t.id for t in task_manager.list_ready_tasks(project_id=project_id)
         }
@@ -512,7 +555,6 @@ class TestLocalTaskManager:
             description="desc",
             priority=5,
             task_type="chore",
-            assignee="me",
             labels=["l1"],
             category="strat",
             validation_criteria="crit",
@@ -524,7 +566,6 @@ class TestLocalTaskManager:
         assert updated.description == "desc"
         assert updated.priority == 5
         assert updated.task_type == "chore"
-        assert updated.assignee == "me"
         assert updated.labels == ["l1"]
         assert updated.category == "strat"
         assert updated.validation_criteria == "crit"
@@ -719,10 +760,16 @@ class TestLocalTaskManager:
         with pytest.raises(ValueError, match="is already open"):
             task_manager.reopen_task(task.id)
 
-    def test_reopen_task_from_in_progress(self, task_manager, project_id) -> None:
+    def test_reopen_task_from_in_progress(self, task_manager, project_id, session_manager) -> None:
         """Test reopening an in_progress task succeeds."""
+        session = session_manager.register(
+            external_id="reopen-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
         task = task_manager.create_task(project_id, "In Progress")
-        task_manager.update_task(task.id, status="in_progress", assignee="test-agent")
+        task_manager.claim_task(task.id, session.id)
 
         reopened = task_manager.reopen_task(task.id)
 
@@ -758,7 +805,7 @@ class TestLocalTaskManager:
             project_id=project_id,
         )
         task = task_manager.create_task(project_id, "Needs review")
-        task_manager.update_task(task.id, status="needs_review")
+        task_manager.mark_task_needs_review(task.id)
 
         claimed = task_manager.claim_task(task.id, session.id)
 
@@ -784,6 +831,66 @@ class TestLocalTaskManager:
         assert released.status == "open"
         assert released.assignee is None
         assert released.claimed_by_session_id is None
+
+    def test_mark_task_needs_review_clears_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Submitting work for review should release the active claim."""
+        session = session_manager.register(
+            external_id="needs-review-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Review me")
+        task_manager.claim_task(task.id, session.id)
+
+        reviewed = task_manager.mark_task_needs_review(task.id, review_notes="Ready for QA")
+
+        assert reviewed.status == "needs_review"
+        assert reviewed.assignee is None
+        assert reviewed.claimed_by_session_id is None
+
+    def test_mark_task_review_approved_clears_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Approving work should release the active claim."""
+        session = session_manager.register(
+            external_id="approved-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Approve me")
+        task_manager.claim_task(task.id, session.id)
+
+        approved = task_manager.mark_task_review_approved(
+            task.id,
+            approval_notes="LGTM",
+        )
+
+        assert approved.status == "review_approved"
+        assert approved.assignee is None
+        assert approved.claimed_by_session_id is None
+
+    def test_escalate_task_clears_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Escalation should release the active claim."""
+        session = session_manager.register(
+            external_id="escalate-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Escalate me")
+        task_manager.claim_task(task.id, session.id)
+
+        escalated = task_manager.escalate_task(task.id, reason="Blocked externally")
+
+        assert escalated.status == "escalated"
+        assert escalated.assignee is None
+        assert escalated.claimed_by_session_id is None
 
     def test_deleting_session_clears_canonical_owner(
         self, task_manager, project_id, session_manager
@@ -863,17 +970,13 @@ class TestLocalTaskManager:
     # Update Task Additional Tests
     # =========================================================================
 
-    def test_update_task_escalation_fields(self, task_manager, project_id) -> None:
-        """Test updating escalation-related fields."""
+    def test_escalate_task_sets_escalation_fields(self, task_manager, project_id) -> None:
+        """Escalation metadata should be written via the lifecycle method."""
         task = task_manager.create_task(project_id, "Task")
 
-        updated = task_manager.update_task(
-            task.id,
-            escalated_at="2024-01-01T00:00:00Z",
-            escalation_reason="Blocked on external dependency",
-        )
+        updated = task_manager.escalate_task(task.id, reason="Blocked on external dependency")
 
-        assert updated.escalated_at == "2024-01-01T00:00:00Z"
+        assert updated.escalated_at is not None
         assert updated.escalation_reason == "Blocked on external dependency"
 
     def test_update_task_labels_to_none(self, task_manager, project_id) -> None:
@@ -914,11 +1017,17 @@ class TestLocalTaskManager:
     # List Tasks Additional Filter Tests
     # =========================================================================
 
-    def test_list_tasks_with_status_list(self, task_manager, project_id) -> None:
+    def test_list_tasks_with_status_list(self, task_manager, project_id, session_manager) -> None:
         """Test filtering tasks by multiple statuses."""
+        session = session_manager.register(
+            external_id="filter-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
         t1 = task_manager.create_task(project_id, "Open Task")
         t2 = task_manager.create_task(project_id, "In Progress")
-        task_manager.update_task(t2.id, status="in_progress")
+        task_manager.claim_task(t2.id, session.id)
         t3 = task_manager.create_task(project_id, "Closed")
         task_manager.close_task(t3.id)
 

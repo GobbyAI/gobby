@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.config_store import ConfigStore
+from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
@@ -49,16 +50,22 @@ def config_store(temp_db) -> ConfigStore:
 
 
 @pytest.fixture
+def session_manager(temp_db) -> LocalSessionManager:
+    return LocalSessionManager(temp_db)
+
+
+@pytest.fixture
 def test_project(project_manager) -> Any:
     """Create a test project for FK constraints."""
     return project_manager.create(name="spawn-test-proj", repo_path="/tmp/spawn-test")
 
 
 @pytest.fixture
-def server(temp_db, task_manager, config_store):
+def server(temp_db, task_manager, session_manager, config_store):
     return create_http_server(
         config=DaemonConfig(),
         database=temp_db,
+        session_manager=session_manager,
         task_manager=task_manager,
     )
 
@@ -87,7 +94,11 @@ class TestSpawnAgent:
         assert response.status_code == 400
 
     def test_spawn_web_chat_mode(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        session_manager: LocalSessionManager,
+        test_project,
     ) -> None:
         """Web chat mode returns conversation_id without spawning."""
         task = _create_task(task_manager, test_project.id, "Chat task")
@@ -103,6 +114,7 @@ class TestSpawnAgent:
         data = response.json()
         assert data["success"] is True
         assert "conversation_id" in data
+        assert session_manager.get(data["conversation_id"]) is not None
 
     def test_spawn_terminal_no_runner(
         self, client: TestClient, task_manager: LocalTaskManager, test_project
@@ -136,15 +148,17 @@ class TestSpawnAgent:
             )
         assert response.status_code == 200
 
+        data = response.json()
         updated = task_manager.get_task(task.id)
         assert updated.status == "in_progress"
+        assert updated.assignee == data["conversation_id"]
 
     def test_spawn_web_chat_preserves_review_status(
         self, client: TestClient, task_manager: LocalTaskManager, test_project
     ) -> None:
         """Web chat spawn on needs_review should set assignee without regressing status."""
         task = _create_task(task_manager, test_project.id, "Review task")
-        task_manager.update_task(task.id, status="needs_review")
+        task_manager.mark_task_needs_review(task.id)
 
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -162,11 +176,22 @@ class TestSpawnAgent:
         assert updated.assignee == data["conversation_id"]
 
     def test_spawn_web_chat_does_not_steal_claimed_review_task(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        session_manager: LocalSessionManager,
+        test_project,
     ) -> None:
         """Web chat spawn should not overwrite a non-open task already owned elsewhere."""
+        existing_owner = session_manager.register(
+            external_id="claimed-review-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=test_project.id,
+        )
         task = _create_task(task_manager, test_project.id, "Claimed review task")
-        task_manager.update_task(task.id, status="needs_review", assignee="other-owner")
+        task_manager.mark_task_needs_review(task.id)
+        task_manager.claim_task(task.id, existing_owner.id)
 
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -180,7 +205,7 @@ class TestSpawnAgent:
         assert response.status_code == 200
         updated = task_manager.get_task(task.id)
         assert updated.status == "needs_review"
-        assert updated.assignee == "other-owner"
+        assert updated.assignee == existing_owner.id
 
 
 # ---------------------------------------------------------------------------

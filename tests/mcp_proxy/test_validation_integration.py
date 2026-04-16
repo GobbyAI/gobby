@@ -173,8 +173,11 @@ async def test_validate_task_tool_failure_max_retries(
     # Verify task escalated
     mock_task_manager.update_task.assert_called_once()
     update_args = mock_task_manager.update_task.call_args.kwargs
-    assert update_args["status"] == "escalated"
     assert "Exceeded max retries" in update_args["validation_feedback"]
+    mock_task_manager.escalate_task.assert_called_once_with(
+        "t1",
+        reason="exceeded_validation_retries (3)",
+    )
 
 
 # ============================================================================
@@ -531,9 +534,12 @@ async def test_validate_task_exactly_at_max_retries(
 
     # Task should be escalated
     update_args = mock_task_manager.update_task.call_args.kwargs
-    assert update_args["status"] == "escalated"
     assert update_args["validation_fail_count"] == 3
     assert "Exceeded max retries (3)" in update_args["validation_feedback"]
+    mock_task_manager.escalate_task.assert_called_once_with(
+        "t1",
+        reason="exceeded_validation_retries (3)",
+    )
 
 
 @pytest.mark.integration
@@ -574,7 +580,11 @@ async def test_validate_task_beyond_max_retries(
 
     # Task should be escalated again
     update_args = mock_task_manager.update_task.call_args.kwargs
-    assert update_args["status"] == "escalated"
+    assert update_args["validation_fail_count"] == 4
+    mock_task_manager.escalate_task.assert_called_once_with(
+        "t1",
+        reason="exceeded_validation_retries (3)",
+    )
 
 
 # ============================================================================
