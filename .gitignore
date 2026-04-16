@@ -232,6 +232,7 @@ __marimo__/
 .gobby/screenshots/
 .gobby/plans/
 .gobby/session_summaries/
+screenshots/
 reports/
 bandit_report.json
 coderabbit.md
