@@ -25,6 +25,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def drain_hook_inbox_loop(
+    app: Any,
+    is_shutdown_requested: Callable[[], bool],
+    interval_seconds: int = 60,
+) -> None:
+    """Replay pending hook inbox envelopes on the maintenance loop."""
+    from gobby.hooks.inbox import drain_hook_inbox_loop as _drain_hook_inbox_loop
+
+    await _drain_hook_inbox_loop(
+        app,
+        is_shutdown_requested,
+        interval_seconds=interval_seconds,
+    )
+
+
 async def metrics_cleanup_loop(
     metrics_manager: ToolMetricsManager,
     is_shutdown_requested: Callable[[], bool],

@@ -467,6 +467,10 @@ def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:
         loops["metric_snapshot_loop"](runner.database, lambda: runner._shutdown_requested),
         name="metric-snapshot",
     )
+    runner._hook_inbox_task = asyncio.create_task(
+        loops["drain_hook_inbox_loop"](runner.http_server.app, lambda: runner._shutdown_requested),
+        name="hook-inbox-drain",
+    )
 
     runner._approval_timeout_task = None
     if runner.pipeline_execution_manager:
@@ -489,6 +493,7 @@ def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:
             runner._comms_messages_task,
             runner._expired_isolation_task,
             runner._metric_snapshot_task,
+            runner._hook_inbox_task,
             runner._approval_timeout_task,
         )
         if t is not None
@@ -505,6 +510,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
         cleanup_expired_isolation_loop,
         cleanup_pid_file,
         cleanup_zombie_messages_loop,
+        drain_hook_inbox_loop,
         expire_approval_timeouts_loop,
         memory_reconcile_loop,
         metric_snapshot_loop,
@@ -563,6 +569,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
             cleanup_comms_messages_loop=cleanup_comms_messages_loop,
             cleanup_expired_isolation_loop=cleanup_expired_isolation_loop,
             metric_snapshot_loop=metric_snapshot_loop,
+            drain_hook_inbox_loop=drain_hook_inbox_loop,
             expire_approval_timeouts_loop=expire_approval_timeouts_loop,
         )
 
@@ -707,6 +714,14 @@ async def run_daemon(runner: GobbyRunner) -> None:
             runner._metric_snapshot_task.cancel()
             try:
                 await asyncio.wait_for(runner._metric_snapshot_task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+
+        # Cancel hook inbox drain task
+        if runner._hook_inbox_task and not runner._hook_inbox_task.done():
+            runner._hook_inbox_task.cancel()
+            try:
+                await asyncio.wait_for(runner._hook_inbox_task, timeout=2.0)
             except (asyncio.CancelledError, TimeoutError):
                 pass
 

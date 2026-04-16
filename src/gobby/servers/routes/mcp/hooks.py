@@ -44,6 +44,8 @@ HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
     "AskUserQuestion": "AskUserQuestion",
 }
 
+SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
+
 
 def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
     """
@@ -75,6 +77,68 @@ def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
 
 
 MAX_PENDING_PER_SESSION = 3
+
+
+def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Normalize legacy flat hook payloads and schema-versioned envelopes.
+
+    The discriminator is explicit: if ``schema_version`` is present, treat the
+    request as an envelope. If it is absent, treat the request as the legacy
+    flat shape. Do not heuristically infer envelope mode from other fields.
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+
+    # Explicit discriminator: schema_version present => envelope. Without it,
+    # keep the request on the legacy flat path even if extra envelope-like
+    # fields are present.
+    if "schema_version" in payload:
+        schema_version = payload.get("schema_version")
+        if schema_version != SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Unsupported schema_version: "
+                    f"{schema_version}. Supported: {SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION}"
+                ),
+            )
+        metadata = {
+            "request_shape": "envelope",
+            "schema_version": schema_version,
+            "critical": bool(payload.get("critical", False)),
+            "enqueued_at": payload.get("enqueued_at"),
+        }
+    else:
+        metadata = {
+            "request_shape": "flat",
+            "schema_version": None,
+            "critical": None,
+            "enqueued_at": None,
+        }
+
+    normalized_payload = {
+        "hook_type": payload.get("hook_type"),
+        "input_data": payload.get("input_data") or {},
+        "source": payload.get("source"),
+    }
+    return normalized_payload, metadata
+
+
+def _hook_log_extra(
+    hook_type: str | None,
+    metadata: dict[str, Any],
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build structured log extras for hook ingress."""
+    combined = {
+        "hook_type": hook_type,
+        "request_shape": metadata.get("request_shape"),
+        "schema_version": metadata.get("schema_version"),
+        "critical": metadata.get("critical"),
+        "enqueued_at": metadata.get("enqueued_at"),
+    }
+    combined.update(extra)
+    return combined
 
 
 def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
@@ -272,10 +336,16 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         start_time = time.perf_counter()
         inc_counter("hooks_total")
         hook_type: str | None = None  # Track for error handling
+        request_metadata: dict[str, Any] = {
+            "request_shape": "unknown",
+            "schema_version": None,
+            "critical": None,
+            "enqueued_at": None,
+        }
 
         try:
             # Parse request
-            payload = await request.json()
+            payload, request_metadata = _normalize_hook_request(await request.json())
             hook_type = payload.get("hook_type")
             source = payload.get("source")
 
@@ -345,11 +415,12 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
                 logger.debug(
                     f"Hook executed: {hook_type}",
-                    extra={
-                        "hook_type": hook_type,
-                        "continue": result.get("continue"),
-                        "response_time_ms": response_time_ms,
-                    },
+                    extra=_hook_log_extra(
+                        hook_type,
+                        request_metadata,
+                        continue_=result.get("continue"),
+                        response_time_ms=response_time_ms,
+                    ),
                 )
 
                 return result
@@ -359,7 +430,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 inc_counter("hooks_failed_total")
                 logger.warning(
                     f"Invalid hook request: {hook_type}",
-                    extra={"hook_type": hook_type, "error": str(e)},
+                    extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
                 )
                 return _graceful_error_response(hook_type, str(e))
 
@@ -370,7 +441,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 logger.error(
                     f"Hook execution failed: {hook_type}",
                     exc_info=True,
-                    extra={"hook_type": hook_type},
+                    extra=_hook_log_extra(hook_type, request_metadata),
                 )
                 return _graceful_error_response(hook_type, str(e))
 
@@ -380,7 +451,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             # Outer exception - return graceful response to prevent CLI warning
             inc_counter("hooks_failed_total")
-            logger.error("Hook endpoint error", exc_info=True)
+            logger.error(
+                "Hook endpoint error",
+                exc_info=True,
+                extra=_hook_log_extra(hook_type, request_metadata),
+            )
             if hook_type:
                 return _graceful_error_response(hook_type, str(e))
             # Fallback: return basic success to prevent CLI hook failure
