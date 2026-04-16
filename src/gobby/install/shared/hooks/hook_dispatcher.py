@@ -35,7 +35,23 @@ from typing import Any
 
 import aiofiles
 
-from gobby.sessions.tmux_context import parse_tmux_socket_path
+
+# NOTE: This dispatcher runs in an isolated PEP-723 `uv run` environment
+# (see the script header above — only httpx, pyyaml, aiofiles are declared).
+# The gobby package is NOT importable here. Keep this file self-contained:
+# do not add `from gobby.<anything>` imports. Inline helpers instead.
+def parse_tmux_socket_path(tmux_env: str | None) -> str | None:
+    """Extract the tmux socket path from the ``TMUX`` env var.
+
+    Mirrors ``gobby.sessions.tmux_context.parse_tmux_socket_path`` — must
+    stay in sync. Inlined here because the dispatcher cannot import from
+    the gobby package at runtime.
+    """
+    if not isinstance(tmux_env, str):
+        return None
+    socket_path = tmux_env.split(",", 1)[0].strip()
+    return socket_path or None
+
 
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 60887

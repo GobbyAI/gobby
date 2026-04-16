@@ -546,6 +546,58 @@ class TestAgentDaemonFailureTracking:
         assert hook_dispatcher._track_daemon_failure("test-reset") == 1
 
 
+# ── Self-contained runtime (no gobby.* imports) ─────────────────────────
+
+
+class TestDispatcherSelfContained:
+    """The dispatcher runs in a PEP-723 uv env that cannot import gobby.*.
+
+    Regression guard for the bug introduced in commit ca27d7e24 and fixed
+    in commit #11854 — importing from the gobby package at module load
+    broke every hook invocation because uv run isolates to the inline
+    deps (httpx, pyyaml, aiofiles).
+    """
+
+    def test_no_gobby_imports_in_source(self) -> None:
+        source_path = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "gobby"
+            / "install"
+            / "shared"
+            / "hooks"
+            / "hook_dispatcher.py"
+        )
+        text = source_path.read_text()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert not stripped.startswith("from gobby."), (
+                f"Dispatcher must stay self-contained; found: {stripped}"
+            )
+            assert not stripped.startswith("import gobby"), (
+                f"Dispatcher must stay self-contained; found: {stripped}"
+            )
+
+    @pytest.mark.parametrize(
+        "tmux_env,expected",
+        [
+            (None, None),
+            ("", None),
+            ("/tmp/tmux-501/default,12345,0", "/tmp/tmux-501/default"),
+            ("  /tmp/tmux-501/default  ,12345,0", "/tmp/tmux-501/default"),
+            ("/tmp/only-path", "/tmp/only-path"),
+            (",12345,0", None),
+            (123, None),
+        ],
+    )
+    def test_parse_tmux_socket_path(
+        self, tmux_env: str | None, expected: str | None
+    ) -> None:
+        assert hook_dispatcher.parse_tmux_socket_path(tmux_env) == expected
+
+
 # ── get_daemon_url bind_host handling ────────────────────────────────────
 
 
