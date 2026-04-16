@@ -4,4 +4,6 @@
 //! `gsqz`, `gloc`, `ghook`) share: project-root walk-up, project-id reading,
 //! bootstrap config resolution, daemon URL construction.
 
+pub mod bootstrap;
+pub mod daemon_url;
 pub mod project;
