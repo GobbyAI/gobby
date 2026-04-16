@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.project_init import initialize_project
 
 logger = logging.getLogger(__name__)
@@ -53,11 +54,11 @@ def init(
 
         # Trigger initial code indexing via gcode
         try:
-            gcode_bin = Path.home() / ".gobby" / "bin" / "gcode"
-            if gcode_bin.exists():
+            gcode_bin = resolve_native_bin("gcode")
+            if gcode_bin:
                 click.echo("Indexing codebase...")
                 proc = subprocess.run(
-                    [str(gcode_bin), "index", "--project", str(result.project_path)],
+                    [gcode_bin, "index", "--project", str(result.project_path)],
                     capture_output=True,
                     text=True,
                     timeout=300,

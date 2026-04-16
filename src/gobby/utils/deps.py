@@ -12,6 +12,8 @@ import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
 from typing import Any
 
+from gobby.cli.installers.hook_commands import is_gobby_hook_command
+
 
 def _run_cmd(args: list[str], timeout: int = 5) -> str | None:
     """Run a command and return stdout, or None on failure."""
@@ -137,7 +139,7 @@ def _check_hooks_in_file(path: Path) -> bool:
         return False
     try:
         content = path.read_text()
-        return "hook_dispatcher.py" in content
+        return is_gobby_hook_command(content)
     except Exception:
         return False
 

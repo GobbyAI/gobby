@@ -9,6 +9,7 @@ from typing import Any
 
 from gobby.cli.utils import get_install_dir
 
+from .hook_commands import rewrite_hook_template_commands
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
     clean_project_hooks,
@@ -96,12 +97,15 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
     with open(source_hooks_template) as f:
         gobby_settings_str = f.read()
 
-    uv_path = which("uv") or "uv"
     gobby_settings_str = gobby_settings_str.replace("$HOOKS_DIR", str(hooks_dir.resolve()))
-    if uv_path != "uv":
-        gobby_settings_str = gobby_settings_str.replace("uv run", f"{uv_path} run")
 
     gobby_settings = json.loads(gobby_settings_str)
+    rewrite_hook_template_commands(
+        gobby_settings,
+        cli_name="qwen",
+        hooks_dir=hooks_dir,
+        uv_bin=which("uv") or "uv",
+    )
 
     if "hooks" not in existing_settings:
         existing_settings["hooks"] = {}

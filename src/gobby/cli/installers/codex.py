@@ -15,6 +15,7 @@ from typing import Any
 
 from gobby.cli.utils import get_install_dir
 
+from .hook_commands import config_contains_gobby_hook, rewrite_hook_template_commands
 from .mcp_config import (
     configure_mcp_server_toml,
     remove_mcp_server_toml,
@@ -145,6 +146,7 @@ def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
     template_str = template_path.read_text(encoding="utf-8")
     template_str = template_str.replace("$HOOKS_DIR", str(hooks_dir.resolve()))
     gobby_hooks_config = json.loads(template_str)
+    rewrite_hook_template_commands(gobby_hooks_config, cli_name="codex", hooks_dir=hooks_dir)
 
     hooks_file = codex_home / "hooks.json"
     existing: dict[str, Any] = {}
@@ -185,24 +187,7 @@ def _is_gobby_hook(hook_entry: Any) -> bool:
     Inspects the entry's command/args for the hook_dispatcher.py path
     rather than doing a broad string search on the JSON serialization.
     """
-    if isinstance(hook_entry, dict):
-        for field in ("command", "cmd", "script"):
-            val = hook_entry.get(field, "")
-            if isinstance(val, str) and "hook_dispatcher.py" in val:
-                return True
-        for field in ("args", "arguments"):
-            val = hook_entry.get(field, [])
-            if isinstance(val, list):
-                for arg in val:
-                    if isinstance(arg, str) and "hook_dispatcher.py" in arg:
-                        return True
-        # Recurse into nested "hooks" key (Codex hooks.json nests commands there)
-        hooks_list = hook_entry.get("hooks", [])
-        if isinstance(hooks_list, list) and any(_is_gobby_hook(h) for h in hooks_list):
-            return True
-    elif isinstance(hook_entry, list):
-        return any(_is_gobby_hook(item) for item in hook_entry)
-    return False
+    return config_contains_gobby_hook(hook_entry)
 
 
 def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]:
