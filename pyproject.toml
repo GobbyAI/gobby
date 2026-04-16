@@ -39,8 +39,8 @@ dependencies = [
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "qdrant-client>=1.12.0",
-    # python-multipart 0.0.21 has CVE-2026-24486 - pin to fixed version
-    "python-multipart>=0.0.22",
+    # python-multipart <0.0.26 has CVE-2026-24486 - pin to fixed version
+    "python-multipart>=0.0.26",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
     # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
