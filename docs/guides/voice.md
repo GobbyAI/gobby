@@ -124,7 +124,8 @@ Notes:
 - `tts_reference_audio` alone enables normal cloning
 - Adding `tts_reference_text` lets the provider reuse the same clip as prompt audio for better similarity
 - Output is typically 48kHz
-- Embedded VoxCPM currently auto-selects its runtime device; `tts_device` is not enforced
+- On Apple Silicon, prefer `tts_device: auto` so VoxCPM can select `mps`
+- Embedded VoxCPM currently auto-selects its runtime device; `tts_device` is best treated as a preference, not a guarantee
 - VoxCPM is not installed by `uv sync --extra voice`
 
 ### Chatterbox

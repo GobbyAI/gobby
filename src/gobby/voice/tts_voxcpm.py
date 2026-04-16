@@ -28,6 +28,17 @@ def _maybe_local_model_path(model_ref: str) -> Path | None:
     return None
 
 
+def _should_warn_runtime_device_fallback(
+    requested_device: str, runtime_device: str | None
+) -> bool:
+    """Warn only when VoxCPM falls back to CPU despite a stronger explicit request."""
+    return (
+        runtime_device == "cpu"
+        and requested_device not in {"auto", "cpu"}
+        and requested_device != runtime_device
+    )
+
+
 class VoxCPMProvider(BaseTTSProvider):
     """Local TTS via VoxCPM with optional higher-fidelity reference text."""
 
@@ -112,13 +123,9 @@ class VoxCPMProvider(BaseTTSProvider):
             if isinstance(sample_rate, int):
                 self._sample_rate = sample_rate
             requested_device = self._config.tts_device
-            if (
-                isinstance(runtime_device, str)
-                and requested_device != "auto"
-                and requested_device != runtime_device
-            ):
+            if _should_warn_runtime_device_fallback(requested_device, runtime_device):
                 logger.warning(
-                    "Embedded VoxCPM ignored requested tts_device=%s and loaded on %s",
+                    "Embedded VoxCPM fell back from requested tts_device=%s to %s",
                     requested_device,
                     runtime_device,
                 )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -152,3 +153,49 @@ class TestVoxCPMProvider:
         assert "device" not in load_mock.call_args.kwargs
         assert status.details["tts_device"] == "cpu"
         assert status.details["tts_runtime_device"] == "mps"
+
+    @pytest.mark.asyncio
+    async def test_warmup_does_not_warn_when_runtime_upgrades_to_mps(
+        self, voice_config: VoiceConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.voice.tts_voxcpm import VoxCPMProvider
+
+        provider = VoxCPMProvider(voice_config)
+        mock_model = MagicMock()
+        mock_model.tts_model = SimpleNamespace(sample_rate=48000, device="mps")
+        load_mock = MagicMock(return_value=mock_model)
+        mock_voxcpm = SimpleNamespace(VoxCPM=SimpleNamespace(from_pretrained=load_mock))
+
+        with patch.dict("sys.modules", {"voxcpm": mock_voxcpm}):
+            with caplog.at_level(logging.WARNING, logger="gobby.voice.tts_voxcpm"):
+                await provider.warmup()
+
+        assert "fell back" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_warmup_warns_when_runtime_falls_back_to_cpu(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.voice.tts_voxcpm import VoxCPMProvider
+
+        ref = tmp_path / "reference.wav"
+        ref.write_bytes(b"RIFF" + b"\x00" * 100)
+        provider = VoxCPMProvider(
+            VoiceConfig(
+                enabled=True,
+                tts_enabled=True,
+                tts_provider="voxcpm",
+                tts_reference_audio=str(ref),
+                tts_device="mps",
+            )
+        )
+        mock_model = MagicMock()
+        mock_model.tts_model = SimpleNamespace(sample_rate=48000, device="cpu")
+        load_mock = MagicMock(return_value=mock_model)
+        mock_voxcpm = SimpleNamespace(VoxCPM=SimpleNamespace(from_pretrained=load_mock))
+
+        with patch.dict("sys.modules", {"voxcpm": mock_voxcpm}):
+            with caplog.at_level(logging.WARNING, logger="gobby.voice.tts_voxcpm"):
+                await provider.warmup()
+
+        assert "fell back from requested tts_device=mps to cpu" in caplog.text
