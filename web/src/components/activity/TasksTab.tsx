@@ -1,8 +1,14 @@
-import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Tree, type NodeRendererProps, type TreeApi } from "react-arborist";
+import {
+  memo,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  type MouseEvent,
+} from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { Markdown } from "../chat/Markdown";
-import { useNow } from "../../hooks/useNow";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import "../tasks/task-execution.css";
 import type { GobbyTask } from "../../hooks/useTasks";
@@ -17,6 +23,7 @@ import {
 
 interface TasksTabProps {
   projectId?: string | null;
+  chatSessionId?: string | null;
 }
 
 interface GobbyTaskDetail extends GobbyTask {
@@ -36,6 +43,21 @@ interface TreeNode {
   children: TreeNode[];
 }
 
+interface VisibleTaskRow {
+  node: TreeNode;
+  depth: number;
+  isInternal: boolean;
+  isOpen: boolean;
+}
+
+type TaskFilterKey = TaskBucket | "escalated";
+
+interface TaskContextMenu {
+  x: number;
+  y: number;
+  task: GobbyTask;
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -46,11 +68,13 @@ const LIFECYCLE_BUCKETS: TaskBucket[] = [
   "review",
   "merge_ready",
 ];
-const STATUS_BUCKETS: TaskBucket[] = ["blocked", "closed"];
-const DEFAULT_FILTERS = new Set<TaskBucket>([...LIFECYCLE_BUCKETS, "blocked"]);
-const INITIAL_TASK_LIMIT = 10;
-const TASK_ROW_HEIGHT = 30;
-const TASK_TREE_FOOTER_HEIGHT = 40;
+const STATUS_FILTERS: TaskFilterKey[] = ["blocked", "escalated", "closed"];
+const DEFAULT_FILTERS = new Set<TaskFilterKey>([
+  ...LIFECYCLE_BUCKETS,
+  "blocked",
+  "escalated",
+]);
+const RECENT_CLOSED_TASK_LIMIT = 20;
 
 const STATUS_DOT_COLORS = TASK_BUCKET_COLORS;
 
@@ -98,8 +122,7 @@ function buildTree(tasks: GobbyTask[]): TreeNode[] {
   return roots;
 }
 
-function searchMatch(node: { data: TreeNode }, term: string): boolean {
-  const task = node.data.task;
+function taskMatchesSearch(task: GobbyTask, term: string): boolean {
   const lower = term.toLowerCase();
   return (
     task.title.toLowerCase().includes(lower) ||
@@ -107,51 +130,92 @@ function searchMatch(node: { data: TreeNode }, term: string): boolean {
   );
 }
 
-// =============================================================================
-// Lightweight node renderer for panel tree
-// =============================================================================
+function filterTreeBySearch(nodes: TreeNode[], term: string): TreeNode[] {
+  const trimmed = term.trim();
+  if (!trimmed) {
+    return nodes;
+  }
 
-function PanelTaskNode({ node, style }: NodeRendererProps<TreeNode>) {
-  const task = node.data.task;
-  const dotColor = STATUS_DOT_COLORS[getTaskBucket(task)] ?? "#737373";
-  const textColor =
-    PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
-  const ref = task.seq_num != null ? `#${task.seq_num}` : null;
+  const visit = (node: TreeNode): TreeNode | null => {
+    const children = node.children
+      .map(visit)
+      .filter((child): child is TreeNode => child !== null);
 
-  return (
-    <div
-      style={style}
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${node.isSelected ? " bg-accent/[0.06]" : ""}${getTaskBucket(task) === "closed" ? " opacity-50" : ""}`}
-      onClick={() => node.activate()}
-    >
-      {node.isInternal ? (
-        <button
-          className="bg-transparent border-none text-muted-foreground text-xs cursor-pointer p-0 w-4 shrink-0 text-center leading-none"
-          onClick={(e) => {
-            e.stopPropagation();
-            node.toggle();
-          }}
-        >
-          {node.isOpen ? "▾" : "▸"}
-        </button>
-      ) : (
-        <span className="invisible w-4 shrink-0" />
-      )}
-      <span
-        className="w-1.5 h-1.5 rounded-full shrink-0"
-        style={{ backgroundColor: dotColor }}
-      />
-      {ref && (
-        <span className="text-sm text-muted-foreground shrink-0">{ref}</span>
-      )}
-      <span
-        className="truncate min-w-0 flex-1 text-sm text-foreground"
-        style={{ color: textColor }}
-      >
-        {task.title}
-      </span>
-    </div>
-  );
+    if (!taskMatchesSearch(node.task, trimmed) && children.length === 0) {
+      return null;
+    }
+
+    return {
+      ...node,
+      children,
+    };
+  };
+
+  return nodes
+    .map(visit)
+    .filter((node): node is TreeNode => node !== null);
+}
+
+function collectExpandableNodeIds(
+  nodes: TreeNode[],
+  ids: Set<string> = new Set(),
+): Set<string> {
+  for (const node of nodes) {
+    if (node.children.length > 0) {
+      ids.add(node.id);
+      collectExpandableNodeIds(node.children, ids);
+    }
+  }
+  return ids;
+}
+
+function collectVisibleTaskRows(
+  nodes: TreeNode[],
+  collapsedIds: Set<string>,
+  depth = 0,
+  forceOpen = false,
+): VisibleTaskRow[] {
+  return nodes.flatMap((node) => {
+    const isInternal = node.children.length > 0;
+    const isOpen = forceOpen || !collapsedIds.has(node.id);
+    const row: VisibleTaskRow = {
+      node,
+      depth,
+      isInternal,
+      isOpen,
+    };
+
+    if (!isInternal || !isOpen) {
+      return [row];
+    }
+
+    return [
+      row,
+      ...collectVisibleTaskRows(node.children, collapsedIds, depth + 1, forceOpen),
+    ];
+  });
+}
+
+function getTaskFilterLabel(filter: TaskFilterKey): string {
+  if (filter === "escalated") {
+    return "Escalated";
+  }
+  return TASK_BUCKET_LABELS[filter];
+}
+
+function getTaskFilterColor(filter: TaskFilterKey): string {
+  if (filter === "escalated") {
+    return "var(--status-escalated, #ef4444)";
+  }
+  return STATUS_DOT_COLORS[filter] ?? "#737373";
+}
+
+function matchesTaskFilter(task: GobbyTask, filters: Set<TaskFilterKey>): boolean {
+  const state = getCanonicalTaskState(task);
+  if (state.is_closed) return filters.has("closed");
+  if (state.is_escalated) return filters.has("escalated");
+  const bucket = getTaskBucket(task);
+  return filters.has(bucket);
 }
 
 // =============================================================================
@@ -163,19 +227,22 @@ function FilterDropdown({
   onToggle,
   onClose,
 }: {
-  filters: Set<TaskBucket>;
-  onToggle: (status: TaskBucket) => void;
+  filters: Set<TaskFilterKey>;
+  onToggle: (status: TaskFilterKey) => void;
   onClose: () => void;
 }) {
-  const filterGroups: Array<{ label: string; buckets: TaskBucket[] }> = [
+  const filterGroups: Array<{ label: string; buckets: TaskFilterKey[] }> = [
     { label: "Lifecycle", buckets: LIFECYCLE_BUCKETS },
-    { label: "Status", buckets: STATUS_BUCKETS },
+    { label: "Status", buckets: STATUS_FILTERS },
   ];
 
   return (
     <>
       <div className="fixed inset-0 z-[99]" onClick={onClose} />
-      <div className="absolute top-full right-2 z-[100] bg-secondary border border-border rounded-md shadow-lg p-1.5 flex flex-col gap-0.5 min-w-[10rem]">
+      <div
+        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl p-1.5 flex flex-col gap-0.5 min-w-[10rem]"
+        style={{ background: "var(--bg-secondary)" }}
+      >
         {filterGroups.map((group) => (
           <div key={group.label} className="flex flex-col gap-0.5 py-0.5">
             <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
@@ -195,10 +262,10 @@ function FilterDropdown({
                 <span
                   className="w-1.5 h-1.5 rounded-full shrink-0"
                   style={{
-                    backgroundColor: STATUS_DOT_COLORS[status] ?? "#737373",
+                    backgroundColor: getTaskFilterColor(status),
                   }}
                 />
-                <span>{TASK_BUCKET_LABELS[status]}</span>
+                <span>{getTaskFilterLabel(status)}</span>
               </label>
             ))}
           </div>
@@ -212,32 +279,26 @@ function FilterDropdown({
 // TasksTab
 // =============================================================================
 
-export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
+export const TasksTab = memo(function TasksTab({
+  projectId,
+  chatSessionId,
+}: TasksTabProps) {
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [statusFilters, setStatusFilters] = useState<Set<TaskBucket>>(
+  const [statusFilters, setStatusFilters] = useState<Set<TaskFilterKey>>(
     () => new Set(DEFAULT_FILTERS),
   );
-  const [visibleCount, setVisibleCount] = useState(INITIAL_TASK_LIMIT);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [topHeight, setTopHeight] = useState(50);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [treeHeight, setTreeHeight] = useState(300);
-  const treeRef = useRef<TreeApi<TreeNode> | null>(null);
-  // Visible row count, sourced from react-arborist's TreeApi.visibleNodes
-  // so it tracks user collapse/expand state. Initialized lazily once the
-  // tree mounts; updated on every onToggle.
-  const [arboristVisibleCount, setArboristVisibleCount] = useState<
-    number | null
-  >(null);
-  const syncVisibleCount = useCallback(() => {
-    const n = treeRef.current?.visibleNodes?.length;
-    setArboristVisibleCount(typeof n === "number" ? n : null);
-  }, []);
+  const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
+  const [taskMenu, setTaskMenu] = useState<TaskContextMenu | null>(null);
+  const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Fetch tasks, then apply canonical bucket filters client-side.
   const abortRef = useRef<AbortController | null>(null);
@@ -381,19 +442,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     return () => controller.abort();
   }, [selectedTaskId]);
 
-  // ResizeObserver for tree height
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const available = entry.contentRect.height;
-      if (available > 100) setTreeHeight(Math.round(available));
-    });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
-
-  const toggleFilter = useCallback((status: TaskBucket) => {
+  const toggleFilter = useCallback((status: TaskFilterKey) => {
     setStatusFilters((prev) => {
       const next = new Set(prev);
       if (next.has(status)) next.delete(status);
@@ -402,34 +451,41 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     });
   }, []);
 
-  useEffect(() => {
-    setVisibleCount(INITIAL_TASK_LIMIT);
-  }, [projectId, search, statusFilters]);
-
   // Client-side filter + stable re-sort by updated_at desc to match the
   // server's sort_by=updated_at request. WebSocket task_created events
   // append to `tasks` without preserving ordering, so we re-sort here to
   // keep the list consistent with the server ordering.
-  const now = useNow();
-  const DAY_MS = 24 * 60 * 60 * 1000;
   const filtered = useMemo(() => {
-    return tasks
-      .filter((t) => {
-        const bucket = getTaskBucket(t);
-        if (!statusFilters.has(bucket)) return false;
-        if (bucket !== "closed") return true;
-        const closedAt = getCanonicalTaskState(t).closed_at;
-        if (!closedAt) return false;
-        return now - new Date(closedAt).getTime() < DAY_MS;
+    const matchingTasks = tasks.filter((task) =>
+      matchesTaskFilter(task, statusFilters),
+    );
+    const recentClosedIds = new Set(
+      matchingTasks
+        .filter((task) => getTaskBucket(task) === "closed")
+        .sort((a, b) => {
+          const closedAtA = getCanonicalTaskState(a).closed_at ?? a.updated_at ?? "";
+          const closedAtB = getCanonicalTaskState(b).closed_at ?? b.updated_at ?? "";
+          return closedAtB.localeCompare(closedAtA);
+        })
+        .slice(0, RECENT_CLOSED_TASK_LIMIT)
+        .map((task) => task.id),
+    );
+
+    return matchingTasks
+      .filter((task) => {
+        if (getTaskBucket(task) !== "closed") {
+          return true;
+        }
+        return recentClosedIds.has(task.id);
       })
       .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
-  }, [tasks, statusFilters, now, DAY_MS]);
+  }, [tasks, statusFilters]);
 
   const treeData = useMemo(() => {
     const taskMap = new Map(tasks.map((task) => [task.id, task]));
     const visibleIds = new Set<string>();
 
-    for (const task of filtered.slice(0, visibleCount)) {
+    for (const task of filtered) {
       let current: GobbyTask | undefined = task;
       while (current) {
         if (visibleIds.has(current.id)) break;
@@ -442,43 +498,207 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
 
     const visibleTasks = filtered.filter((task) => visibleIds.has(task.id));
     return buildTree(visibleTasks);
-  }, [filtered, tasks, visibleCount]);
+  }, [filtered, tasks]);
 
-  // Resync the visible row count whenever the tree's data shape changes —
-  // this catches mount and any case where filters/search add or remove rows
-  // before the user touches the tree manually.
+  const searchableTreeData = useMemo(
+    () => filterTreeBySearch(treeData, search),
+    [treeData, search],
+  );
+  const searchableExpandableIds = useMemo(
+    () => collectExpandableNodeIds(searchableTreeData),
+    [searchableTreeData],
+  );
+
   useEffect(() => {
-    setArboristVisibleCount(null);
-    const frame = window.requestAnimationFrame(() => {
-      syncVisibleCount();
-    });
+    setCollapsedTaskIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
 
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [search, treeData, syncVisibleCount]);
-
-  const hasMore = filtered.length > visibleCount;
-  const fallbackVisibleCount = useMemo(
-    () => countVisibleNodes(treeData),
-    [treeData],
-  );
-  // Prefer the authoritative count from the TreeApi when the tree has
-  // mounted; otherwise use the recursive fallback so initial render still
-  // gets a sensible viewport height.
-  const visibleTreeRowCount = arboristVisibleCount ?? fallbackVisibleCount;
-  const unconstrainedTreeHeight = visibleTreeRowCount * TASK_ROW_HEIGHT;
-  const treeFooterOffset = hasMore ? TASK_TREE_FOOTER_HEIGHT : 0;
-  const availableTreeHeight = Math.max(
-    TASK_ROW_HEIGHT,
-    treeHeight - treeFooterOffset,
-  );
-  const treeViewportHeight = selectedTaskId
-    ? availableTreeHeight
-    : Math.max(
-        TASK_ROW_HEIGHT,
-        Math.min(availableTreeHeight, unconstrainedTreeHeight),
+      const next = new Set(
+        [...prev].filter((id) => searchableExpandableIds.has(id)),
       );
+
+      return next.size === prev.size ? prev : next;
+    });
+  }, [searchableExpandableIds]);
+
+  const visibleRows = useMemo(
+    () =>
+      collectVisibleTaskRows(
+        searchableTreeData,
+        collapsedTaskIds,
+        0,
+        search.trim().length > 0,
+      ),
+    [search, searchableTreeData, collapsedTaskIds],
+  );
+
+  useEffect(() => {
+    if (visibleRows.length === 0) {
+      if (selectedTaskId !== null) {
+        setSelectedTaskId(null);
+      }
+      return;
+    }
+
+    if (
+      !selectedTaskId ||
+      !visibleRows.some((row) => row.node.task.id === selectedTaskId)
+    ) {
+      setSelectedTaskId(visibleRows[0].node.task.id);
+    }
+  }, [selectedTaskId, visibleRows]);
+
+  const closeTaskMenu = useCallback(() => setTaskMenu(null), []);
+
+  useEffect(() => {
+    if (!taskMenu) return;
+    const handleWindowClick = () => setTaskMenu(null);
+    window.addEventListener("click", handleWindowClick);
+    return () => window.removeEventListener("click", handleWindowClick);
+  }, [taskMenu]);
+
+  const handleMenuButtonClick = useCallback(
+    (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => {
+      event.stopPropagation();
+      const rect = event.currentTarget.getBoundingClientRect();
+      const menuWidth = 180;
+      setTaskMenu({
+        x: rect.left - menuWidth,
+        y: rect.top,
+        task,
+      });
+    },
+    [],
+  );
+
+  const handleAssignToMainChat = useCallback(async () => {
+    if (!taskMenu?.task.id || !chatSessionId) {
+      return;
+    }
+    const taskId = taskMenu.task.id;
+    closeTaskMenu();
+    setAssigningTaskId(taskId);
+    try {
+      const response = await fetch(
+        `${getBaseUrl()}/api/tasks/${encodeURIComponent(taskId)}/claim`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: chatSessionId, force: true }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to claim task (${response.status})`);
+      }
+      const claimedTask = await response.json();
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === taskId ? { ...task, ...(claimedTask?.task ?? claimedTask) } : task,
+        ),
+      );
+      if (selectedTaskId === taskId) {
+        setTaskDetail((claimedTask?.task ?? claimedTask) as GobbyTaskDetail);
+      }
+      fetchTasks();
+    } catch (error) {
+      console.error("Failed to assign task to main chat:", error);
+    } finally {
+      setAssigningTaskId(null);
+    }
+  }, [chatSessionId, closeTaskMenu, fetchTasks, selectedTaskId, taskMenu]);
+
+  const toggleTaskOpen = useCallback((taskId: string) => {
+    setCollapsedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }, []);
+
+  const renderTaskRow = useCallback(
+    (row: VisibleTaskRow) => {
+      const task = row.node.task;
+      const taskState = getCanonicalTaskState(task);
+      const dotColor = taskState.is_escalated
+        ? getTaskFilterColor("escalated")
+        : STATUS_DOT_COLORS[getTaskBucket(task)] ?? "#737373";
+      const textColor =
+        PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
+      const ref = task.seq_num != null ? `#${task.seq_num}` : null;
+      const isAssigning = assigningTaskId === task.id;
+      const isSelected = selectedTaskId === task.id;
+
+      return (
+        <div
+          key={task.id}
+          style={{ paddingLeft: `${row.depth * 16 + 10}px` }}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${isSelected ? " bg-accent/[0.06]" : ""}${getTaskBucket(task) === "closed" ? " opacity-50" : ""}`}
+          role="treeitem"
+          aria-level={row.depth + 1}
+          aria-expanded={row.isInternal ? row.isOpen : undefined}
+          onClick={() => setSelectedTaskId(task.id)}
+        >
+          {row.isInternal ? (
+            <button
+              className="bg-transparent border-none text-muted-foreground text-xs cursor-pointer p-0 w-4 shrink-0 text-center leading-none"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleTaskOpen(task.id);
+              }}
+            >
+              {row.isOpen ? "▾" : "▸"}
+            </button>
+          ) : (
+            <span className="invisible w-4 shrink-0" />
+          )}
+          <span
+            className="w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ backgroundColor: dotColor }}
+          />
+          {ref && (
+            <span className="text-sm text-muted-foreground shrink-0">{ref}</span>
+          )}
+          <span
+            className="truncate min-w-0 flex-1 text-sm text-foreground"
+            style={{ color: textColor }}
+          >
+            {task.title}
+          </span>
+          <button
+            type="button"
+            className="session-more-btn"
+            onClick={(event) => handleMenuButtonClick(event, task)}
+            title="Task actions"
+            aria-label="Task actions"
+            disabled={isAssigning}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <circle cx="12" cy="5" r="2" />
+              <circle cx="12" cy="12" r="2" />
+              <circle cx="12" cy="19" r="2" />
+            </svg>
+          </button>
+        </div>
+      );
+    },
+    [
+      assigningTaskId,
+      handleMenuButtonClick,
+      selectedTaskId,
+      toggleTaskOpen,
+    ],
+  );
 
   if (loading) {
     return (
@@ -489,7 +709,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-secondary relative">
         <input
@@ -529,12 +749,14 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
 
       {/* Tree pane */}
       <div
-        ref={containerRef}
-        className={`activity-tasks-pane flex min-h-0 flex-col ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
+        className={`activity-tasks-pane min-h-0 overflow-y-auto ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
         style={selectedTaskId ? { height: `${topHeight}%` } : undefined}
+        role={filtered.length > 0 ? "tree" : undefined}
+        aria-label={filtered.length > 0 ? "Tasks" : undefined}
+        data-testid={filtered.length > 0 ? "task-tree" : undefined}
       >
         {filtered.length === 0 ? (
-          <div className="activity-tab-empty flex-1">
+          <div className="activity-tab-empty">
             <p>No tasks match filters</p>
             {tasks.length > 0 && (
               <p className="text-xs text-muted-foreground mt-1">
@@ -544,35 +766,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
           </div>
         ) : (
           <>
-            <div className="flex-1 min-h-0">
-              <Tree<TreeNode>
-                ref={treeRef}
-                data={treeData}
-                openByDefault={true}
-                width="100%"
-                height={treeViewportHeight}
-                rowHeight={TASK_ROW_HEIGHT}
-                indent={16}
-                searchTerm={search}
-                searchMatch={searchMatch}
-                onActivate={(node) => setSelectedTaskId(node.data.task.id)}
-                onToggle={syncVisibleCount}
-                disableDrag
-                disableDrop
-              >
-                {PanelTaskNode}
-              </Tree>
-            </div>
-            {hasMore && (
-              <button
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
-                onClick={() =>
-                  setVisibleCount((prev) => prev + INITIAL_TASK_LIMIT)
-                }
-              >
-                Load more
-              </button>
-            )}
+            {visibleRows.map((row) => renderTaskRow(row))}
           </>
         )}
       </div>
@@ -595,14 +789,6 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
             <span className="flex-1 min-w-0 truncate text-sm font-medium">
               {taskDetail ? taskDetail.title : "Loading..."}
             </span>
-            <button
-              type="button"
-              className="bg-transparent border-none text-muted-foreground cursor-pointer text-sm px-1 shrink-0 hover:text-foreground transition-colors"
-              onClick={() => setSelectedTaskId(null)}
-              title="Close detail"
-            >
-              ✕
-            </button>
           </div>
           {detailLoading ? (
             <p className="text-xs text-muted-foreground px-3 py-2">
@@ -616,6 +802,26 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
             </p>
           )}
         </div>
+      )}
+
+      {taskMenu && (
+        <>
+          <div className="session-ctx-backdrop" onClick={closeTaskMenu} />
+          <div
+            className="session-ctx-menu"
+            style={{ position: "fixed", left: taskMenu.x, top: taskMenu.y }}
+          >
+            <button
+              className="session-ctx-item"
+              onClick={() => {
+                void handleAssignToMainChat();
+              }}
+              disabled={!chatSessionId || assigningTaskId === taskMenu.task.id}
+            >
+              Assign to Main Chat
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -680,12 +886,5 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
         )}
       </div>
     </div>
-  );
-}
-
-function countVisibleNodes(nodes: TreeNode[]): number {
-  return nodes.reduce(
-    (count, node) => count + 1 + countVisibleNodes(node.children),
-    0,
   );
 }
