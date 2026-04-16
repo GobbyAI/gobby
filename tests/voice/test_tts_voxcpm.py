@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -14,6 +15,16 @@ from gobby.config.voice import VoiceConfig
 from gobby.voice.providers import create_tts_provider, get_tts_provider_status
 
 pytestmark = pytest.mark.unit
+
+
+def _write_wav(path: Path, *, duration_seconds: float, channels: int = 1, sample_rate: int = 16000) -> None:
+    frame_count = int(duration_seconds * sample_rate)
+    silence = b"\x00\x00" * frame_count * channels
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(silence)
 
 
 @pytest.fixture
@@ -47,6 +58,31 @@ class TestVoxCPMProvider:
         assert status.capabilities.supports_reference_text is True
         assert status.capabilities.supports_voice_cloning is True
         assert status.details["tts_reference_audio_exists"] is True
+
+    def test_status_uses_sidecar_reference_text_and_reports_quality_hints(
+        self, tmp_path: Path
+    ) -> None:
+        ref = tmp_path / "reference.wav"
+        _write_wav(ref, duration_seconds=30.0, channels=2)
+        ref.with_suffix(".txt").write_text("Reference transcript", encoding="utf-8")
+        config = VoiceConfig(
+            enabled=True,
+            tts_enabled=True,
+            tts_provider="voxcpm",
+            tts_reference_audio=str(ref),
+        )
+
+        with patch.dict("sys.modules", {"voxcpm": MagicMock()}):
+            status = get_tts_provider_status(config)
+
+        assert status.details["tts_reference_text_configured"] is True
+        assert status.details["tts_reference_text_source"] == "sidecar"
+        assert status.details["tts_reference_audio_channels"] == 2
+        assert status.details["tts_reference_audio_duration_seconds"] == 30.0
+        assert status.details["tts_reference_audio_warnings"] == [
+            "Reference clip is stereo; VoxCPM downmixes to mono internally.",
+            "Reference clip is longer than 20s; VoxCPM usually clones better from 8-15s.",
+        ]
 
     def test_status_reports_missing_local_model_path(self, tmp_path: Path) -> None:
         config = VoiceConfig(
@@ -119,6 +155,38 @@ class TestVoxCPMProvider:
         assert call.kwargs["reference_wav_path"] == str(ref)
         assert call.kwargs["prompt_wav_path"] == str(ref)
         assert call.kwargs["prompt_text"] == "Reference transcript"
+
+    @pytest.mark.asyncio
+    async def test_synthesize_stream_uses_reference_text_from_sidecar(
+        self, tmp_path: Path
+    ) -> None:
+        from gobby.voice.tts_voxcpm import VoxCPMProvider
+
+        ref = tmp_path / "reference.wav"
+        ref.write_bytes(b"RIFF" + b"\x00" * 100)
+        ref.with_suffix(".txt").write_text("Sidecar transcript", encoding="utf-8")
+        provider = VoxCPMProvider(
+            VoiceConfig(
+                enabled=True,
+                tts_enabled=True,
+                tts_provider="voxcpm",
+                tts_reference_audio=str(ref),
+                tts_device="cpu",
+            )
+        )
+
+        mock_model = MagicMock()
+        mock_model.generate.return_value = np.array([0.1, -0.1], dtype=np.float32)
+        mock_model.tts_model = SimpleNamespace(sample_rate=48000)
+        provider._model = mock_model
+
+        async for _ in provider.synthesize_stream("Hello from VoxCPM"):
+            pass
+
+        call = mock_model.generate.call_args
+        assert call.kwargs["reference_wav_path"] == str(ref)
+        assert call.kwargs["prompt_wav_path"] == str(ref)
+        assert call.kwargs["prompt_text"] == "Sidecar transcript"
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_propagates_model_load_failure(

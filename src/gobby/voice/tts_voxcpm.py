@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import wave
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,6 +38,63 @@ def _should_warn_runtime_device_fallback(
         and requested_device not in {"auto", "cpu"}
         and requested_device != runtime_device
     )
+
+
+def _reference_text_candidates(reference_audio: Path) -> tuple[Path, ...]:
+    """Return supported sidecar transcript locations for a reference clip."""
+    return (reference_audio.with_suffix(".txt"), Path(f"{reference_audio}.txt"))
+
+
+def _load_reference_text(
+    configured_text: str | None, reference_audio: Path
+) -> tuple[str | None, str | None]:
+    """Resolve optional reference text from config first, then a sidecar transcript."""
+    reference_text = (configured_text or "").strip()
+    if reference_text:
+        return reference_text, "config"
+
+    for candidate in _reference_text_candidates(reference_audio):
+        try:
+            text = candidate.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            continue
+        if text:
+            return text, "sidecar"
+    return None, None
+
+
+def _inspect_reference_audio(reference_audio: Path) -> dict[str, Any]:
+    """Return lightweight reference-clip metadata and quality warnings."""
+    details: dict[str, Any] = {
+        "tts_reference_audio_channels": None,
+        "tts_reference_audio_duration_seconds": None,
+        "tts_reference_audio_warnings": [],
+    }
+    if not reference_audio.exists():
+        return details
+
+    try:
+        with wave.open(str(reference_audio), "rb") as wav_file:
+            channels = wav_file.getnchannels()
+            sample_rate = wav_file.getframerate()
+            frames = wav_file.getnframes()
+    except Exception:
+        return details
+
+    duration_seconds = 0.0
+    if sample_rate > 0:
+        duration_seconds = frames / sample_rate
+
+    warnings: list[str] = []
+    if channels > 1:
+        warnings.append("Reference clip is stereo; VoxCPM downmixes to mono internally.")
+    if duration_seconds > 20:
+        warnings.append("Reference clip is longer than 20s; VoxCPM usually clones better from 8-15s.")
+
+    details["tts_reference_audio_channels"] = channels
+    details["tts_reference_audio_duration_seconds"] = round(duration_seconds, 2)
+    details["tts_reference_audio_warnings"] = warnings
+    return details
 
 
 class VoxCPMProvider(BaseTTSProvider):
@@ -73,16 +131,21 @@ class VoxCPMProvider(BaseTTSProvider):
         return True, ""
 
     def _status_details(self) -> dict[str, Any]:
-        reference_text = (self._config.tts_reference_text or "").strip()
+        reference_text, reference_text_source = _load_reference_text(
+            self._config.tts_reference_text, self._reference_audio
+        )
         runtime_device = getattr(getattr(self._model, "tts_model", None), "device", None)
-        return {
+        details = {
             "tts_reference_audio": str(self._reference_audio),
             "tts_reference_audio_exists": self._reference_audio.exists(),
             "tts_reference_text_configured": bool(reference_text),
+            "tts_reference_text_source": reference_text_source,
             "tts_device": self._config.tts_device,
             "tts_runtime_device": runtime_device,
             "tts_voxcpm_model": self._config.tts_voxcpm_model,
         }
+        details.update(_inspect_reference_audio(self._reference_audio))
+        return details
 
     async def warmup(self) -> None:
         """Public entry point for preloading the VoxCPM model."""
@@ -141,7 +204,9 @@ class VoxCPMProvider(BaseTTSProvider):
 
         try:
             ref_path = str(self._reference_audio) if self._reference_audio.exists() else None
-            reference_text = (self._config.tts_reference_text or "").strip() or None
+            reference_text, _reference_text_source = _load_reference_text(
+                self._config.tts_reference_text, self._reference_audio
+            )
 
             def _generate() -> Any:
                 kwargs: dict[str, Any] = {

@@ -96,6 +96,10 @@ Behavior:
 - Used by VoxCPM to switch from simple reference-audio cloning to a higher-fidelity prompt-audio mode
 
 If you do not want to transcribe the clip, leave it unset. Basic cloning still works.
+For VoxCPM, you can also place the transcript in a sidecar text file next to the audio:
+
+- `~/.gobby/voice/reference.txt`
+- or `~/.gobby/voice/reference.wav.txt`
 
 ## TTS Providers
 
@@ -123,10 +127,12 @@ Notes:
 - Default provider for new voice configs
 - `tts_reference_audio` alone enables normal cloning
 - Adding `tts_reference_text` lets the provider reuse the same clip as prompt audio for better similarity
+- If `tts_reference_text` is unset, Gobby will also look for `reference.txt` or `reference.wav.txt` next to the clip
 - Output is typically 48kHz
 - On Apple Silicon, prefer `tts_device: auto` so VoxCPM can select `mps`
 - Embedded VoxCPM currently auto-selects its runtime device; `tts_device` is best treated as a preference, not a guarantee
 - VoxCPM is not installed by `uv sync --extra voice`
+- VoxCPM usually clones better from an `8-15s` clean mono clip than a long `30s` reference
 
 ### Chatterbox
 
@@ -183,7 +189,7 @@ Notes:
 | "Voice not enabled" | Set `voice.enabled: true` and restart the daemon |
 | No microphone icon | Check `/api/voice/status`; STT must be available |
 | STT works but TTS does not | Check `tts_provider`, provider install status, and provider-specific readiness in `/api/voice/status` |
-| Cloning sounds wrong | Use a cleaner or longer reference clip |
+| Cloning sounds wrong | Use a cleaner 8-15s clip, prefer mono, and add `tts_reference_text` or a sidecar transcript |
 | `tts_reference_text` has no effect | The active provider may ignore it, or the field may be unset/blank |
 | VoxCPM unavailable | Confirm `voxcpm` is installed in the daemon runtime and supported on your platform/Python |
 | Kokoro unavailable | Check `tts_model_path` and `tts_voices_path` |
