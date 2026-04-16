@@ -191,3 +191,12 @@ export function splitProtocolContent(
   const sanitized = sanitizeVisibleProtocolText(content)
   return sanitized.trim() ? [{ type: 'text', content: sanitized }] : []
 }
+
+export function hasProtocolToolContent(content: string): boolean {
+  if (!content.includes('<')) {
+    return false
+  }
+
+  protocolToolRe.lastIndex = 0
+  return protocolToolRe.test(content)
+}

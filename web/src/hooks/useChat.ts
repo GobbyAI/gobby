@@ -13,6 +13,7 @@ import { classifyTool, normalizeChatMode } from "../types/chat";
 import type { QueuedFile } from "../types/chat";
 import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
+import { hasProtocolToolContent } from "../components/chat/protocolContent";
 import { AUTO_REASONING_EFFORT } from "../lib/providerModels";
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
@@ -377,6 +378,46 @@ interface ApiMessage {
   content_blocks?: ContentBlock[]; // Snake case from RenderedMessage shape
   model?: string | null;
   usage?: TokenUsage | null;
+}
+
+function normalizeChatRole(
+  role: unknown,
+  content: unknown,
+): "user" | "assistant" | "system" {
+  const normalizedRole =
+    role === "user" || role === "assistant" || role === "system"
+      ? role
+      : "assistant";
+
+  if (typeof content !== "string") {
+    return normalizedRole;
+  }
+
+  if (
+    normalizedRole === "user" &&
+    (isHookFeedback(content) || hasProtocolToolContent(content))
+  ) {
+    return "system";
+  }
+
+  return normalizedRole;
+}
+
+function mapStoredChatMessage(m: {
+  id: string;
+  role: string;
+  content: string;
+  tool_calls?: ToolCall[];
+  created_at: string;
+}): ChatMessage {
+  return {
+    id: m.id,
+    role: normalizeChatRole(m.role, m.content),
+    content: m.content,
+    contentBlocks: m.content ? [{ type: "text" as const, content: m.content }] : [],
+    toolCalls: m.tool_calls ?? [],
+    timestamp: new Date(m.created_at),
+  };
 }
 
 function tryParseJSON(value: unknown): unknown {
@@ -774,9 +815,7 @@ function mapRenderedMessageToChatMessage(
 ): ChatMessage {
   const chatMsg: ChatMessage = {
     id: String(message.id ?? `ws-${Date.now()}`),
-    role:
-      (message.role as string as "user" | "assistant" | "system") ||
-      "assistant",
+    role: normalizeChatRole(message.role, message.content),
     content: (message.content as string) ?? "",
     timestamp: new Date((message.timestamp as string) ?? Date.now()),
     contentBlocks: message.content_blocks as ContentBlock[] | undefined,
@@ -1379,25 +1418,7 @@ export function useChat() {
           .then((data) => {
             if (viewingSessionIdRef.current) return;
             if (!data?.messages?.length) return;
-            const backfilled: ChatMessage[] = data.messages.map(
-              (m: {
-                id: string;
-                role: string;
-                content: string;
-                tool_calls?: ToolCall[];
-                seq: number;
-                created_at: string;
-              }) => ({
-                id: m.id,
-                role: m.role as "user" | "assistant" | "system",
-                content: m.content,
-                contentBlocks: m.content
-                  ? [{ type: "text" as const, content: m.content }]
-                  : [],
-                toolCalls: m.tool_calls ?? [],
-                timestamp: new Date(m.created_at),
-              }),
-            );
+            const backfilled: ChatMessage[] = data.messages.map(mapStoredChatMessage);
             setMessages((prev) => {
               const existingIds = new Set(prev.map((m) => m.id));
               const newMsgs = backfilled.filter((m) => !existingIds.has(m.id));
@@ -3339,25 +3360,7 @@ export function useChat() {
             conversationIdRef.current !== existingConvId
           )
             return;
-          const restored: ChatMessage[] = data.messages.map(
-            (m: {
-              id: string;
-              role: string;
-              content: string;
-              tool_calls?: ToolCall[];
-              seq: number;
-              created_at: string;
-            }) => ({
-              id: m.id,
-              role: m.role as "user" | "assistant" | "system",
-              content: m.content,
-              contentBlocks: m.content
-                ? [{ type: "text" as const, content: m.content }]
-                : [],
-              toolCalls: m.tool_calls ?? [],
-              timestamp: new Date(m.created_at),
-            }),
-          );
+          const restored: ChatMessage[] = data.messages.map(mapStoredChatMessage);
           setMessages(restored);
           if (data.max_seq) lastSeqRef.current = data.max_seq;
         })
