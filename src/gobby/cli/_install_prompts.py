@@ -438,7 +438,7 @@ def _run_voice_install(
 ) -> None:
     """Interactive voice chat setup.
 
-    Installs voice dependencies (faster-whisper, chatterbox, torchaudio, torch)
+    Installs voice dependencies (faster-whisper, voxcpm, kokoro-onnx)
     and enables voice in daemon config. Skipped by default in non-interactive mode.
 
     Args:
@@ -453,7 +453,7 @@ def _run_voice_install(
         click.echo("Voice Chat (Optional)")
         click.echo("-" * 40)
         click.echo("Voice adds speech-to-text and text-to-speech with voice cloning.")
-        click.echo("Requires ~500MB of additional packages (PyTorch, Chatterbox).")
+        click.echo("Requires a large local TTS stack (Whisper plus VoxCPM or other providers).")
         click.echo("")
 
         try:
@@ -483,8 +483,8 @@ def _run_voice_install(
                 "pip",
                 "install",
                 "faster-whisper>=1.0.0",
+                "voxcpm",
                 "kokoro-onnx>=0.5.0",
-                "chatterbox-tts",
             ],
             capture_output=True,
             text=True,
@@ -507,7 +507,7 @@ def _run_voice_install(
                     )
                     conn.execute(
                         "INSERT OR REPLACE INTO daemon_config (key, value) VALUES (?, ?)",
-                        ("voice.tts_provider", "chatterbox"),
+                        ("voice.tts_provider", "voxcpm"),
                     )
                 click.echo("Voice enabled in daemon config")
             except Exception as e:

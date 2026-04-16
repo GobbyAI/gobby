@@ -7,6 +7,7 @@ class TestVoiceConfig:
     def test_defaults(self):
         config = VoiceConfig()
         assert config.enabled is False
+        assert config.tts_provider == "voxcpm"
         assert config.tts_reference_text is None
         assert config.tts_voxcpm_model == "openbmb/VoxCPM2"
         assert config.stt_enabled is True

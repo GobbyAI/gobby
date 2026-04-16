@@ -38,7 +38,7 @@ def _load_provider_factory(provider: str) -> ProviderFactory | None:
 
 def create_tts_provider(config: VoiceConfig) -> TTSProvider | None:
     """Instantiate the configured TTS provider."""
-    factory = _load_provider_factory(getattr(config, "tts_provider", "chatterbox"))
+    factory = _load_provider_factory(getattr(config, "tts_provider", "voxcpm"))
     if factory is None:
         return None
     return factory(config)
@@ -46,7 +46,7 @@ def create_tts_provider(config: VoiceConfig) -> TTSProvider | None:
 
 def get_tts_provider_status(config: VoiceConfig) -> TTSProviderStatus:
     """Return provider status without making callers branch on provider type."""
-    provider_name = getattr(config, "tts_provider", "chatterbox")
+    provider_name = getattr(config, "tts_provider", "voxcpm")
     provider = create_tts_provider(config)
     if provider is None:
         return TTSProviderStatus(
@@ -61,7 +61,7 @@ def get_tts_provider_status(config: VoiceConfig) -> TTSProviderStatus:
 
 def get_tts_status_for_config(config: VoiceConfig) -> TTSProviderStatus:
     """Return the public provider status for the current voice config."""
-    provider_name = getattr(config, "tts_provider", "chatterbox")
+    provider_name = getattr(config, "tts_provider", "voxcpm")
     if not config.enabled:
         return TTSProviderStatus(
             provider=provider_name,

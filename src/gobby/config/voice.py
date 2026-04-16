@@ -24,7 +24,7 @@ class VoiceConfig(BaseModel):
         description="Enable text-to-speech output in voice mode (requires enabled=True).",
     )
     tts_provider: str = Field(
-        default="chatterbox",
+        default="voxcpm",
         description=(
             "TTS provider: 'chatterbox' (voice cloning), 'kokoro' (fixed voices), "
             "or 'voxcpm' (voice cloning with optional reference_text)."
@@ -49,7 +49,10 @@ class VoiceConfig(BaseModel):
     )
     tts_device: str = Field(
         default="auto",
-        description="TTS compute device: 'auto', 'cuda', 'mps', 'cpu'.",
+        description=(
+            "Requested TTS compute device: 'auto', 'cuda', 'mps', 'cpu'. "
+            "Providers may ignore explicit selection if the upstream runtime does not support it."
+        ),
     )
     # --- Kokoro-specific settings (legacy) ---
     tts_voice: str = Field(

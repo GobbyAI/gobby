@@ -131,3 +131,24 @@ class TestVoxCPMProvider:
             with pytest.raises(RuntimeError, match="boom"):
                 async for _ in provider.synthesize_stream("Hello"):
                     pass
+
+    @pytest.mark.asyncio
+    async def test_warmup_uses_runtime_device_reported_by_voxcpm(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_voxcpm import VoxCPMProvider
+
+        provider = VoxCPMProvider(voice_config)
+        mock_model = MagicMock()
+        mock_model.tts_model = SimpleNamespace(sample_rate=32000, device="mps")
+        load_mock = MagicMock(return_value=mock_model)
+        mock_voxcpm = SimpleNamespace(VoxCPM=SimpleNamespace(from_pretrained=load_mock))
+
+        with patch.dict("sys.modules", {"voxcpm": mock_voxcpm}):
+            await provider.warmup()
+            status = provider.get_status()
+
+        assert provider.sample_rate == 32000
+        assert "device" not in load_mock.call_args.kwargs
+        assert status.details["tts_device"] == "cpu"
+        assert status.details["tts_runtime_device"] == "mps"

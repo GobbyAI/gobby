@@ -63,11 +63,13 @@ class VoxCPMProvider(BaseTTSProvider):
 
     def _status_details(self) -> dict[str, Any]:
         reference_text = (self._config.tts_reference_text or "").strip()
+        runtime_device = getattr(getattr(self._model, "tts_model", None), "device", None)
         return {
             "tts_reference_audio": str(self._reference_audio),
             "tts_reference_audio_exists": self._reference_audio.exists(),
             "tts_reference_text_configured": bool(reference_text),
             "tts_device": self._config.tts_device,
+            "tts_runtime_device": runtime_device,
             "tts_voxcpm_model": self._config.tts_voxcpm_model,
         }
 
@@ -101,15 +103,29 @@ class VoxCPMProvider(BaseTTSProvider):
                     "load_denoiser": self._config.tts_voxcpm_load_denoiser,
                     "local_files_only": self._config.tts_voxcpm_local_files_only,
                     "optimize": self._config.tts_voxcpm_optimize,
-                    "device": self._config.tts_device,
                 }
                 return VoxCPM.from_pretrained(**kwargs)
 
             self._model = await asyncio.to_thread(_load)
             sample_rate = getattr(getattr(self._model, "tts_model", None), "sample_rate", None)
+            runtime_device = getattr(getattr(self._model, "tts_model", None), "device", None)
             if isinstance(sample_rate, int):
                 self._sample_rate = sample_rate
-            logger.info("VoxCPM model loaded successfully")
+            requested_device = self._config.tts_device
+            if (
+                isinstance(runtime_device, str)
+                and requested_device != "auto"
+                and requested_device != runtime_device
+            ):
+                logger.warning(
+                    "Embedded VoxCPM ignored requested tts_device=%s and loaded on %s",
+                    requested_device,
+                    runtime_device,
+                )
+            logger.info(
+                "VoxCPM model loaded successfully (runtime_device=%s)",
+                runtime_device or "unknown",
+            )
             return self._model
 
     async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:

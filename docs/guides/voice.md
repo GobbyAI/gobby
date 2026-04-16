@@ -28,11 +28,12 @@ gobby install --voice
 ### Baseline voice dependencies
 
 ```bash
-# Installs Whisper STT plus the built-in Chatterbox/Kokoro TTS providers.
+# Installs Whisper STT plus the legacy built-in Chatterbox/Kokoro TTS providers.
 uv sync --extra voice
 ```
 
-`uv sync --extra voice` does **not** install VoxCPM.
+`uv sync --extra voice` does **not** install VoxCPM, even though VoxCPM is the
+default provider in config. Install it separately or use the interactive installer.
 
 ### VoxCPM provider
 
@@ -56,7 +57,7 @@ Enable voice in your daemon config:
 ```yaml
 voice:
   enabled: true
-  tts_provider: chatterbox
+  tts_provider: voxcpm
 ```
 
 Restart the daemon after config changes: `gobby restart`
@@ -98,6 +99,34 @@ If you do not want to transcribe the clip, leave it unset. Basic cloning still w
 
 ## TTS Providers
 
+### VoxCPM (default)
+
+Reference-audio cloning with optional `reference_text` for higher-fidelity continuation-style cloning.
+
+```yaml
+voice:
+  enabled: true
+  tts_provider: voxcpm
+  tts_reference_audio: ~/.gobby/voice/reference.wav
+  tts_reference_text: "Optional transcript of the reference clip."
+  tts_voxcpm_model: openbmb/VoxCPM2
+  tts_voxcpm_cfg_value: 2.0
+  tts_voxcpm_inference_timesteps: 10
+  tts_voxcpm_load_denoiser: false
+  tts_voxcpm_denoise: false
+  tts_voxcpm_local_files_only: false
+  tts_voxcpm_optimize: true
+```
+
+Notes:
+
+- Default provider for new voice configs
+- `tts_reference_audio` alone enables normal cloning
+- Adding `tts_reference_text` lets the provider reuse the same clip as prompt audio for better similarity
+- Output is typically 48kHz
+- Embedded VoxCPM currently auto-selects its runtime device; `tts_device` is not enforced
+- VoxCPM is not installed by `uv sync --extra voice`
+
 ### Chatterbox
 
 Zero-shot voice cloning with a short reference clip.
@@ -113,36 +142,9 @@ voice:
 
 Notes:
 
-- Good default for the "drop in a WAV and go" workflow
+- Good fallback if you want the older "drop in a WAV and go" workflow
 - Uses `tts_reference_audio`
 - Ignores `tts_reference_text`
-
-### VoxCPM
-
-Reference-audio cloning with optional `reference_text` for higher-fidelity continuation-style cloning.
-
-```yaml
-voice:
-  enabled: true
-  tts_provider: voxcpm
-  tts_reference_audio: ~/.gobby/voice/reference.wav
-  tts_reference_text: "Optional transcript of the reference clip."
-  tts_device: auto
-  tts_voxcpm_model: openbmb/VoxCPM2
-  tts_voxcpm_cfg_value: 2.0
-  tts_voxcpm_inference_timesteps: 10
-  tts_voxcpm_load_denoiser: false
-  tts_voxcpm_denoise: false
-  tts_voxcpm_local_files_only: false
-  tts_voxcpm_optimize: true
-```
-
-Notes:
-
-- `tts_reference_audio` alone enables normal cloning
-- Adding `tts_reference_text` lets the provider reuse the same clip as prompt audio for better similarity
-- Output is typically 48kHz
-- VoxCPM is not auto-installed by Gobby
 
 ### Kokoro
 
