@@ -724,9 +724,56 @@ class TestContinueInChatTerminalKill:
         response = json.loads(payload)
         assert response["type"] == "attach_to_session_result"
         assert response["session_type"] == "terminal"
+        assert response["can_proxy_attach"] is True
         assert response["workflow_name"] == "release-checks"
         assert response["agent_run_id"] == "run-auto-1"
         assert response["agent_name"] == "code-reviewer"
+
+    @pytest.mark.asyncio
+    async def test_attach_to_session_keeps_live_handoff_tmux_proxy_attachable(self) -> None:
+        """Live tmux metadata should keep resume-only terminal rows attachable."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.external_id = "cli-session-456"
+        source_session.seq_num = 43
+        source_session.source = "gemini"
+        source_session.title = "Handoff Session"
+        source_session.status = "handoff_ready"
+        source_session.model = "gemini-2.5-pro"
+        source_session.chat_mode = "plan"
+        source_session.git_branch = "main"
+        source_session.context_window = 1_000_000
+        source_session.session_type = "terminal"
+        source_session.terminal_context = {"tmux_pane": "%9"}
+        source_session.workflow_name = None
+        source_session.agent_run_id = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {}}
+        host._send_error = AsyncMock()
+
+        await SessionControlMixin._handle_attach_to_session(
+            host,
+            ws,
+            {"session_id": "source-uuid"},
+        )
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["type"] == "attach_to_session_result"
+        assert response["status"] == "handoff_ready"
+        assert response["can_proxy_attach"] is True
 
     @pytest.mark.asyncio
     async def test_attach_to_session_rejects_web_chat_sessions(self) -> None:

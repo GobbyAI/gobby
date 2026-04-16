@@ -463,6 +463,64 @@ describe("ChatPage", () => {
     expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
   });
 
+  it("shows only Resume for swapped terminals that cannot proxy attach", async () => {
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            viewingSessionId: "terminal-resume-only",
+            viewingSessionMeta: {
+              ref: "#153",
+              source: "gemini",
+              title: "Resume Only Terminal",
+              status: "handoff_ready",
+              canProxyAttach: false,
+              model: "gemini-2.5-pro",
+              externalId: "term-153",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+    });
+
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-status-attach")).toBeNull();
+    expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
+  });
+
+  it("keeps Attach available for live handoff tmux sessions across providers", async () => {
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            viewingSessionId: "terminal-live-handoff",
+            viewingSessionMeta: {
+              ref: "#154",
+              source: "qwen",
+              title: "Live Handoff Terminal",
+              status: "handoff_ready",
+              canProxyAttach: true,
+              model: "qwen3-coder",
+              externalId: "term-154",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+    });
+
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-attach")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
+  });
+
   it("routes Attach to the viewed terminal attach handler", async () => {
     const onAttachToViewed = vi.fn();
     const continueSessionInChat = vi.fn(async () => "continued-session");

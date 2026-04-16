@@ -15,6 +15,10 @@ import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
 import { hasProtocolToolContent } from "../components/chat/protocolContent";
 import { AUTO_REASONING_EFFORT } from "../lib/providerModels";
+import {
+  canProxyAttachObservationMeta,
+  canProxyAttachSessionRecord,
+} from "../lib/sessionProxyAttach";
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
@@ -331,6 +335,11 @@ function toSessionObservationMeta(
     status:
       overrides?.status ??
       (typeof session.status === "string" ? session.status : "unknown"),
+    canProxyAttach:
+      overrides?.canProxyAttach ??
+      (typeof session.can_proxy_attach === "boolean"
+        ? session.can_proxy_attach
+        : undefined),
     model:
       overrides?.model ??
       (typeof session.model === "string" ? session.model : null),
@@ -1829,6 +1838,7 @@ export function useChat() {
               source: "unknown",
               title: null,
               status: "unknown",
+              canProxyAttach: false,
               model: null,
               externalId: "",
               chatMode: null,
@@ -1848,8 +1858,7 @@ export function useChat() {
           setViewingSessionMeta(meta);
           viewingSessionMetaRef.current = meta;
           const requestedMode = pendingSessionInteractionModeRef.current;
-          const proxyCapable =
-            meta.sessionType === "terminal" && meta.status === "active";
+          const proxyCapable = canProxyAttachObservationMeta(meta);
           const nextMode =
             requestedMode === "proxy" && !proxyCapable ? "none" : requestedMode;
           setSessionInteractionMode(nextMode);
@@ -1862,7 +1871,9 @@ export function useChat() {
             setAttachedSessionMeta(null);
             setProxyDeliveryNotice(
               requestedMode === "proxy" && meta.sessionType === "terminal"
-                ? "This terminal session is paused. Use Resume Session to continue it in web chat."
+                ? meta.status === "paused"
+                  ? "This terminal session is paused. Use Resume Session to continue it in web chat."
+                  : "This terminal session can only be resumed in web chat right now."
                 : null,
             );
           }
@@ -3129,6 +3140,7 @@ export function useChat() {
             source: s.source || "unknown",
             title: s.title || null,
             status: s.status || "unknown",
+            canProxyAttach: canProxyAttachSessionRecord(s),
             model: s.model || null,
             reasoningEffort: s.reasoning_effort || null,
             externalId: s.external_id || "",

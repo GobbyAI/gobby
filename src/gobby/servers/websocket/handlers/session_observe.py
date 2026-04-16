@@ -40,6 +40,42 @@ def _as_int(value: Any, default: int | None = None) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
+def _has_terminal_liveness(terminal_context: Any) -> bool:
+    """Return True when terminal metadata indicates a live tmux-backed session."""
+    if not isinstance(terminal_context, dict):
+        return False
+
+    tmux_pane = terminal_context.get("tmux_pane")
+    if isinstance(tmux_pane, str) and tmux_pane:
+        return True
+
+    parent_pid = terminal_context.get("parent_pid")
+    if isinstance(parent_pid, int) and not isinstance(parent_pid, bool):
+        return parent_pid > 0
+    if isinstance(parent_pid, str):
+        try:
+            return int(parent_pid) > 0
+        except ValueError:
+            return False
+
+    return False
+
+
+def _can_proxy_attach_session(session: Any) -> bool:
+    """Return True when a terminal session is eligible for interactive proxy attach."""
+    if getattr(session, "session_type", None) != "terminal":
+        return False
+
+    explicit = getattr(session, "can_proxy_attach", None)
+    if isinstance(explicit, bool):
+        return explicit
+
+    if getattr(session, "status", None) == "active":
+        return True
+
+    return _has_terminal_liveness(getattr(session, "terminal_context", None))
+
+
 async def _release_source_session(
     mixin: SessionControlMixin,
     source_session_id: str,
@@ -479,6 +515,7 @@ async def handle_attach_to_session(
                 "git_branch": _as_str(getattr(session, "git_branch", None)),
                 "context_window": _as_int(getattr(session, "context_window", None)),
                 "session_type": _as_str(getattr(session, "session_type", None)),
+                "can_proxy_attach": _can_proxy_attach_session(session),
                 "workflow_name": workflow_name,
                 "agent_run_id": agent_run_id,
                 "agent_name": agent_name,

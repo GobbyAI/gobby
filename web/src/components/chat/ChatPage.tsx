@@ -32,21 +32,23 @@ import {
   resolveProviderModelPair,
   type ProviderModelEntry,
 } from "../../lib/providerModels";
+import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
 
 const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
 function getViewedSessionStateLabel(
   interactionMode: ChatState["sessionInteractionMode"],
-  viewingStatus: string | undefined,
+  hasViewedSession: boolean,
+  isWatchingLive: boolean,
   isAttached: boolean,
 ): string | null {
-  if (!viewingStatus && !isAttached && interactionMode === "none") {
+  if (!hasViewedSession && !isAttached && interactionMode === "none") {
     return null;
   }
   if (interactionMode === "proxy" || isAttached) {
     return "Attached";
   }
-  if (viewingStatus === "active") {
+  if (isWatchingLive) {
     return "Watching live";
   }
   return "Watching";
@@ -239,9 +241,12 @@ export function ChatPage({
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
   );
+  const canAttachViewedSession =
+    !isAutonomousSession && canProxyAttachObservationMeta(viewingMeta);
   const viewedSessionStateLabel = getViewedSessionStateLabel(
     chat.sessionInteractionMode,
-    viewingMeta?.status,
+    Boolean(viewingMeta),
+    canAttachViewedSession,
     Boolean(chat.attachedSessionId),
   );
   const canControlViewedSession =
@@ -368,7 +373,7 @@ export function ChatPage({
       }
 
       const confirmChange =
-        viewingMeta?.status === "active"
+        canAttachViewedSession
           ? await confirm({
               title: "Change provider?",
               description:
@@ -400,7 +405,7 @@ export function ChatPage({
       onReasoningPreferenceChange,
       projectId,
       viewingMeta?.chatMode,
-      viewingMeta?.status,
+      canAttachViewedSession,
     ],
   );
 
@@ -741,7 +746,7 @@ export function ChatPage({
               isAttached={!!chat.attachedSessionId}
               isAutonomousSession={isAutonomousSession}
               onAttach={
-                canControlViewedSession ? chat.onAttachToViewed : undefined
+                canAttachViewedSession ? chat.onAttachToViewed : undefined
               }
               onResume={
                 canControlViewedSession ? handleResumeViewedSession : undefined

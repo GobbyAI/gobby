@@ -7,6 +7,7 @@ import { MessageItem } from "../chat/MessageItem";
 import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { getSessionTitleText } from "../../lib/sessionTitle";
+import { canProxyAttachSessionRecord } from "../../lib/sessionProxyAttach";
 import {
   SessionInteractionModal,
   type InteractionMode,
@@ -77,38 +78,15 @@ function getAgentBadge(agentRunId: string | null | undefined): {
   return { label: "auto", className: "session-kind-badge--auto" };
 }
 
-function hasTerminalLiveness(session: GobbySession): boolean {
-  const terminalContext = session.terminal_context;
-  if (!terminalContext) {
-    return false;
-  }
-
-  const tmuxPane = terminalContext.tmux_pane;
-  if (typeof tmuxPane === "string" && tmuxPane.length > 0) {
-    return true;
-  }
-
-  const parentPid = terminalContext.parent_pid;
-  if (typeof parentPid === "number") {
-    return parentPid > 0;
-  }
-  if (typeof parentPid === "string") {
-    const pid = Number.parseInt(parentPid, 10);
-    return Number.isFinite(pid) && pid > 0;
-  }
-
-  return false;
-}
-
 function isWatchableActivitySession(session: GobbySession): boolean {
   if (session.source === "pipeline" || session.source === "cron") {
     return false;
   }
 
-  // Legacy paused terminal rows with no tmux/pid metadata cannot be observed
-  // and should not linger in the live activity panel.
-  if (session.status === "paused" && session.session_type === "terminal") {
-    return hasTerminalLiveness(session);
+  // Resume-only terminal rows should stay visible only while tmux metadata
+  // still indicates a live session that can be reattached or resumed in chat.
+  if (session.status !== "active" && session.session_type === "terminal") {
+    return canProxyAttachSessionRecord(session);
   }
 
   return true;
@@ -176,7 +154,7 @@ export const SessionsTab = memo(function SessionsTab({
       ? `&project_id=${encodeURIComponent(projectId)}`
       : "";
     try {
-      const [agentsRes, activeRes, pausedRes] = await Promise.all([
+      const [agentsRes, activeRes, pausedRes, handoffReadyRes] = await Promise.all([
         fetch(`${baseUrl}/api/agents/running`).then((r) =>
           r.ok ? r.json() : { agents: [] },
         ),
@@ -186,11 +164,17 @@ export const SessionsTab = memo(function SessionsTab({
         fetch(
           `${baseUrl}/api/sessions?status=paused&limit=20${projectParam}`,
         ).then((r) => (r.ok ? r.json() : { sessions: [] })),
+        fetch(
+          `${baseUrl}/api/sessions?status=handoff_ready&limit=20${projectParam}`,
+        ).then((r) => (r.ok ? r.json() : { sessions: [] })),
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
       const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchableActivitySession);
       const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchableActivitySession);
-      setActivitySessions([...active, ...paused]);
+      const handoffReady = (handoffReadyRes.sessions ?? handoffReadyRes ?? []).filter(
+        isWatchableActivitySession,
+      );
+      setActivitySessions([...active, ...paused, ...handoffReady]);
       setExpiringIds(new Set());
       setFetchError(null);
     } catch (err) {
@@ -231,7 +215,10 @@ export const SessionsTab = memo(function SessionsTab({
             ? `Agent ${a.run_id.slice(0, 8)}`
             : `Session ${a.run_id.slice(0, 8)}`),
         provider: a.provider,
-        status: "active" as const,
+        status:
+          matchedSession && matchedSession.status !== "active"
+            ? "paused"
+            : ("active" as const),
         sessionType: matchedSession?.session_type,
         externalId: matchedSession?.external_id,
         agentRunId: matchedSession?.agent_run_id ?? a.run_id,
@@ -250,7 +237,7 @@ export const SessionsTab = memo(function SessionsTab({
           type: "cli" as const,
           label: getSessionTitleText(s.title),
           provider: s.source ?? "unknown",
-          status: (s.status === "paused" ? "paused" : "active") as
+          status: (s.status === "active" ? "active" : "paused") as
             | "active"
             | "paused",
           sessionType: s.session_type,

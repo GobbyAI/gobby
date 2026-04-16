@@ -178,6 +178,7 @@ export interface SessionObservationMeta {
   source: string;
   title: string | null;
   status: string;
+  canProxyAttach?: boolean;
   model: string | null;
   reasoningEffort?: string | null;
   externalId: string;

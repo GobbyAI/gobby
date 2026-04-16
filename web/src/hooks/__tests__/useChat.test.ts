@@ -1111,6 +1111,82 @@ describe("useChat", () => {
     expect(result.current.attachedSessionId).toBe("sess-view");
   });
 
+  it.each([
+    ["codex", "gpt-5.4"],
+    ["gemini", "gemini-2.5-pro"],
+    ["qwen", "qwen3-coder"],
+  ])(
+    "keeps live %s tmux sessions attachable even when the session row is handoff_ready",
+    async (source, model) => {
+      await loadModule();
+      mockFetch.mockJsonResponse(
+        "/api/sessions/sess-live-handoff/messages?limit=100&offset=0",
+        {
+          messages: [],
+        },
+      );
+      mockFetch.mockJsonResponse("/api/sessions/sess-live-handoff", {
+        session: {
+          id: "sess-live-handoff",
+          seq_num: 2310,
+          source,
+          title: "Live handoff terminal",
+          status: "handoff_ready",
+          can_proxy_attach: true,
+          model,
+          external_id: `${source}-ext-view`,
+          chat_mode: "accept_edits",
+          git_branch: "main",
+          context_window: 200000,
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          usage_cache_read_tokens: 0,
+          usage_cache_creation_tokens: 0,
+          session_type: "terminal",
+          terminal_context: { tmux_pane: "%18" },
+        },
+      });
+
+      const { result } = renderHook(() => useChat());
+      const ws = mockWs.instances[0];
+      act(() => ws.simulateOpen());
+
+      await act(async () => {
+        result.current.viewSession("sess-live-handoff");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      act(() => {
+        result.current.attachToViewed?.();
+      });
+
+      act(() => {
+        ws.simulateMessage({
+          type: "attach_to_session_result",
+          session_id: "sess-live-handoff",
+          external_id: `${source}-ext-view`,
+          source,
+          title: "Live handoff terminal",
+          status: "handoff_ready",
+          can_proxy_attach: true,
+          model,
+          ref: "#2310",
+          chat_mode: "accept_edits",
+          git_branch: "main",
+          context_window: 200000,
+          session_type: "terminal",
+          messages: [],
+          total_count: 0,
+        });
+      });
+
+      expect(result.current.viewingSessionMeta?.canProxyAttach).toBe(true);
+      expect(result.current.sessionInteractionMode).toBe("proxy");
+      expect(result.current.attachedSessionId).toBe("sess-live-handoff");
+    },
+  );
+
   it("keeps autonomous session observation read-only", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(
@@ -1405,6 +1481,39 @@ describe("useChat", () => {
     expect(result.current.sessionInteractionMode).toBe("none");
     expect(result.current.proxyDeliveryNotice).toBe(
       "This terminal session is paused. Use Resume Session to continue it in web chat.",
+    );
+  });
+
+  it("shows a resume-only notice for non-attachable handoff terminals", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-handoff", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-handoff",
+        external_id: "handoff-ext",
+        source: "codex",
+        title: "Resume-only terminal",
+        status: "handoff_ready",
+        can_proxy_attach: false,
+        model: "gpt-5.4",
+        ref: "#2314",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    expect(result.current.sessionInteractionMode).toBe("none");
+    expect(result.current.proxyDeliveryNotice).toBe(
+      "This terminal session can only be resumed in web chat right now.",
     );
   });
 

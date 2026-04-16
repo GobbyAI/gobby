@@ -165,6 +165,36 @@ class Session:
         """Short human-readable reference: #seq_num or first 8 chars of id."""
         return f"#{self.seq_num}" if self.seq_num else self.id[:8]
 
+    @property
+    def has_terminal_liveness(self) -> bool:
+        """Best-effort liveness signal for tmux-backed terminal sessions."""
+        if not self.terminal_context:
+            return False
+
+        tmux_pane = self.terminal_context.get("tmux_pane")
+        if isinstance(tmux_pane, str) and tmux_pane:
+            return True
+
+        parent_pid = self.terminal_context.get("parent_pid")
+        if isinstance(parent_pid, int) and not isinstance(parent_pid, bool):
+            return parent_pid > 0
+        if isinstance(parent_pid, str):
+            try:
+                return int(parent_pid) > 0
+            except ValueError:
+                return False
+
+        return False
+
+    @property
+    def can_proxy_attach(self) -> bool:
+        """Whether the web chat can proxy-attach to this session right now."""
+        if self.session_type != "terminal":
+            return False
+        if self.status == "active":
+            return True
+        return self.has_terminal_liveness
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -204,6 +234,7 @@ class Session:
             "last_assistant_content": self.last_assistant_content,
             "approved_tools_json": self.approved_tools_json,
             "session_type": self.session_type,
+            "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
@@ -226,6 +257,7 @@ class Session:
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,
             "session_type": self.session_type,
+            "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,

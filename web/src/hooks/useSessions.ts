@@ -25,6 +25,7 @@ export interface GobbySession {
   parent_session_id: string | null;
   session_type: string;
   terminal_context: Record<string, unknown> | null;
+  can_proxy_attach?: boolean;
   tasks_closed?: number;
   memories_created?: number;
   commit_count?: number;

@@ -58,6 +58,30 @@ class TestSession:
         assert d["title"] == "Test Session"
         assert d["status"] == "active"
 
+    def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self) -> None:
+        """Paused tmux sessions remain attachable while terminal liveness metadata exists."""
+        session = Session(
+            id="sess-live-tmux",
+            external_id="ext-live-tmux",
+            machine_id="machine-1",
+            source="qwen",
+            project_id="proj-1",
+            title="Live tmux session",
+            status="handoff_ready",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch="main",
+            parent_session_id=None,
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:05:00Z",
+            terminal_context={"tmux_pane": "%12"},
+            session_type="terminal",
+        )
+
+        assert session.can_proxy_attach is True
+        assert session.to_dict()["can_proxy_attach"] is True
+
 
 class TestLocalSessionManager:
     """Tests for LocalSessionManager class."""
