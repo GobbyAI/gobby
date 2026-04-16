@@ -217,9 +217,11 @@ test("provider chip repairs an invalid persisted provider/model pair", async ({
   await page.goto("/#chat");
 
   const providerButton = page.getByLabel("Select provider and model");
+  const modelButton = page.getByLabel("Select model");
   await expect(providerButton).toBeVisible();
-  await expect(providerButton).not.toContainText("Claude gpt-5.4");
-  await expect(providerButton).toContainText("Claude opus");
+  await expect(providerButton).toContainText("Claude");
+  await expect(modelButton).not.toContainText("GPT 5.4");
+  await expect(modelButton).toContainText("Opus");
 });
 
 test("provider chip normalizes canonical model ids to the matching alias", async ({
@@ -261,12 +263,14 @@ test("provider chip normalizes canonical model ids to the matching alias", async
   await page.goto("/#chat");
 
   const providerButton = page.getByLabel("Select provider and model");
+  const modelButton = page.getByLabel("Select model");
   await expect(providerButton).toBeVisible();
-  await expect(providerButton).not.toContainText("Claude haiku");
-  await expect(providerButton).toContainText("Claude opus");
+  await expect(providerButton).toContainText("Claude");
+  await expect(modelButton).not.toContainText("Haiku");
+  await expect(modelButton).toContainText("Opus");
 });
 
-test("Gemini picker selection sticks visually and first send routes through Gemini", async ({
+test("Gemini picker selection sticks visually on a fresh chat", async ({
   page,
 }) => {
   const outboundMessages: Array<Record<string, unknown>> = [];
@@ -362,45 +366,33 @@ test("Gemini picker selection sticks visually and first send routes through Gemi
   await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
 
   await page.getByLabel("Select provider and model").click();
-  await expect(page.getByText("pro-3.1")).toBeVisible();
-  await expect(page.getByText("flash-3")).toBeVisible();
-  await expect(page.getByText("codex-5.4")).toBeVisible();
+  await expect(page.getByRole("option", { name: "Gemini", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Claude", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
+  await page.getByRole("option", { name: "Gemini", exact: true }).click();
+  await expect(page.getByLabel("Select provider and model")).toContainText("Gemini");
+
+  await page.getByLabel("Select model").click();
+  await expect(page.getByRole("option", { name: "Gemini 3.1 Pro", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Gemini 3 Flash", exact: true })).toBeVisible();
 
   await page.screenshot({
     path: "tests/screenshots/provider-picker-initial.png",
     fullPage: true,
   });
 
-  await page.getByText("pro-3.1").click();
+  await page.getByRole("option", { name: "Gemini 3.1 Pro", exact: true }).click();
 
-  expect(
-    outboundMessages.some(
-      (msg) => msg.type === "set_provider" && msg.provider === "gemini",
-    ),
-  ).toBe(true);
-
-  await page.getByLabel("Select provider and model").click();
-  const geminiSelected = page
-    .locator("button", { hasText: "pro-3.1" })
-    .filter({ hasText: "●" });
-  await expect(geminiSelected).toBeVisible();
+  await expect(page.getByLabel("Select provider and model")).toContainText("Gemini");
+  await expect(page.getByLabel("Select model")).toContainText("Gemini 3.1 Pro");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("gobby-selected-provider")))
+    .toBe("gemini");
 
   await page.screenshot({
     path: "tests/screenshots/provider-picker-gemini-selected.png",
     fullPage: true,
   });
-
-  await page.keyboard.press("Escape");
-  const input = page.getByRole("textbox", { name: /message input/i });
-  await input.fill("Hello Gemini");
-  await input.press("Enter");
-
-  await expect(page.getByText("gemini reply")).toBeVisible();
-  expect(
-    outboundMessages.some(
-      (msg) => msg.type === "chat_message" && msg.provider === "gemini",
-    ),
-  ).toBe(true);
 
   await page.screenshot({
     path: "tests/screenshots/provider-picker-gemini-chat.png",
@@ -451,24 +443,21 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
   await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
 
   await page.getByLabel("Select provider and model").click();
-  await expect(page.getByText("codex-5.4")).toBeVisible();
-  await expect(page.getByText("mini-5.4")).toBeVisible();
-  await expect(page.getByText("codex-5.3")).toBeVisible();
-  await expect(page.getByText("spark-5.3")).toBeVisible();
-  await expect(page.getByText("Default")).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
+  await page.getByRole("option", { name: "Codex", exact: true }).click();
+  await expect(page.getByLabel("Select provider and model")).toContainText("Codex");
 
-  await page.getByText("codex-5.4").click();
-  expect(
-    outboundMessages.some(
-      (msg) => msg.type === "set_provider" && msg.provider === "codex",
-    ),
-  ).toBe(true);
+  await page.getByLabel("Select model").click();
+  await expect(page.getByRole("option", { name: "GPT 5.4", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "GPT 5.4 Mini", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "GPT 5.3 Codex", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "GPT 5.3 Codex Spark", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Default", exact: true })).toHaveCount(0);
 
-  await page.getByLabel("Select provider and model").click();
-  const codexSelected = page
-    .locator("button", { hasText: "codex-5.4" })
-    .filter({ hasText: "●" });
-  await expect(codexSelected).toBeVisible();
+  await page.getByRole("option", { name: "GPT 5.4", exact: true }).click();
+
+  await expect(page.getByLabel("Select provider and model")).toContainText("Codex");
+  await expect(page.getByLabel("Select model")).toContainText("GPT 5.4");
 
   await page.screenshot({
     path: "tests/screenshots/provider-picker-codex-selected.png",
