@@ -61,7 +61,7 @@ default sandbox mode produces working hooks — no hand-edited CLI config.
   walk-up of `.gobby/project.json`. No env vars, no `current.json`.
   See §2.2.
 - **`GOBBY_*` env vars:** enter the flow as `terminal_context` *data*,
-  not as headers. See §2.4a.
+  not as headers. See §2.5.
 
 ## Replay envelope (schema v1 — frozen)
 
@@ -142,7 +142,7 @@ Server / drain:
 - `src/gobby/servers/routes/mcp/hooks.py:288` — drain replay must preserve
   `X-Gobby-Project-Id` / `X-Gobby-Session-Id`
 - New: `src/gobby/hooks/inbox.py` — daemon-side drain watcher. Includes
-  quarantine handling for malformed-stdin envelopes (§2.7a).
+  quarantine handling for malformed-stdin envelopes (§2.9).
 - `src/gobby/runner_maintenance.py` — wire drain into maintenance tick
 
 Cross-binary resolution utility:
@@ -198,10 +198,10 @@ and tolerates release-not-yet-available cleanly (returns `skipped`).
 1. `hook_dispatcher.py` stays shipped in the Gobby wheel until `ghook` has
    been released for one full version cycle. It is the fallback, not dead
    code.
-2. The drain (§2.7) always runs regardless of which branch is active; it
+2. The drain (§2.8) always runs regardless of which branch is active; it
    watches the inbox dir and no-ops when empty. `hook_dispatcher.py` will
    be retrofitted to write envelopes to the inbox on HTTP failure as part
-   of §2.7 so the legacy path also benefits from loss-free replay.
+   of §2.8 so the legacy path also benefits from loss-free replay.
 3. Sandbox writes are strictly gated on `ghook` being present. We never
    loosen a user's sandbox for a binary they don't have.
 4. The install manifest carries a `branch: "ghook" | "legacy"` field so
@@ -216,8 +216,8 @@ and tolerates release-not-yet-available cleanly (returns `skipped`).
 
 **Canonical plan location:** this file for the Python side;
 `~/Projects/gobby-cli/docs/plans/sandbox-tolerant-hooks-rust.md` for the
-Rust side. The Rust-side agent owns §0.6, §1.2, §2.1–2.6, §2.8, and the CI
-release. The Python-side agent owns everything else.
+Rust side. The Rust-side agent owns §0.6, §1.2, §2.1–2.7, §2.9, §2.10, and
+the CI release. The Python-side agent owns everything else.
 
 **Pinned contracts (source of truth in `gobby-cli`, mirrored into `gobby`):**
 - `inbox-envelope.v1.schema.json` — Rust serializes, Python deserializes;
@@ -238,81 +238,109 @@ release. The Python-side agent owns everything else.
   required — `gobby-cli` is public (`install_setup.py:234,237,538,541`
   confirm unauthenticated release URLs).
 
-## Phase 0 — Prerequisites
+## Phase 0: Prerequisites
 
 Pre-existing bugs / missing surfaces that must land first.
 
-1. **Fix Qwen package data.** Add `install/qwen/*` to `package-data` /
-   `include` in `pyproject.toml:95`. Built distributions are currently
-   missing `install/qwen/hooks-template.json`. *(Already landed in commit
-   6507b9a6c — keep the item here for historical completeness.)*
-2. **Structured install manifest.** New `~/.gobby/install-manifest.json`
-   records, per CLI, exactly which JSON keys / TOML paths Gobby owns:
-   ```json
-   {
-     "schema_version": 1,
-     "clis": {
-       "claude": {
-         "settings_path": "~/.claude/settings.json",
-         "owned_keys": ["hooks.SessionStart", "allowedHttpHookUrls"],
-         "hook_bin": "<absolute path to ghook>"
-       },
-       "codex": { ... },
-       "gemini": { ... },
-       "qwen": { ... }
-     }
-   }
-   ```
-   Replaces the current substring-based ownership probes. Install writes
-   it; uninstall consumes it.
-3. **Swap Codex TOML edits to a library.** Replace the regex edits in
-   `installers/codex.py:38` with `tomli` + `tomli_w`. Prerequisite for
-   idempotent merges in Phase 3.
-4. **`gobby install --dry-run`.** Extends `install.py:153` to compute all
-   writes (hook entries, sandbox mutations, manifest updates) and print
-   them without touching the filesystem.
-5. **`native_bin.py` resolver + migrate existing callers.** Pays down
-   duplicated `~/.gobby/bin/<name>` lookup logic now (currently two call
-   sites for `gcode` and `gsqz`) so Phase 2's `ghook` lookup is the third
-   user of one resolver, not new duplication.
-6. **Fix dispatcher `get_daemon_url` to honor `bind_host`.** The legacy
-   Python dispatcher at `hook_dispatcher.py:172` hardcodes `localhost`
-   regardless of the `bind_host` value in `~/.gobby/bootstrap.yaml`. Users
-   with `bind_host: 192.168.x.y` or similar silently fail against the
-   daemon today. Since the dispatcher is the transition-window fallback
-   (until `ghook` ships and lands on all installs), it has to be correct.
-   Fix reads `bind_host` (default `"localhost"`), normalizes wildcard
-   listen-addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1`, brackets IPv6
-   literals for URL syntax, and passes everything else through. The
-   `gobby-core::daemon_url` Rust helper adopts the same spec — one
-   canonical resolution rule on both sides.
-7. **Pin the coupling schemas in `gobby-cli`.** Write
-   `gobby-cli/schemas/inbox-envelope.v1.schema.json` and
-   `gobby-cli/schemas/diagnose-output.v1.schema.json`. Add a `cargo test`
-   that validates `ghook`'s serialized output against them. Mirror into
-   `gobby/schemas/` with `SOURCE_COMMIT` and CI hash check.
+### 0.1 Fix Qwen package data
 
-## Phase 1 — Sandbox test harness & compatibility matrix
+Add `install/qwen/*` to `package-data` / `include` in `pyproject.toml:95`.
+Built distributions are currently missing `install/qwen/hooks-template.json`.
+*(Already landed in commit 6507b9a6c — keep the item here for historical
+completeness.)*
+
+### 0.2 Structured install manifest
+
+New `~/.gobby/install-manifest.json` records, per CLI, exactly which JSON
+keys / TOML paths Gobby owns:
+
+```json
+{
+  "schema_version": 1,
+  "clis": {
+    "claude": {
+      "settings_path": "~/.claude/settings.json",
+      "owned_keys": ["hooks.SessionStart", "allowedHttpHookUrls"],
+      "hook_bin": "<absolute path to ghook>"
+    },
+    "codex": { ... },
+    "gemini": { ... },
+    "qwen": { ... }
+  }
+}
+```
+
+Replaces the current substring-based ownership probes. Install writes it;
+uninstall consumes it.
+
+### 0.3 Swap Codex TOML edits to a library
+
+Replace the regex edits in `installers/codex.py:38` with `tomli` +
+`tomli_w`. Prerequisite for idempotent merges in Phase 3.
+
+### 0.4 `gobby install --dry-run`
+
+Extends `install.py:153` to compute all writes (hook entries, sandbox
+mutations, manifest updates) and print them without touching the
+filesystem.
+
+### 0.5 `native_bin.py` resolver + migrate existing callers
+
+Pays down duplicated `~/.gobby/bin/<name>` lookup logic now (currently two
+call sites for `gcode` and `gsqz`) so Phase 2's `ghook` lookup is the third
+user of one resolver, not new duplication.
+
+### 0.6 Fix dispatcher `get_daemon_url` to honor `bind_host`
+
+The legacy Python dispatcher at `hook_dispatcher.py:172` hardcodes
+`localhost` regardless of the `bind_host` value in
+`~/.gobby/bootstrap.yaml`. Users with `bind_host: 192.168.x.y` or similar
+silently fail against the daemon today. Since the dispatcher is the
+transition-window fallback (until `ghook` ships and lands on all installs),
+it has to be correct. Fix reads `bind_host` (default `"localhost"`),
+normalizes wildcard listen-addresses (`0.0.0.0`, `::`, `::0`) to
+`127.0.0.1`, brackets IPv6 literals for URL syntax, and passes everything
+else through. The `gobby-core::daemon_url` Rust helper adopts the same
+spec — one canonical resolution rule on both sides.
+
+### 0.7 Pin the coupling schemas in `gobby-cli`
+
+Write `gobby-cli/schemas/inbox-envelope.v1.schema.json` and
+`gobby-cli/schemas/diagnose-output.v1.schema.json`. Add a `cargo test` that
+validates `ghook`'s serialized output against them. Mirror into
+`gobby/schemas/` with `SOURCE_COMMIT` and CI hash check.
+
+## Phase 1: Sandbox test harness & compatibility matrix
 
 Goal: reproducible matrix that boots each CLI in its strictest default
 sandbox mode and fires every registered hook event, capturing which
 dependency (exec / FS read / FS write / loopback) is denied.
 
-1. `tests/integration/sandbox/` with one runner per CLI:
-   `run_codex_sandbox.py`, `run_claude_sandbox.py`, `run_gemini_sandbox.py`,
-   `run_qwen_sandbox.py`.
-2. `ghook --diagnose` — probes exec (can I read my own binary?), FS read
-   (`~/.gobby/bootstrap.yaml`), FS write (`~/.gobby/hooks/inbox/test.tmp`),
-   loopback (TCP connect to `127.0.0.1:60887`). Emits JSON per
-   `diagnose-output.v1.schema.json`. Runners invoke it through the
-   registered hook command string so measurements reflect the real
-   in-sandbox context.
-3. `docs/sandbox-compatibility.md` — matrix of `(cli, sandbox mode, hook
-   event) → diagnose output`. Internal reference.
-4. Mark runners `@pytest.mark.integration` + `@pytest.mark.slow`; gate
-   behind `--run-sandbox`. Not run pre-push.
+### 1.1 Per-CLI sandbox runners
 
-## Phase 2 — Rust `ghook` binary + enqueue-first transport
+`tests/integration/sandbox/` with one runner per CLI:
+`run_codex_sandbox.py`, `run_claude_sandbox.py`, `run_gemini_sandbox.py`,
+`run_qwen_sandbox.py`.
+
+### 1.2 `ghook --diagnose` probe
+
+Probes exec (can I read my own binary?), FS read (`~/.gobby/bootstrap.yaml`),
+FS write (`~/.gobby/hooks/inbox/test.tmp`), loopback (TCP connect to
+`127.0.0.1:60887`). Emits JSON per `diagnose-output.v1.schema.json`.
+Runners invoke it through the registered hook command string so
+measurements reflect the real in-sandbox context.
+
+### 1.3 Compatibility matrix doc
+
+`docs/sandbox-compatibility.md` — matrix of
+`(cli, sandbox mode, hook event) → diagnose output`. Internal reference.
+
+### 1.4 Test marker gating
+
+Mark runners `@pytest.mark.integration` + `@pytest.mark.slow`; gate behind
+`--run-sandbox`. Not run pre-push.
+
+## Phase 2: Rust `ghook` binary + enqueue-first transport
 
 Goal: replace `uv run hook_dispatcher.py` with a single static binary
 implementing a loss-free enqueue-first flow.
@@ -404,7 +432,7 @@ Every invocation:
 5. On connect/timeout: keep file; exit 0 non-critical, 2 critical.
 6. On HTTP 4xx/5xx: keep file for diagnostics; exit per criticality.
 
-### 2.4a Terminal context enrichment
+### 2.5 Terminal context enrichment
 
 **Load-bearing — do not drop.** Before building the envelope, for hooks
 in the per-CLI `terminal_context_hooks` set, inject a `terminal_context`
@@ -435,7 +463,7 @@ Gate: `terminal_context_hooks` set per-CLI (dispatcher `CLIConfig:61`).
 `setdefault` semantics — never overwrite a `terminal_context` the host CLI
 may have already placed.
 
-### 2.5 Detach semantics
+### 2.6 Detach semantics
 
 `ghook --detach`:
 - Unix: single `setsid` — matches dispatcher's `start_new_session=True`
@@ -448,7 +476,7 @@ Detached grandchild runs the normal enqueue-first flow. File write precedes
 POST, so the event is durable even if the parent CLI kills the child
 mid-POST.
 
-### 2.6 Stable ownership marker
+### 2.7 Stable ownership marker
 
 Every registered hook command includes a literal `--gobby-owned` flag
 (no-op at runtime, ownership signal for probes). Same-PR migration of the
@@ -460,7 +488,7 @@ three current substring probes:
 Keep an "old dispatcher detected" compatibility branch in each for one
 release so upgrades clean up pre-existing installs.
 
-### 2.7 Inbox drain (Python side)
+### 2.8 Inbox drain (Python side)
 
 `src/gobby/hooks/inbox.py`:
 - Scan `~/.gobby/hooks/inbox/` on daemon start and via
@@ -484,7 +512,7 @@ release so upgrades clean up pre-existing installs.
   Drain never replays from quarantine — operator surfaces via
   `gobby status` / logs.
 
-### 2.7a Malformed-stdin quarantine path
+### 2.9 Malformed-stdin quarantine path
 
 Where dispatcher drops malformed stdin on the floor
 (`hook_dispatcher.py:647-651`), `ghook` preserves it as a diagnostic
@@ -506,7 +534,7 @@ is `null`. Drain never tries to replay these; the sidecar exists for
 debuggability. Exit code follows criticality (0 non-critical, 2 critical).
 Envelope schema v1 stays clean — no `malformed` branch.
 
-### 2.8 CI + release
+### 2.10 CI + release
 
 `.github/workflows/release-ghook.yml` mirrors `release-gcode.yml`:
 - Multi-target matrix: `darwin-arm64`, `darwin-x86_64`, `linux-x86_64`,
@@ -518,60 +546,68 @@ Envelope schema v1 stays clean — no `malformed` branch.
   `cargo install` fallback tiers work — `install_setup.py`'s
   latest-version check hits `crates.io/api/v1/crates/<name>`.
 
-### 2.9 Update hook templates
+### 2.11 Update hook templates
 
 All four `src/gobby/install/<cli>/hooks-template.json` emit the new command
 string: `<ghook_bin> --gobby-owned --cli=<x> --type=<y>` where `<ghook_bin>`
 substitutes to the absolute resolved path from `native_bin.py`.
 
-## Phase 3 — Declarative sandbox permissions per adapter
+## Phase 3: Declarative sandbox permissions per adapter
 
 Goal: adapters declare what they need; installers translate to idempotent
 settings writes tracked by the install manifest.
 
-1. **`SandboxRequirements` dataclass** in
-   `src/gobby/adapters/sandbox_declaration.py`:
-   - `loopback_hosts: list[str]`
-     (default: `["127.0.0.1:60887", "127.0.0.1:60888"]`)
-   - `fs_read_paths: list[str]`
-     (default: `["~/.gobby/bootstrap.yaml", "~/.gobby/hooks/"]`)
-   - `fs_write_paths: list[str]` (default: `["~/.gobby/hooks/inbox/"]`)
-   - `exec_paths: list[str]` (default: `["~/.gobby/bin/ghook"]`)
+### 3.1 `SandboxRequirements` dataclass
 
-   Each adapter returns its requirements via `sandbox_requirements()`.
+In `src/gobby/adapters/sandbox_declaration.py`:
 
-2. **Installer translation (all default-on during `gobby install`,
-   recorded in manifest, revertible via uninstall):**
-   - **Codex** (`installers/codex.py`): using `tomli_w`, set
-     `sandbox_workspace_write.network_access = true` in
-     `~/.codex/config.toml`. If Codex later exposes a loopback-only
-     allowlist, switch to that.
-   - **Claude Code** (`installers/claude.py`): JSON-merge
-     `allowedHttpHookUrls: ["http://127.0.0.1:60887/*"]` and — when the
-     user already has a `sandbox` block — append Gobby's `fs_read_paths`
-     / `fs_write_paths` / `exec_paths` to `sandbox.filesystem.allowRead` /
-     `allowWrite` / `sandbox.exec.allowBinaries` respectively. **Do not**
-     create a `sandbox` block if absent.
-   - **Gemini** (`installers/gemini.py`): when a sandbox profile is
-     configured, write `~/.gemini/sandbox-profiles/gobby.sb` (macOS) or
-     `gobby.bwrap` (Linux) and register it via the profile include
-     mechanism. No-op otherwise.
-   - **Qwen** (`installers/qwen.py`): same as Gemini; when OpenSandbox is
-     configured, add a host-network bridge directive.
+- `loopback_hosts: list[str]`
+  (default: `["127.0.0.1:60887", "127.0.0.1:60888"]`)
+- `fs_read_paths: list[str]`
+  (default: `["~/.gobby/bootstrap.yaml", "~/.gobby/hooks/"]`)
+- `fs_write_paths: list[str]` (default: `["~/.gobby/hooks/inbox/"]`)
+- `exec_paths: list[str]` (default: `["~/.gobby/bin/ghook"]`)
 
-3. **Idempotence via manifest, not comment fences.** Strict-JSON (Claude,
-   Gemini, Qwen) and TOML (Codex) cannot carry inline ownership comments
-   reliably.
-   - Before writing, read current value, diff against adapter
-     requirements, apply only the delta.
-   - After writing, record the exact JSON path / TOML path in the
-     manifest's `owned_keys`.
-   - Re-running install diffs manifest against adapter requirements;
-     adds/removes accordingly — no duplication.
+Each adapter returns its requirements via `sandbox_requirements()`.
 
-4. **`gobby install --dry-run` output** prints hook entries, sandbox
-   mutations (before → after), and manifest diff. Exits 0 without
-   writing.
+### 3.2 Installer translation
+
+All default-on during `gobby install`, recorded in manifest, revertible via
+uninstall:
+
+- **Codex** (`installers/codex.py`): using `tomli_w`, set
+  `sandbox_workspace_write.network_access = true` in
+  `~/.codex/config.toml`. If Codex later exposes a loopback-only allowlist,
+  switch to that.
+- **Claude Code** (`installers/claude.py`): JSON-merge
+  `allowedHttpHookUrls: ["http://127.0.0.1:60887/*"]` and — when the user
+  already has a `sandbox` block — append Gobby's `fs_read_paths` /
+  `fs_write_paths` / `exec_paths` to `sandbox.filesystem.allowRead` /
+  `allowWrite` / `sandbox.exec.allowBinaries` respectively. **Do not**
+  create a `sandbox` block if absent.
+- **Gemini** (`installers/gemini.py`): when a sandbox profile is
+  configured, write `~/.gemini/sandbox-profiles/gobby.sb` (macOS) or
+  `gobby.bwrap` (Linux) and register it via the profile include mechanism.
+  No-op otherwise.
+- **Qwen** (`installers/qwen.py`): same as Gemini; when OpenSandbox is
+  configured, add a host-network bridge directive.
+
+### 3.3 Idempotence via manifest, not comment fences
+
+Strict-JSON (Claude, Gemini, Qwen) and TOML (Codex) cannot carry inline
+ownership comments reliably.
+
+- Before writing, read current value, diff against adapter requirements,
+  apply only the delta.
+- After writing, record the exact JSON path / TOML path in the manifest's
+  `owned_keys`.
+- Re-running install diffs manifest against adapter requirements;
+  adds/removes accordingly — no duplication.
+
+### 3.4 `--dry-run` output
+
+`gobby install --dry-run` prints hook entries, sandbox mutations
+(before → after), and manifest diff. Exits 0 without writing.
 
 ## Out of scope
 
@@ -598,7 +634,7 @@ once `ghook` is universal.
    `utils/deps.py`) — they simplify to only checking the `--gobby-owned`
    marker.
 5. The retrofit of `hook_dispatcher.py` that writes to the inbox on HTTP
-   failure (§2.7, invariant 2) — no longer reachable.
+   failure (§2.8, invariant 2) — no longer reachable.
 6. The `branch` field in the install manifest (or keep it and make
    `"ghook"` the only valid value; decide at cleanup time).
 
