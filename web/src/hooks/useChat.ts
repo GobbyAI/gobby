@@ -13,7 +13,10 @@ import { classifyTool, normalizeChatMode } from "../types/chat";
 import type { QueuedFile } from "../types/chat";
 import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
-import { hasProtocolToolContent } from "../components/chat/protocolContent";
+import {
+  mapRenderedMessageToChatMessage,
+  normalizeChatRole,
+} from "../lib/chatMessageMapping";
 import { AUTO_REASONING_EFFORT } from "../lib/providerModels";
 import {
   canProxyAttachObservationMeta,
@@ -392,29 +395,6 @@ interface ApiMessage {
   content_blocks?: ContentBlock[]; // Snake case from RenderedMessage shape
   model?: string | null;
   usage?: TokenUsage | null;
-}
-
-function normalizeChatRole(
-  role: unknown,
-  content: unknown,
-): "user" | "assistant" | "system" {
-  const normalizedRole =
-    role === "user" || role === "assistant" || role === "system"
-      ? role
-      : "assistant";
-
-  if (typeof content !== "string") {
-    return normalizedRole;
-  }
-
-  if (
-    normalizedRole === "user" &&
-    (isHookFeedback(content) || hasProtocolToolContent(content))
-  ) {
-    return "system";
-  }
-
-  return normalizedRole;
 }
 
 function mapStoredChatMessage(m: {
@@ -822,31 +802,6 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
 
   flushAssistant();
   return result;
-}
-
-function mapRenderedMessageToChatMessage(
-  message: Record<string, unknown>,
-): ChatMessage {
-  const chatMsg: ChatMessage = {
-    id: String(message.id ?? `ws-${Date.now()}`),
-    role: normalizeChatRole(message.role, message.content),
-    content: (message.content as string) ?? "",
-    timestamp: new Date((message.timestamp as string) ?? Date.now()),
-    contentBlocks: message.content_blocks as ContentBlock[] | undefined,
-  };
-
-  if (chatMsg.contentBlocks) {
-    for (const block of chatMsg.contentBlocks) {
-      if (block.type === "tool_chain" && block.tool_calls) {
-        chatMsg.toolCalls = [...(chatMsg.toolCalls || []), ...block.tool_calls];
-      } else if (block.type === "thinking") {
-        chatMsg.thinkingContent =
-          (chatMsg.thinkingContent || "") + block.content;
-      }
-    }
-  }
-
-  return chatMsg;
 }
 
 export function useChat() {

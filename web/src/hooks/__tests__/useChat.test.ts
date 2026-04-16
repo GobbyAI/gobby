@@ -1039,6 +1039,74 @@ describe("useChat", () => {
     expect(result.current.messages[0].role).toBe("system");
   });
 
+  it("reclassifies rendered protocol-only session_message events as system while viewing a session", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-1/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-1", {
+      session: {
+        id: "sess-1",
+        seq_num: 2310,
+        source: "codex",
+        title: "Observed session",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-1",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-1");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-1",
+        message: {
+          id: "sess-protocol-rendered-1",
+          role: "user",
+          content: "",
+          timestamp: "2026-04-09T00:00:01Z",
+          content_blocks: [
+            {
+              type: "tool_chain",
+              tool_calls: [
+                {
+                  id: "protocol-1",
+                  tool_name: "protocol_context",
+                  server_name: "builtin",
+                  tool_type: "protocol",
+                  status: "completed",
+                },
+              ],
+            },
+          ],
+        },
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].role).toBe("system");
+  });
+
   it("attachToViewed upgrades an active watched terminal session into proxy mode", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(
