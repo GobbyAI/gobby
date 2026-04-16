@@ -22,6 +22,20 @@ fn print_graph_hint_text(ctx: &Context) {
     }
 }
 
+fn empty_response_for_unresolved(ctx: &Context, format: Format) -> anyhow::Result<()> {
+    match format {
+        Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
+            project_id: ctx.project_id.clone(),
+            total: 0,
+            offset: 0,
+            limit: 0,
+            results: vec![],
+            hint: hint_for(ctx),
+        }),
+        Format::Text => Ok(()),
+    }
+}
+
 /// Resolve user input to a symbol name, printing suggestions on ambiguity.
 /// Returns None and prints an error message if no match found.
 fn resolve_name(ctx: &Context, input: &str) -> Option<String> {
@@ -34,12 +48,7 @@ fn resolve_name(ctx: &Context, input: &str) -> Option<String> {
         Some(name) if !suggestions.is_empty() => {
             eprintln!(
                 "Resolved '{input}' to '{name}' (also matched: {})",
-                suggestions
-                    .iter()
-                    .filter(|s| s != &name)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                suggestions.join(", ")
             );
         }
         None => {
@@ -59,19 +68,7 @@ pub fn callers(
 ) -> anyhow::Result<()> {
     let name = match resolve_name(ctx, symbol_name) {
         Some(n) => n,
-        None => {
-            return match format {
-                Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
-                    project_id: ctx.project_id.clone(),
-                    total: 0,
-                    offset: 0,
-                    limit: 0,
-                    results: vec![],
-                    hint: hint_for(ctx),
-                }),
-                Format::Text => Ok(()),
-            };
-        }
+        None => return empty_response_for_unresolved(ctx, format),
     };
     let total = neo4j::count_callers(ctx, &name)?;
     let results = neo4j::find_callers(ctx, &name, offset, limit)?;
@@ -118,19 +115,7 @@ pub fn usages(
 ) -> anyhow::Result<()> {
     let name = match resolve_name(ctx, symbol_name) {
         Some(n) => n,
-        None => {
-            return match format {
-                Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
-                    project_id: ctx.project_id.clone(),
-                    total: 0,
-                    offset: 0,
-                    limit: 0,
-                    results: vec![],
-                    hint: hint_for(ctx),
-                }),
-                Format::Text => Ok(()),
-            };
-        }
+        None => return empty_response_for_unresolved(ctx, format),
     };
     let total = neo4j::count_usages(ctx, &name)?;
     let results = neo4j::find_usages(ctx, &name, offset, limit)?;
@@ -206,19 +191,7 @@ pub fn blast_radius(
 ) -> anyhow::Result<()> {
     let name = match resolve_name(ctx, target) {
         Some(n) => n,
-        None => {
-            return match format {
-                Format::Json => output::print_json(&PagedResponse::<Vec<()>> {
-                    project_id: ctx.project_id.clone(),
-                    total: 0,
-                    offset: 0,
-                    limit: 0,
-                    results: vec![],
-                    hint: hint_for(ctx),
-                }),
-                Format::Text => Ok(()),
-            };
-        }
+        None => return empty_response_for_unresolved(ctx, format),
     };
     let results = neo4j::blast_radius(ctx, &name, depth)?;
     let total = results.len();

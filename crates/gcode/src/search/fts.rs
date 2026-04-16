@@ -5,6 +5,19 @@ use rusqlite::Connection;
 
 use crate::models::{ContentSearchHit, SearchResult, Symbol};
 
+/// Escape LIKE wildcards (`%`, `_`) and the backslash escape char itself.
+/// Must be paired with `ESCAPE '\'` in the SQL for SQLite to honor it.
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Extract a SQL LIKE prefix from a glob pattern for index-assisted pre-filtering.
 /// Returns the literal prefix before the first wildcard character, or None if empty.
 fn glob_to_like_prefix(pattern: &str) -> Option<String> {
@@ -15,10 +28,7 @@ fn glob_to_like_prefix(pattern: &str) -> Option<String> {
     if prefix.is_empty() {
         None
     } else {
-        Some(format!(
-            "{}%",
-            prefix.replace('%', r"\%").replace('_', r"\_")
-        ))
+        Some(format!("{}%", escape_like(&prefix)))
     }
 }
 
@@ -153,11 +163,13 @@ pub fn resolve_symbol_name(
         return (Some(name), vec![]);
     }
 
-    // 2. LIKE fallback — collect top matches as suggestions
-    let pattern = format!("%{input}%");
+    // 2. LIKE fallback — collect top matches as suggestions.
+    //    Escape %/_/\ in input and use ESCAPE clause so symbol names containing
+    //    underscores (common in snake_case) match literally, not as wildcards.
+    let pattern = format!("%{}%", escape_like(input));
     let mut stmt = match conn.prepare(
         "SELECT DISTINCT name FROM code_symbols \
-         WHERE project_id = ? AND (name LIKE ? OR qualified_name LIKE ?) \
+         WHERE project_id = ? AND (name LIKE ? ESCAPE '\\' OR qualified_name LIKE ? ESCAPE '\\') \
          ORDER BY name LIMIT 5",
     ) {
         Ok(s) => s,
@@ -174,7 +186,8 @@ pub fn resolve_symbol_name(
     if names.len() == 1 {
         return (Some(names[0].clone()), vec![]);
     } else if !names.is_empty() {
-        return (Some(names[0].clone()), names);
+        let first = names[0].clone();
+        return (Some(first), names[1..].to_vec());
     }
 
     // 3. FTS5 fallback — search across names, signatures, docstrings
@@ -196,7 +209,8 @@ pub fn resolve_symbol_name(
     } else if fts_names.is_empty() {
         (None, vec![])
     } else {
-        (Some(fts_names[0].clone()), fts_names)
+        let first = fts_names[0].clone();
+        (Some(first), fts_names[1..].to_vec())
     }
 }
 
