@@ -681,7 +681,11 @@ def create_memory_registry(
         try:
             title = await _bootstrap_session_title(session_manager, session_id, prompt_text)
             if not title:
-                return {"success": True, "skipped": True, "reason": "title already set or prompt unusable"}
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "title already set or prompt unusable",
+                }
             return {"success": True, "title": title}
         except Exception as e:
             return {"success": False, "error": str(e)}

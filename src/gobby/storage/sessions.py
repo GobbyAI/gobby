@@ -582,7 +582,9 @@ class LocalSessionManager:
                 try:
                     listener(session_id, title)
                 except Exception:
-                    logger.warning("Title listener failed for session %s", session_id, exc_info=True)
+                    logger.warning(
+                        "Title listener failed for session %s", session_id, exc_info=True
+                    )
 
         return updated
 

@@ -111,7 +111,9 @@ class SessionControlMixin:
                 for interaction in pending:
                     msg = _json.dumps(
                         {
-                            "type": "tool_status" if interaction.get("kind") == "tool" else "pending_interaction",
+                            "type": "tool_status"
+                            if interaction.get("kind") == "tool"
+                            else "pending_interaction",
                             "conversation_id": conv_id,
                             "interaction": interaction,
                             "message_id": f"pending-interaction-{interaction['interaction_id']}",

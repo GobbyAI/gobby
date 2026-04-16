@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -71,7 +71,7 @@ def _project_to_response(server: HTTPServer, project: Any) -> dict[str, Any]:
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
     data.update(_get_project_stats(server, project.id))
     data["approval_rules"] = load_project_approval_rules(project.repo_path)
-    return data
+    return cast(dict[str, Any], data)
 
 
 def create_projects_router(server: HTTPServer) -> APIRouter:
@@ -117,7 +117,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             if approval_rules is None:
                 return _project_to_response(server, project)
 
-        updated = project
+        updated: Any = project
         if fields:
             updated = pm.update(project_id, **fields)
             if not updated:
@@ -125,7 +125,9 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
 
         if approval_rules is not None:
             if not updated.repo_path:
-                raise HTTPException(400, "Project has no repo_path for project-scoped approval rules")
+                raise HTTPException(
+                    400, "Project has no repo_path for project-scoped approval rules"
+                )
             save_project_approval_rules(updated.repo_path, approval_rules)
 
         return _project_to_response(server, updated)
