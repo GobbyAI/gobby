@@ -187,9 +187,15 @@ describe("TasksTab", () => {
 
     expect(screen.queryByText("Open task 10")).toBeNull();
     expect(screen.queryByText("Closed task")).toBeNull();
+
+    const tasksPane = screen
+      .getByTestId("task-tree")
+      .closest(".activity-tasks-pane");
+    expect(tasksPane).toBeTruthy();
+    expect(tasksPane).not.toHaveClass("overflow-y-auto");
     expect(screen.getByTestId("task-tree")).toHaveAttribute(
       "data-height",
-      "300",
+      "260",
     );
 
     fireEvent.click(screen.getByText("Load more"));
@@ -197,24 +203,22 @@ describe("TasksTab", () => {
     expect(screen.getByText("Open task 10")).toBeTruthy();
   });
 
-  it("resyncs the visible tree height when search changes the arborist-visible rows", async () => {
+  it("restores the full task viewport height when the load-more footer disappears", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
       expect(screen.getByTestId("task-tree")).toHaveAttribute(
         "data-height",
-        "300",
+        "260",
       );
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Search..."), {
-      target: { value: "Open task 10" },
-    });
+    fireEvent.click(screen.getByText("Load more"));
 
     await waitFor(() => {
       expect(screen.getByTestId("task-tree")).toHaveAttribute(
         "data-height",
-        "30",
+        "300",
       );
     });
   });

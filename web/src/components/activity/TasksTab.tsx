@@ -50,6 +50,7 @@ const STATUS_BUCKETS: TaskBucket[] = ["blocked", "closed"];
 const DEFAULT_FILTERS = new Set<TaskBucket>([...LIFECYCLE_BUCKETS, "blocked"]);
 const INITIAL_TASK_LIMIT = 10;
 const TASK_ROW_HEIGHT = 30;
+const TASK_TREE_FOOTER_HEIGHT = 40;
 
 const STATUS_DOT_COLORS = TASK_BUCKET_COLORS;
 
@@ -385,7 +386,7 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
     const container = containerRef.current;
     if (!container) return;
     const observer = new ResizeObserver(([entry]) => {
-      const available = entry.contentRect.height - 40;
+      const available = entry.contentRect.height;
       if (available > 100) setTreeHeight(Math.round(available));
     });
     observer.observe(container);
@@ -467,9 +468,17 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
   // gets a sensible viewport height.
   const visibleTreeRowCount = arboristVisibleCount ?? fallbackVisibleCount;
   const unconstrainedTreeHeight = visibleTreeRowCount * TASK_ROW_HEIGHT;
+  const treeFooterOffset = hasMore ? TASK_TREE_FOOTER_HEIGHT : 0;
+  const availableTreeHeight = Math.max(
+    TASK_ROW_HEIGHT,
+    treeHeight - treeFooterOffset,
+  );
   const treeViewportHeight = selectedTaskId
-    ? undefined
-    : Math.max(TASK_ROW_HEIGHT, Math.min(treeHeight, unconstrainedTreeHeight));
+    ? availableTreeHeight
+    : Math.max(
+        TASK_ROW_HEIGHT,
+        Math.min(availableTreeHeight, unconstrainedTreeHeight),
+      );
 
   if (loading) {
     return (
@@ -521,11 +530,11 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
       {/* Tree pane */}
       <div
         ref={containerRef}
-        className={`overflow-y-auto ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
+        className={`activity-tasks-pane flex min-h-0 flex-col ${selectedTaskId ? "border-b border-border" : "flex-1"}`}
         style={selectedTaskId ? { height: `${topHeight}%` } : undefined}
       >
         {filtered.length === 0 ? (
-          <div className="activity-tab-empty">
+          <div className="activity-tab-empty flex-1">
             <p>No tasks match filters</p>
             {tasks.length > 0 && (
               <p className="text-xs text-muted-foreground mt-1">
@@ -535,23 +544,25 @@ export const TasksTab = memo(function TasksTab({ projectId }: TasksTabProps) {
           </div>
         ) : (
           <>
-            <Tree<TreeNode>
-              ref={treeRef}
-              data={treeData}
-              openByDefault={true}
-              width="100%"
-              height={treeViewportHeight}
-              rowHeight={TASK_ROW_HEIGHT}
-              indent={16}
-              searchTerm={search}
-              searchMatch={searchMatch}
-              onActivate={(node) => setSelectedTaskId(node.data.task.id)}
-              onToggle={syncVisibleCount}
-              disableDrag
-              disableDrop
-            >
-              {PanelTaskNode}
-            </Tree>
+            <div className="flex-1 min-h-0">
+              <Tree<TreeNode>
+                ref={treeRef}
+                data={treeData}
+                openByDefault={true}
+                width="100%"
+                height={treeViewportHeight}
+                rowHeight={TASK_ROW_HEIGHT}
+                indent={16}
+                searchTerm={search}
+                searchMatch={searchMatch}
+                onActivate={(node) => setSelectedTaskId(node.data.task.id)}
+                onToggle={syncVisibleCount}
+                disableDrag
+                disableDrop
+              >
+                {PanelTaskNode}
+              </Tree>
+            </div>
             {hasMore && (
               <button
                 className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
