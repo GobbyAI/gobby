@@ -1,6 +1,5 @@
 import { cn } from '../lib/utils'
 import type { Settings, Theme, VoiceInputMode } from '../hooks/useSettings'
-import { MODEL_OPTIONS } from '../hooks/useSettings'
 import { useVoiceCapabilities } from '../hooks/useVoiceCapabilities'
 import type { ChatMode } from '../types/chat'
 import { CHAT_MODES } from '../types/chat'
@@ -11,7 +10,6 @@ interface SettingsProps {
   onClose: () => void
   settings: Settings
   onFontSizeChange: (size: number) => void
-  onModelChange: (model: string) => void
   onThemeChange: (theme: Theme) => void
   onDefaultChatModeChange: (mode: ChatMode) => void
   onPostPlanChatModeChange: (mode: 'normal' | 'bypass') => void
@@ -26,7 +24,6 @@ export function Settings({
   onClose,
   settings,
   onFontSizeChange,
-  onModelChange,
   onThemeChange,
   onDefaultChatModeChange,
   onPostPlanChatModeChange,
@@ -54,22 +51,6 @@ export function Settings({
         </div>
 
         <div className="settings-content">
-          <div className="setting-item">
-            <label htmlFor="model-select">Model</label>
-            <select
-              id="model-select"
-              value={settings.model}
-              onChange={(e) => onModelChange(e.target.value)}
-              className="model-select"
-            >
-              {MODEL_OPTIONS.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
           <div className="setting-item">
             <label htmlFor="font-size">
               Font Size: {settings.fontSize}px

@@ -1542,7 +1542,6 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         settings={settings}
         onFontSizeChange={updateFontSize}
-        onModelChange={updateModel}
         onThemeChange={updateTheme}
         onDefaultChatModeChange={updateDefaultChatMode}
         onPostPlanChatModeChange={updatePostPlanChatMode}
