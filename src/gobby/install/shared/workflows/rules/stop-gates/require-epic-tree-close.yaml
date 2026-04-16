@@ -6,7 +6,7 @@ rules:
     event: turn_end
     enabled: true
     priority: 51
-    agent_scope: [default, default-web-chat]
+    agent_scope: [default]
     when: >-
       not variables.get('plan_mode')
       and variables.get('task_claimed')

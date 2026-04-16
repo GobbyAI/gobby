@@ -66,7 +66,7 @@ function makeChatHookState() {
     canvasPanel: null,
     onCanvasInteraction: vi.fn(),
     setOnChatDeleted: vi.fn(),
-    activeAgent: 'default-web-chat',
+    activeAgent: 'default',
     sendAgentChange: vi.fn(),
   }
 }

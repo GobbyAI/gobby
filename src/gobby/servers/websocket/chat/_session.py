@@ -281,7 +281,7 @@ class ChatSessionMixin:
         # Early agent resolution to determine provider (Codex vs Claude SDK)
         pending_agents = getattr(self, "_pending_agents", {})
         pending_agent = pending_agents.pop(session_key, None)
-        agent_name = pending_agent or "default-web-chat"
+        agent_name = pending_agent or "default"
         agent_body = None
         if session_manager:
             try:

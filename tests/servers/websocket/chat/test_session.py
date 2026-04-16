@@ -349,6 +349,8 @@ class TestCreateChatSessionInner:
 
             await mixin._create_chat_session_inner("conv-gemini", provider="gemini")
 
+            assert mock_resolve_agent.call_args is not None
+            assert mock_resolve_agent.call_args.args[0] == "default"
             mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
                 provider="gemini",
                 conversation_id="conv-gemini",

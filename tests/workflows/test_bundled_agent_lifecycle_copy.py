@@ -13,8 +13,8 @@ pytestmark = pytest.mark.unit
 
 def _bundled_agent_files() -> list[Path]:
     files = sorted(get_bundled_agents_path().glob("*.yaml"))
-    assert len(files) == 13, (
-        f"expected 13 bundled agents, got {len(files)}: "
+    assert len(files) == 12, (
+        f"expected 12 bundled agents, got {len(files)}: "
         f"{[f.name for f in files]}"
     )
     return files

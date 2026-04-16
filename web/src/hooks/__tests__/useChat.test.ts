@@ -283,6 +283,32 @@ describe("useChat", () => {
     }
   });
 
+  it("defaults activeAgent to default and resets to default on a fresh chat", async () => {
+    localStorage.clear();
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    expect(result.current.activeAgent).toBe("default");
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_info",
+        session_ref: "#42",
+        agent_name: "developer",
+      });
+    });
+
+    expect(result.current.activeAgent).toBe("developer");
+
+    act(() => result.current.startNewChat());
+
+    expect(result.current.activeAgent).toBe("default");
+  });
+
   it("sendMessage adds user message and sends WS message", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

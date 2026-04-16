@@ -55,7 +55,7 @@ Tags serve two purposes:
 | Tag | Meaning |
 |-----|---------|
 | `gobby` | **Provenance** — rule ships with gobby. All non-deprecated rules get this tag. |
-| `default` | **Audience** — rule applies to the interactive session (default/default-web-chat agents). |
+| `default` | **Audience** — rule applies to the interactive session (`default` agent). |
 | Group tags | **Identity** — rule belongs to a functional group. Workers cherry-pick these. |
 
 The `default` agent uses `rule_selectors: {include: ["tag:default"]}` to load all interactive-session rules. Worker agents (e.g., `pipeline-worker.yaml`) select specific group tags instead.

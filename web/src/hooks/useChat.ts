@@ -840,7 +840,7 @@ export function useChat() {
   // Active agent tracking — persisted to survive page reloads
   const ACTIVE_AGENT_KEY = "gobby-active-agent";
   const [activeAgent, setActiveAgent] = useState<string>(
-    () => localStorage.getItem(ACTIVE_AGENT_KEY) || "default-web-chat",
+    () => localStorage.getItem(ACTIVE_AGENT_KEY) || "default",
   );
 
   // Session title — stored from switchConversation to survive filtered list race
@@ -2392,7 +2392,7 @@ export function useChat() {
   // Start a new chat conversation, optionally with a specific agent
   const startNewChat = useCallback(
     (agentName?: string) => {
-      const effectiveAgent = agentName || "default-web-chat";
+      const effectiveAgent = agentName || "default";
       setActiveAgent(effectiveAgent);
       clearSessionObservationState();
       resetMainChatState();

@@ -331,7 +331,7 @@ test("Gemini picker selection sticks visually and first send routes through Gemi
             type: "session_info",
             conversation_id: msg.conversation_id,
             session_ref: "#501",
-            agent_name: "default-web-chat",
+            agent_name: "default",
           }),
         );
         ws.send(
