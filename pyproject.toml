@@ -97,6 +97,7 @@ gobby = [
     "install/claude/**/*",
     "install/gemini/**/*",
     "install/codex/**/*",
+    "install/qwen/**/*",
     "install/shared/**/*",
     "storage/*.sql",
     "data/*",
