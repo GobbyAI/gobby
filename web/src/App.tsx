@@ -1129,6 +1129,7 @@ export default function App() {
       sendMessage,
       settings.model,
       settings.chatMode,
+      settings.postPlanChatMode,
       effectiveProjectId,
       currentMainReasoning,
       updateChatMode,
