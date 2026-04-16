@@ -17,6 +17,9 @@ name = "gcode"
 path = "src/main.rs"
 
 [dependencies]
+# Internal
+gobby-core = { path = "../gobby-core" }
+
 # CLI
 clap = { version = "4", features = ["derive"] }
 

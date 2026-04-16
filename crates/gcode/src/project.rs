@@ -3,42 +3,13 @@
 //! Resolution order: .gobby/project.json (gobby) > .gobby/gcode.json (standalone) > generate on-the-fly.
 //! gcode never writes to project.json — that's gobby's file.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context as _;
+use gobby_core::project::read_project_id;
 use uuid::Uuid;
 
 use crate::models::CODE_INDEX_UUID_NAMESPACE;
-
-/// Walk up from `start` looking for `.gobby/project.json` or `.gobby/gcode.json`.
-/// Returns the project root (parent of `.gobby/`) if found.
-pub fn find_project_root(start: &Path) -> Option<PathBuf> {
-    let mut dir = start;
-    loop {
-        let gobby_dir = dir.join(".gobby");
-        if gobby_dir.join("project.json").exists() || gobby_dir.join("gcode.json").exists() {
-            return Some(dir.to_path_buf());
-        }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
-    }
-}
-
-/// Read project ID from `.gobby/project.json`.
-/// Reads `"id"` field first, falls back to `"project_id"` for backwards compat.
-pub fn read_project_id(project_root: &Path) -> anyhow::Result<String> {
-    let path = project_root.join(".gobby").join("project.json");
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    let json: serde_json::Value = serde_json::from_str(&contents)?;
-    json.get("id")
-        .or_else(|| json.get("project_id"))
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .context("'id' field not found in .gobby/project.json")
-}
 
 /// Read project ID from `.gobby/gcode.json`.
 pub fn read_gcode_json(project_root: &Path) -> anyhow::Result<String> {
@@ -237,82 +208,6 @@ mod tests {
         // File should be byte-identical
         let after_bytes = std::fs::read(dir.path().join(".gobby").join("gcode.json")).unwrap();
         assert_eq!(original_bytes, after_bytes);
-    }
-
-    #[test]
-    fn test_read_project_id_uses_id_field() {
-        let dir = tempfile::tempdir().unwrap();
-        let gobby_dir = dir.path().join(".gobby");
-        std::fs::create_dir_all(&gobby_dir).unwrap();
-
-        let json = serde_json::json!({
-            "id": "correct-id",
-            "name": "test"
-        });
-        std::fs::write(
-            gobby_dir.join("project.json"),
-            serde_json::to_string(&json).unwrap(),
-        )
-        .unwrap();
-
-        let id = read_project_id(dir.path()).unwrap();
-        assert_eq!(id, "correct-id");
-    }
-
-    #[test]
-    fn test_read_project_id_falls_back_to_project_id_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let gobby_dir = dir.path().join(".gobby");
-        std::fs::create_dir_all(&gobby_dir).unwrap();
-
-        // Old format with "project_id" instead of "id"
-        let json = serde_json::json!({
-            "project_id": "legacy-id",
-            "name": "test"
-        });
-        std::fs::write(
-            gobby_dir.join("project.json"),
-            serde_json::to_string(&json).unwrap(),
-        )
-        .unwrap();
-
-        let id = read_project_id(dir.path()).unwrap();
-        assert_eq!(id, "legacy-id");
-    }
-
-    #[test]
-    fn test_find_project_root_finds_project_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let nested = dir.path().join("a").join("b").join("c");
-        std::fs::create_dir_all(&nested).unwrap();
-
-        let gobby_dir = dir.path().join(".gobby");
-        std::fs::create_dir_all(&gobby_dir).unwrap();
-        std::fs::write(gobby_dir.join("project.json"), "{}").unwrap();
-
-        let found = find_project_root(&nested);
-        assert_eq!(found, Some(dir.path().to_path_buf()));
-    }
-
-    #[test]
-    fn test_find_project_root_finds_gcode_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let nested = dir.path().join("a").join("b");
-        std::fs::create_dir_all(&nested).unwrap();
-
-        let gobby_dir = dir.path().join(".gobby");
-        std::fs::create_dir_all(&gobby_dir).unwrap();
-        std::fs::write(gobby_dir.join("gcode.json"), "{}").unwrap();
-
-        let found = find_project_root(&nested);
-        assert_eq!(found, Some(dir.path().to_path_buf()));
-    }
-
-    #[test]
-    fn test_find_project_root_returns_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let found = find_project_root(dir.path());
-        assert!(found.is_none());
     }
 
     #[test]

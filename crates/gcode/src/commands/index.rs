@@ -1,3 +1,5 @@
+use gobby_core::project::{find_project_root, read_project_id};
+
 use crate::config::Context;
 use crate::db;
 use crate::index::indexer;
@@ -13,12 +15,11 @@ pub fn run(
     let (root, project_id, conn) = match path.as_deref() {
         Some(p) => {
             let target = std::path::PathBuf::from(p);
-            let target_root =
-                crate::project::find_project_root(&target).unwrap_or_else(|| target.clone());
+            let target_root = find_project_root(&target).unwrap_or_else(|| target.clone());
             if target_root != ctx.project_root {
                 // Path belongs to a different project — re-resolve everything
                 let db_path = crate::config::resolve_db_path(&target_root)?;
-                let project_id = crate::project::read_project_id(&target_root)
+                let project_id = read_project_id(&target_root)
                     .or_else(|_| crate::project::read_gcode_json(&target_root))
                     .unwrap_or_else(|_| crate::project::generate_project_id(&target_root));
                 if !ctx.quiet {

@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use gobby_core::project::{find_project_root, read_project_id};
 
 use crate::secrets;
 
@@ -196,7 +197,7 @@ pub fn detect_project_root() -> anyhow::Result<PathBuf> {
     let cwd = std::env::current_dir()?;
 
     // First: look for an identity file (.gobby/project.json or .gobby/gcode.json)
-    if let Some(root) = crate::project::find_project_root(&cwd) {
+    if let Some(root) = find_project_root(&cwd) {
         return Ok(root);
     }
 
@@ -255,7 +256,7 @@ fn resolve_project_id(project_root: &Path) -> anyhow::Result<String> {
     let gobby_dir = project_root.join(".gobby");
 
     if gobby_dir.join("project.json").exists() {
-        return crate::project::read_project_id(project_root);
+        return read_project_id(project_root);
     }
     if gobby_dir.join("gcode.json").exists() {
         return crate::project::read_gcode_json(project_root);

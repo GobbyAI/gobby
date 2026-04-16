@@ -632,6 +632,7 @@ dependencies = [
  "dirs",
  "fernet",
  "glob",
+ "gobby-core",
  "hmac",
  "ignore",
  "openssl",
