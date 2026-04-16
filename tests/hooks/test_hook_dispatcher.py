@@ -544,3 +544,111 @@ class TestAgentDaemonFailureTracking:
         assert exit_code == 0
         # Counter should be reset — next failure starts at 1
         assert hook_dispatcher._track_daemon_failure("test-reset") == 1
+
+
+# ── get_daemon_url bind_host handling ────────────────────────────────────
+
+
+class TestResolveDaemonHost:
+    """Unit tests for the _resolve_daemon_host normalizer."""
+
+    @pytest.mark.parametrize(
+        "bind_host,expected",
+        [
+            ("localhost", "localhost"),
+            ("127.0.0.1", "127.0.0.1"),
+            ("192.168.1.10", "192.168.1.10"),
+            ("daemon.internal", "daemon.internal"),
+            ("0.0.0.0", "127.0.0.1"),
+            ("::", "127.0.0.1"),
+            ("::0", "127.0.0.1"),
+            ("::1", "[::1]"),
+            ("fe80::1", "[fe80::1]"),
+            ("[::1]", "[::1]"),
+        ],
+    )
+    def test_normalization(self, bind_host: str, expected: str) -> None:
+        assert hook_dispatcher._resolve_daemon_host(bind_host) == expected
+
+
+class TestGetDaemonUrl:
+    """Resolution of the daemon URL from bootstrap.yaml."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_cache(self) -> Iterator[None]:
+        hook_dispatcher._cached_daemon_url = None
+        yield
+        hook_dispatcher._cached_daemon_url = None
+
+    @pytest.mark.asyncio
+    async def test_default_when_bootstrap_missing(self, tmp_path: Path) -> None:
+        missing = tmp_path / "absent.yaml"
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(missing)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://localhost:60887"
+
+    @pytest.mark.asyncio
+    async def test_default_when_bootstrap_malformed(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("this: is: not: valid: yaml: [")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://localhost:60887"
+
+    @pytest.mark.asyncio
+    async def test_reads_port_only(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("daemon_port: 61234\n")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://localhost:61234"
+
+    @pytest.mark.asyncio
+    async def test_reads_explicit_bind_host(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("daemon_port: 60887\nbind_host: 192.168.1.10\n")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://192.168.1.10:60887"
+
+    @pytest.mark.asyncio
+    async def test_normalizes_wildcard_v4(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("daemon_port: 60887\nbind_host: 0.0.0.0\n")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://127.0.0.1:60887"
+
+    @pytest.mark.asyncio
+    async def test_normalizes_wildcard_v6(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("daemon_port: 60887\nbind_host: '::'\n")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://127.0.0.1:60887"
+
+    @pytest.mark.asyncio
+    async def test_brackets_ipv6_literal(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("daemon_port: 60887\nbind_host: '::1'\n")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://[::1]:60887"
+
+    @pytest.mark.asyncio
+    async def test_localhost_passthrough(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("daemon_port: 60887\nbind_host: localhost\n")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            url = await hook_dispatcher.get_daemon_url()
+        assert url == "http://localhost:60887"
+
+    @pytest.mark.asyncio
+    async def test_cached_across_calls(self, tmp_path: Path) -> None:
+        path = tmp_path / "bootstrap.yaml"
+        path.write_text("daemon_port: 60887\nbind_host: 127.0.0.1\n")
+        with patch.object(hook_dispatcher, "DEFAULT_BOOTSTRAP_PATH", str(path)):
+            first = await hook_dispatcher.get_daemon_url()
+            path.write_text("daemon_port: 12345\nbind_host: 0.0.0.0\n")
+            second = await hook_dispatcher.get_daemon_url()
+        assert first == second == "http://127.0.0.1:60887"

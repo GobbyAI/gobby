@@ -275,7 +275,18 @@ Pre-existing bugs / missing surfaces that must land first.
    duplicated `~/.gobby/bin/<name>` lookup logic now (currently two call
    sites for `gcode` and `gsqz`) so Phase 2's `ghook` lookup is the third
    user of one resolver, not new duplication.
-6. **Pin the coupling schemas in `gobby-cli`.** Write
+6. **Fix dispatcher `get_daemon_url` to honor `bind_host`.** The legacy
+   Python dispatcher at `hook_dispatcher.py:172` hardcodes `localhost`
+   regardless of the `bind_host` value in `~/.gobby/bootstrap.yaml`. Users
+   with `bind_host: 192.168.x.y` or similar silently fail against the
+   daemon today. Since the dispatcher is the transition-window fallback
+   (until `ghook` ships and lands on all installs), it has to be correct.
+   Fix reads `bind_host` (default `"localhost"`), normalizes wildcard
+   listen-addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1`, brackets IPv6
+   literals for URL syntax, and passes everything else through. The
+   `gobby-core::daemon_url` Rust helper adopts the same spec — one
+   canonical resolution rule on both sides.
+7. **Pin the coupling schemas in `gobby-cli`.** Write
    `gobby-cli/schemas/inbox-envelope.v1.schema.json` and
    `gobby-cli/schemas/diagnose-output.v1.schema.json`. Add a `cargo test`
    that validates `ghook`'s serialized output against them. Mirror into
@@ -336,11 +347,44 @@ ghook --version
   detached Rust process surprise on macOS; resolve the path while the
   parent's cwd is still intact.
 
-### 2.3 Port resolution
+### 2.3 Daemon URL resolution
 
-Read `~/.gobby/bootstrap.yaml` with `serde_yaml`, extract `daemon_port`,
-default `60887`. Mirror `hook_dispatcher.py:145-175` exactly. Use
-`dirs::home_dir()` for `~` expansion (matches `gsqz` config resolver).
+Lives in `gobby-core::daemon_url` (R2-02/R2-03 on the Rust side). Shared
+between `ghook` and any future `gobby-core` consumer; the Python
+dispatcher's fixed `get_daemon_url` (§Phase 0 item 6) implements the
+same spec.
+
+Rules:
+1. Read `~/.gobby/bootstrap.yaml` with `serde_yaml`. Use `dirs::home_dir()`
+   for `~` expansion (matches `gsqz` config resolver).
+2. Extract `daemon_port` (default `60887`) and `bind_host` (default
+   `"localhost"` — matches `BootstrapConfig` at
+   `src/gobby/config/bootstrap.py:31`).
+3. Normalize the host for dialing:
+   - `"0.0.0.0"`, `"::"`, `"::0"` → `"127.0.0.1"` (wildcard listen-addrs
+     aren't dialable)
+   - IPv6 literals containing `:` (e.g. `"::1"`, `"fe80::1"`) get bracketed
+     (`"[::1]"`) for URL syntax
+   - Everything else (hostnames, IPv4 literals, already-bracketed IPv6)
+     passes through
+4. Return `http://<normalized_host>:<port>`.
+
+No `GOBBY_PORT` env override in the core helper. `gcode`'s current
+`resolve_daemon_url` at `gobby-cli/crates/gcode/src/config.rs:216-246`
+honors `GOBBY_PORT`; when `gcode` migrates under R2-06 it can keep that
+affordance as a thin local wrapper over `gobby_core::daemon_url`.
+
+API shape (Rust side):
+
+```rust
+pub struct DaemonEndpoint { pub host: String, pub port: u16 }
+pub fn read_daemon_endpoint() -> DaemonEndpoint;
+pub fn read_daemon_endpoint_at(path: &Path) -> DaemonEndpoint;
+pub fn daemon_url() -> String;       // http://<host>:<port>, normalized
+pub fn daemon_url_at(path: &Path) -> String;
+```
+
+No process cache — sync Rust, cheap.
 
 ### 2.4 Enqueue-first flow
 
