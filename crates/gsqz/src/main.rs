@@ -238,8 +238,7 @@ fn run_output_mode(cmd: &str, config: &Config, stats: bool) {
     }
 
     // Report savings to daemon (best-effort)
-    if result.strategy_name != "passthrough"
-        && result.strategy_name != "excluded"
+    if !result.is_passthrough()
         && let Some(ref url) = daemon_url
     {
         daemon::report_savings(
@@ -250,16 +249,15 @@ fn run_output_mode(cmd: &str, config: &Config, stats: bool) {
         );
     }
 
-    let output_str = if result.strategy_name != "passthrough" && result.strategy_name != "excluded"
-    {
+    let output_str = if result.is_passthrough() {
+        result.compressed
+    } else {
         format!(
             "[Output compressed by gsqz — {}, {:.0}% reduction]\n{}",
             result.strategy_name,
             result.savings_pct(),
             result.compressed
         )
-    } else {
-        result.compressed
     };
 
     print!("{}", output_str);

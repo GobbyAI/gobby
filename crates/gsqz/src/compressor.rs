@@ -18,6 +18,19 @@ impl CompressionResult {
         }
         (1.0 - self.compressed_chars as f64 / self.original_chars as f64) * 100.0
     }
+
+    /// True when no useful compression occurred — original output should be
+    /// surfaced verbatim, with no `[Output compressed by gsqz — …]` header
+    /// and no daemon savings report. Covers:
+    ///   - `passthrough` — output too short or fallback couldn't help.
+    ///   - `excluded` — command matched an exclusion regex.
+    ///   - `*/no-op` — a pipeline matched but adding the low-savings marker
+    ///     would itself have grown the output, so we kept the original.
+    pub fn is_passthrough(&self) -> bool {
+        self.strategy_name == "passthrough"
+            || self.strategy_name == "excluded"
+            || self.strategy_name.ends_with("/no-op")
+    }
 }
 
 struct CompiledPipeline {
@@ -479,6 +492,28 @@ mod tests {
         assert!(!result.compressed.contains("[gsqz:low-savings]"));
         assert_eq!(result.compressed, output);
         assert_eq!(result.compressed_chars, result.original_chars);
+        // /no-op is a passthrough — main.rs uses this to skip the outer header.
+        assert!(result.is_passthrough());
+    }
+
+    #[test]
+    fn test_is_passthrough_classification() {
+        let mk = |name: &str| CompressionResult {
+            compressed: String::new(),
+            original_chars: 0,
+            compressed_chars: 0,
+            strategy_name: name.into(),
+        };
+        // Pure passthrough cases — main.rs surfaces output verbatim.
+        assert!(mk("passthrough").is_passthrough());
+        assert!(mk("excluded").is_passthrough());
+        assert!(mk("git-mutation/no-op").is_passthrough());
+        assert!(mk("cargo-test/no-op").is_passthrough());
+        // Real compression — main.rs prepends the header and reports to daemon.
+        assert!(!mk("git-status").is_passthrough());
+        assert!(!mk("cargo-test/low-savings").is_passthrough());
+        assert!(!mk("pytest/on_empty").is_passthrough());
+        assert!(!mk("fallback").is_passthrough());
     }
 
     #[test]

@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### gsqz
 
 - **Low-savings marker** — Suppress `[gsqz:low-savings]` marker when prepending it would grow the output beyond the original. The marker now only annotates when the annotation itself doesn't make things worse. (#111)
+- **Outer compression header for `/no-op` strategy** — When the low-savings marker is suppressed (above), the resulting `{pipeline}/no-op` strategy now also skips the outer `[Output compressed by gsqz — …, 0% reduction]` header and the daemon savings report. The user sees the original output verbatim. `CompressionResult::is_passthrough()` classifies `passthrough`, `excluded`, and `*/no-op` together so both call sites stay in sync. (#121)
 
 ## [0.1.0] — gobby-hooks
 
