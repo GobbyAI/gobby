@@ -579,6 +579,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gobby-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+]
+
+[[package]]
 name = "gobby-local"
 version = "0.1.1"
 dependencies = [
