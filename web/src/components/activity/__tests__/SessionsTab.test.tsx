@@ -176,6 +176,59 @@ const activeSessions = [
   },
 ];
 
+const pausedSessions = [
+  {
+    id: "terminal-paused-live",
+    ref: "#206",
+    external_id: "terminal-paused-live-ext",
+    source: "codex",
+    project_id: "proj-1",
+    title: "Paused Terminal Session",
+    status: "paused",
+    model: "gpt-5.4",
+    message_count: 5,
+    created_at: "2026-04-08T12:50:00Z",
+    updated_at: "2026-04-08T12:55:00Z",
+    seq_num: 206,
+    summary_markdown: null,
+    git_branch: "main",
+    usage_input_tokens: 0,
+    usage_output_tokens: 0,
+    had_edits: false,
+    agent_depth: 0,
+    chat_mode: "plan",
+    agent_run_id: null,
+    parent_session_id: null,
+    session_type: "terminal",
+    terminal_context: { tmux_pane: "%44", parent_pid: 1234 },
+  },
+  {
+    id: "terminal-paused-stale",
+    ref: "#207",
+    external_id: "terminal-paused-stale-ext",
+    source: "codex",
+    project_id: "proj-1",
+    title: "Stale Terminal Session",
+    status: "paused",
+    model: "gpt-5.4",
+    message_count: 5,
+    created_at: "2026-04-07T12:50:00Z",
+    updated_at: "2026-04-08T12:55:00Z",
+    seq_num: 207,
+    summary_markdown: null,
+    git_branch: "main",
+    usage_input_tokens: 0,
+    usage_output_tokens: 0,
+    had_edits: false,
+    agent_depth: 0,
+    chat_mode: "plan",
+    agent_run_id: null,
+    parent_session_id: null,
+    session_type: "terminal",
+    terminal_context: null,
+  },
+];
+
 describe("SessionsTab", () => {
   beforeEach(() => {
     mockUseSessionDetail.mockReset();
@@ -214,6 +267,25 @@ describe("SessionsTab", () => {
     expect(screen.getAllByText(/^web$/i)).toHaveLength(1);
     expect(screen.getAllByLabelText("Session actions")).toHaveLength(2);
     expect(screen.queryByText("Close")).toBeNull();
+  });
+
+  it("hides paused terminal sessions that no longer have terminal liveness metadata", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
+    mockFetch.mockJsonResponse("/api/sessions?status=active", {
+      sessions: activeSessions,
+    });
+    mockFetch.mockJsonResponse("/api/sessions?status=paused", {
+      sessions: pausedSessions,
+    });
+
+    render(<SessionsTab chatSessionId="web-current" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#206: Paused Terminal Session")).toBeTruthy();
+    });
+
+    expect(screen.queryByText("#207: Stale Terminal Session")).toBeNull();
   });
 
   it("shows agent badge and lets a watched session swap into the main chat", async () => {

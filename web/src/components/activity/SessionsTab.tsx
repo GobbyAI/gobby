@@ -77,6 +77,43 @@ function getAgentBadge(agentRunId: string | null | undefined): {
   return { label: "auto", className: "session-kind-badge--auto" };
 }
 
+function hasTerminalLiveness(session: GobbySession): boolean {
+  const terminalContext = session.terminal_context;
+  if (!terminalContext) {
+    return false;
+  }
+
+  const tmuxPane = terminalContext.tmux_pane;
+  if (typeof tmuxPane === "string" && tmuxPane.length > 0) {
+    return true;
+  }
+
+  const parentPid = terminalContext.parent_pid;
+  if (typeof parentPid === "number") {
+    return parentPid > 0;
+  }
+  if (typeof parentPid === "string") {
+    const pid = Number.parseInt(parentPid, 10);
+    return Number.isFinite(pid) && pid > 0;
+  }
+
+  return false;
+}
+
+function isWatchableActivitySession(session: GobbySession): boolean {
+  if (session.source === "pipeline" || session.source === "cron") {
+    return false;
+  }
+
+  // Legacy paused terminal rows with no tmux/pid metadata cannot be observed
+  // and should not linger in the live activity panel.
+  if (session.status === "paused" && session.session_type === "terminal") {
+    return hasTerminalLiveness(session);
+  }
+
+  return true;
+}
+
 function renderBadges(entry: SessionEntry) {
   const typeBadge = getSessionTypeBadge(entry.sessionType);
   const agentBadge = getAgentBadge(entry.agentRunId);
@@ -151,10 +188,8 @@ export const SessionsTab = memo(function SessionsTab({
         ).then((r) => (r.ok ? r.json() : { sessions: [] })),
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
-      const isWatchable = (s: GobbySession) =>
-        s.source !== "pipeline" && s.source !== "cron";
-      const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
-      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
+      const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchableActivitySession);
+      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchableActivitySession);
       setActivitySessions([...active, ...paused]);
       setExpiringIds(new Set());
       setFetchError(null);

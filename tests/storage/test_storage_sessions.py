@@ -683,6 +683,66 @@ class TestLocalSessionManager:
         paused = session_manager.get(session.id)
         assert paused.status == "paused"
 
+    def test_pause_inactive_active_sessions_preserves_last_activity_time(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Auto-pausing should not make a stale session look freshly active."""
+        session = session_manager.register(
+            external_id="active-idle-preserve-time",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = datetime('now', '-31 minutes') WHERE id = ?",
+            (session.id,),
+        )
+        before = session_manager.db.fetchone(
+            "SELECT updated_at FROM sessions WHERE id = ?",
+            (session.id,),
+        )
+
+        count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        assert count == 1
+
+        after = session_manager.db.fetchone(
+            "SELECT updated_at FROM sessions WHERE id = ?",
+            (session.id,),
+        )
+        assert before is not None
+        assert after is not None
+        assert after["updated_at"] == before["updated_at"]
+
+    def test_pause_then_expire_stale_session_uses_last_activity_time(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A very old session should expire in the same cleanup sweep after pause."""
+        session = session_manager.register(
+            external_id="ancient-active-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = datetime('now', '-25 hours') WHERE id = ?",
+            (session.id,),
+        )
+
+        paused = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        expired = session_manager.expire_stale_sessions(timeout_hours=24)
+
+        assert paused == 1
+        assert expired == 1
+        stale = session_manager.get(session.id)
+        assert stale is not None
+        assert stale.status == "expired"
+
     def test_transcript_processing_lifecycle(
         self,
         session_manager: LocalSessionManager,
