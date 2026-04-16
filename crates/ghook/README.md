@@ -10,7 +10,7 @@ was lost to a sandbox FS-read denial, a network blip, or daemon restart.
 
 ## CLI surface
 
-```
+```text
 ghook --gobby-owned --cli=<c> --type=<t> [--critical] [--detach]
 ghook --diagnose    --cli=<c> --type=<t>
 ghook --version
