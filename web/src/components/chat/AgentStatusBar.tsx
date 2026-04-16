@@ -21,6 +21,7 @@ function formatChatMode(chatMode: string | null | undefined): string | null {
   switch (chatMode) {
     case 'plan':
       return 'Plan'
+    case 'normal':
     case 'accept_edits':
       return 'Act'
     case 'bypass':

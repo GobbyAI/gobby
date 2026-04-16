@@ -206,7 +206,7 @@ class TestCreateChatSessionInner:
             await mixin._create_chat_session_inner("conv-res", model="sonnet")
 
             assert mock_session.resume_session_id == "conv-res"
-            assert mock_session.chat_mode == "accept_edits"
+            assert mock_session.chat_mode == "normal"
             assert mock_session._accumulated_output_tokens == 500
             mixin.session_manager.update_model.assert_called_once_with("db-id-123", "sonnet")
 
@@ -456,7 +456,7 @@ class TestCreateChatSessionInner:
             assert mock_session.db_session_id == "term-row-id"
             assert mock_session.seq_num == 27
             assert mock_session.resume_session_id == "sdk-session-123"
-            assert mock_session.chat_mode == "accept_edits"
+            assert mock_session.chat_mode == "normal"
             mock_session.start.assert_awaited_once_with(model="claude-opus-4-6")
             mixin.session_manager.register.assert_not_called()
             mixin.session_manager.update.assert_any_call(

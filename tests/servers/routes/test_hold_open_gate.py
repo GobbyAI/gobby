@@ -131,7 +131,7 @@ async def test_web_chat_pre_tool_use_deny_on_timeout() -> None:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(request, "sess-web-1", "PreToolUse", payload, "web_chat")
 
-    assert result == {"decision": "expired"}
+    assert result == {"decision": "deny"}
 
 
 @pytest.mark.asyncio

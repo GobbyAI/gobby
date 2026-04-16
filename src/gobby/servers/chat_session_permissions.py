@@ -9,7 +9,6 @@ import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from fnmatch import fnmatch
 from typing import Any
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
@@ -21,6 +20,18 @@ from gobby.servers.chat_session_helpers import (
     _PLAN_MODE_BLOCKED_TOOLS,
     PendingApproval,
 )
+from gobby.servers.tool_approvals import (
+    DEFAULT_GLOBAL_APPROVAL_RULES,
+    SAFE_MCP_PROXY_TOOLS,
+    approval_key_for_tool,
+    find_out_of_repo_write_path,
+    get_global_approval_rules,
+    is_safe_canvas_call,
+    is_tool_auto_allowed,
+    load_project_approval_rules,
+    normalize_approved_tool_keys,
+)
+from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -55,34 +66,15 @@ class ChatSessionPermissionsMixin:
     _pending_approval_decision: str | None
     _pending_approval_event: asyncio.Event | None
 
-    # MCP proxy discovery tools — safe across chat modes because they only
-    # inspect MCP registry/capabilities and do not execute downstream tools.
-    _SAFE_MCP_PROXY_TOOLS = frozenset(
-        {
-            "mcp__gobby__list_mcp_servers",
-            "mcp__gobby__list_tools",
-            "mcp__gobby__get_tool_schema",
-            "mcp__gobby__recommend_tools",
-            "mcp__gobby__search_tools",
-            "mcp__gobby__get_variable",
-        }
+    # Patterns that indicate dangerous bash commands (used by accept_edits mode)
+    _DANGEROUS_BASH_PATTERNS = re.compile(
+        r"(?:^|[;&|]\s*)(?:sudo|rm|chmod|chown|kill|killall|mkfs|dd|reboot|shutdown|halt|"
+        r"systemctl|service|init|"
+        r"mv\s+/|>\s*/|git\s+(?:push|reset\s+--hard|clean\s+-f))\b"
+        r"|(?:curl|wget)\s+.*\|\s*(?:ba)?sh\b",
+        re.MULTILINE,
     )
-
-    # UI-only canvas calls are safe to auto-approve because they only present
-    # information in the web UI; they do not mutate the repo or system state.
-    _SAFE_CANVAS_CALL_TOOLS = frozenset(
-        {
-            "render_surface",
-            "update_surface",
-            "close_canvas",
-            "wait_for_interaction",
-            "canvas_present",
-            "show_file",
-        }
-    )
-
-    # Read-only tool name prefixes — auto-approve call_tool in accept_edits mode
-    _READ_TOOL_PREFIXES = (
+    _READ_ONLY_MCP_TOOL_PREFIXES = (
         "get_",
         "list_",
         "search_",
@@ -91,15 +83,6 @@ class ChatSessionPermissionsMixin:
         "recall_",
         "blast_",
         "recommend_",
-    )
-
-    # Patterns that indicate dangerous bash commands (used by accept_edits mode)
-    _DANGEROUS_BASH_PATTERNS = re.compile(
-        r"(?:^|[;&|]\s*)(?:sudo|rm|chmod|chown|kill|killall|mkfs|dd|reboot|shutdown|halt|"
-        r"systemctl|service|init|"
-        r"mv\s+/|>\s*/|git\s+(?:push|reset\s+--hard|clean\s+-f))\b"
-        r"|(?:curl|wget)\s+.*\|\s*(?:ba)?sh\b",
-        re.MULTILINE,
     )
 
     async def _can_use_tool(
@@ -162,19 +145,20 @@ class ChatSessionPermissionsMixin:
 
             if decision == "approve":
                 self._plan_approved = True
-                self.set_chat_mode("accept_edits")
                 if self._on_mode_changed:
-                    await self._on_mode_changed("accept_edits", "plan_approved")
+                    await self._on_mode_changed("plan", "plan_approved")
                 return PermissionResultAllow(updated_input=input_data)
             else:
                 # request_changes — deny so the agent stays in plan mode
+                if self._on_mode_changed:
+                    await self._on_mode_changed("plan", "plan_changes_requested")
                 feedback = self._plan_feedback or ""
                 return PermissionResultDeny(
                     message=f"User requested changes to the plan. {feedback}".strip()
                 )
 
-        # Plan mode: block write tools until the plan is approved
-        if self.chat_mode == "plan" and not self._plan_approved:
+        # Plan mode: always block normal repo mutations.
+        if self.chat_mode == "plan":
             if tool_name in _PLAN_MODE_BLOCKED_TOOLS:
                 # Allow writes to plan files (e.g. ~/.claude/plans/*.md)
                 if tool_name in ("Write", "Edit"):
@@ -207,23 +191,28 @@ class ChatSessionPermissionsMixin:
                     message=resp.get("reason", "Blocked by session lifecycle")
                 )
 
-        if tool_name in self._SAFE_MCP_PROXY_TOOLS:
+        out_of_repo_path = find_out_of_repo_write_path(
+            tool_name,
+            input_data,
+            project_path=self.project_path,
+        )
+        if out_of_repo_path:
+            return PermissionResultDeny(
+                message=(
+                    "Writing outside the active repo is blocked in web chat. "
+                    f"Blocked path: {out_of_repo_path}"
+                )
+            )
+
+        if tool_name in SAFE_MCP_PROXY_TOOLS:
             return PermissionResultAllow(updated_input=input_data)
         if tool_name == "mcp__gobby__call_tool" and self._is_safe_canvas_call(input_data):
             return PermissionResultAllow(updated_input=input_data)
 
         # Check tool approval (before AskUserQuestion, which has its own flow)
         if tool_name != "AskUserQuestion":
-            if self._needs_tool_approval(tool_name):
+            if self._needs_tool_approval(tool_name, input_data):
                 return await self._wait_for_tool_approval(tool_name, input_data)
-            # In accept_edits mode, auto-approved Bash still needs danger check
-            if self.chat_mode == "accept_edits" and is_shell_tool(tool_name):
-                if self._is_dangerous_bash(input_data):
-                    return await self._wait_for_tool_approval(tool_name, input_data)
-            # In accept_edits mode, call_tool needs inner-tool inspection
-            if self.chat_mode == "accept_edits" and tool_name == "mcp__gobby__call_tool":
-                if self._is_write_mcp_call(input_data):
-                    return await self._wait_for_tool_approval(tool_name, input_data)
             return PermissionResultAllow(updated_input=input_data)
 
         # Store the pending question and block until answered
@@ -262,71 +251,44 @@ class ChatSessionPermissionsMixin:
         """Whether an AskUserQuestion is currently awaiting a response."""
         return self._pending_question is not None
 
-    def _needs_tool_approval(self, tool_name: str) -> bool:
+    def _normalized_approved_tools(self) -> set[str]:
+        normalized = normalize_approved_tool_keys(self._approved_tools)
+        if normalized != self._approved_tools:
+            self._approved_tools = normalized
+            if self._on_approved_tools_persist:
+                self._on_approved_tools_persist(self._approved_tools)
+        return normalized
+
+    def _global_approval_rules(self) -> list[str]:
+        session_manager = getattr(self, "_session_manager_ref", None)
+        db = getattr(session_manager, "db", None) if session_manager else None
+        if db is None:
+            return list(DEFAULT_GLOBAL_APPROVAL_RULES)
+        return get_global_approval_rules(ConfigStore(db))
+
+    def _needs_tool_approval(self, tool_name: str, input_data: dict[str, Any]) -> bool:
         """Check if a tool requires user approval based on chat mode and config.
 
         Mode logic:
-        - bypass: Never prompt (auto-approve everything)
-        - accept_edits: Auto-approve Edit/Write/NotebookEdit and safe Bash.
-          Prompt for dangerous Bash and MCP call_tool.
-        - normal: Fall through to ToolApprovalConfig policy checks
-        - plan: Fall through to ToolApprovalConfig policy checks
-          (plan mode blocking is handled by the workflow engine, not here)
+        - bypass: Never prompt
+        - plan: Never prompt (plan-mode blocking happens earlier)
+        - normal / accept_edits: prompt unless a shared allowlist matches
         """
         tool_name = str(canonicalize_shell_tool_name(tool_name))
         mode = self.chat_mode
 
-        # Bypass mode: no approvals ever
-        if mode == "bypass":
+        if mode in {"bypass", "plan"}:
             return False
 
-        # Accept-edits mode: auto-approve edits and safe bash
-        if mode == "accept_edits":
-            # Already approved this session
-            if tool_name in self._approved_tools:
-                return False
-            # Auto-approve file edit tools
-            if tool_name in ("Edit", "Write", "NotebookEdit"):
-                return False
-            # Bash: auto-approve unless dangerous patterns detected
-            if is_shell_tool(tool_name):
-                return False  # Handled by _is_dangerous_bash in _can_use_tool
-            # MCP proxy discovery tools — always safe
-            if tool_name in self._SAFE_MCP_PROXY_TOOLS:
-                return False
-            # Safe canvas presentation tools are also auto-approved
-            # (handled in _can_use_tool because they need inner-tool inspection).
-            # MCP proxy call_tool — inspect inner tool in _can_use_tool
-            if tool_name == "mcp__gobby__call_tool":
-                return False  # Handled by _is_write_mcp_call in _can_use_tool
-            # Everything else (unknown tools, external MCP): prompt
-            return True
-
-        # Normal / plan mode: use ToolApprovalConfig
-        config = self._tool_approval_config
-        if config is None or not config.enabled:
-            return False
-
-        # Already approved this session (approve_always)
-        if tool_name in self._approved_tools:
-            return False
-
-        # Extract server/tool from full tool name (e.g. mcp__gobby-tasks__create_task)
-        parts = tool_name.split("__")
-        server_name = parts[1] if len(parts) >= 3 else ""
-        short_tool = parts[-1] if parts else tool_name
-
-        # Check specific policies first
-        for policy in config.policies:
-            if fnmatch(server_name, policy.server_pattern) and fnmatch(
-                short_tool, policy.tool_pattern
-            ):
-                needs_approval: bool = policy.policy != "auto"
-                return needs_approval
-
-        # Fall back to default policy
-        default_needs: bool = config.default_policy != "auto"
-        return default_needs
+        project_rules = load_project_approval_rules(self.project_path)
+        global_rules = self._global_approval_rules()
+        return not is_tool_auto_allowed(
+            tool_name,
+            input_data,
+            session_rules=self._normalized_approved_tools(),
+            project_rules=project_rules,
+            global_rules=global_rules,
+        )
 
     def _is_dangerous_bash(self, input_data: dict[str, Any]) -> bool:
         """Check if a Bash command matches dangerous patterns."""
@@ -339,12 +301,9 @@ class ChatSessionPermissionsMixin:
     def _mcp_call_tool_key(input_data: dict[str, Any]) -> str:
         """Build a composite key for an MCP call_tool invocation.
 
-        Returns e.g. 'call_tool:gobby-tasks:create_task' for granular
-        approve_always tracking (instead of approving ALL call_tool calls).
+        Returns the shared `mcp:<server>:<tool>` approval identity.
         """
-        server = input_data.get("server_name", "")
-        tool = input_data.get("tool_name", "")
-        return f"call_tool:{server}:{tool}"
+        return approval_key_for_tool("mcp__gobby__call_tool", input_data)
 
     def _is_write_mcp_call(self, input_data: dict[str, Any]) -> bool:
         """Check if an MCP call_tool invocation targets a write operation."""
@@ -352,17 +311,14 @@ class ChatSessionPermissionsMixin:
             return False
         tool_name = input_data.get("tool_name", "")
         if not tool_name:
-            return True  # can't determine — treat as write
-        # Check if this specific tool was previously approve_always'd
-        if self._mcp_call_tool_key(input_data) in self._approved_tools:
+            return True
+        if any(tool_name.startswith(prefix) for prefix in self._READ_ONLY_MCP_TOOL_PREFIXES):
             return False
-        return not tool_name.startswith(self._READ_TOOL_PREFIXES)
+        return True
 
     def _is_safe_canvas_call(self, input_data: dict[str, Any]) -> bool:
         """Return True for UI-only canvas MCP calls that are safe to auto-approve."""
-        server_name = input_data.get("server_name", "")
-        tool_name = input_data.get("tool_name", "")
-        return server_name == "gobby-canvas" and tool_name in self._SAFE_CANVAS_CALL_TOOLS
+        return is_safe_canvas_call(input_data)
 
     def _is_write_bash(self, input_data: dict[str, Any]) -> bool:
         """Check if a Bash command performs write/destructive operations (plan mode)."""
@@ -497,8 +453,8 @@ class ChatSessionPermissionsMixin:
         if self._plan_approved:
             return (
                 '<plan-mode status="approved">\n'
-                "The user has approved your plan. You may now execute it.\n"
-                "Write tools (Edit, Write, NotebookEdit, write Bash) are unblocked.\n"
+                "The user has approved your plan, but you are still in PLAN MODE.\n"
+                "Do not execute changes until the session is explicitly switched to Act or Auto.\n"
                 "</plan-mode>"
             )
 
@@ -562,12 +518,7 @@ class ChatSessionPermissionsMixin:
             return PermissionResultDeny(message=f"User rejected tool call: {tool_name}")
 
         if decision == "approve_always":
-            # For MCP call_tool, store a granular composite key so we don't
-            # blanket-approve all call_tool invocations
-            if tool_name == "mcp__gobby__call_tool":
-                key = self._mcp_call_tool_key(input_data)
-            else:
-                key = tool_name
+            key = approval_key_for_tool(tool_name, input_data)
             self._approved_tools.add(key)
             if self._on_approved_tools_persist:
                 self._on_approved_tools_persist(self._approved_tools)

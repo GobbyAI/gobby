@@ -842,6 +842,7 @@ class ChatMessagingMixin:
         approval decision to unblock the pending tool approval callback.
         """
         conversation_id = data.get("conversation_id")
+        tool_call_id = data.get("tool_call_id")
         decision = data.get("decision", "reject")
         if decision not in ("approve", "reject", "approve_always"):
             decision = "reject"
@@ -852,6 +853,11 @@ class ChatMessagingMixin:
             return
 
         if not session.has_pending_approval:
+            manager = getattr(self, "_pending_interaction_manager", None)
+            if manager and isinstance(tool_call_id, str) and tool_call_id:
+                resolved = await manager.resolve(tool_call_id, decision)
+                if resolved:
+                    return
             logger.warning(f"tool_approval_response but no pending approval for {conversation_id}")
             return
 

@@ -12,6 +12,7 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.tool_approvals import normalize_approved_tool_keys
 from gobby.servers.websocket.chat._lifecycle import _inject_agent_skills
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.machine_id import get_machine_id
@@ -19,6 +20,12 @@ from gobby.utils.machine_id import get_machine_id
 logger = logging.getLogger(__name__)
 
 _CANCEL_YIELD_DELAY = 0.1
+
+
+def _normalize_runtime_chat_mode(mode: str | None) -> str | None:
+    if mode == "accept_edits":
+        return "normal"
+    return mode
 
 
 def _build_agent_identity_preamble(agent_body: Any) -> str | None:
@@ -402,7 +409,7 @@ class ChatSessionMixin:
         if daemon_cfg is not None:
             chat_cfg = getattr(daemon_cfg, "chat", None)
             if chat_cfg is not None:
-                session.chat_mode = chat_cfg.default_mode
+                session.chat_mode = _normalize_runtime_chat_mode(chat_cfg.default_mode) or "plan"
 
         # Set project context on session BEFORE start() so env vars and CWD
         # are correctly configured for the CLI subprocess.
@@ -458,17 +465,18 @@ class ChatSessionMixin:
             ):
                 session.resume_session_id = existing_db_session.external_id
 
-            if existing_db_session.chat_mode and existing_db_session.chat_mode != "plan":
-                session.chat_mode = existing_db_session.chat_mode
+            runtime_mode = _normalize_runtime_chat_mode(existing_db_session.chat_mode)
+            if runtime_mode and runtime_mode != "plan":
+                session.chat_mode = runtime_mode
             if existing_db_session.usage_output_tokens:
                 session._accumulated_output_tokens = existing_db_session.usage_output_tokens
-            if existing_db_session.approved_tools_json:
-                try:
-                    session._approved_tools = set(
-                        json.loads(existing_db_session.approved_tools_json)
-                    )
-                except (ValueError, TypeError):
-                    logger.debug("Malformed approved_tools_json, ignoring")
+                if existing_db_session.approved_tools_json:
+                    try:
+                        session._approved_tools = normalize_approved_tool_keys(
+                            json.loads(existing_db_session.approved_tools_json)
+                        )
+                    except (ValueError, TypeError):
+                        logger.debug("Malformed approved_tools_json, ignoring")
 
             logger.info(
                 f"Hydrated web-chat session {existing_db_session.id} "
@@ -507,13 +515,16 @@ class ChatSessionMixin:
 
                 # Restore persisted state from DB (safe for both new and returning
                 # sessions — new rows have defaults that won't clobber anything).
-                if db_session.chat_mode and db_session.chat_mode != "plan":
-                    session.chat_mode = db_session.chat_mode
+                runtime_mode = _normalize_runtime_chat_mode(db_session.chat_mode)
+                if runtime_mode and runtime_mode != "plan":
+                    session.chat_mode = runtime_mode
                 if db_session.usage_output_tokens:
                     session._accumulated_output_tokens = db_session.usage_output_tokens
                 if db_session.approved_tools_json:
                     try:
-                        session._approved_tools = set(json.loads(db_session.approved_tools_json))
+                        session._approved_tools = normalize_approved_tool_keys(
+                            json.loads(db_session.approved_tools_json)
+                        )
                     except (ValueError, TypeError):
                         logger.debug("Malformed approved_tools_json, ignoring")
                 logger.info(
@@ -527,7 +538,7 @@ class ChatSessionMixin:
         pending_modes = getattr(self, "_pending_modes", {})
         pending_mode = pending_modes.pop(session_key, None)
         if pending_mode:
-            session.chat_mode = pending_mode
+            session.chat_mode = _normalize_runtime_chat_mode(pending_mode) or pending_mode
 
         # Wire DB persistence callback for chat_mode changes
         if session_manager and session.db_session_id:

@@ -1,6 +1,7 @@
 import "./styles.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { AUTONOMOUS_CHAT_MODES } from "../../types/chat";
 import type {
   ChatState,
   ConversationState,
@@ -148,7 +149,6 @@ export function ChatPage({
   } = activity;
   const {
     onApprovePlan,
-    onModeChangeLocal,
     onPaletteSelect,
     onRequestPlanChanges,
     onSend,
@@ -557,11 +557,8 @@ export function ChatPage({
   const handleApprovePlan = useCallback(() => {
     setPendingPlanArtifactId(null);
     onApprovePlan?.();
-    // Direct local mode update — bypasses the ref-based callback bridge
-    // in useChat.approvePlan which can silently fail if the ref isn't wired.
-    onModeChangeLocal?.("accept_edits");
     setIsPinned(false);
-  }, [onApprovePlan, onModeChangeLocal, setIsPinned]);
+  }, [onApprovePlan, setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
@@ -713,6 +710,7 @@ export function ChatPage({
               onPaletteSelect={handlePaletteSelect}
               mode={chat.mode}
               onModeChange={chat.onModeChange}
+              modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
               contextUsage={chat.contextUsage}
               currentBranch={chat.currentBranch}
               worktreePath={chat.worktreePath}

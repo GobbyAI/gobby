@@ -38,6 +38,12 @@ export interface ConfigExportBundle {
   secrets: SecretInfo[]
 }
 
+export interface ApprovalRulesPayload {
+  rules: string[]
+  default_rules: string[]
+  built_in_exemptions: string[]
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
@@ -51,6 +57,9 @@ export function useConfiguration() {
 
   // Rules enforcement
   const [rulesEnforcement, setRulesEnforcementState] = useState(true)
+  const [globalApprovalRules, setGlobalApprovalRules] = useState<string[]>([])
+  const [defaultApprovalRules, setDefaultApprovalRules] = useState<string[]>([])
+  const [builtInApprovalExemptions, setBuiltInApprovalExemptions] = useState<string[]>([])
 
   // Template (full defaults + DB overrides as YAML)
   const [templateContent, setTemplateContent] = useState('')
@@ -130,14 +139,53 @@ export function useConfiguration() {
     }
   }, [])
 
+  const fetchGlobalApprovalRules = useCallback(async () => {
+    try {
+      const res = await fetch('/api/config/tool-approvals/global')
+      if (res.ok) {
+        const data: ApprovalRulesPayload = await res.json()
+        setGlobalApprovalRules(data.rules || [])
+        setDefaultApprovalRules(data.default_rules || [])
+        setBuiltInApprovalExemptions(data.built_in_exemptions || [])
+      }
+    } catch (e) {
+      console.error('Failed to fetch global approval rules:', e)
+    }
+  }, [])
+
+  const saveGlobalApprovalRules = useCallback(async (rules: string[]): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/config/tool-approvals/global', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules }),
+      })
+      if (res.ok) {
+        const data: ApprovalRulesPayload & { ok: boolean } = await res.json()
+        setGlobalApprovalRules(data.rules || [])
+        setDefaultApprovalRules(data.default_rules || [])
+        setBuiltInApprovalExemptions(data.built_in_exemptions || [])
+        return true
+      }
+    } catch (e) {
+      console.error('Failed to save global approval rules:', e)
+    }
+    return false
+  }, [])
+
   const fetchConfig = useCallback(async () => {
     setIsLoading(true)
     try {
-      await Promise.all([fetchSchema(), fetchConfigValues(), fetchRulesEnforcement()])
+      await Promise.all([
+        fetchSchema(),
+        fetchConfigValues(),
+        fetchRulesEnforcement(),
+        fetchGlobalApprovalRules(),
+      ])
     } finally {
       setIsLoading(false)
     }
-  }, [fetchSchema, fetchConfigValues, fetchRulesEnforcement])
+  }, [fetchSchema, fetchConfigValues, fetchRulesEnforcement, fetchGlobalApprovalRules])
 
   const saveConfig = useCallback(async (values: Record<string, unknown>): Promise<{ ok: boolean; errors?: string[] }> => {
     try {
@@ -363,6 +411,11 @@ export function useConfiguration() {
     // Rules enforcement
     rulesEnforcement,
     setRulesEnforcement,
+    globalApprovalRules,
+    defaultApprovalRules,
+    builtInApprovalExemptions,
+    fetchGlobalApprovalRules,
+    saveGlobalApprovalRules,
 
     // Template (full defaults + DB overrides as YAML)
     templateContent,

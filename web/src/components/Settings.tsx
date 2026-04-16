@@ -14,6 +14,7 @@ interface SettingsProps {
   onModelChange: (model: string) => void
   onThemeChange: (theme: Theme) => void
   onDefaultChatModeChange: (mode: ChatMode) => void
+  onPostPlanChatModeChange: (mode: 'normal' | 'bypass') => void
   onSttEnabledChange: (enabled: boolean) => void
   onTtsEnabledChange: (enabled: boolean) => void
   onVoiceInputModeChange: (mode: VoiceInputMode) => void
@@ -28,6 +29,7 @@ export function Settings({
   onModelChange,
   onThemeChange,
   onDefaultChatModeChange,
+  onPostPlanChatModeChange,
   onSttEnabledChange,
   onTtsEnabledChange,
   onVoiceInputModeChange,
@@ -111,6 +113,22 @@ export function Settings({
                   key={m.id}
                   className={`theme-option${settings.defaultChatMode === m.id ? ' active' : ''}`}
                   onClick={() => onDefaultChatModeChange(m.id)}
+                  title={m.description}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="setting-item">
+            <label>After Approved Plan</label>
+            <div className="theme-selector">
+              {CHAT_MODES.filter((m) => m.id === 'normal' || m.id === 'bypass').map((m) => (
+                <button
+                  key={m.id}
+                  className={`theme-option${settings.postPlanChatMode === m.id ? ' active' : ''}`}
+                  onClick={() => onPostPlanChatModeChange(m.id as 'normal' | 'bypass')}
                   title={m.description}
                 >
                   {m.label}

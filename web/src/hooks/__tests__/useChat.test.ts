@@ -1376,7 +1376,7 @@ describe("useChat", () => {
       expect(result.current.contextUsage.contextWindow).toBe(200000);
     });
 
-    expect(modeChanged).toHaveBeenCalledWith("accept_edits");
+    expect(modeChanged).toHaveBeenCalledWith("normal");
   });
 
   it("restores the previous chat state when continueSessionInChat fails", async () => {

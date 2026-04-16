@@ -111,9 +111,14 @@ class SessionControlMixin:
                 for interaction in pending:
                     msg = _json.dumps(
                         {
-                            "type": "pending_interaction",
+                            "type": "tool_status" if interaction.get("kind") == "tool" else "pending_interaction",
                             "conversation_id": conv_id,
                             "interaction": interaction,
+                            "message_id": f"pending-interaction-{interaction['interaction_id']}",
+                            "tool_call_id": interaction["interaction_id"],
+                            "status": "pending_approval",
+                            "tool_name": interaction.get("tool_name"),
+                            "arguments": interaction.get("arguments", {}),
                         }
                     )
                     await websocket.send(msg)

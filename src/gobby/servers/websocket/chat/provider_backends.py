@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -24,15 +25,29 @@ from gobby.llm.claude_models import (
     ToolResultEvent,
 )
 from gobby.servers.chat_session import ChatSession
-from gobby.servers.chat_session_helpers import PendingApproval, build_compaction_context
+from gobby.servers.chat_session_helpers import (
+    _BASH_WRITE_PATTERNS,
+    PendingApproval,
+    build_compaction_context,
+)
 from gobby.servers.gemini_permissions import GeminiWebChatPermissionsMixin
+from gobby.servers.tool_approvals import (
+    DEFAULT_GLOBAL_APPROVAL_RULES,
+    find_out_of_repo_write_path,
+    get_global_approval_rules,
+    is_tool_auto_allowed,
+    load_project_approval_rules,
+    normalize_approved_tool_keys,
+)
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
+from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
 _BACKEND_START_TIMEOUT_SECONDS = 15.0
 _CODEX_TRANSCRIPT_RETRY_ATTEMPTS = 5
 _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS = 0.1
+_CODEX_WEB_CHAT_APPROVAL_POLICY = "unlessTrusted"
 
 # GeminiAdapter is stateless w.r.t. tool-name normalization; share one instance
 # instead of constructing a new adapter on every tool call.
@@ -402,11 +417,14 @@ class QwenManagedChatSession(GeminiManagedChatSession):
 
 
 @dataclass
-class CodexManagedChatSession(ManagedChatSessionBase):
+class CodexManagedChatSession(
+    GeminiWebChatPermissionsMixin,
+    ManagedChatSessionBase,
+):
     """Web-chat session backed by the shared Codex app-server backend."""
 
     provider: str = field(default="codex", init=False)
-    chat_mode: str = field(default="code")
+    chat_mode: str = field(default="plan")
     _thread_id: str | None = field(default=None, repr=False)
     _turn_id: str | None = field(default=None, repr=False)
     _transcript_path: str | None = field(default=None, repr=False)
@@ -418,6 +436,11 @@ class CodexManagedChatSession(ManagedChatSessionBase):
         default=_CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
         repr=False,
     )
+    _pending_approval: PendingApproval | None = field(default=None, repr=False)
+    _pending_approval_event: asyncio.Event | None = field(default=None, repr=False)
+    _pending_approval_decision: str | None = field(default=None, repr=False)
+    _plan_approved: bool = field(default=False, repr=False)
+    _plan_feedback: str | None = field(default=None, repr=False)
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
         if not self._connected:
@@ -439,6 +462,9 @@ class CodexManagedChatSession(ManagedChatSessionBase):
                 source="codex_web_chat",
             )
         )
+        plan_ctx = self._pop_plan_mode_context()
+        if plan_ctx:
+            context_parts.append(plan_ctx)
 
         if self._on_before_agent:
             resp = await self._on_before_agent({"prompt": prompt, "source": "codex_web_chat"})
@@ -709,6 +735,7 @@ class CodexWebChatBackend:
             available=False,
             startup_error="Codex app-server client not configured",
         )
+        self._sessions_by_thread: dict[str, CodexManagedChatSession] = {}
         self._startup_task: asyncio.Task[None] | None = None
         self.transcript_retry_attempts = transcript_retry_attempts
         self.transcript_retry_delay_seconds = transcript_retry_delay_seconds
@@ -749,6 +776,7 @@ class CodexWebChatBackend:
             logger.warning("Codex backend startup failed: %s", exc)
             return
 
+        self._client.register_approval_handler(self.handle_approval_request)
         self._health = ProviderBackendHealth(provider=self.provider, available=True)
 
     async def start(self, *, background: bool = False) -> None:
@@ -799,6 +827,7 @@ class CodexWebChatBackend:
             thread = await self._client.start_thread(
                 cwd=session.project_path or ".",
                 model=session._model,
+                approval_policy=_CODEX_WEB_CHAT_APPROVAL_POLICY,
             )
 
         session._thread_id = thread.id
@@ -806,10 +835,160 @@ class CodexWebChatBackend:
         session._transcript_path = getattr(thread, "path", None)
         session._connected = True
         session.last_activity = datetime.now(UTC)
+        self._sessions_by_thread[thread.id] = session
 
     async def detach_session(self, session: CodexManagedChatSession) -> None:
         session._connected = False
         session._turn_id = None
+        if session._thread_id:
+            self._sessions_by_thread.pop(session._thread_id, None)
+
+    @staticmethod
+    def _decline_response(method: str) -> dict[str, Any]:
+        if method == "mcpServer/elicitation/request":
+            return {"action": "cancel", "content": None, "_meta": None}
+        return {"decision": "decline"}
+
+    @staticmethod
+    def _accept_response(method: str) -> dict[str, Any]:
+        if method == "mcpServer/elicitation/request":
+            return {"action": "accept", "content": None, "_meta": None}
+        return {"decision": "accept"}
+
+    @staticmethod
+    def _extract_tool_args(payload: dict[str, Any]) -> dict[str, Any]:
+        for key in ("tool_input", "toolArgs", "arguments", "input", "params"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                return dict(value)
+        return {}
+
+    @staticmethod
+    def _extract_mcp_tool_name(message: Any) -> str | None:
+        if not isinstance(message, str):
+            return None
+        match = re.search(r'run tool "([^"]+)"', message)
+        if not match:
+            return None
+        tool_name = match.group(1).strip()
+        return tool_name or None
+
+    def _translate_approval_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+    ) -> tuple[str | None, dict[str, Any]]:
+        if method == "mcpServer/elicitation/request":
+            meta = params.get("_meta")
+            if not isinstance(meta, dict) or meta.get("codex_approval_kind") != "mcp_tool_call":
+                return None, {}
+            server_name = params.get("serverName")
+            tool_name = self._extract_mcp_tool_name(params.get("message"))
+            input_data = dict(meta.get("tool_params", {})) if isinstance(meta.get("tool_params"), dict) else {}
+            if isinstance(server_name, str) and server_name and isinstance(tool_name, str) and tool_name:
+                input_data["server_name"] = server_name
+                input_data["tool_name"] = tool_name
+                return "mcp__gobby__call_tool", input_data
+            return None, {}
+
+        item_type = method.removeprefix("item/").removesuffix("/requestApproval")
+        nested_payload = params.get(item_type)
+        payload: dict[str, Any] = {}
+        if isinstance(nested_payload, dict):
+            payload.update(nested_payload)
+        payload.update(params)
+
+        if item_type == "commandExecution":
+            command = payload.get("parsedCmd") or payload.get("command") or ""
+            if isinstance(command, str):
+                return "Bash", {"command": command}
+            return "Bash", {}
+
+        if item_type == "fileChange":
+            changes = payload.get("changes")
+            input_data: dict[str, Any] = {}
+            if isinstance(changes, list):
+                input_data["changes"] = changes
+                if changes and isinstance(changes[0], dict):
+                    first = changes[0]
+                    for key in ("file_path", "path", "target_path"):
+                        value = first.get(key)
+                        if isinstance(value, str) and value:
+                            input_data["file_path"] = value
+                            break
+            return "Write", input_data
+
+        if item_type == "mcpToolCall":
+            server_name = payload.get("serverName")
+            raw_name = payload.get("tool_name") or payload.get("toolName") or payload.get("name")
+            input_data = self._extract_tool_args(payload)
+            if isinstance(server_name, str) and server_name and isinstance(raw_name, str) and raw_name:
+                input_data["server_name"] = server_name
+                input_data["tool_name"] = raw_name
+                return "mcp__gobby__call_tool", input_data
+            return None, input_data
+
+        return None, {}
+
+    @staticmethod
+    def _global_rules_for_session(session: CodexManagedChatSession) -> list[str]:
+        session_manager = getattr(session, "_session_manager_ref", None)
+        db = getattr(session_manager, "db", None) if session_manager else None
+        if db is None:
+            return list(DEFAULT_GLOBAL_APPROVAL_RULES)
+        return get_global_approval_rules(ConfigStore(db))
+
+    async def handle_approval_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        thread_id = params.get("threadId")
+        if not isinstance(thread_id, str) or not thread_id:
+            return self._decline_response(method)
+
+        session = self._sessions_by_thread.get(thread_id)
+        if session is None:
+            return self._decline_response(method)
+
+        tool_name, input_data = self._translate_approval_request(method, params)
+        if not tool_name:
+            return self._decline_response(method)
+
+        out_of_repo_path = find_out_of_repo_write_path(
+            tool_name,
+            input_data,
+            project_path=session.project_path,
+        )
+        if out_of_repo_path:
+            return self._decline_response(method)
+
+        if session.chat_mode == "plan":
+            if tool_name in {"Write", "Edit", "NotebookEdit"}:
+                file_path = input_data.get("file_path", "")
+                if not isinstance(file_path, str) or not file_path or not re.match(
+                    r"^(?:.*[/\\])?\.(?:claude|gobby|gemini|qwen|codex)[/\\].*\.md$",
+                    file_path,
+                ):
+                    return self._decline_response(method)
+            elif tool_name == "Bash" and _BASH_WRITE_PATTERNS.search(
+                str(input_data.get("command", ""))
+            ):
+                return self._decline_response(method)
+
+        if session.chat_mode == "bypass":
+            return self._accept_response(method)
+
+        if is_tool_auto_allowed(
+            tool_name,
+            input_data,
+            session_rules=normalize_approved_tool_keys(session._approved_tools),
+            project_rules=load_project_approval_rules(session.project_path),
+            global_rules=self._global_rules_for_session(session),
+        ):
+            return self._accept_response(method)
+
+        approval = await session._wait_for_tool_approval(tool_name, input_data)
+        decision = approval.get("decision")
+        if decision == "accept":
+            return self._accept_response(method)
+        return self._decline_response(method)
 
     async def send_message(
         self,

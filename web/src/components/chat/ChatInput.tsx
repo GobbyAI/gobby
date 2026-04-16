@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ContextUsage, ChatSendOptions } from '../../types/chat'
+import type { QueuedFile, ChatMode, ChatModeInfo, ContextUsage, ChatSendOptions } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
@@ -40,6 +40,7 @@ interface ChatInputProps {
   onPaletteSelect?: (item: PaletteItem) => void
   mode?: ChatMode
   onModeChange?: (mode: ChatMode) => void
+  modeOptions?: ChatModeInfo[]
   sttEnabled?: boolean
   voiceInputMode?: VoiceInputMode
   isRecording?: boolean
@@ -106,8 +107,9 @@ export function ChatInput({
   onInputChange,
   paletteItems = [],
   onPaletteSelect,
-  mode = 'accept_edits',
+  mode = 'normal',
   onModeChange,
+  modeOptions,
   sttEnabled = false,
   voiceInputMode = 'ptt',
   isRecording = false,
@@ -628,7 +630,12 @@ export function ChatInput({
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
               {onModeChange && (
-                <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
+                <ModeSelector
+                  mode={mode}
+                  onModeChange={onModeChange}
+                  disabled={disabled}
+                  modes={modeOptions}
+                />
               )}
               <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
                 <PaperclipIcon />

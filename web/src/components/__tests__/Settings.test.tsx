@@ -14,6 +14,7 @@ const baseSettings = {
   chatMode: 'plan' as const,
   theme: 'dark' as const,
   defaultChatMode: 'plan' as const,
+  postPlanChatMode: 'normal' as const,
   sttEnabled: false,
   ttsEnabled: false,
   voiceInputMode: 'ptt' as const,
@@ -42,6 +43,7 @@ describe('Settings voice section', () => {
         onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={vi.fn()}
@@ -70,6 +72,7 @@ describe('Settings voice section', () => {
         onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={vi.fn()}
@@ -100,6 +103,7 @@ describe('Settings voice section', () => {
         onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={onVoiceInputModeChange}
@@ -118,6 +122,7 @@ describe('Settings voice section', () => {
         onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={onVoiceInputModeChange}
@@ -148,6 +153,7 @@ describe('Settings voice section', () => {
         onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={vi.fn()}

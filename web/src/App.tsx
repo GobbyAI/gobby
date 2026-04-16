@@ -21,7 +21,8 @@ import { useColonAutocomplete } from "./hooks/useColonAutocomplete";
 import type { PaletteItem } from "./hooks/useColonAutocomplete";
 import { useSessions } from "./hooks/useSessions";
 import { useAgentDefinitions } from "./hooks/useAgentDefinitions";
-import type { QueuedFile, ChatMode } from "./types/chat";
+import { normalizeChatMode } from "./types/chat";
+import type { QueuedFile } from "./types/chat";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPage } from "./components/chat/ChatPage";
@@ -347,6 +348,7 @@ export default function App() {
     updateChatMode,
     updateTheme,
     updateDefaultChatMode,
+    updatePostPlanChatMode,
     updateSttEnabled,
     updateTtsEnabled,
     updateVoiceInputMode,
@@ -1031,7 +1033,7 @@ export default function App() {
 
   const handleStartNewChat = useCallback(
     (agentName?: string) => {
-      updateChatMode(settings.defaultChatMode);
+      updateChatMode(normalizeChatMode(settings.defaultChatMode));
       startNewChat(agentName);
     },
     [settings.defaultChatMode, startNewChat, updateChatMode],
@@ -1046,7 +1048,8 @@ export default function App() {
     const session = webChatSessions.find((s) => s.id === dbSessionId);
     if (!session) return;
     const restoredMode =
-      (session?.chat_mode as ChatMode | null) || settings.defaultChatMode;
+      (session?.chat_mode ? normalizeChatMode(session.chat_mode) : null) ||
+      normalizeChatMode(settings.defaultChatMode);
     updateChatMode(restoredMode);
     sendMode(restoredMode);
   }, [conversationSwitchKey, sessionsHook.isLoading, dbSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1108,8 +1111,8 @@ export default function App() {
       }
       if (item.action === "exit_plan_mode") {
         if (settings.chatMode === "plan") {
-          updateChatMode("accept_edits");
-          sendMode("accept_edits");
+          updateChatMode(settings.postPlanChatMode);
+          sendMode(settings.postPlanChatMode);
         }
         return;
       }
@@ -1542,6 +1545,7 @@ export default function App() {
         onModelChange={updateModel}
         onThemeChange={updateTheme}
         onDefaultChatModeChange={updateDefaultChatMode}
+        onPostPlanChatModeChange={updatePostPlanChatMode}
         onSttEnabledChange={updateSttEnabled}
         onTtsEnabledChange={updateTtsEnabled}
         onVoiceInputModeChange={updateVoiceInputMode}

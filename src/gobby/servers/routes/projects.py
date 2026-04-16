@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from gobby.servers.tool_approvals import load_project_approval_rules, save_project_approval_rules
 from gobby.storage.projects import SYSTEM_PROJECT_NAMES, LocalProjectManager
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ class ProjectUpdate(BaseModel):
     github_url: str | None = None
     github_repo: str | None = None
     linear_team_id: str | None = None
+    approval_rules: list[str] | None = None
 
 
 def _get_project_manager(server: HTTPServer) -> LocalProjectManager:
@@ -64,6 +66,14 @@ def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
     }
 
 
+def _project_to_response(server: HTTPServer, project: Any) -> dict[str, Any]:
+    data = project.to_dict()
+    data["display_name"] = "Personal" if project.name == "_personal" else project.name
+    data.update(_get_project_stats(server, project.id))
+    data["approval_rules"] = load_project_approval_rules(project.repo_path)
+    return data
+
+
 def create_projects_router(server: HTTPServer) -> APIRouter:
     """Create the projects API router."""
     router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -79,10 +89,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             if project.name in HIDDEN_PROJECT_NAMES:
                 continue
 
-            data = project.to_dict()
-            data["display_name"] = "Personal" if project.name == "_personal" else project.name
-            data.update(_get_project_stats(server, project.id))
-            results.append(data)
+            results.append(_project_to_response(server, project))
 
         return results
 
@@ -94,10 +101,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         if not project or project.deleted_at:
             raise HTTPException(404, "Project not found")
 
-        data = project.to_dict()
-        data["display_name"] = "Personal" if project.name == "_personal" else project.name
-        data.update(_get_project_stats(server, project.id))
-        return data
+        return _project_to_response(server, project)
 
     @router.put("/{project_id}")
     async def update_project(project_id: str, body: ProjectUpdate) -> dict[str, Any]:
@@ -108,20 +112,23 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(404, "Project not found")
 
         fields = body.model_dump(exclude_none=True)
+        approval_rules = fields.pop("approval_rules", None)
         if not fields:
-            data = project.to_dict()
-            data["display_name"] = "Personal" if project.name == "_personal" else project.name
-            data.update(_get_project_stats(server, project.id))
-            return data
+            if approval_rules is None:
+                return _project_to_response(server, project)
 
-        updated = pm.update(project_id, **fields)
-        if not updated:
-            raise HTTPException(500, "Failed to update project")
+        updated = project
+        if fields:
+            updated = pm.update(project_id, **fields)
+            if not updated:
+                raise HTTPException(500, "Failed to update project")
 
-        data = updated.to_dict()
-        data["display_name"] = "Personal" if updated.name == "_personal" else updated.name
-        data.update(_get_project_stats(server, project_id))
-        return data
+        if approval_rules is not None:
+            if not updated.repo_path:
+                raise HTTPException(400, "Project has no repo_path for project-scoped approval rules")
+            save_project_approval_rules(updated.repo_path, approval_rules)
+
+        return _project_to_response(server, updated)
 
     @router.delete("/{project_id}")
     async def delete_project(project_id: str) -> dict[str, str]:

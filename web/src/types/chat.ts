@@ -1,7 +1,7 @@
 import type { GobbySession } from "../hooks/useSessions";
 import type { PaletteItem } from "../hooks/useColonAutocomplete";
 
-export type ChatMode = "accept_edits" | "bypass" | "plan";
+export type ChatMode = "accept_edits" | "bypass" | "normal" | "plan";
 
 export interface ChatModeInfo {
   id: ChatMode;
@@ -18,9 +18,9 @@ export const CHAT_MODES: ChatModeInfo[] = [
     level: 0,
   },
   {
-    id: "accept_edits",
+    id: "normal",
     label: "Act",
-    description: "Auto-approve reads and edits, prompt for write operations",
+    description: "Prompt for non-exempt tool use",
     level: 1,
   },
   {
@@ -30,6 +30,17 @@ export const CHAT_MODES: ChatModeInfo[] = [
     level: 2,
   },
 ];
+
+export const AUTONOMOUS_CHAT_MODES: ChatModeInfo[] = CHAT_MODES.filter(
+  (mode) => mode.id !== "normal",
+);
+
+export function normalizeChatMode(mode: string | null | undefined): ChatMode {
+  if (mode === "act") return "normal";
+  if (mode === "accept_edits") return "normal";
+  if (mode === "bypass" || mode === "normal" || mode === "plan") return mode;
+  return "plan";
+}
 
 export interface ToolResult {
   content: unknown;

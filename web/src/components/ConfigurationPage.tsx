@@ -8,7 +8,7 @@ import './ConfigurationPage.css'
 // Types
 // =============================================================================
 
-type TabId = 'config' | 'secrets' | 'prompts' | 'variables' | 'template'
+type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
 
 const BACKEND_SECRET_MASK = '********'
 
@@ -396,6 +396,119 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
         </button>
       </div>
     </>
+  )
+}
+
+interface ApprovalRulesTabProps {
+  rules: string[]
+  defaultRules: string[]
+  builtInExemptions: string[]
+  onSave: (rules: string[]) => Promise<boolean>
+}
+
+function ApprovalRulesTab({
+  rules,
+  defaultRules,
+  builtInExemptions,
+  onSave,
+}: ApprovalRulesTabProps) {
+  const [localRules, setLocalRules] = useState<string[]>(rules)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setLocalRules(rules)
+  }, [rules])
+
+  const handleSave = async () => {
+    setSaving(true)
+    await onSave(localRules.map((rule) => rule.trim()).filter(Boolean))
+    setSaving(false)
+  }
+
+  return (
+    <div className="config-form">
+      <div className="config-form-section">
+        <div className="config-section-header">
+          <div>
+            <span className="config-section-title">Built-In Exemptions</span>
+            <span className="config-field-help" style={{ marginLeft: 8 }}>
+              Always auto-allowed and read-only
+            </span>
+          </div>
+        </div>
+        <div className="config-section-body">
+          {builtInExemptions.map((rule) => (
+            <div key={rule} className="config-form-field">
+              <input type="text" className="config-input" value={rule} readOnly />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="config-form-section">
+        <div className="config-section-header">
+          <div>
+            <span className="config-section-title">Global Auto-Allow Rules</span>
+            <span className="config-field-help" style={{ marginLeft: 8 }}>
+              Shared across providers for interactive web chat
+            </span>
+          </div>
+        </div>
+        <div className="config-section-body">
+          {localRules.map((rule, index) => (
+            <div key={`${index}-${rule}`} className="config-toggle-row" style={{ marginBottom: 12, gap: 8 }}>
+              <input
+                type="text"
+                className="config-input"
+                value={rule}
+                onChange={(e) =>
+                  setLocalRules((prev) =>
+                    prev.map((value, i) => (i === index ? e.target.value : value)),
+                  )
+                }
+                placeholder="tool:Write or mcp:gobby-tasks:*"
+              />
+              <button
+                type="button"
+                className="config-toolbar-btn"
+                onClick={() => setLocalRules((prev) => prev.filter((_, i) => i !== index))}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+
+          <div className="config-field-help" style={{ marginBottom: 12 }}>
+            Recommended defaults: {defaultRules.join(', ')}
+          </div>
+
+          <div className="config-toolbar-right">
+            <button
+              type="button"
+              className="config-toolbar-btn"
+              onClick={() => setLocalRules((prev) => [...prev, ''])}
+            >
+              Add Rule
+            </button>
+            <button
+              type="button"
+              className="config-toolbar-btn"
+              onClick={() => setLocalRules(defaultRules)}
+            >
+              Reset To Defaults
+            </button>
+            <button
+              type="button"
+              className="config-toolbar-btn primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? 'Saving...' : 'Save Rules'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1025,6 +1138,7 @@ export function ConfigurationPage() {
 
   const tabs: { id: TabId; label: string }[] = [
     { id: 'config', label: 'Configuration' },
+    { id: 'approvals', label: 'Approvals' },
     { id: 'secrets', label: 'Secrets' },
     { id: 'prompts', label: 'Prompts' },
     { id: 'variables', label: 'Variables' },
@@ -1063,6 +1177,14 @@ export function ConfigurationPage() {
             secretKeys={config.secretKeys}
             rulesEnforcement={config.rulesEnforcement}
             onToggleRulesEnforcement={config.setRulesEnforcement}
+          />
+        )}
+        {activeTab === 'approvals' && (
+          <ApprovalRulesTab
+            rules={config.globalApprovalRules}
+            defaultRules={config.defaultApprovalRules}
+            builtInExemptions={config.builtInApprovalExemptions}
+            onSave={config.saveGlobalApprovalRules}
           />
         )}
         {activeTab === 'secrets' && (

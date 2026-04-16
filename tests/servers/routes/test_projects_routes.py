@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -153,6 +155,7 @@ class TestProjectRoutes:
         assert data["name"] == "my-project"
         assert data["display_name"] == "my-project"
         assert "session_count" in data
+        assert data["approval_rules"] == []
 
     def test_get_project_personal_display_name(
         self, client: TestClient, personal_project: dict
@@ -240,6 +243,46 @@ class TestProjectRoutes:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "my-project"
+
+    def test_update_project_approval_rules(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        project = project_manager.create(
+            name="rules-project",
+            repo_path=str(repo_path),
+            github_url="https://github.com/test/rules-project",
+        )
+
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={"approval_rules": ["tool:Write", " tool:Write ", "mcp:third-party:*"]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["approval_rules"] == ["tool:Write", "mcp:third-party:*"]
+
+        project_file = repo_path / ".gobby" / "project.json"
+        assert project_file.exists()
+        saved = json.loads(project_file.read_text())
+        assert saved["tool_approvals"]["allow"] == ["tool:Write", "mcp:third-party:*"]
+
+    def test_update_project_approval_rules_requires_repo_path(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+    ) -> None:
+        project = project_manager.create(name="no-repo-project", repo_path=None)
+
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={"approval_rules": ["tool:Write"]},
+        )
+        assert response.status_code == 400
 
     def test_update_project_not_found(self, client: TestClient) -> None:
         """404 when updating nonexistent project."""

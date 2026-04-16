@@ -13,6 +13,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
@@ -257,6 +258,61 @@ class TestSaveTemplate:
         )
         assert response.status_code == 200
         assert response.json()["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# UI settings + approval rules
+# ---------------------------------------------------------------------------
+
+
+class TestUISettingsPostPlanMode:
+    def test_ui_settings_round_trip_includes_post_plan_mode(
+        self, client: TestClient, temp_db
+    ) -> None:
+        response = client.put(
+            "/api/config/ui-settings",
+            json={
+                "fontSize": 18,
+                "defaultChatMode": "plan",
+                "postPlanChatMode": "bypass",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+
+        get_response = client.get("/api/config/ui-settings")
+        assert get_response.status_code == 200
+        assert get_response.json()["fontSize"] == 18
+        assert get_response.json()["defaultChatMode"] == "plan"
+        assert get_response.json()["postPlanChatMode"] == "bypass"
+
+        store = ConfigStore(temp_db)
+        assert store.get("ui_settings.postPlanChatMode") == "bypass"
+
+
+class TestGlobalToolApprovalRules:
+    def test_get_global_tool_approval_rules_defaults(self, client: TestClient) -> None:
+        response = client.get("/api/config/tool-approvals/global")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["rules"] == list(DEFAULT_GLOBAL_APPROVAL_RULES)
+        assert data["default_rules"] == list(DEFAULT_GLOBAL_APPROVAL_RULES)
+        assert "mcp:gobby*:*" in data["built_in_exemptions"]
+
+    def test_save_global_tool_approval_rules_normalizes(self, client: TestClient, temp_db) -> None:
+        response = client.put(
+            "/api/config/tool-approvals/global",
+            json={
+                "rules": [" tool:Write ", "tool:Write", "", "mcp:third-party:*"],
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["rules"] == ["tool:Write", "mcp:third-party:*"]
+
+        store = ConfigStore(temp_db)
+        assert store.get("tool_approvals.global_rules") == ["tool:Write", "mcp:third-party:*"]
 
     def test_save_invalid_yaml_syntax(self, client: TestClient) -> None:
         response = client.put(

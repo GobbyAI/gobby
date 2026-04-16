@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.servers.chat_session_helpers import PendingApproval
+from gobby.servers.tool_approvals import approval_key_for_tool
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,6 @@ class GeminiWebChatPermissionsMixin:
 
     def provide_plan_decision(self, decision: str) -> None:
         if decision == "approve":
-            self.set_chat_mode("accept_edits")
             self._plan_approved = True
 
     @property
@@ -89,8 +89,8 @@ class GeminiWebChatPermissionsMixin:
         if self._plan_approved:
             return (
                 '<plan-mode status="approved">\n'
-                "The user has approved your plan. You may now execute it.\n"
-                "Write tools (Edit, Write, NotebookEdit, write Bash) are unblocked.\n"
+                "The user has approved your plan, but you are still in PLAN MODE.\n"
+                "Do not execute changes until the session is explicitly switched to Auto.\n"
                 "</plan-mode>"
             )
 
@@ -147,7 +147,7 @@ class GeminiWebChatPermissionsMixin:
             return {"decision": "decline", "reason": f"User rejected tool call: {tool_name}"}
 
         if decision == "approve_always":
-            self._approved_tools.add(tool_name)
+            self._approved_tools.add(approval_key_for_tool(tool_name, input_data))
             if self._on_approved_tools_persist:
                 self._on_approved_tools_persist(self._approved_tools)
             return {"decision": "accept"}

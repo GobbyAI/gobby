@@ -9,7 +9,7 @@ import type {
   TokenUsage,
   ToolResult,
 } from "../types/chat";
-import { classifyTool } from "../types/chat";
+import { classifyTool, normalizeChatMode } from "../types/chat";
 import type { QueuedFile } from "../types/chat";
 import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
@@ -1069,7 +1069,7 @@ export function useChat() {
         setSelectedProvider(nextMeta.source);
       }
       if (nextMeta?.chatMode) {
-        const restored = nextMeta.chatMode as ChatMode;
+        const restored = normalizeChatMode(nextMeta.chatMode);
         if (restored !== currentModeRef.current) {
           currentModeRef.current = restored;
           onModeChangedRef.current?.(restored);
@@ -1288,8 +1288,8 @@ export function useChat() {
       );
       setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
       setIsLoadingMessages(false);
-      currentModeRef.current = snapshot.currentMode;
-      onModeChangedRef.current?.(snapshot.currentMode);
+      currentModeRef.current = normalizeChatMode(snapshot.currentMode);
+      onModeChangedRef.current?.(normalizeChatMode(snapshot.currentMode));
 
       if (
         snapshot.observedSessionId &&
@@ -1570,9 +1570,10 @@ export function useChat() {
             .conversation_id as string | undefined;
           // Only apply mode changes for the CURRENT conversation
           if (!msgConvId || msgConvId === conversationIdRef.current) {
-            const newMode = (data as Record<string, unknown>).mode as
-              | ChatMode
+            const rawMode = (data as Record<string, unknown>).mode as
+              | string
               | undefined;
+            const newMode = rawMode ? normalizeChatMode(rawMode) : undefined;
             const reason = (data as Record<string, unknown>).reason as
               | string
               | undefined;
@@ -1585,17 +1586,6 @@ export function useChat() {
               if (reason === "plan_approved") {
                 setPlanPendingApproval(false);
                 planContentRef.current = null;
-              }
-              if (
-                reason === "plan_approved" &&
-                pendingPlanExecutionRef.current
-              ) {
-                pendingPlanExecutionRef.current = false;
-                setTimeout(() => {
-                  sendMessageRef.current?.(
-                    "Plan approved — proceed with implementation.",
-                  );
-                }, 200);
               }
               if (
                 reason === "plan_changes_requested" &&
@@ -1674,7 +1664,7 @@ export function useChat() {
               setSelectedProvider(continuedMeta.source);
             }
             if (continuedMeta.chatMode) {
-              const restored = continuedMeta.chatMode as ChatMode;
+              const restored = normalizeChatMode(continuedMeta.chatMode);
               currentModeRef.current = restored;
               onModeChangedRef.current?.(restored);
             }
@@ -2066,17 +2056,6 @@ export function useChat() {
         }));
       }
 
-      // Plan approval auto-send is handled in the mode_changed handler above,
-      // since the agent's turn has already ended by the time the user approves.
-      // Safety fallback: if somehow still pending here, consume it.
-      if (pendingPlanExecutionRef.current) {
-        pendingPlanExecutionRef.current = false;
-        setTimeout(() => {
-          sendMessageRef.current?.(
-            "Plan approved — proceed with implementation.",
-          );
-        }, 200);
-      }
       if (pendingPlanFeedbackRef.current) {
         const feedback = pendingPlanFeedbackRef.current;
         pendingPlanFeedbackRef.current = null;
@@ -2109,7 +2088,7 @@ export function useChat() {
 
   // Handle tool status updates
   const handleToolStatus = useCallback((status: ToolStatusMessage) => {
-    if (!isActiveRequest(status.request_id)) {
+    if (status.status !== "pending_approval" && !isActiveRequest(status.request_id)) {
       console.debug(
         "Dropping stale tool_status, request_id:",
         status.request_id,
@@ -2385,7 +2364,7 @@ export function useChat() {
           if (!s || conversationIdRef.current !== id) return;
           applyMainSessionMeta(s);
           if (s.chat_mode) {
-            const restored = s.chat_mode as ChatMode;
+            const restored = normalizeChatMode(s.chat_mode);
             if (
               wsRef.current?.readyState === WebSocket.OPEN &&
               Date.now() - lastServerModeTimestampRef.current > 2000
@@ -2569,7 +2548,7 @@ export function useChat() {
       // session is created with whatever local mode happened to be active.
       const sourceChatMode =
         typeof sourceSession?.chat_mode === "string"
-          ? (sourceSession.chat_mode as ChatMode)
+          ? normalizeChatMode(sourceSession.chat_mode)
           : null;
 
       applyMainSessionMeta(sourceSession);
@@ -2709,14 +2688,15 @@ export function useChat() {
 
   // Send mode change to backend
   const sendMode = useCallback((mode: ChatMode) => {
-    currentModeRef.current = mode; // Always track latest intended mode
+    const normalizedMode = normalizeChatMode(mode);
+    currentModeRef.current = normalizedMode; // Always track latest intended mode
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!conversationIdRef.current) return;
     setPlanPendingApproval(false);
     wsRef.current.send(
       JSON.stringify({
         type: "set_mode",
-        mode,
+        mode: normalizedMode,
         conversation_id: conversationIdRef.current,
       }),
     );
@@ -3008,23 +2988,16 @@ export function useChat() {
     [],
   );
 
-  // Track whether we're waiting for plan_approved mode_changed to auto-send
-  const pendingPlanExecutionRef = useRef(false);
   const pendingPlanFeedbackRef = useRef<string | null>(null);
 
-  // Approve the current plan — tells backend to unlock write tools,
-  // then sends a follow-up message to prompt the agent to begin execution.
+  // Approve the current plan while keeping the session in plan mode.
   const approvePlan = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!conversationIdRef.current) return;
     if (!planContentRef.current) return;
-    pendingPlanExecutionRef.current = true;
     // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
     setPlanPendingApproval(false);
     planContentRef.current = null;
-    // Optimistically switch mode out of plan (WS mode_changed will confirm/correct)
-    currentModeRef.current = "accept_edits";
-    onModeChangedRef.current?.("accept_edits");
     wsRef.current.send(
       JSON.stringify({
         type: "plan_approval_response",
@@ -3247,7 +3220,7 @@ export function useChat() {
         .then((data) => {
           const s = data?.session;
           if (s?.chat_mode) {
-            onModeChangedRef.current?.(s.chat_mode as ChatMode);
+            onModeChangedRef.current?.(normalizeChatMode(s.chat_mode));
           }
         })
         .catch(() => {});
