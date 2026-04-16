@@ -179,6 +179,7 @@ export interface SessionObservationMeta {
   title: string | null;
   status: string;
   model: string | null;
+  reasoningEffort?: string | null;
   externalId: string;
   chatMode?: string | null;
   gitBranch?: string | null;
@@ -246,6 +247,7 @@ export interface ChatState {
       provider?: string | null;
       model?: string | null;
       reasoningEffort?: string | null;
+      chatMode?: string | null;
     },
   ) => Promise<string>;
   planPendingApproval: boolean;

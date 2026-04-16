@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { getSessionTitleText } from '../../lib/sessionTitle'
+import { SourceIcon } from '../shared/SourceIcon'
 
 interface RunningAgent {
   run_id: string
@@ -14,6 +15,8 @@ interface RunningAgent {
 interface CommandBarProps {
   sessionRef: string | null
   title: string | null
+  sessionSource?: string | null
+  sessionStateLabel?: string | null
   onOpenPalette: () => void
   onOpenActiveSessions: () => void
   onNewChat: (agentName?: string) => void
@@ -31,6 +34,8 @@ interface CommandBarProps {
 export function CommandBar({
   sessionRef,
   title,
+  sessionSource,
+  sessionStateLabel,
   onOpenPalette,
   onOpenActiveSessions: _onOpenActiveSessions,
   onNewChat,
@@ -59,12 +64,20 @@ export function CommandBar({
           onClick={onOpenPalette}
           title="Switch session (Cmd+K)"
         >
+          {sessionSource && (
+            <span className="command-bar-source" aria-hidden="true">
+              <SourceIcon source={sessionSource} size={14} />
+            </span>
+          )}
           {sessionRef && (
             <span className="command-bar-ref">{sessionRef}</span>
           )}
           <span className="command-bar-title">
             {getSessionTitleText(title)}
           </span>
+          {sessionStateLabel && (
+            <span className="command-bar-state">{sessionStateLabel}</span>
+          )}
           <span className="command-bar-caret">&#9662;</span>
         </button>
       </div>

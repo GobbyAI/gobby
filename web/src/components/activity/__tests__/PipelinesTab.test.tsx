@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { PipelinesTab } from '../PipelinesTab'
 import { createMockFetch, type MockFetchInstance } from '../../../test/mocks/fetch'
 
@@ -33,6 +33,15 @@ describe('PipelinesTab', () => {
         },
       ],
     })
+    mockFetch.mockJsonResponse('/api/pipelines/exec-1', {
+      execution: {
+        id: 'exec-1',
+        pipeline_name: 'Nightly sync',
+        status: 'running',
+        created_at: '2026-04-09T00:00:00Z',
+        steps: [],
+      },
+    })
   })
 
   afterEach(() => {
@@ -46,7 +55,7 @@ describe('PipelinesTab', () => {
     render(<PipelinesTab projectId="proj-1" />)
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('All')).toBeInTheDocument()
+      expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true')
       expect(screen.getByText('Nightly sync')).toBeInTheDocument()
     })
 
@@ -58,12 +67,30 @@ describe('PipelinesTab', () => {
     expect(executionCalls[0]).not.toContain('status=running')
   })
 
-  it('orders the filter options as All, Completed, Failed, Running', async () => {
+  it('renders segmented filter buttons in the expected order', async () => {
     render(<PipelinesTab projectId="proj-1" />)
 
-    const select = await screen.findByDisplayValue('All')
-    const options = within(select).getAllByRole('option').map((option) => option.textContent)
+    const radios = await screen.findAllByRole('radio')
+    expect(radios.map((radio) => radio.textContent)).toEqual(['All', 'Completed', 'Failed', 'Running'])
+  })
 
-    expect(options).toEqual(['All', 'Completed', 'Failed', 'Running'])
+  it('auto-selects the first execution and keeps the detail panel open', async () => {
+    render(<PipelinesTab projectId="proj-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Nightly sync')).toBeInTheDocument()
+      expect(screen.queryByText('Close')).toBeNull()
+    })
+  })
+
+  it('switches filters through the segmented control', async () => {
+    render(<PipelinesTab projectId="proj-1" />)
+
+    const failedButton = await screen.findByRole('radio', { name: 'Failed' })
+    fireEvent.click(failedButton)
+
+    await waitFor(() => {
+      expect(failedButton).toHaveAttribute('aria-checked', 'true')
+    })
   })
 })

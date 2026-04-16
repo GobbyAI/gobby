@@ -17,6 +17,13 @@ interface PipelineExecution {
   steps?: StepData[]
 }
 
+const FILTER_OPTIONS = [
+  { id: 'all', label: 'All' },
+  { id: 'completed', label: 'Completed' },
+  { id: 'failed', label: 'Failed' },
+  { id: 'running', label: 'Running' },
+] as const
+
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
@@ -104,14 +111,23 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   }, [executions, selectedId, detailExec?.status, fetchExecutions, fetchDetail])
 
   const handleSelect = useCallback((id: string) => {
-    if (selectedId === id) {
-      setSelectedId(null)
-      setDetailExec(null)
-    } else {
-      setSelectedId(id)
-      fetchDetail(id)
+    setSelectedId(id)
+    fetchDetail(id)
+  }, [fetchDetail])
+
+  useEffect(() => {
+    if (executions.length === 0) {
+      if (selectedId !== null) setSelectedId(null)
+      if (detailExec !== null) setDetailExec(null)
+      return
     }
-  }, [selectedId, fetchDetail])
+
+    if (!selectedId || !executions.some((exec) => exec.id === selectedId)) {
+      const nextId = executions[0].id
+      setSelectedId(nextId)
+      fetchDetail(nextId)
+    }
+  }, [detailExec, executions, fetchDetail, selectedId])
 
   if (loading) {
     return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>
@@ -121,19 +137,28 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-          className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-        >
-          <option value="all">All</option>
-          <option value="completed">Completed</option>
-          <option value="failed">Failed</option>
-          <option value="running">Running</option>
-        </select>
-        <span className="text-xs text-muted-foreground ml-auto">
-          {executions.length} execution{executions.length !== 1 ? 's' : ''}
-        </span>
+        <div className="flex rounded-md border border-border text-xs" role="radiogroup" aria-label="Pipeline status filter">
+          {FILTER_OPTIONS.map((option, index) => (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={statusFilter === option.id}
+              className={`px-2 py-1 transition-colors ${
+                index === 0 ? 'rounded-l-md' : ''
+              } ${
+                index === FILTER_OPTIONS.length - 1 ? 'rounded-r-md' : ''
+              } ${
+                statusFilter === option.id
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-muted'
+              }`}
+              onClick={() => setStatusFilter(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Execution list */}
@@ -195,12 +220,6 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                 </span>
               )}
             </div>
-            <button
-              className="text-xs text-muted-foreground hover:text-foreground shrink-0"
-              onClick={() => { setSelectedId(null); setDetailExec(null) }}
-            >
-              Close
-            </button>
           </div>
           <div className="flex-1 overflow-y-auto">
             {detailExec.steps && detailExec.steps.length > 0 ? (

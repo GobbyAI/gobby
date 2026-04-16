@@ -334,6 +334,11 @@ function toSessionObservationMeta(
     model:
       overrides?.model ??
       (typeof session.model === "string" ? session.model : null),
+    reasoningEffort:
+      overrides?.reasoningEffort ??
+      (typeof session.reasoning_effort === "string"
+        ? session.reasoning_effort
+        : null),
     externalId:
       overrides?.externalId ??
       (typeof session.external_id === "string" ? session.external_id : ""),
@@ -1104,6 +1109,7 @@ export function useChat() {
       if (nextMeta?.ref) {
         setSessionRef(nextMeta.ref);
       }
+      setCurrentBranch(nextMeta?.gitBranch ?? null);
       if (nextMeta && isChatProvider(nextMeta.source)) {
         setSelectedProvider(nextMeta.source);
       }
@@ -1681,6 +1687,7 @@ export function useChat() {
             if (continuedMeta.ref) {
               setSessionRef(continuedMeta.ref);
             }
+            setCurrentBranch(continuedMeta.gitBranch ?? null);
             if (continuedMeta.source && isChatProvider(continuedMeta.source)) {
               setSelectedProvider(continuedMeta.source);
             }
@@ -2500,6 +2507,7 @@ export function useChat() {
         provider?: string | null;
         model?: string | null;
         reasoningEffort?: string | null;
+        chatMode?: string | null;
       },
     ): Promise<string> => {
       const reasoningEffort = normalizeReasoningEffort(
@@ -2564,13 +2572,18 @@ export function useChat() {
       const continuationModel =
         options?.model ??
         (typeof sourceSession?.model === "string" ? sourceSession.model : null);
+      const continuationChatMode =
+        typeof options?.chatMode === "string" && options.chatMode
+          ? normalizeChatMode(options.chatMode)
+          : null;
       // Propagate the source session's chat mode into the new continuation
       // session BEFORE calling ensureMainSession — otherwise the server-side
       // session is created with whatever local mode happened to be active.
       const sourceChatMode =
-        typeof sourceSession?.chat_mode === "string"
+        continuationChatMode ??
+        (typeof sourceSession?.chat_mode === "string"
           ? normalizeChatMode(sourceSession.chat_mode)
-          : null;
+          : null);
 
       applyMainSessionMeta(sourceSession);
       if (continuationProvider) {
@@ -2618,6 +2631,7 @@ export function useChat() {
           provider: continuationProvider,
           model: continuationModel,
           reasoning_effort: reasoningEffort,
+          chat_mode: sourceChatMode,
         }),
       );
 
@@ -3116,6 +3130,7 @@ export function useChat() {
             title: s.title || null,
             status: s.status || "unknown",
             model: s.model || null,
+            reasoningEffort: s.reasoning_effort || null,
             externalId: s.external_id || "",
             chatMode: s.chat_mode || null,
             gitBranch: s.git_branch || null,
@@ -3125,6 +3140,7 @@ export function useChat() {
             agentName: null,
             sessionType: normalizeSessionType(s.session_type),
           };
+          viewingSessionMetaRef.current = nextMeta;
           setViewingSessionMeta(nextMeta);
           if (nextMeta.agentRunId) {
             void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
@@ -3192,6 +3208,7 @@ export function useChat() {
     if (mainSessionMeta) {
       setSessionRef(mainSessionMeta.ref);
       setSessionTitle(mainSessionMeta.title ?? null);
+      setCurrentBranch(mainSessionMeta.gitBranch ?? null);
       if (mainSessionMeta.contextWindow) {
         setContextUsage((prev) => ({
           ...prev,
@@ -3210,6 +3227,7 @@ export function useChat() {
     } else {
       setSessionRef(null);
       setSessionTitle(null);
+      setCurrentBranch(null);
       setContextUsage({
         totalInputTokens: 0,
         outputTokens: 0,

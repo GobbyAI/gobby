@@ -9,6 +9,8 @@ describe("CommandBar", () => {
       <CommandBar
         sessionRef="#42"
         title="Viewed web chat"
+        sessionSource="codex"
+        sessionStateLabel="Watching live"
         onOpenPalette={vi.fn()}
         onOpenActiveSessions={vi.fn()}
         onNewChat={vi.fn()}
@@ -20,6 +22,7 @@ describe("CommandBar", () => {
 
     expect(screen.getByText("#42")).toHaveClass("command-bar-ref");
     expect(screen.getByText("Viewed web chat")).toHaveClass("command-bar-title");
+    expect(screen.getByText("Watching live")).toHaveClass("command-bar-state");
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent("#42");
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
       "Viewed web chat",

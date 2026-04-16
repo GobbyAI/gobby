@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AgentStatusBar } from '../AgentStatusBar'
 
 describe('AgentStatusBar', () => {
-  it('renders session metadata with explicit mode semantics', () => {
+  it('renders only the remaining session metadata chips', () => {
     render(
       <AgentStatusBar
         viewingMeta={{
@@ -27,12 +27,12 @@ describe('AgentStatusBar', () => {
       />,
     )
 
-    expect(screen.getByText('Watching live')).toBeInTheDocument()
-    expect(screen.getByText('Codex')).toHaveClass('chat-session-status__source')
     expect(screen.getByText('gpt-5.4')).toBeInTheDocument()
     expect(screen.getByText('tmux')).toBeInTheDocument()
-    expect(screen.getByText('Mode: Plan')).toBeInTheDocument()
     expect(screen.getByText('triage-agent')).toBeInTheDocument()
+    expect(screen.queryByText('Watching live')).toBeNull()
+    expect(screen.queryByText('Codex')).toBeNull()
+    expect(screen.queryByText('Mode: Plan')).toBeNull()
     expect(screen.queryByText('#77')).toBeNull()
     expect(screen.queryByText('Observed Session')).toBeNull()
   })

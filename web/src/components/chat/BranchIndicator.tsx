@@ -13,6 +13,7 @@ interface BranchIndicatorProps {
   worktreePath: string | null
   projectId: string | null
   onWorktreeChange: (worktreePath: string, worktreeId?: string) => void
+  variant?: 'toolbar' | 'select'
 }
 
 export function BranchIndicator({
@@ -20,6 +21,7 @@ export function BranchIndicator({
   worktreePath,
   projectId,
   onWorktreeChange,
+  variant = 'toolbar',
 }: BranchIndicatorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([])
@@ -118,7 +120,11 @@ export function BranchIndicator({
     <div className="relative" ref={containerRef}>
       <button
         onClick={handleToggle}
-        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:bg-muted/60 transition-colors"
+        className={
+          variant === 'select'
+            ? 'inline-flex h-8 min-w-0 shrink-0 items-center gap-1 rounded-md border border-border bg-transparent px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+            : 'flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:bg-muted/60 transition-colors'
+        }
         title={worktreePath ?? 'Current branch'}
         aria-haspopup="listbox"
         aria-expanded={isOpen}

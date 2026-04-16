@@ -527,7 +527,12 @@ describe("ChatPage", () => {
 
     fireEvent.click(screen.getByTestId("agent-status-resume"));
 
-    expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1");
+    expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1", {
+      provider: "claude",
+      model: "sonnet",
+      reasoningEffort: "auto",
+      chatMode: null,
+    });
   });
 
   it("normalizes the input chip to a valid model for the active provider", async () => {

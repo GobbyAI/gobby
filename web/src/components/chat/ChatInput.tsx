@@ -9,7 +9,7 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/Select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from './ui/Select'
 import { SourceIcon } from '../shared/SourceIcon'
 import {
   AUTO_REASONING_EFFORT,
@@ -654,7 +654,7 @@ export function ChatInput({
               )}
             </div>
             <div className="chat-input-toolbar__right">
-              {onWorktreeChange && (
+              {!canSelectModel && onWorktreeChange && (
                 <BranchIndicator
                   currentBranch={currentBranch ?? null}
                   worktreePath={worktreePath ?? null}
@@ -775,14 +775,17 @@ export function ChatInput({
                     </div>
                   </SelectTrigger>
                   <SelectContent side="top" className="chat-input-select__content">
-                    {orderedProviders.map((candidateProvider) => (
-                      <SelectItem key={candidateProvider} value={candidateProvider}>
-                        <span className="chat-input-select__item">
-                          <SourceIcon source={candidateProvider} size={14} />
-                          <span>{getProviderDisplayName(candidateProvider)}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      <SelectLabel className="chat-input-select__label">Provider</SelectLabel>
+                      {orderedProviders.map((candidateProvider) => (
+                        <SelectItem key={candidateProvider} value={candidateProvider}>
+                          <span className="chat-input-select__item">
+                            <SourceIcon source={candidateProvider} size={14} />
+                            <span>{getProviderDisplayName(candidateProvider)}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
 
@@ -803,11 +806,14 @@ export function ChatInput({
                     </div>
                   </SelectTrigger>
                   <SelectContent side="top" className="chat-input-select__content">
-                    {modelOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      <SelectLabel className="chat-input-select__label">Model</SelectLabel>
+                      {modelOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
 
@@ -825,19 +831,33 @@ export function ChatInput({
                     title={providerPickerDisabledReason ?? 'Select reasoning effort'}
                   >
                     <div className="chat-input-select__value">
+                      <BrainIcon />
                       <span className="chat-input-select__text">
                         {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
                       </span>
                     </div>
                   </SelectTrigger>
                   <SelectContent side="top" className="chat-input-select__content">
-                    {reasoningOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      <SelectLabel className="chat-input-select__label">Effort</SelectLabel>
+                      {reasoningOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
+
+                {onWorktreeChange && (
+                  <BranchIndicator
+                    currentBranch={currentBranch ?? null}
+                    worktreePath={worktreePath ?? null}
+                    projectId={projectId ?? null}
+                    onWorktreeChange={onWorktreeChange}
+                    variant="select"
+                  />
+                )}
               </div>
             </div>
           )}
@@ -890,6 +910,19 @@ function PaperclipIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
+
+function BrainIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.5 2A3.5 3.5 0 0 0 6 5.5v1A2.5 2.5 0 0 0 3.5 9v1.5A2.5 2.5 0 0 0 6 13v3a4 4 0 0 0 4 4" />
+      <path d="M14.5 2A3.5 3.5 0 0 1 18 5.5v1A2.5 2.5 0 0 1 20.5 9v1.5A2.5 2.5 0 0 1 18 13v3a4 4 0 0 1-4 4" />
+      <path d="M9 8h1" />
+      <path d="M14 8h1" />
+      <path d="M9 12h6" />
+      <path d="M12 13v5" />
     </svg>
   )
 }

@@ -1,3 +1,4 @@
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -150,8 +151,22 @@ class TestAdminRoutes:
         # verify the method was called.
         mock_server._process_shutdown.assert_called()
 
+    @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
+    @patch(
+        "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
+        return_value=False,
+    )
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
-    def test_restart_endpoint(self, mock_popen, client, mock_server) -> None:
+    def test_restart_endpoint_uses_direct_helper(
+        self,
+        mock_popen,
+        _mock_service_mode,
+        _mock_getpid,
+        client,
+        mock_server,
+    ) -> None:
+        import gobby.servers.routes.admin._lifecycle as lifecycle
+
         response = client.post("/api/admin/restart")
         assert response.status_code == 200
         data = response.json()
@@ -159,14 +174,59 @@ class TestAdminRoutes:
         assert data["message"] == "Daemon restart initiated"
         assert "response_time_ms" in data
 
-        # Verify restarter subprocess was spawned
         mock_popen.assert_called_once()
+        command = mock_popen.call_args.args[0]
+        assert command == [sys.executable, "-c", lifecycle._DIRECT_RESTART_HELPER, "4321"]
 
-        # Verify shutdown was initiated
         mock_server._process_shutdown.assert_called()
 
+    @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
+    @patch(
+        "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
+        return_value=True,
+    )
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
-    def test_restart_endpoint_double_restart_guard(self, mock_popen, client, mock_server) -> None:
+    def test_restart_endpoint_uses_service_helper(
+        self,
+        mock_popen,
+        _mock_service_mode,
+        _mock_getpid,
+        client,
+        mock_server,
+    ) -> None:
+        import gobby.servers.routes.admin._lifecycle as lifecycle
+
+        response = client.post("/api/admin/restart")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "restarting"
+        assert data["message"] == "Daemon restart initiated"
+        assert "response_time_ms" in data
+
+        mock_popen.assert_called_once()
+        command = mock_popen.call_args.args[0]
+        assert command == [
+            sys.executable,
+            "-c",
+            lifecycle._SERVICE_RESTART_HELPER,
+            "4321",
+            str(mock_server.port),
+        ]
+
+        mock_server._process_shutdown.assert_called()
+
+    @patch(
+        "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
+        return_value=False,
+    )
+    @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
+    def test_restart_endpoint_double_restart_guard(
+        self,
+        mock_popen,
+        _mock_service_mode,
+        client,
+        mock_server,
+    ) -> None:
         # First restart should succeed
         response1 = client.post("/api/admin/restart")
         assert response1.json()["status"] == "restarting"
@@ -174,6 +234,31 @@ class TestAdminRoutes:
         # Second restart should be rejected
         response2 = client.post("/api/admin/restart")
         assert response2.json()["status"] == "already_restarting"
+        mock_popen.assert_called_once()
+
+
+class TestAdminRestartHelpers:
+    @patch("gobby.servers.routes.admin._lifecycle._append_restart_helper_log")
+    @patch("gobby.cli.installers.service.service_restart")
+    @patch("gobby.cli.daemon._wait_for_daemon_health")
+    @patch("gobby.servers.routes.admin._lifecycle._wait_for_process_exit", return_value=True)
+    def test_service_restart_helper_invokes_service_restart_when_needed(
+        self,
+        _mock_wait_for_exit,
+        mock_wait_for_health,
+        mock_service_restart,
+        mock_log,
+    ) -> None:
+        import gobby.servers.routes.admin._lifecycle as lifecycle
+
+        mock_wait_for_health.side_effect = [None, 0.5]
+        mock_service_restart.return_value = {"success": True, "method": "launchctl"}
+
+        lifecycle._run_service_restart_helper(4321, 60887)
+
+        mock_service_restart.assert_called_once_with()
+        assert mock_wait_for_health.call_count == 2
+        mock_log.assert_not_called()
 
 
 class TestHealthEndpoint:

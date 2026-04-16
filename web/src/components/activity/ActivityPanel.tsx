@@ -235,7 +235,7 @@ export function ActivityPanel({
       case "pipelines":
         return <PipelinesTab projectId={projectId} />;
       case "tasks":
-        return <TasksTab projectId={projectId} />;
+        return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":
         return <FilesTab projectId={projectId} onAddToChat={onAddFileToChat} />;
       case "plans":

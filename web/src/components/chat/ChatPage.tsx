@@ -35,6 +35,23 @@ import {
 
 const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
+function getViewedSessionStateLabel(
+  interactionMode: ChatState["sessionInteractionMode"],
+  viewingStatus: string | undefined,
+  isAttached: boolean,
+): string | null {
+  if (!viewingStatus && !isAttached && interactionMode === "none") {
+    return null;
+  }
+  if (interactionMode === "proxy" || isAttached) {
+    return "Attached";
+  }
+  if (viewingStatus === "active") {
+    return "Watching live";
+  }
+  return "Watching";
+}
+
 interface ChatPageProps {
   chat: ChatState;
   conversations: ConversationState;
@@ -222,6 +239,11 @@ export function ChatPage({
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
   );
+  const viewedSessionStateLabel = getViewedSessionStateLabel(
+    chat.sessionInteractionMode,
+    viewingMeta?.status,
+    Boolean(chat.attachedSessionId),
+  );
   const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
   const providerPickerDisabledReason = isAutonomousSession
@@ -257,6 +279,7 @@ export function ChatPage({
   const effectiveInputModel = isSwappedTerminal
     ? viewedInputSelection.model ?? ""
     : mainInputSelection.model ?? "";
+  const effectiveBranch = viewingMeta?.gitBranch ?? chat.currentBranch;
   const effectiveReasoningPreferenceKey = buildReasoningPreferenceKey(
     effectiveInputProvider,
     effectiveInputModel,
@@ -300,11 +323,38 @@ export function ChatPage({
     ) {
       return;
     }
+    if (effectiveInputModel) {
+      onModelChange?.(effectiveInputModel);
+    }
+    if (effectiveInputProvider && effectiveInputModel && effectiveInputReasoning) {
+      onReasoningPreferenceChange?.(
+        effectiveInputProvider,
+        effectiveInputModel,
+        effectiveInputReasoning,
+      );
+    }
     void chat.continueSessionInChat(
       chat.viewingSessionId,
       projectId ?? undefined,
+      {
+        provider: effectiveInputProvider,
+        model: effectiveInputModel,
+        reasoningEffort: effectiveInputReasoning,
+        chatMode: viewingMeta?.chatMode ?? null,
+      },
     );
-  }, [chat, isAutonomousSession, isSwappedTerminal, projectId]);
+  }, [
+    chat,
+    effectiveInputModel,
+    effectiveInputProvider,
+    effectiveInputReasoning,
+    isAutonomousSession,
+    isSwappedTerminal,
+    onModelChange,
+    onReasoningPreferenceChange,
+    projectId,
+    viewingMeta?.chatMode,
+  ]);
 
   const handleSwappedSessionProviderSelection = useCallback(
     async (provider: string, model: string, reasoningEffort: string | null) => {
@@ -338,6 +388,7 @@ export function ChatPage({
         provider,
         model,
         reasoningEffort,
+        chatMode: viewingMeta?.chatMode ?? null,
       });
     },
     [
@@ -348,6 +399,7 @@ export function ChatPage({
       onModelChange,
       onReasoningPreferenceChange,
       projectId,
+      viewingMeta?.chatMode,
       viewingMeta?.status,
     ],
   );
@@ -631,6 +683,8 @@ export function ChatPage({
             viewingMeta?.title ??
             activeTitle
           }
+          sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
+          sessionStateLabel={viewedSessionStateLabel}
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
@@ -712,7 +766,7 @@ export function ChatPage({
               onModeChange={chat.onModeChange}
               modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
               contextUsage={chat.contextUsage}
-              currentBranch={chat.currentBranch}
+              currentBranch={effectiveBranch}
               worktreePath={chat.worktreePath}
               projectId={projectId ?? null}
               onWorktreeChange={chat.onWorktreeChange}
