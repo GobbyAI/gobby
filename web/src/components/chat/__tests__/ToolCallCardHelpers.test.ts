@@ -131,6 +131,17 @@ describe('getToolSummary', () => {
     expect(getToolSummary(call)).toBe('echo hello')
   })
 
+  it('returns protocol tag summaries for protocol tool calls', () => {
+    const call = makeCall({
+      id: '1',
+      tool_name: 'protocol_context',
+      tool_type: 'protocol',
+      arguments: { tag: 'environment_context' },
+    })
+    expect(getToolSummary(call)).toBe('environment_context')
+    expect(getToolDisplayName(call)).toBe('Protocol')
+  })
+
   it('returns cmd-based command summaries for exec_command', () => {
     const call = makeCall({
       id: '1',

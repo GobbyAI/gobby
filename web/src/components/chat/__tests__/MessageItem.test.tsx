@@ -112,6 +112,24 @@ describe('MessageItem', () => {
     expect(screen.getByTestId('tool-chain')).toBeTruthy()
   })
 
+  it('renders protocol tags inside text as collapsed tool chains', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content:
+            'Visible text\n<environment_context><shell>zsh</shell></environment_context>\nTrailing text',
+        })}
+      />,
+    )
+
+    const markdowns = screen.getAllByTestId('markdown')
+    expect(markdowns).toHaveLength(2)
+    expect(markdowns[0].textContent).toContain('Visible text')
+    expect(markdowns[1].textContent).toContain('Trailing text')
+    expect(screen.getByTestId('tool-chain')).toBeTruthy()
+    expect(screen.getByText('1 tools')).toBeTruthy()
+  })
+
   it('renders image blocks', () => {
     render(
       <MessageItem

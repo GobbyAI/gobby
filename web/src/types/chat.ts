@@ -68,6 +68,8 @@ export function classifyTool(toolName: string | null | undefined): string {
   if (!toolName) return "unknown";
   const name = toolName.toLowerCase();
 
+  if (name === "protocol_context" || name === "protocol") return "protocol";
+
   // Built-in tools
   if (
     [

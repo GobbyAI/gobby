@@ -6,6 +6,7 @@ import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallCards, ToolChainGroup } from './ToolCallCard'
 import { UnknownBlockCard } from './UnknownBlockCard'
 import type { A2UISurfaceState, UserAction } from '../canvas'
+import { splitProtocolContent } from './protocolContent'
 
 /** Replace [Image: ...] text descriptions with styled placeholders */
 function renderImagePlaceholders(content: string): string {
@@ -24,6 +25,62 @@ interface MessageItemProps {
   onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
   canvasSurfaces?: Map<string, A2UISurfaceState>
   onCanvasInteraction?: (canvasId: string, action: UserAction) => void
+}
+
+function ProtocolAwareText({
+  content,
+  id,
+  isStreaming = false,
+  onRespondToQuestion,
+  onRespondToApproval,
+  canvasSurfaces,
+  onCanvasInteraction,
+}: {
+  content: string
+  id: string
+  isStreaming?: boolean
+  onRespondToQuestion?: (toolCallId: string, answers: Record<string, string>) => boolean | void
+  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
+  canvasSurfaces?: Map<string, A2UISurfaceState>
+  onCanvasInteraction?: (canvasId: string, action: UserAction) => void
+}) {
+  const segments = splitProtocolContent(content, id)
+  const textSegmentIndexes = segments
+    .map((segment, index) => (segment.type === 'text' ? index : -1))
+    .filter((index) => index >= 0)
+  const lastTextSegmentIndex = textSegmentIndexes[textSegmentIndexes.length - 1]
+
+  return (
+    <>
+      {segments.map((segment, index) => {
+        if (segment.type === 'text') {
+          return (
+            <div
+              key={`${id}-t${index}`}
+              className="message-content leading-relaxed text-foreground"
+              data-testid="chat-message-content"
+            >
+              <Markdown content={renderImagePlaceholders(segment.content)} id={`${id}-${index}`} />
+              {isStreaming && index === lastTextSegmentIndex && (
+                <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />
+              )}
+            </div>
+          )
+        }
+
+        return (
+          <ToolChainGroup
+            key={`${id}-p${index}`}
+            toolCalls={[segment.call]}
+            onRespond={onRespondToQuestion}
+            onRespondToApproval={onRespondToApproval}
+            canvasSurfaces={canvasSurfaces}
+            onCanvasInteraction={onCanvasInteraction}
+          />
+        )
+      })}
+    </>
+  )
 }
 
 export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: MessageItemProps) {
@@ -84,17 +141,17 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
           <>
             {message.contentBlocks.map((block, i) => {
               if (block.type === 'text') {
-                const isLastText = !message.contentBlocks!.slice(i + 1).some(b => b.type === 'text')
-                const textContent = renderImagePlaceholders(block.content)
                 return (
-                  <div
+                  <ProtocolAwareText
                     key={`${message.id}-b${i}`}
-                    className="message-content leading-relaxed text-foreground"
-                    data-testid="chat-message-content"
-                  >
-                    <Markdown content={textContent} id={`${message.id}-${i}`} />
-                    {isStreaming && isLastText && <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />}
-                  </div>
+                    content={block.content}
+                    id={`${message.id}-${i}`}
+                    isStreaming={isStreaming}
+                    onRespondToQuestion={onRespondToQuestion}
+                    onRespondToApproval={onRespondToApproval}
+                    canvasSurfaces={canvasSurfaces}
+                    onCanvasInteraction={onCanvasInteraction}
+                  />
                 )
               }
               if (block.type === 'thinking') {
@@ -162,13 +219,15 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
               <ToolCallCards toolCalls={message.toolCalls} onRespond={onRespondToQuestion} onRespondToApproval={onRespondToApproval} canvasSurfaces={canvasSurfaces} onCanvasInteraction={onCanvasInteraction} />
             )}
             {message.content && (
-              <div
-                className="message-content leading-relaxed text-foreground"
-                data-testid="chat-message-content"
-              >
-                <Markdown content={renderImagePlaceholders(message.content)} id={message.id} />
-                {isStreaming && <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />}
-              </div>
+              <ProtocolAwareText
+                content={message.content}
+                id={message.id}
+                isStreaming={isStreaming}
+                onRespondToQuestion={onRespondToQuestion}
+                onRespondToApproval={onRespondToApproval}
+                canvasSurfaces={canvasSurfaces}
+                onCanvasInteraction={onCanvasInteraction}
+              />
             )}
           </>
         )}

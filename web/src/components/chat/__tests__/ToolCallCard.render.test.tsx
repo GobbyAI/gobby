@@ -82,4 +82,33 @@ describe('ToolCallCard rendering', () => {
     expect(code).toContain('"response_time_ms": 42')
     expect(code).not.toContain('"result":')
   })
+
+  it('renders protocol tool calls with a protocol header and tag summary', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'protocol_context',
+            tool_type: 'protocol',
+            arguments: { tag: 'environment_context' },
+            result: {
+              content: { shell: 'zsh', timezone: 'America/Chicago' },
+              content_type: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Protocol')).toBeInTheDocument()
+    expect(screen.getByText('environment_context')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Protocol'))
+
+    const code = container.querySelector('code')?.textContent ?? ''
+    expect(code).toContain('"shell": "zsh"')
+    expect(code).toContain('"timezone": "America/Chicago"')
+  })
 })

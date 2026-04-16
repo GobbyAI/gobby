@@ -2,7 +2,7 @@ import type { ToolCall, ToolResult } from '../../types/chat'
 import { classifyTool } from '../../types/chat'
 
 const FILE_TOOL_TYPES = new Set(['read', 'edit'])
-const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob'])
+const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob', 'protocol'])
 const COMPACT_HEADER_NAMES = new Set(['list_mcp_servers', 'ExitPlanMode'])
 const UNGROUPABLE_TOOLS = new Set(['render_surface', 'AskUserQuestion'])
 const SHELL_ALIAS_NAMES = new Set([
@@ -56,6 +56,9 @@ function getShellCommand(args: Record<string, unknown>): string | null {
 
 export function getToolDisplayName(call: ToolCall): string {
   const name = formatToolName(call.tool_name)
+  if (resolveToolType(call) === 'protocol') {
+    return 'Protocol'
+  }
   if (resolveToolType(call) === 'bash' && SHELL_ALIAS_NAMES.has(name.toLowerCase())) {
     return 'Bash'
   }
@@ -146,6 +149,8 @@ export function getToolSummary(call: ToolCall): string | null {
       return (args.file_path as string) || null
     case 'bash':
       return truncStr(getShellCommand(args), 80)
+    case 'protocol':
+      return (args.tag as string) || null
     case 'grep': {
       const pattern = args.pattern as string
       const path = args.path as string
