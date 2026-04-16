@@ -3,7 +3,7 @@ name: Release ghook
 on:
   push:
     tags:
-      - "gobby-hook-v*"
+      - "gobby-hooks-v*"
 
 permissions:
   contents: write
@@ -21,10 +21,10 @@ jobs:
           components: clippy
 
       - name: Clippy
-        run: cargo clippy -p gobby-hook --all-targets -- -D warnings
+        run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test -p gobby-hook
+        run: cargo test -p gobby-hooks
 
   build:
     needs: test
@@ -67,7 +67,7 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build ghook
-        run: cargo build --release --target ${{ matrix.target }} -p gobby-hook
+        run: cargo build --release --target ${{ matrix.target }} -p gobby-hooks
 
       - name: Package (Unix)
         if: "!startsWith(matrix.os, 'windows')"
@@ -101,8 +101,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish gobby-hook to crates.io
-        run: cargo publish -p gobby-hook
+      - name: Publish gobby-hooks to crates.io
+        run: cargo publish -p gobby-hooks
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

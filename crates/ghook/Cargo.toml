@@ -1,10 +1,10 @@
 [package]
-name = "gobby-hook"
+name = "gobby-hooks"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
-description = "Sandbox-tolerant hook dispatcher for Gobby — enqueue-first, Rust port of the Python hook_dispatcher"
+description = "Sandbox-tolerant hook dispatcher for Gobby — enqueue-first, Rust port of the Python hook_dispatcher. Ships the `ghook` binary."
 license = "Apache-2.0"
 repository = "https://github.com/GobbyAI/gobby-cli"
 homepage = "https://gobby.ai"
@@ -22,7 +22,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
-gobby-core = { path = "../gobby-core", version = "0.1.0" }
+gobby-core = { path = "../gcore", version = "0.1.0" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

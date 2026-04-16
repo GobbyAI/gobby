@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gcode", "crates/ghook", "crates/gobby-core", "crates/gsqz", "crates/gloc"]
+members = ["crates/gcode", "crates/gcore", "crates/ghook", "crates/gsqz", "crates/gloc"]
 resolver = "3"
 
 [profile.release]
@@ -15,5 +15,5 @@ opt-level = "z"
 [profile.release.package.gobby-local]
 opt-level = "z"
 
-[profile.release.package.gobby-hook]
+[profile.release.package.gobby-hooks]
 opt-level = "z"

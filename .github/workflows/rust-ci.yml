@@ -43,10 +43,10 @@ jobs:
 
       # ghook: full clippy + tests
       - name: Clippy (ghook)
-        run: cargo clippy -p gobby-hook --all-targets -- -D warnings
+        run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
 
       - name: Test (ghook)
-        run: cargo test -p gobby-hook
+        run: cargo test -p gobby-hooks
 
       # gsqz: full clippy + tests
       - name: Clippy (gsqz)

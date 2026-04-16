@@ -1,0 +1,42 @@
+name: Release gobby-core
+
+on:
+  push:
+    tags:
+      - "gobby-core-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Clippy
+        run: cargo clippy -p gobby-core --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test -p gobby-core
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish gobby-core to crates.io
+        run: cargo publish -p gobby-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

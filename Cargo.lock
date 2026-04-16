@@ -681,7 +681,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gobby-hook"
+name = "gobby-hooks"
 version = "0.1.0"
 dependencies = [
  "anyhow",
