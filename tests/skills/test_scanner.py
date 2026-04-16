@@ -9,9 +9,13 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from skill_scanner.core.models import Finding, Severity, ThreatCategory
 
 from gobby.skills.scanner import scan_skill_content
+
+skill_scanner_models = pytest.importorskip("skill_scanner.core.models")
+Finding = skill_scanner_models.Finding
+Severity = skill_scanner_models.Severity
+ThreatCategory = skill_scanner_models.ThreatCategory
 
 pytestmark = pytest.mark.unit
 

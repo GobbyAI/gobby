@@ -300,7 +300,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ImportError:
             raise HTTPException(
                 status_code=501,
-                detail="skill-scanner package not installed. Install with: pip install skill-scanner",
+                detail="cisco-ai-skill-scanner not installed. Install with: uv add cisco-ai-skill-scanner",
             ) from None
         except Exception as e:
             logger.error(f"Failed to scan skill: {e}")
