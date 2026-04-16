@@ -418,7 +418,12 @@ No process cache — sync Rust, cheap.
 
 Every invocation:
 
-1. Build the replay envelope (§Replay envelope).
+1. Build the replay envelope (§Replay envelope). Empty stdin normalizes
+   to `input_data = {}` — the dispatcher's legacy behavior is to exit
+   non-zero on empty stdin (`hook_dispatcher.py:677`), but `ghook`
+   treats empty as an empty payload so the hook still enqueues. Exit
+   code is still governed by `--critical` flag alone; this is a
+   documented transition-window divergence, not a contract break.
 2. Atomically write to
    `~/.gobby/hooks/inbox/<p>-<ts13>-<uuid>.json` — write `.tmp`, `fsync`,
    rename.
@@ -427,6 +432,10 @@ Every invocation:
    - `<ts13>` is zero-padded 13-digit Unix epoch millis (stays
      lex-correct past year 2286).
    - Drain must ignore `*.tmp` — those are in-flight writes.
+   - Parent-directory `fsync` after the rename is **not** required for
+     v0.1; file-level `fsync` before rename covers normal-shutdown
+     durability. See "Follow-up cleanup" for the power-loss hardening
+     task that would add it.
 3. POST payload + headers to the daemon with short timeout.
 4. On 2xx: delete inbox file, exit 0.
 5. On connect/timeout: keep file; exit 0 non-critical, 2 critical.
@@ -469,8 +478,13 @@ may have already placed.
 - Unix: single `setsid` — matches dispatcher's `start_new_session=True`
   at `:697`. No double-fork. The file-write-before-POST durability
   guarantee makes double-fork unnecessary.
-- Windows: `std::os::windows::process::CommandExt` with `DETACHED_PROCESS |
-  CREATE_NEW_PROCESS_GROUP` creation flags. No external crate needed.
+- Windows: call `FreeConsole()` once ghook is running to release the
+  inherited console handle. `DETACHED_PROCESS` and
+  `CREATE_NEW_PROCESS_GROUP` are `CreateProcess` parent-side flags and
+  cannot be self-applied from the already-spawned child — the post-spawn
+  analog is `FreeConsole`. Rust call is through the `windows-sys`
+  `FreeConsole` binding (already in the workspace) or `winapi` — no new
+  external crate needed beyond what's in `Cargo.toml`.
 
 Detached grandchild runs the normal enqueue-first flow. File write precedes
 POST, so the event is durable even if the parent CLI kills the child
@@ -489,6 +503,21 @@ Keep an "old dispatcher detected" compatibility branch in each for one
 release so upgrades clean up pre-existing installs.
 
 ### 2.8 Inbox drain (Python side)
+
+**POST body contract for `/api/hooks/execute`.** The endpoint at
+`src/gobby/servers/routes/mcp/hooks.py:258` parses JSON and reads
+`hook_type`, `input_data`, and `source` from the top level — and hands
+the whole payload to `adapter.handle_native`. Each adapter (Claude,
+Codex, Gemini, Qwen) reads only the fields it needs; extra keys are
+ignored. That means the endpoint accepts **either** the legacy
+dispatcher shape `{hook_type, input_data, source}` **or** the full
+schema-v1 envelope `{schema_version, enqueued_at, critical, hook_type,
+input_data, source, headers}` — both return 200 today because envelope
+extras fall through as silent metadata. Live `ghook` POSTs and drain
+replays both send envelope shape; the legacy dispatcher sends bare. The
+Verification section below adds a handler test that POSTs both shapes
+and asserts identical behavior, so future refactors can't regress
+envelope-aware clients without CI noticing.
 
 `src/gobby/hooks/inbox.py`:
 - Scan `~/.gobby/hooks/inbox/` on daemon start and via
@@ -545,6 +574,17 @@ Envelope schema v1 stays clean — no `malformed` branch.
 - Publish `gobby-hook` to crates.io so the `cargo-binstall` /
   `cargo install` fallback tiers work — `install_setup.py`'s
   latest-version check hits `crates.io/api/v1/crates/<name>`.
+
+**Publish-order constraint.** `ghook` depends on `gobby-core`, so
+`gobby-core` must publish to crates.io **first** — crates.io rejects
+package uploads that carry path-only dependencies. A sibling
+`.github/workflows/release-gobby-core.yml` publishes `gobby-core` and
+must land in the repo before `release-ghook.yml` can succeed end-to-end.
+`crates/ghook/Cargo.toml` must declare its `gobby-core` dep with both a
+`version = "0.x.y"` constraint **and** the `path = "../gobby-core"`
+entry — crates.io consumes the `version`; local workspace builds honor
+the `path`. The first `ghook` release cannot ship before the matching
+`gobby-core` version is live on the registry.
 
 ### 2.11 Update hook templates
 
@@ -652,6 +692,16 @@ branch is the kind of thing that silently becomes permanent if nobody
 owns its removal. Filing the ticket alongside the initial implementation
 is the forcing function.
 
+### Post-launch durability: parent-dir fsync
+
+`ghook`'s enqueue write (§2.4) does file-level `fsync` before rename,
+which covers normal-shutdown durability. Full power-loss durability
+across file creation requires `fsync` on the parent directory after the
+rename too — otherwise a crash between rename and directory metadata
+flush can lose the just-enqueued envelope. Not a launch blocker — the
+window is narrow and failure modes are per-hook rather than systemic —
+but worth filing as a follow-up once the main plan lands.
+
 ## Verification
 
 1. **Rust side** (`gobby-cli`): `cargo test --workspace`, `cargo clippy
@@ -687,3 +737,11 @@ is the forcing function.
    manifest diff).
 10. Uninstall: `gobby uninstall` consults manifest, removes only
     Gobby-owned keys.
+11. **POST body shape compatibility** (`tests/servers/routes/mcp/`): a
+    handler test POSTs both the legacy bare shape
+    `{hook_type, input_data, source}` and the schema-v1 envelope
+    `{schema_version, enqueued_at, critical, hook_type, input_data,
+    source, headers}` to `/api/hooks/execute` and asserts both return
+    identical hook processing outcomes. Locks the duck-typed tolerance
+    described in §2.8 so a future handler refactor can't silently
+    regress envelope-aware clients.
