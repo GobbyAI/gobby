@@ -949,7 +949,11 @@ class TestCodexTranscriptParser:
         )
 
     @staticmethod
-    def _function_call_output(call_id: str, output: str, ts: str = "2024-06-15T10:30:00Z") -> str:
+    def _function_call_output(
+        call_id: str,
+        output: object,
+        ts: str = "2024-06-15T10:30:00Z",
+    ) -> str:
         """Build a Codex response_item/function_call_output envelope line."""
         return json.dumps(
             {
@@ -1065,6 +1069,24 @@ class TestCodexTranscriptParser:
         assert msg.tool_use_id == "call_abc"
         assert msg.tool_result == {"output": "file1.txt\nfile2.txt"}
         assert "file1.txt" in msg.content
+
+    def test_parse_function_call_output_preserves_structured_payloads(self, parser) -> None:
+        payload = {
+            "success": False,
+            "result": {
+                "success": False,
+                "error": "Rule enforced by Gobby: [consecutive-tool-block]",
+                "error_code": "TOOL_BLOCKED",
+            },
+            "response_time_ms": 1.59,
+        }
+        line = self._function_call_output("call_err", payload)
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert msg.tool_use_id == "call_err"
+        assert msg.tool_result == payload
+        assert msg.content == str(payload)
 
     # -- parse_line: skipped types --
 

@@ -212,7 +212,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             content_type="tool_result",
             tool_name=None,
             tool_input=None,
-            tool_result={"output": output},
+            tool_result=output if isinstance(output, dict) else {"output": output},
             timestamp=timestamp,
             raw_json=data,
             usage=None,

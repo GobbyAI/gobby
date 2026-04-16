@@ -317,6 +317,50 @@ describe('extractResultContent', () => {
     })
   })
 
+  it('flattens legacy Codex output-wrapped MCP envelopes', () => {
+    const result = {
+      content: {
+        output: {
+          success: true,
+          result: { success: true },
+          response_time_ms: 42,
+        },
+      },
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      success: true,
+      response_time_ms: 42,
+    })
+  })
+
+  it('flattens legacy Codex output-wrapped MCP failures', () => {
+    const result = {
+      content: {
+        output: {
+          success: false,
+          result: {
+            success: false,
+            error: 'Rule enforced by Gobby: [consecutive-tool-block]',
+            error_code: 'TOOL_BLOCKED',
+          },
+          response_time_ms: 1.59,
+        },
+      },
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      success: false,
+      error: 'Rule enforced by Gobby: [consecutive-tool-block]',
+      error_code: 'TOOL_BLOCKED',
+      response_time_ms: 1.59,
+    })
+  })
+
   it('leaves non-envelope results untouched', () => {
     const payload = { success: true, result: { success: true } }
     const result = {

@@ -86,11 +86,30 @@ function tryParseJsonValue(value: string): unknown {
   }
 }
 
+function getMcpEnvelopeCandidate(content: unknown): unknown {
+  const parsedContent = typeof content === 'string' ? tryParseJsonValue(content) : content
+  if (!isRecord(parsedContent) || !('output' in parsedContent)) return parsedContent
+
+  const output = typeof parsedContent.output === 'string'
+    ? tryParseJsonValue(parsedContent.output)
+    : parsedContent.output
+
+  if (
+    isRecord(output) &&
+    typeof output.success === 'boolean' &&
+    typeof output.response_time_ms === 'number'
+  ) {
+    return output
+  }
+
+  return parsedContent
+}
+
 function normalizeDisplayResult(
   content: unknown,
   metadata?: Record<string, unknown>,
 ): { content: unknown; metadata?: Record<string, unknown> } {
-  const parsedContent = typeof content === 'string' ? tryParseJsonValue(content) : content
+  const parsedContent = getMcpEnvelopeCandidate(content)
   if (
     !isRecord(parsedContent) ||
     typeof parsedContent.success !== 'boolean' ||
