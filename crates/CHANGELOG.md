@@ -7,6 +7,63 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — gcode
+
+### Changed
+
+#### gcode
+
+- **gobby-core integration** — Migrated to consume the new `gobby-core` crate for project-root walk-up, bootstrap-config resolution, and daemon-URL construction. Inline implementations in `src/project.rs` removed (-109 lines); `src/config.rs` and `src/commands/index.rs` now use the shared helpers. No user-visible behavior change. (#115)
+
+### Fixed
+
+#### gcode
+
+- **FTS LIKE escape** — Hardened FTS5 LIKE-clause escape in `src/search/fts.rs` against patterns containing `%`, `_`, or `\`. Prevents pathological queries from matching unintended rows. (#118)
+- **graph.rs dedup** — Deduplicated unresolved-symbol response building in `src/commands/graph.rs` (-63 lines net). No behavior change. (#118)
+
+#### CI/CD
+
+- **Binary-specific tag prefixes** — Release workflows now trigger on `gcode-v*`, `gsqz-v*`, `gloc-v*`, `gcore-v*`, and `ghook-v*` tags so each crate releases independently. (#110)
+- **Release gating** — Added `release-gobby-core` workflow; GitHub releases for binary crates are gated on successful crates.io publish. (#116)
+
+## [0.4.1] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Low-savings marker** — Suppress `[gsqz:low-savings]` marker when prepending it would grow the output beyond the original. The marker now only annotates when the annotation itself doesn't make things worse. (#111)
+
+## [0.1.0] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Initial release** — Sandbox-tolerant hook dispatcher binary `ghook`. Spools envelopes to `~/.gobby/hooks/inbox/` *before* POSTing to the local Gobby daemon, so the daemon's drain worker can replay deliveries lost to sandbox FS-read denials, network blips, or daemon restarts. (#114)
+- **Dispatch mode** — `ghook --gobby-owned --cli=<c> --type=<t> [--critical] [--detach]` reads stdin, enriches with terminal context where applicable, atomically writes the envelope, then attempts the daemon POST.
+- **Diagnose mode** — `ghook --diagnose --cli=<c> --type=<t>` prints a JSON snapshot of what would happen — daemon URL, project root/id, recognized CLI, critical flag, terminal-context preview. No network, no envelope write. Output validated against `schemas/diagnose-output.v1.schema.json`.
+- **Version mode** — `ghook --version` prints the version and writes `~/.gobby/bin/.ghook-compatibility` so the daemon can detect schema-version mismatches.
+- **Exit codes** — `0` for delivered or non-critical failure (envelope still enqueued); `2` for critical failure (envelope enqueued; signals the host CLI to abort).
+- **Schemas** — `inbox-envelope.v1.schema.json` and `diagnose-output.v1.schema.json`, both validated against the Rust types in unit tests.
+- **Host CLI registry** — Out-of-the-box support for `claude`, `codex`, `gemini`, `qwen` (per-CLI critical-hooks set + terminal-context-hooks set). Unknown CLIs are tolerated — envelope still spools, just without enrichment.
+- **Quarantine** — Malformed stdin lands in `~/.gobby/hooks/inbox/quarantine/` as a body+meta pair. The drain never replays quarantined envelopes; they surface via `gobby status` and daemon logs.
+- **Atomic spool writes** — Envelopes use write-temp + `fsync` + rename, so the drain only ever sees fully-written files.
+- **Renamed for consistency** — Crate renamed from `gobby-hook` to `gobby-hooks`; binary stays `ghook`. (#117)
+
+## [0.1.0] — gobby-core
+
+### Added
+
+#### gobby-core
+
+- **Initial release** — Shared-primitives crate consumed by `gcode`, `gsqz`, `gloc`, and `ghook`. Three modules:
+  - `project` — walk up from cwd to find `.gobby/project.json` (or legacy `.gobby/gcode.json`), read `id`/`project_id`.
+  - `bootstrap` — resolve `~/.gobby/bootstrap.yaml` into a `DaemonEndpoint` (host + port). Falls back to `127.0.0.1:60887` on any failure.
+  - `daemon_url` — compose a dial URL from a `DaemonEndpoint`, normalizing wildcard listen addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1`.
+- **Extracted from inline implementations** in the binary crates so behavior changes propagate with one PR instead of four. (#112, #113, #117)
+
 ## [0.4.0] — gsqz
 
 ### Added

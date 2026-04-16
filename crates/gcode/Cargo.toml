@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "0.5.3"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Internal
-gobby-core = { path = "../gcore" }
+gobby-core = { path = "../gcore", version = "0.1" }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
