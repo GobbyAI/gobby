@@ -176,6 +176,46 @@ def test_render_transcript_strips_collaboration_mode_tags():
     assert rendered[0].content == "Collaboration Mode: Default"
 
 
+def test_render_transcript_strips_turn_aborted_tags():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<turn_aborted>The user interrupted the previous turn.</turn_aborted>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "The user interrupted the previous turn."
+
+
+def test_render_transcript_strips_environment_context_block():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "Visible\n<environment_context><shell>zsh</shell></environment_context>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "Visible"
+
+
+def test_render_transcript_strips_instruction_wrapper_tags_case_insensitively():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<INSTRUCTIONS># Repository Guidelines</INSTRUCTIONS>\n"
+            "<skills_instructions>Safety first.</skills_instructions>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "# Repository Guidelines\nSafety first."
+
+
 def test_render_incremental_returns_completed_turns():
     state = RenderState()
 

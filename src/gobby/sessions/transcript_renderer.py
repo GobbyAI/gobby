@@ -283,38 +283,82 @@ def _is_hook_feedback(msg: ParsedMessage) -> bool:
     return any(msg.content.startswith(p) for p in prefixes)
 
 
+_FULLY_STRIPPED_PROTOCOL_TAGS: tuple[str, ...] = (
+    "system-reminder",
+    "task-notification",
+    "local-command-caveat",
+    "local-command-stdout",
+    "command-name",
+    "command-args",
+    "command-message",
+    "hook_context",
+    "hook-context",
+    "antml_thinking",
+    "antml_function_calls",
+    "antml_invoke",
+    "environment_context",
+    "skill",
+)
+
+_UNCLOSED_PROTOCOL_TAGS: tuple[str, ...] = (
+    "system-reminder",
+    "task-notification",
+    "local-command-caveat",
+    "hook_context",
+    "environment_context",
+    "skill",
+)
+
+_WRAPPER_STRIPPED_PROTOCOL_TAGS: tuple[str, ...] = (
+    "proposed_plan",
+    "proposed_implementation",
+    "search_quality_reflection",
+    "permissions instructions",
+    "permission instructions",
+    "collaboration_mode",
+    "turn_aborted",
+    "instructions",
+    "skills_instructions",
+)
+
+
+def _tag_pattern(tags: tuple[str, ...]) -> str:
+    return "|".join(re.escape(tag) for tag in tags)
+
+
+_FULLY_STRIPPED_PROTOCOL_TAG_PATTERN = _tag_pattern(_FULLY_STRIPPED_PROTOCOL_TAGS)
+_UNCLOSED_PROTOCOL_TAG_PATTERN = _tag_pattern(_UNCLOSED_PROTOCOL_TAGS)
+_WRAPPER_STRIPPED_PROTOCOL_TAG_PATTERN = _tag_pattern(_WRAPPER_STRIPPED_PROTOCOL_TAGS)
+
 # Protocol XML tags that should be stripped from rendered content
 _PROTOCOL_TAG_RE = re.compile(
-    r"<(?:system-reminder|task-notification|local-command-caveat|local-command-stdout"
-    r"|command-name|command-args|command-message|hook_context|hook-context"
-    r"|antml_thinking|antml_function_calls|antml_invoke)"
-    r"[^>]*>.*?</(?:system-reminder|task-notification|local-command-caveat|local-command-stdout"
-    r"|command-name|command-args|command-message|hook_context|hook-context"
-    r"|antml_thinking|antml_function_calls|antml_invoke)>",
-    re.DOTALL,
+    rf"<(?:{_FULLY_STRIPPED_PROTOCOL_TAG_PATTERN})(?=[\s>])[^>]*>"
+    rf".*?"
+    rf"</(?:{_FULLY_STRIPPED_PROTOCOL_TAG_PATTERN})\s*>",
+    re.DOTALL | re.IGNORECASE,
 )
 
 # Unclosed protocol tags (content extends to end of string)
 _PROTOCOL_TAG_UNCLOSED_RE = re.compile(
-    r"<(?:system-reminder|task-notification|local-command-caveat|hook_context)[^>]*>.*$",
-    re.DOTALL,
+    rf"<(?:{_UNCLOSED_PROTOCOL_TAG_PATTERN})(?=[\s>])[^>]*>.*$",
+    re.DOTALL | re.IGNORECASE,
 )
 
 # Tags where only the wrapper should be stripped (content preserved)
 _TAG_ONLY_STRIP_RE = re.compile(
-    r"</?(?:proposed_plan|proposed_implementation|search_quality_reflection"
-    r"|permissions instructions|permission instructions|collaboration_mode)>"
+    rf"</?(?:{_WRAPPER_STRIPPED_PROTOCOL_TAG_PATTERN})(?=[\s>])[^>]*>",
+    re.IGNORECASE,
 )
 
 
 def _strip_protocol_tags(content: str) -> str:
     """Remove protocol XML tags from message content.
 
-    Strips system-reminder, task-notification, local-command-*,
+    Strips environment_context, skill payloads, local-command-*,
     hook_context, and other infrastructure tags that shouldn't be
-    displayed in the session viewer.  Also strips tag wrappers (but
-    preserves content) for proposed_plan, proposed_implementation,
-    and search_quality_reflection.
+    displayed in the session viewer. Also strips tag wrappers (but
+    preserves content) for proposed_plan, turn_aborted,
+    instructions, and similar prompt metadata tags.
     """
     if "<" not in content:
         return content

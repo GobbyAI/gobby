@@ -94,4 +94,27 @@ describe('Markdown', () => {
     expect(container.textContent).not.toContain('permissions instructions')
     expect(container.textContent).not.toContain('collaboration_mode')
   })
+
+  it('strips Codex protocol wrappers and metadata blocks', () => {
+    const { container } = render(
+      <Markdown
+        content={
+          '<turn_aborted>The user interrupted the previous turn.</turn_aborted>\n' +
+          '<environment_context><shell>zsh</shell></environment_context>\n' +
+          '<INSTRUCTIONS># Repository Guidelines</INSTRUCTIONS>\n' +
+          '<skills_instructions>Safety first.</skills_instructions>'
+        }
+        id="test-11"
+      />,
+    )
+
+    expect(container.textContent).toContain('The user interrupted the previous turn.')
+    expect(container.textContent).toContain('Repository Guidelines')
+    expect(container.textContent).toContain('Safety first.')
+    expect(container.textContent).not.toContain('environment_context')
+    expect(container.textContent).not.toContain('turn_aborted')
+    expect(container.textContent).not.toContain('INSTRUCTIONS')
+    expect(container.textContent).not.toContain('skills_instructions')
+    expect(container.textContent).not.toContain('zsh')
+  })
 })
