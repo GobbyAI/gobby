@@ -122,6 +122,15 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
 
 const noopFetchDiff = async (): Promise<string> => "";
 
+// Width constants shared between the inline style, ResizeHandle, and the
+// `useActivityPanel` localStorage validator. CHAT_MIN_WIDTH mirrors the
+// `min-w-[400px]` on the chat column in ChatPage.tsx so the maxWidth calc
+// always leaves enough room for the chat to keep its floor.
+const PANEL_MIN_WIDTH = 280;
+const PANEL_MAX_WIDTH = 1200;
+const CHAT_MIN_WIDTH = 400;
+const LAYOUT_BUFFER = 24;
+
 interface ActivityPanelProps {
   isPinned: boolean;
   onPinnedChange: (pinned: boolean) => void;
@@ -309,12 +318,17 @@ export function ActivityPanel({
       <ResizeHandle
         onResize={onWidthChange}
         panelWidth={panelWidth}
-        minWidth={280}
-        maxWidth={1200}
+        minWidth={PANEL_MIN_WIDTH}
+        maxWidth={PANEL_MAX_WIDTH}
       />
       <div
         className="activity-panel"
-        style={{ width: panelWidth, flexShrink: 0 }}
+        style={{
+          width: panelWidth,
+          minWidth: PANEL_MIN_WIDTH,
+          maxWidth: `calc(100vw - ${CHAT_MIN_WIDTH + LAYOUT_BUFFER}px)`,
+          flexShrink: 1,
+        }}
       >
         {/* Tab strip */}
         <div className="activity-panel-tabs">
