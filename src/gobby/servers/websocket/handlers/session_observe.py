@@ -137,6 +137,7 @@ async def handle_continue_in_chat(
     target_provider = data.get("provider")
     target_model = data.get("model")
     target_reasoning_effort = _as_str(data.get("reasoning_effort"))
+    target_chat_mode = _as_str(data.get("chat_mode"))
 
     # Look up source session for project_id and SDK session ID
     session_manager = getattr(mixin, "session_manager", None)
@@ -174,6 +175,7 @@ async def handle_continue_in_chat(
     source_chat_mode = (
         _as_str(getattr(source_session, "chat_mode", None)) if source_session else None
     )
+    effective_chat_mode = target_chat_mode or source_chat_mode
     source_model = _as_str(getattr(source_session, "model", None)) if source_session else None
     effective_model = target_model or source_model
     can_sdk_resume = (
@@ -225,10 +227,11 @@ async def handle_continue_in_chat(
                 source_session_id,
                 source=effective_provider,
                 model=effective_model,
-                chat_mode=source_chat_mode,
+                chat_mode=effective_chat_mode,
                 session_type="web_chat",
                 status="active",
                 title=source_title,
+                terminal_context={},
                 project_id=project_id,
             )
         except Exception as e:
@@ -252,8 +255,8 @@ async def handle_continue_in_chat(
                     )
                     or (source_title and getattr(target_session, "title", None) != source_title)
                     or (
-                        source_chat_mode
-                        and getattr(target_session, "chat_mode", None) != source_chat_mode
+                        effective_chat_mode
+                        and getattr(target_session, "chat_mode", None) != effective_chat_mode
                     )
                 ):
                     await asyncio.to_thread(
@@ -262,7 +265,7 @@ async def handle_continue_in_chat(
                         source=effective_provider,
                         model=effective_model,
                         title=source_title,
-                        chat_mode=source_chat_mode,
+                        chat_mode=effective_chat_mode,
                     )
         except Exception as e:
             logger.warning(
@@ -285,13 +288,13 @@ async def handle_continue_in_chat(
                 session_manager
                 and session.db_session_id
                 and not resume_in_place
-                and (source_title or source_chat_mode or effective_model)
+                and (source_title or effective_chat_mode or effective_model)
             ):
                 session_updates: dict[str, Any] = {}
                 if source_title:
                     session_updates["title"] = source_title
-                if source_chat_mode:
-                    session_updates["chat_mode"] = source_chat_mode
+                if effective_chat_mode:
+                    session_updates["chat_mode"] = effective_chat_mode
                 if effective_model:
                     session_updates["model"] = effective_model
                 if session_updates:
@@ -306,6 +309,9 @@ async def handle_continue_in_chat(
             return
     elif target_reasoning_effort is not None:
         session.reasoning_effort = target_reasoning_effort
+
+    if effective_chat_mode:
+        session.chat_mode = effective_chat_mode
 
     # History injection via message_manager removed (session_messages table dropped)
 
@@ -333,7 +339,8 @@ async def handle_continue_in_chat(
                 "title": source_title,
                 "source": effective_provider,
                 "model": effective_model,
-                "chat_mode": source_chat_mode,
+                "chat_mode": effective_chat_mode,
+                "reasoning_effort": target_reasoning_effort,
                 "session_type": "web_chat",
                 "status": "active",
             }

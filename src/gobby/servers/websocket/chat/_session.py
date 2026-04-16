@@ -434,6 +434,7 @@ class ChatSessionMixin:
                     project_id=effective_pid,
                     session_type="web_chat",
                     status="active",
+                    terminal_context={},
                 )
                 if normalized_session is not None:
                     existing_db_session = normalized_session

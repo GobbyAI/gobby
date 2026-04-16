@@ -468,6 +468,7 @@ class TestCreateChatSessionInner:
                 project_id="proj-1",
                 session_type="web_chat",
                 status="active",
+                terminal_context={},
             )
             mixin.session_manager.update_model.assert_called_once_with(
                 "term-row-id",
