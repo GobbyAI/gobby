@@ -48,10 +48,17 @@ def _get_subtask_phase(subtask: dict[str, Any]) -> int:
     return _extract_phase_number(subtask) or _extract_phase_from_title(subtask) or 0
 
 
+_PHASE_HEADING_RE = re.compile(r"##\s+Phase\s+(\d+)\s*(?::|[\u2014\u2013-])\s*(.+)")
+
+
 def _extract_phase_titles(description: str) -> dict[int, str]:
-    """Extract phase titles from plan document content in task description."""
+    """Extract phase titles from plan document content in task description.
+
+    Accepts `## Phase N: Title`, `## Phase N — Title` (em-dash),
+    `## Phase N – Title` (en-dash), and `## Phase N - Title` (ASCII hyphen).
+    """
     titles: dict[int, str] = {}
-    for match in re.finditer(r"##\s+Phase\s+(\d+):\s*(.+)", description):
+    for match in _PHASE_HEADING_RE.finditer(description):
         titles[int(match.group(1))] = match.group(2).strip()
     return titles
 

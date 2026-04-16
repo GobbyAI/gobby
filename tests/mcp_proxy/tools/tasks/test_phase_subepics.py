@@ -95,3 +95,48 @@ Even more."""
         description = "## Phase 5: Gemini Web Chat + Provider Picker + Personas\n"
         titles = _extract_phase_titles(description)
         assert titles[5] == "Gemini Web Chat + Provider Picker + Personas"
+
+    def test_accepts_em_dash_separator(self) -> None:
+        description = (
+            "## Phase 0 \u2014 Prerequisites\n\n"
+            "## Phase 1 \u2014 Sandbox test harness\n\n"
+            "## Phase 2 \u2014 Rust `ghook` binary\n"
+        )
+        titles = _extract_phase_titles(description)
+        assert titles == {
+            0: "Prerequisites",
+            1: "Sandbox test harness",
+            2: "Rust `ghook` binary",
+        }
+
+    def test_accepts_en_dash_separator(self) -> None:
+        description = "## Phase 2 \u2013 Implementation\n"
+        titles = _extract_phase_titles(description)
+        assert titles[2] == "Implementation"
+
+    def test_accepts_ascii_hyphen_separator(self) -> None:
+        description = "## Phase 3 - Cleanup\n"
+        titles = _extract_phase_titles(description)
+        assert titles[3] == "Cleanup"
+
+    def test_mixed_separators_in_same_document(self) -> None:
+        description = (
+            "## Phase 1: Colon style\n\n"
+            "## Phase 2 \u2014 Em-dash style\n\n"
+            "## Phase 3 - Hyphen style\n"
+        )
+        titles = _extract_phase_titles(description)
+        assert titles == {
+            1: "Colon style",
+            2: "Em-dash style",
+            3: "Hyphen style",
+        }
+
+    def test_preserves_hyphens_inside_title(self) -> None:
+        description = "## Phase 4: TDD - red/green/refactor\n"
+        titles = _extract_phase_titles(description)
+        assert titles[4] == "TDD - red/green/refactor"
+
+    def test_ignores_heading_without_separator(self) -> None:
+        description = "## Phase 5 NoSeparatorHere\n"
+        assert _extract_phase_titles(description) == {}
