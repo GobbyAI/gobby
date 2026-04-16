@@ -110,7 +110,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   release:
-    needs: build
+    needs: [build, publish]
     runs-on: ubuntu-latest
 
     steps:
