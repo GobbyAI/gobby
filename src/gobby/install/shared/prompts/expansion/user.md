@@ -1,7 +1,7 @@
 ---
 name: expansion-user
 description: User prompt template for compiled task expansion
-version: "2.0"
+version: "2.1"
 variables:
   task_id:
     type: str
@@ -21,6 +21,15 @@ variables:
   plan_file:
     type: str
     default: ""
+  single_phase_mode:
+    type: bool
+    default: false
+  phase_title:
+    type: str
+    default: ""
+  phase_number:
+    type: int
+    default: 0
 ---
 Compile this task into a deterministic expansion spec.
 
@@ -40,7 +49,12 @@ Compile this task into a deterministic expansion spec.
 {{ plan_file if plan_file else "No plan file provided." }}
 
 ## Requirements
-
+{% if single_phase_mode %}
+**Single-phase compile.** This run is scoped to Phase {{ phase_number }}: "{{ phase_title }}".
+Return exactly one phase entry in `phases[]` titled "{{ phase_title }}". Do not invent
+sibling phases — the merger combines this output with independent runs for the other
+phases of the plan. All `tasks[]` entries must reference this phase's `id`.
+{% endif %}
 - Produce a phase-aware compiled spec.
 - Prefer multiple phases only when the work is genuinely phased.
 - Make dependencies explicit with stable task IDs.
