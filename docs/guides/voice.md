@@ -1,16 +1,17 @@
 # Voice Chat
 
-Gobby provides local speech-to-text (STT) and text-to-speech (TTS) for voice conversations with your AI coding assistants through the web chat.
+Gobby provides local speech-to-text (STT) and provider-based text-to-speech (TTS)
+for voice conversations with your AI coding assistants through the web chat.
 
 ## Overview
 
 The voice pipeline:
 
-1. **You speak** -- browser VAD detects speech, records audio
-2. **STT** -- Whisper (faster-whisper) transcribes audio to text locally
-3. **Chat** -- transcribed text is sent as a normal chat message
-4. **TTS** -- Chatterbox synthesizes the assistant's response using your cloned voice
-5. **Playback** -- audio streams back over WebSocket and plays in the browser
+1. **You speak** - browser VAD detects speech and records audio
+2. **STT** - Whisper (`faster-whisper`) transcribes audio locally
+3. **Chat** - the transcript is sent as a normal chat message
+4. **TTS** - the configured provider synthesizes the assistant response
+5. **Playback** - PCM audio streams back over WebSocket and plays in the browser
 
 All inference runs locally. No audio leaves your machine.
 
@@ -24,12 +25,29 @@ The installer asks whether you want voice chat. Say yes, or pass `--voice`:
 gobby install --voice
 ```
 
-### Manual install
+### Baseline voice dependencies
 
 ```bash
-# Install voice dependencies (~500MB, includes PyTorch)
+# Installs Whisper STT plus the built-in Chatterbox/Kokoro TTS providers.
 uv sync --extra voice
 ```
+
+`uv sync --extra voice` does **not** install VoxCPM.
+
+### VoxCPM provider
+
+Install `voxcpm` manually if you plan to use `tts_provider: voxcpm`.
+
+```bash
+uv pip install voxcpm
+```
+
+Notes:
+
+- The current Gobby integration treats VoxCPM as an optional provider, not a baseline dependency.
+- Upstream VoxCPM currently documents embedded usage around Python `<3.13`. If it does not
+  install cleanly into the daemon runtime on your machine, keep using another provider until a
+  dedicated external runtime path is added.
 
 ## Configuration
 
@@ -38,104 +56,143 @@ Enable voice in your daemon config:
 ```yaml
 voice:
   enabled: true
-  tts_provider: chatterbox   # or "kokoro" for fixed voices
-  tts_reference_audio: ~/.gobby/voice/reference.wav
-  tts_temperature: 0.55      # sampling randomness (0.1-1.0, default 0.55)
-  tts_device: auto            # auto, cuda, mps, cpu
+  tts_provider: chatterbox
 ```
 
 Restart the daemon after config changes: `gobby restart`
 
-## Voice Reference
+## Reference Audio
 
-Chatterbox clones a voice from a short reference audio clip. Place your reference at:
+The simple cloning workflow stays the same across providers that support it:
 
-```
-~/.gobby/voice/reference.wav
-```
-
-### Requirements
-
-- **Duration**: 10-20 seconds (minimum 5s, sweet spot ~15s)
-- **Format**: WAV (any sample rate -- internally resampled to 16/24kHz)
-- **Content**: Clean speech, single speaker, consistent tone
-- **Quality**: Quiet environment, minimal background noise
-
-### Sampling from YouTube
-
-Use yt-dlp to extract a voice sample from any video:
-
-```bash
-# Install tools
-
-# macOS
-brew install yt-dlp ffmpeg
-
-# Linux (Debian/Ubuntu)
-sudo apt install yt-dlp ffmpeg
-
-# Any platform (pip)
-pip install yt-dlp  # ffmpeg still needs to be installed via your system package manager
-
-# Download full audio as WAV
-yt-dlp -x --audio-format wav -o "output.wav" "https://youtube.com/watch?v=VIDEO_ID"
-
-# Extract a specific segment (e.g., 1:30 to 1:45)
-yt-dlp -x --audio-format wav \
-  --postprocessor-args "ffmpeg:-ss 00:01:30 -to 00:01:45" \
-  -o "~/.gobby/voice/reference.wav" "https://youtube.com/watch?v=VIDEO_ID"
+```yaml
+voice:
+  tts_reference_audio: ~/.gobby/voice/reference.wav
 ```
 
-Tips for picking a good segment:
-- Choose a section with clear speech (no music, no overlapping voices)
-- Avoid segments with coughing, laughing, or long pauses
-- Pick a tone that matches how you want the assistant to sound
+Guidelines:
 
-### Recording your own
+- Duration: 10-20 seconds works well; 5+ seconds is the bare minimum
+- Format: WAV
+- Content: clean speech, one speaker, consistent tone
+- Quality: quiet room, minimal noise, no overlapping voices
 
-Record ~15 seconds of natural speech using any tool:
+### Optional `tts_reference_text`
 
-```bash
-# macOS Quick Recording (stop with Ctrl+C)
-sox -d -r 16000 -c 1 ~/.gobby/voice/reference.wav trim 0 15
+Some providers can also use the transcript of the reference clip:
 
-# Or use Voice Memos on macOS/iOS and export as WAV
+```yaml
+voice:
+  tts_reference_audio: ~/.gobby/voice/reference.wav
+  tts_reference_text: "The exact transcript of that reference clip."
 ```
+
+Behavior:
+
+- Optional for all providers
+- Ignored if missing
+- Ignored by providers that do not support it
+- Used by VoxCPM to switch from simple reference-audio cloning to a higher-fidelity prompt-audio mode
+
+If you do not want to transcribe the clip, leave it unset. Basic cloning still works.
 
 ## TTS Providers
 
-### Chatterbox (default)
+### Chatterbox
 
-Zero-shot voice cloning using Resemble AI's Chatterbox Turbo model (350M params). Sub-200ms latency per sentence. Supports paralinguistic tags like `[laugh]` and `[chuckle]`.
+Zero-shot voice cloning with a short reference clip.
 
-- **Device**: Auto-detects CUDA > MPS (Apple Silicon) > CPU
-- **Memory**: ~4-5GB VRAM (GPU) or ~8GB RAM (CPU/MPS)
-- **Models**: Auto-downloaded from HuggingFace on first use
+```yaml
+voice:
+  enabled: true
+  tts_provider: chatterbox
+  tts_reference_audio: ~/.gobby/voice/reference.wav
+  tts_temperature: 0.55
+  tts_device: auto
+```
 
-### Kokoro (legacy)
+Notes:
 
-Fixed voices using Kokoro ONNX (82M params). Lighter weight but no voice cloning. Requires manual model download.
+- Good default for the "drop in a WAV and go" workflow
+- Uses `tts_reference_audio`
+- Ignores `tts_reference_text`
 
-Set `tts_provider: kokoro` and download:
-- `~/.gobby/models/kokoro-v1.0.onnx`
-- `~/.gobby/models/voices-v1.0.bin`
+### VoxCPM
+
+Reference-audio cloning with optional `reference_text` for higher-fidelity continuation-style cloning.
+
+```yaml
+voice:
+  enabled: true
+  tts_provider: voxcpm
+  tts_reference_audio: ~/.gobby/voice/reference.wav
+  tts_reference_text: "Optional transcript of the reference clip."
+  tts_device: auto
+  tts_voxcpm_model: openbmb/VoxCPM2
+  tts_voxcpm_cfg_value: 2.0
+  tts_voxcpm_inference_timesteps: 10
+  tts_voxcpm_load_denoiser: false
+  tts_voxcpm_denoise: false
+  tts_voxcpm_local_files_only: false
+  tts_voxcpm_optimize: true
+```
+
+Notes:
+
+- `tts_reference_audio` alone enables normal cloning
+- Adding `tts_reference_text` lets the provider reuse the same clip as prompt audio for better similarity
+- Output is typically 48kHz
+- VoxCPM is not auto-installed by Gobby
+
+### Kokoro
+
+Fixed voices through Kokoro ONNX. Lighter weight, but not a voice-cloning provider.
+
+```yaml
+voice:
+  enabled: true
+  tts_provider: kokoro
+  tts_voice: af_heart
+  tts_speed: 1.0
+  tts_language: en-us
+  tts_model_path: ~/.gobby/models/kokoro-v1.0.onnx
+  tts_voices_path: ~/.gobby/models/voices-v1.0.bin
+```
+
+Notes:
+
+- Does not use `tts_reference_audio`
+- Does not use `tts_reference_text`
+- Requires local model files
 
 ## Usage
 
 1. Open the web chat at `http://localhost:60887`
 2. Click the microphone icon to toggle voice mode
-3. Speak naturally -- VAD auto-detects speech start/end
-4. The assistant's response plays back in your cloned voice
+3. Speak naturally - VAD auto-detects speech start/end
+4. The assistant response plays back through the configured TTS provider
 5. Barge-in: start speaking to interrupt TTS playback
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| "Voice not enabled" | Set `voice.enabled: true` in config, restart daemon |
-| No microphone icon | Check `/api/voice/status` -- STT must be available |
-| STT works but no TTS | Check reference audio exists at configured path |
-| Slow first response | Model downloads on first use (~1-2GB). Subsequent calls are fast. |
-| High memory usage | Try `tts_device: cpu` or reduce Whisper model size |
-| MPS errors on Mac | Some ops may fall back to CPU. Set `tts_device: cpu` if unstable. |
-| Voice sounds wrong | Try a cleaner, longer reference clip (15-20s of clear speech) |
+| Issue | What to check |
+|-------|---------------|
+| "Voice not enabled" | Set `voice.enabled: true` and restart the daemon |
+| No microphone icon | Check `/api/voice/status`; STT must be available |
+| STT works but TTS does not | Check `tts_provider`, provider install status, and provider-specific readiness in `/api/voice/status` |
+| Cloning sounds wrong | Use a cleaner or longer reference clip |
+| `tts_reference_text` has no effect | The active provider may ignore it, or the field may be unset/blank |
+| VoxCPM unavailable | Confirm `voxcpm` is installed in the daemon runtime and supported on your platform/Python |
+| Kokoro unavailable | Check `tts_model_path` and `tts_voices_path` |
+| Chatterbox unstable on your machine | Try `tts_device: cpu` or switch providers |
+
+Provider status is reported through `/api/voice/status`, including:
+
+- `tts_provider`
+- `tts_available`
+- `tts_reason`
+- `tts_backend_kind`
+- `tts_capabilities`
+
+These fields are the quickest way to see whether the active provider supports
+reference audio, reference text, or streaming behavior.

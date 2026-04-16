@@ -1,1 +1,1 @@
-"""Voice chat module: STT via local Whisper, TTS via local Kokoro ONNX."""
+"""Voice chat module: STT via local Whisper, TTS via pluggable providers."""

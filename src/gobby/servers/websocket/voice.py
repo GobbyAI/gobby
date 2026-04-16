@@ -13,7 +13,6 @@ import gc
 import json
 import logging
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
@@ -27,8 +26,7 @@ _WARMUP_ERROR = "error"
 
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
-    from gobby.voice.tts import KokoroTTS
-    from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+    from gobby.voice.tts import TTSProvider
 
 
 class TTSPipeline:
@@ -40,7 +38,7 @@ class TTSPipeline:
 
     def __init__(
         self,
-        tts: KokoroTTS | ChatterboxTurboProvider,
+        tts: TTSProvider,
         conversation_id: str,
         clients: dict[Any, dict[str, Any]],
     ) -> None:
@@ -166,7 +164,7 @@ class VoiceMixin:
 
         # Lazy singletons
         self._whisper_stt: Any = None
-        self._kokoro_tts: KokoroTTS | ChatterboxTurboProvider | None = None
+        self._tts_provider: TTSProvider | None = None
 
         # Dep auto-install tracking (run once per daemon lifecycle)
         self._stt_deps_checked = False
@@ -239,10 +237,10 @@ class VoiceMixin:
         except Exception:
             return False, "faster-whisper not installed (uv sync --extra voice)"
 
-    def _get_tts(self) -> KokoroTTS | ChatterboxTurboProvider | None:
+    def _get_tts(self) -> TTSProvider | None:
         """Get or create the TTS singleton (routes by provider config)."""
-        if self._kokoro_tts is not None:
-            return self._kokoro_tts
+        if self._tts_provider is not None:
+            return self._tts_provider
 
         voice_config = self._get_voice_config()
         if not voice_config or not voice_config.enabled or not voice_config.tts_enabled:
@@ -253,22 +251,17 @@ class VoiceMixin:
             self._tts_deps_checked = True
             self._spawn_background_task(self._ensure_tts_deps(voice_config), name="ensure-tts-deps")
 
-        tts: KokoroTTS | ChatterboxTurboProvider
-        provider = getattr(voice_config, "tts_provider", "kokoro")
-        if provider == "chatterbox":
-            from gobby.voice.tts_chatterbox import ChatterboxTurboProvider as _Chatterbox
+        from gobby.voice.providers import create_tts_provider
 
-            tts = _Chatterbox(voice_config)
-        else:
-            from gobby.voice.tts import KokoroTTS as _KokoroTTS
-
-            tts = _KokoroTTS(voice_config)
+        tts = create_tts_provider(voice_config)
+        if tts is None:
+            return None
 
         if not tts.is_available:
             return None
 
-        self._kokoro_tts = tts
-        return self._kokoro_tts
+        self._tts_provider = tts
+        return self._tts_provider
 
     def _get_tts_availability(self) -> tuple[bool, str]:
         """Return package-level TTS availability and reason."""
@@ -278,25 +271,10 @@ class VoiceMixin:
         if not voice_config.tts_enabled:
             return False, "TTS disabled in config"
 
-        provider = getattr(voice_config, "tts_provider", "kokoro")
-        if provider == "chatterbox":
-            try:
-                import chatterbox  # noqa: F401
+        from gobby.voice.providers import get_tts_status_for_config
 
-                return True, ""
-            except Exception:
-                return False, "chatterbox not installed (uv sync --extra voice)"
-
-        try:
-            import kokoro_onnx  # noqa: F401
-        except Exception:
-            return False, "kokoro-onnx not installed (uv sync --extra voice)"
-
-        model_path = Path(voice_config.tts_model_path).expanduser()
-        voices_path = Path(voice_config.tts_voices_path).expanduser()
-        if model_path.exists() and voices_path.exists():
-            return True, ""
-        return False, "Kokoro model files not found"
+        status = get_tts_status_for_config(voice_config)
+        return status.available, status.reason
 
     def start_voice_warmup(self) -> None:
         """Begin best-effort background warmup for enabled voice models."""
@@ -352,7 +330,7 @@ class VoiceMixin:
             }
 
         stt_available, stt_reason = self._get_stt_availability()
-        tts_available, tts_reason = self._get_tts_availability()
+        from gobby.voice.providers import get_tts_status_for_config
 
         stt_warmup_status = self._stt_warmup_status if voice_config.stt_enabled else _WARMUP_IDLE
         tts_warmup_status = self._tts_warmup_status if voice_config.tts_enabled else _WARMUP_IDLE
@@ -375,22 +353,14 @@ class VoiceMixin:
             "stt_warmup_status": stt_warmup_status,
             "stt_warmup_error": self._stt_warmup_error,
             "tts_enabled": voice_config.tts_enabled,
-            "tts_provider": getattr(voice_config, "tts_provider", "kokoro"),
-            "tts_available": tts_available,
-            "tts_reason": tts_reason,
             "tts_warmup_status": tts_warmup_status,
             "tts_warmup_error": self._tts_warmup_error,
             "voice_ready": voice_ready,
             "voice_loading": voice_loading,
         }
 
-        if result["tts_provider"] == "chatterbox":
-            ref = Path(voice_config.tts_reference_audio).expanduser()
-            result["tts_reference_audio"] = str(ref)
-            result["tts_reference_audio_exists"] = ref.exists()
-            result["tts_device"] = voice_config.tts_device
-        else:
-            result["tts_voice"] = voice_config.tts_voice
+        tts_status = get_tts_status_for_config(voice_config)
+        result.update(tts_status.as_status_fields())
 
         return result
 
@@ -739,9 +709,9 @@ class VoiceMixin:
             self._whisper_stt = None
             unloaded.append("STT")
 
-        if self._kokoro_tts is not None:
-            self._kokoro_tts.unload()
-            self._kokoro_tts = None
+        if self._tts_provider is not None:
+            self._tts_provider.unload()
+            self._tts_provider = None
             unloaded.append("TTS")
 
         if not unloaded:

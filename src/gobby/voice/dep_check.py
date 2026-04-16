@@ -31,7 +31,12 @@ _TTS_DEPS: dict[str, list[tuple[str, str]]] = {
     "kokoro": [
         ("kokoro-onnx", "kokoro_onnx"),
     ],
+    "voxcpm": [
+        ("voxcpm", "voxcpm"),
+    ],
 }
+
+_AUTO_INSTALL_TTS_PROVIDERS = {"chatterbox", "kokoro"}
 
 # Guard against concurrent install attempts
 _install_lock = asyncio.Lock()
@@ -137,6 +142,13 @@ async def ensure_tts_deps(config: VoiceConfig) -> bool:
     missing = _check_imports(deps)
     if not missing:
         return True
+
+    if provider not in _AUTO_INSTALL_TTS_PROVIDERS:
+        logger.info(
+            "Skipping auto-install for TTS provider '%s'; install dependencies manually",
+            provider,
+        )
+        return False
 
     async with _install_lock:
         missing = _check_imports(deps)

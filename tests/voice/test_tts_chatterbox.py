@@ -408,12 +408,27 @@ class TestDepCheck:
             ):
                 assert await ensure_tts_deps(config) is True
 
+    @pytest.mark.asyncio
+    async def test_ensure_tts_deps_skips_voxcpm_auto_install(self) -> None:
+        """VoxCPM must not be auto-installed into the daemon runtime."""
+        from gobby.voice.dep_check import ensure_tts_deps
+
+        config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="voxcpm")
+
+        with patch("gobby.voice.dep_check._check_imports", return_value=["voxcpm"]):
+            with patch(
+                "gobby.voice.dep_check._install_packages", new_callable=AsyncMock
+            ) as install_mock:
+                assert await ensure_tts_deps(config) is False
+        install_mock.assert_not_called()
+
 
 class TestVoiceConfigChatterbox:
     def test_chatterbox_defaults(self) -> None:
         config = VoiceConfig()
         assert config.tts_provider == "chatterbox"
         assert config.tts_reference_audio == "~/.gobby/voice/reference.wav"
+        assert config.tts_reference_text is None
         assert config.tts_temperature == 0.55
         assert config.tts_device == "auto"
 
