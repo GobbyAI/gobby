@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from claude_agent_sdk import HookContext
+from claude_agent_sdk import HookContext, PermissionResultAllow, ToolPermissionContext
 
 from gobby.servers.chat_session import ChatSession
 
@@ -76,6 +76,44 @@ class TestChatSessionHooks:
         mock_cb.assert_awaited_once_with({"tool_name": "Read", "tool_input": {"path": "/"}})
         # Verifying standard Dict pass-through format
         assert res is not None
+
+    @pytest.mark.asyncio
+    async def test_build_pre_tool_hook_enforces_tool_approval(self, session: ChatSession) -> None:
+        """PreToolUse should surface the web-chat approval gate for Claude tools."""
+        session.chat_mode = "normal"
+        mock_cb = AsyncMock(return_value={})
+        session._on_pre_tool = mock_cb
+
+        async def approve(tool_name: str, arguments: dict[str, object]) -> None:
+            assert tool_name == "Bash"
+            assert arguments == {"command": "echo ok > approval.txt"}
+            session.provide_approval("approve")
+
+        session._tool_approval_callback = AsyncMock(side_effect=approve)
+
+        hooks = session._build_sdk_hooks()
+        assert "PreToolUse" in hooks
+        hook_fn = hooks["PreToolUse"][0].hooks[0]
+
+        inp = {"tool_name": "Bash", "tool_input": {"command": "echo ok > approval.txt"}}
+        ctx = HookContext(signal=None)
+        res = await hook_fn(inp, "tool-123", ctx)
+
+        mock_cb.assert_awaited_once_with(inp)
+        session._tool_approval_callback.assert_awaited_once_with(
+            "Bash",
+            {"command": "echo ok > approval.txt"},
+        )
+        assert res["hookSpecificOutput"]["permissionDecision"] == "allow"
+        assert "tool-123" in session._preapproved_tool_use_ids
+
+        permission = await session._can_use_tool(
+            "Bash",
+            {"command": "echo ok > approval.txt"},
+            ToolPermissionContext(tool_use_id="tool-123"),
+        )
+        assert isinstance(permission, PermissionResultAllow)
+        assert session._tool_approval_callback.await_count == 1
 
     @pytest.mark.asyncio
     async def test_build_post_tool_hook(self, session: ChatSession) -> None:

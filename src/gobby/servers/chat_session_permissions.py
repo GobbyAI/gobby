@@ -65,6 +65,7 @@ class ChatSessionPermissionsMixin:
     _pending_approval: PendingApproval | None
     _pending_approval_decision: str | None
     _pending_approval_event: asyncio.Event | None
+    _preapproved_tool_use_ids: set[str]
 
     # Patterns that indicate dangerous bash commands (used by accept_edits mode)
     _DANGEROUS_BASH_PATTERNS = re.compile(
@@ -98,6 +99,10 @@ class ChatSessionPermissionsMixin:
         matched by tool_approval policies (which block until approved).
         """
         tool_name = str(canonicalize_shell_tool_name(tool_name))
+        tool_use_id = getattr(context, "tool_use_id", None)
+        if isinstance(tool_use_id, str) and tool_use_id in self._preapproved_tool_use_ids:
+            self._preapproved_tool_use_ids.discard(tool_use_id)
+            return PermissionResultAllow(updated_input=input_data)
 
         # Agent-initiated plan mode transitions
         if tool_name == "EnterPlanMode":
@@ -157,6 +162,21 @@ class ChatSessionPermissionsMixin:
                     message=f"User requested changes to the plan. {feedback}".strip()
                 )
 
+        return await self._resolve_tool_permission(
+            tool_name,
+            input_data,
+            invoke_pre_tool_callback=True,
+        )
+
+    async def _resolve_tool_permission(
+        self,
+        tool_name: str,
+        input_data: dict[str, Any],
+        *,
+        invoke_pre_tool_callback: bool,
+    ) -> PermissionResultAllow | PermissionResultDeny:
+        """Apply standard tool rules, approvals, and question handling."""
+
         # Plan mode: always block normal repo mutations.
         if self.chat_mode == "plan":
             if tool_name in _PLAN_MODE_BLOCKED_TOOLS:
@@ -184,7 +204,7 @@ class ChatSessionPermissionsMixin:
         # In the SDK path, the PreToolUse hook's permissionDecision="deny" is not
         # respected because can_use_tool already granted permission. By checking
         # here, we block tools at the SDK permission gate itself.
-        if self._on_pre_tool:
+        if invoke_pre_tool_callback and self._on_pre_tool:
             resp = await self._on_pre_tool({"tool_name": tool_name, "tool_input": input_data})
             if resp and resp.get("decision") == "block":
                 return PermissionResultDeny(
@@ -282,10 +302,11 @@ class ChatSessionPermissionsMixin:
 
         project_rules = load_project_approval_rules(self.project_path)
         global_rules = self._global_approval_rules()
+        session_rules = self._normalized_approved_tools()
         return not is_tool_auto_allowed(
             tool_name,
             input_data,
-            session_rules=self._normalized_approved_tools(),
+            session_rules=session_rules,
             project_rules=project_rules,
             global_rules=global_rules,
         )

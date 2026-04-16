@@ -37,6 +37,13 @@ HOOK_EVENT_NAME_MAP: dict[str, str] = {
     "user-prompt-submit": "UserPromptSubmit",
 }
 
+HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
+    "PreToolUse": "PreToolUse",
+    "pre-tool-use": "PreToolUse",
+    "BeforeTool": "PreToolUse",
+    "AskUserQuestion": "AskUserQuestion",
+}
+
 
 def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
     """
@@ -70,6 +77,13 @@ def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
 MAX_PENDING_PER_SESSION = 3
 
 
+def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
+    """Normalize provider-specific hook names for web-chat hold-open gating."""
+    if not hook_type:
+        return None
+    return HOLD_OPEN_HOOK_TYPE_MAP.get(hook_type)
+
+
 async def _maybe_hold_open(
     request: Request,
     session_id: str,
@@ -90,6 +104,19 @@ async def _maybe_hold_open(
         return None
     session_store = LocalSessionManager(db)
     db_session = await asyncio.to_thread(session_store.get, session_id)
+    if not db_session:
+        try:
+            resolved_session_id = await asyncio.to_thread(
+                session_store.resolve_session_reference, session_id
+            )
+        except Exception:
+            resolved_session_id = None
+        if resolved_session_id:
+            db_session = await asyncio.to_thread(session_store.get, resolved_session_id)
+    if not db_session:
+        db_session = await asyncio.to_thread(
+            session_store.find_active_by_external_id, session_id, source
+        )
 
     if not db_session:
         return None
@@ -118,7 +145,10 @@ async def _maybe_hold_open(
         tool_name: str,
         arguments: dict[str, Any],
     ) -> None:
-        ws_server = request.app.state.server.services.websocket_server or request.app.state.server.websocket_server
+        ws_server = (
+            request.app.state.server.services.websocket_server
+            or request.app.state.server.websocket_server
+        )
         if not ws_server:
             return
 
@@ -188,7 +218,9 @@ async def _maybe_hold_open(
             key = approval_key_for_tool(tool_name, arguments)
             updated_rules = set(session_rules)
             updated_rules.add(key)
-            await asyncio.to_thread(session_store.update_approved_tools, db_session.id, updated_rules)
+            await asyncio.to_thread(
+                session_store.update_approved_tools, db_session.id, updated_rules
+            )
             return {"decision": "approve"}
         if decision == "approve":
             return {"decision": "approve"}
@@ -300,9 +332,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # create pending interactions that hold the HTTP response open
                 # until the user approves/denies in the browser.
                 session_header = request.headers.get("X-Gobby-Session-Id", "")
-                if session_header and hook_type in ("PreToolUse", "AskUserQuestion"):
+                normalized_hold_open_type = _normalize_hold_open_hook_type(hook_type)
+                if session_header and normalized_hold_open_type:
                     hold_open_result = await _maybe_hold_open(
-                        request, session_header, hook_type, payload, source
+                        request, session_header, normalized_hold_open_type, payload, source
                     )
                     if hold_open_result is not None:
                         return hold_open_result

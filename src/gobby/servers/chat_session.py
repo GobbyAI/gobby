@@ -20,6 +20,7 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     HookContext,
     HookMatcher,
+    PermissionResultDeny,
     ResultMessage,
     SettingSource,
     TextBlock,
@@ -136,6 +137,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _session_manager_ref: Any | None = field(default=None, repr=False)
     _transcript_path_captured: bool = field(default=False, repr=False)
     _active_reasoning_effort: str | None = field(default=None, repr=False)
+    _preapproved_tool_use_ids: set[str] = field(default_factory=set, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
@@ -405,16 +407,45 @@ class ChatSession(ChatSessionPermissionsMixin):
                 tool_use_id: str | None,
                 ctx: HookContext,
             ) -> SyncHookJSONOutput:
-                # DEBUG: log raw SDK hook input keys to diagnose hook issues
-                logger.debug(
-                    f"_pre_tool_hook raw inp keys={(list(inp.keys()) if isinstance(inp, dict) else type(inp).__name__)}, tool_name={(inp.get('tool_name') if isinstance(inp, dict) else 'N/A')!r}",
-                )
+                tool_name = inp.get("tool_name", "")
+                tool_input = inp.get("tool_input", {})
+                if not isinstance(tool_input, dict):
+                    tool_input = {}
                 data = {
-                    "tool_name": inp.get("tool_name", ""),
-                    "tool_input": inp.get("tool_input", {}),
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
                 }
                 resp = await cb_pre(data)
-                return _response_to_pre_tool_output(resp)
+                if resp and resp.get("decision") == "block":
+                    return _response_to_pre_tool_output(resp)
+
+                effective_input = tool_input
+                modified_input = resp.get("modified_input") if isinstance(resp, dict) else None
+                if isinstance(modified_input, dict):
+                    effective_input = modified_input
+
+                approval_required = self._needs_tool_approval(tool_name, effective_input)
+                permission = await self._resolve_tool_permission(
+                    tool_name,
+                    effective_input,
+                    invoke_pre_tool_callback=False,
+                )
+
+                if isinstance(permission, PermissionResultDeny):
+                    deny_resp = dict(resp or {})
+                    deny_resp["decision"] = "block"
+                    deny_resp["reason"] = permission.message
+                    return _response_to_pre_tool_output(deny_resp)
+
+                allow_resp = dict(resp or {})
+                updated_input = permission.updated_input
+                if isinstance(updated_input, dict) and updated_input != tool_input:
+                    allow_resp["modified_input"] = updated_input
+                if approval_required:
+                    allow_resp["auto_approve"] = True
+                    if isinstance(tool_use_id, str) and tool_use_id:
+                        self._preapproved_tool_use_ids.add(tool_use_id)
+                return _response_to_pre_tool_output(allow_resp)
 
             hooks["PreToolUse"] = [HookMatcher(matcher=None, hooks=[_pre_tool_hook])]
 

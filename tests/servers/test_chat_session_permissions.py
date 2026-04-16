@@ -218,6 +218,34 @@ class TestNeedsToolApproval:
         assert not session._needs_tool_approval("mcp__gobby__do_thing", {})
         assert session._needs_tool_approval("mcp__other__do_thing", {})
 
+    def test_normal_mode_gsqz_passthrough_requires_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
+
+        assert session._needs_tool_approval(
+            "Bash",
+            {
+                "command": "/Users/josh/.gobby/bin/gsqz -- 'printf %s ok > /tmp/gsqz-approval.txt'",
+            },
+        )
+
+    def test_normal_mode_safe_gsqz_input_skips_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
+
+        assert not session._needs_tool_approval(
+            "Bash",
+            {
+                "command": "env GOBBY_LEVEL=standard /Users/josh/.gobby/bin/gsqz input --level standard --stats",
+            },
+        )
+
+    def test_normal_mode_gsqz_version_skips_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
+
+        assert not session._needs_tool_approval(
+            "Bash",
+            {"command": "/Users/josh/.gobby/bin/gsqz --version"},
+        )
+
 
 class TestDangerousPatterns:
     def test_is_dangerous_bash(self, session: ChatSession) -> None:

@@ -116,6 +116,33 @@ async def test_web_chat_pre_tool_use_approve() -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_chat_pre_tool_use_falls_back_to_external_id_lookup() -> None:
+    db = MagicMock()
+    session = _make_session(session_id="sess-web-1", session_type="web_chat")
+    manager = AsyncMock()
+    manager.count_pending.return_value = 0
+    manager.create.return_value = "interaction-1"
+    manager.wait.return_value = {"decision": "approve"}
+
+    request = _make_request(db=db, pending_manager=manager)
+    payload = {"input_data": {"tool_name": "bash", "arguments": {"command": "ls"}}}
+
+    with patch(_LSM_PATCH) as MockSM:
+        store = MockSM.return_value
+        store.get.return_value = None
+        store.resolve_session_reference.side_effect = ValueError("not a session ref")
+        store.find_active_by_external_id.return_value = session
+        result = await _maybe_hold_open(
+            request, "provider-session-123", "PreToolUse", payload, "claude"
+        )
+
+    assert result == {"decision": "approve"}
+    store.find_active_by_external_id.assert_called_once_with("provider-session-123", "claude")
+    manager.create.assert_called_once()
+    manager.wait.assert_called_once_with("interaction-1")
+
+
+@pytest.mark.asyncio
 async def test_web_chat_pre_tool_use_deny_on_timeout() -> None:
     db = MagicMock()
     session = _make_session(session_id="sess-web-1", session_type="web_chat")

@@ -55,7 +55,7 @@ SAFE_CANVAS_CALL_TOOLS = frozenset(
 BUILT_IN_EXEMPTION_LABELS = (
     "mcp:gobby*:*",
     "mcp:gobby-canvas:*",
-    "tool:Bash (gcode / gsqz only)",
+    "tool:Bash (gcode / safe gsqz input only)",
 )
 
 _WRITE_PATH_KEYS = (
@@ -138,7 +138,11 @@ def approval_key_for_tool(tool_name: str, input_data: dict[str, Any]) -> str:
     return f"tool:{canonical}"
 
 
-def _first_shell_command_token(command: str) -> str | None:
+_SAFE_GSQZ_TOP_LEVEL_FLAGS = frozenset({"-h", "--help", "-V", "--version", "--dump-config"})
+_SAFE_GSQZ_SUBCOMMANDS = frozenset({"input"})
+
+
+def _shell_command_tokens(command: str) -> list[str] | None:
     try:
         parts = shlex.split(command)
     except ValueError:
@@ -152,7 +156,21 @@ def _first_shell_command_token(command: str) -> str | None:
             idx += 1
     if idx >= len(parts):
         return None
-    return os.path.basename(parts[idx])
+    return parts[idx:]
+
+
+def _is_safe_gsqz_invocation(parts: list[str]) -> bool:
+    if os.path.basename(parts[0]) != "gsqz":
+        return False
+
+    args = parts[1:]
+    if not args or "--" in args:
+        return False
+
+    if len(args) == 1 and args[0] in _SAFE_GSQZ_TOP_LEVEL_FLAGS:
+        return True
+
+    return args[0] in _SAFE_GSQZ_SUBCOMMANDS
 
 
 def is_auto_exempt_shell_command(input_data: dict[str, Any]) -> bool:
@@ -160,8 +178,15 @@ def is_auto_exempt_shell_command(input_data: dict[str, Any]) -> bool:
     command = input_data.get("command")
     if not isinstance(command, str) or not command.strip():
         return False
-    first = _first_shell_command_token(command)
-    return first in {"gcode", "gsqz"}
+    parts = _shell_command_tokens(command)
+    if not parts:
+        return False
+    first = os.path.basename(parts[0])
+    if first == "gcode":
+        return True
+    if first == "gsqz":
+        return _is_safe_gsqz_invocation(parts)
+    return False
 
 
 def is_safe_canvas_call(input_data: dict[str, Any]) -> bool:

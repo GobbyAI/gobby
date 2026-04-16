@@ -884,11 +884,20 @@ class CodexWebChatBackend:
                 return None, {}
             server_name = params.get("serverName")
             tool_name = self._extract_mcp_tool_name(params.get("message"))
-            input_data = dict(meta.get("tool_params", {})) if isinstance(meta.get("tool_params"), dict) else {}
-            if isinstance(server_name, str) and server_name and isinstance(tool_name, str) and tool_name:
-                input_data["server_name"] = server_name
-                input_data["tool_name"] = tool_name
-                return "mcp__gobby__call_tool", input_data
+            elicitation_data = (
+                dict(meta.get("tool_params", {}))
+                if isinstance(meta.get("tool_params"), dict)
+                else {}
+            )
+            if (
+                isinstance(server_name, str)
+                and server_name
+                and isinstance(tool_name, str)
+                and tool_name
+            ):
+                elicitation_data["server_name"] = server_name
+                elicitation_data["tool_name"] = tool_name
+                return "mcp__gobby__call_tool", elicitation_data
             return None, {}
 
         item_type = method.removeprefix("item/").removesuffix("/requestApproval")
@@ -922,7 +931,12 @@ class CodexWebChatBackend:
             server_name = payload.get("serverName")
             raw_name = payload.get("tool_name") or payload.get("toolName") or payload.get("name")
             input_data = self._extract_tool_args(payload)
-            if isinstance(server_name, str) and server_name and isinstance(raw_name, str) and raw_name:
+            if (
+                isinstance(server_name, str)
+                and server_name
+                and isinstance(raw_name, str)
+                and raw_name
+            ):
                 input_data["server_name"] = server_name
                 input_data["tool_name"] = raw_name
                 return "mcp__gobby__call_tool", input_data
@@ -962,9 +976,13 @@ class CodexWebChatBackend:
         if session.chat_mode == "plan":
             if tool_name in {"Write", "Edit", "NotebookEdit"}:
                 file_path = input_data.get("file_path", "")
-                if not isinstance(file_path, str) or not file_path or not re.match(
-                    r"^(?:.*[/\\])?\.(?:claude|gobby|gemini|qwen|codex)[/\\].*\.md$",
-                    file_path,
+                if (
+                    not isinstance(file_path, str)
+                    or not file_path
+                    or not re.match(
+                        r"^(?:.*[/\\])?\.(?:claude|gobby|gemini|qwen|codex)[/\\].*\.md$",
+                        file_path,
+                    )
                 ):
                     return self._decline_response(method)
             elif tool_name == "Bash" and _BASH_WRITE_PATTERNS.search(

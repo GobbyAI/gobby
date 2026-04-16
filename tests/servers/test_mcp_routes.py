@@ -2152,6 +2152,61 @@ class TestHooksEndpoints:
 
         assert response.status_code == 200
 
+    @pytest.mark.parametrize(
+        ("source", "hook_type", "adapter_patch"),
+        [
+            ("claude", "pre-tool-use", "gobby.adapters.claude_code.ClaudeCodeAdapter"),
+            ("gemini", "BeforeTool", "gobby.adapters.gemini.GeminiAdapter"),
+            ("qwen", "BeforeTool", "gobby.adapters.qwen.QwenAdapter"),
+        ],
+    )
+    def test_execute_hook_normalizes_provider_pre_tool_use_for_hold_open(
+        self,
+        session_storage: LocalSessionManager,
+        source: str,
+        hook_type: str,
+        adapter_patch: str,
+    ) -> None:
+        """Web-chat approval hold-open must normalize raw provider hook names."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch(adapter_patch) as MockAdapter,
+            patch(
+                "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+                new_callable=AsyncMock,
+            ) as mock_hold_open,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+            mock_hold_open.return_value = {"decision": "approve"}
+
+            response = client.post(
+                "/api/hooks/execute",
+                headers={"X-Gobby-Session-Id": "sess-web-1"},
+                json={
+                    "hook_type": hook_type,
+                    "source": source,
+                    "input_data": {"tool_name": "Bash", "arguments": {"command": "pwd"}},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"decision": "approve"}
+        mock_hold_open.assert_awaited_once()
+        args = mock_hold_open.await_args.args
+        assert args[1] == "sess-web-1"
+        assert args[2] == "PreToolUse"
+        assert args[4] == source
+
     def test_execute_hook_codex_source(self, session_storage: LocalSessionManager) -> None:
         """Test execute hook with Codex source uses CodexHooksAdapter."""
         server = create_http_server(
