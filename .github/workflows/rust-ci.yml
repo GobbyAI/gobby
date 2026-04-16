@@ -34,6 +34,20 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      # gobby-core: full clippy + tests
+      - name: Clippy (gobby-core)
+        run: cargo clippy -p gobby-core --all-targets -- -D warnings
+
+      - name: Test (gobby-core)
+        run: cargo test -p gobby-core
+
+      # ghook: full clippy + tests
+      - name: Clippy (ghook)
+        run: cargo clippy -p gobby-hook --all-targets -- -D warnings
+
+      - name: Test (ghook)
+        run: cargo test -p gobby-hook
+
       # gsqz: full clippy + tests
       - name: Clippy (gsqz)
         run: cargo clippy -p gobby-squeeze -- -D warnings

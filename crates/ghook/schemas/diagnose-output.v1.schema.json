@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://gobby.ai/schemas/ghook/diagnose-output.v1.schema.json",
+  "title": "Gobby ghook --diagnose output",
+  "description": "Output of `ghook --diagnose --cli=<c> --type=<t>`. Schema version 1.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ghook_version",
+    "cli",
+    "hook_type",
+    "critical",
+    "terminal_context_enabled",
+    "daemon_url",
+    "daemon_host",
+    "daemon_port",
+    "cli_recognized"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "ghook_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cli": {
+      "type": "string",
+      "minLength": 1
+    },
+    "hook_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": ["string", "null"]
+    },
+    "critical": {
+      "type": "boolean"
+    },
+    "terminal_context_enabled": {
+      "type": "boolean"
+    },
+    "daemon_url": {
+      "type": "string",
+      "minLength": 1
+    },
+    "daemon_host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "daemon_port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "project_root": {
+      "type": ["string", "null"]
+    },
+    "project_id": {
+      "type": ["string", "null"]
+    },
+    "terminal_context_preview": {
+      "type": ["object", "null"]
+    },
+    "cli_recognized": {
+      "type": "boolean"
+    }
+  }
+}
