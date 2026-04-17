@@ -18,8 +18,9 @@ ghook --version
 
 Exit codes:
 
-- `0` — delivered OR non-critical failure (envelope enqueued for replay)
-- `2` — critical failure (envelope enqueued; signals the host CLI)
+- `0` — success, including non-Stop deny/block responses that are returned as JSON
+- `1` — non-critical hook failure, returned as JSON error output
+- `2` — critical hook failure or blocked critical hook, returned as stderr
 
 ## Schemas
 

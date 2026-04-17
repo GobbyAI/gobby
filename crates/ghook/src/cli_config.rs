@@ -16,6 +16,8 @@ pub struct CliConfig {
     pub critical_hooks: HashSet<&'static str>,
     /// Hooks that should carry enriched terminal context in `input_data`.
     pub terminal_context_hooks: HashSet<&'static str>,
+    /// Exit code to use for malformed JSON input, matching the Python dispatcher.
+    pub json_error_exit_code: u8,
 }
 
 impl CliConfig {
@@ -27,16 +29,19 @@ impl CliConfig {
                     .into_iter()
                     .collect(),
                 terminal_context_hooks: ["session-start"].into_iter().collect(),
+                json_error_exit_code: 2,
             }),
             "gemini" => Some(Self {
                 source: "gemini",
                 critical_hooks: ["SessionStart"].into_iter().collect(),
                 terminal_context_hooks: ["SessionStart"].into_iter().collect(),
+                json_error_exit_code: 1,
             }),
             "qwen" => Some(Self {
                 source: "qwen",
                 critical_hooks: ["SessionStart"].into_iter().collect(),
                 terminal_context_hooks: ["SessionStart"].into_iter().collect(),
+                json_error_exit_code: 1,
             }),
             "codex" => Some(Self {
                 source: "codex",
@@ -50,13 +55,22 @@ impl CliConfig {
                 ]
                 .into_iter()
                 .collect(),
+                json_error_exit_code: 2,
             }),
             _ => None,
         }
     }
 
+    pub fn for_dispatch(cli: &str) -> Self {
+        Self::for_cli(cli).unwrap_or_else(|| Self::for_cli("claude").expect("claude config"))
+    }
+
     pub fn wants_terminal_context(&self, hook_type: &str) -> bool {
         self.terminal_context_hooks.contains(hook_type)
+    }
+
+    pub fn is_critical_hook(&self, hook_type: &str) -> bool {
+        self.critical_hooks.contains(hook_type)
     }
 }
 
@@ -86,6 +100,15 @@ mod tests {
         let c = CliConfig::for_cli("gemini").unwrap();
         assert!(c.wants_terminal_context("SessionStart"));
         assert!(!c.wants_terminal_context("PreToolUse"));
+        assert_eq!(c.json_error_exit_code, 1);
+    }
+
+    #[test]
+    fn codex_stop_is_critical() {
+        let c = CliConfig::for_cli("codex").unwrap();
+        assert!(c.is_critical_hook("Stop"));
+        assert!(!c.is_critical_hook("PreToolUse"));
+        assert_eq!(c.json_error_exit_code, 2);
     }
 
     #[test]
@@ -97,5 +120,13 @@ mod tests {
     fn cli_name_is_case_insensitive() {
         assert!(CliConfig::for_cli("CLAUDE").is_some());
         assert!(CliConfig::for_cli("Codex").is_some());
+    }
+
+    #[test]
+    fn unknown_cli_falls_back_to_claude_for_dispatch() {
+        let c = CliConfig::for_dispatch("cursor");
+        assert_eq!(c.source, "claude");
+        assert!(c.is_critical_hook("session-start"));
+        assert_eq!(c.json_error_exit_code, 2);
     }
 }

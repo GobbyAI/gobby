@@ -15,6 +15,7 @@
 
 use crate::envelope::Envelope;
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -26,12 +27,31 @@ const HOOKS_ENDPOINT: &str = "/api/hooks/execute";
 /// Result of `enqueue_and_post` — the main CLI needs to know whether the
 /// daemon ACKed (delete the inbox file and return early) or not (keep the
 /// file; the drain will handle it).
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryOutcome {
     /// Daemon returned 2xx — inbox file already deleted.
     Delivered,
     /// Daemon did not 2xx — inbox file persists for drain replay.
     Enqueued,
+}
+
+/// Classification of a failed live daemon POST.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryFailureKind {
+    Http,
+    Connect,
+    Timeout,
+    Other,
+}
+
+/// Delivery details from the live daemon POST attempt.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DeliveryReport {
+    pub outcome: DeliveryOutcome,
+    pub failure_kind: Option<DeliveryFailureKind>,
+    pub status_code: Option<u16>,
+    pub response_body: Option<String>,
+    pub transport_error: Option<String>,
 }
 
 /// Compute the inbox directory (`~/.gobby/hooks/inbox/`).
@@ -101,9 +121,9 @@ pub fn enqueue_to(envelope: &Envelope, inbox: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// POST the envelope to the daemon. On 2xx, delete the inbox file and
-/// return `Delivered`. On any other outcome, leave the file and return
-/// `Enqueued`.
+/// POST a Python-compatible live hook payload derived from the envelope to the
+/// daemon. On 2xx, delete the inbox file and return `Delivered`. On any other
+/// outcome, leave the file and return `Enqueued`.
 ///
 /// `daemon_url` is the base URL (e.g. `http://127.0.0.1:60887`). The
 /// endpoint path is appended here.
@@ -111,7 +131,7 @@ pub fn post_and_cleanup(
     envelope: &Envelope,
     enqueued_path: &Path,
     daemon_url: &str,
-) -> DeliveryOutcome {
+) -> DeliveryReport {
     let endpoint = format!("{daemon_url}{HOOKS_ENDPOINT}");
     let mut req = ureq::post(&endpoint)
         .timeout(POST_TIMEOUT)
@@ -120,18 +140,91 @@ pub fn post_and_cleanup(
         req = req.set(k, v);
     }
 
-    let body = match serde_json::to_string(envelope) {
+    let body = match serde_json::to_string(&LiveRequest::from(envelope)) {
         Ok(s) => s,
-        Err(_) => return DeliveryOutcome::Enqueued,
+        Err(e) => {
+            return DeliveryReport {
+                outcome: DeliveryOutcome::Enqueued,
+                failure_kind: Some(DeliveryFailureKind::Other),
+                status_code: None,
+                response_body: None,
+                transport_error: Some(e.to_string()),
+            };
+        }
     };
 
     match req.send_string(&body) {
         Ok(resp) if (200..300).contains(&resp.status()) => {
+            let status_code = Some(resp.status());
+            let response_body = resp.into_string().ok();
             let _ = fs::remove_file(enqueued_path);
-            DeliveryOutcome::Delivered
+            DeliveryReport {
+                outcome: DeliveryOutcome::Delivered,
+                failure_kind: None,
+                status_code,
+                response_body,
+                transport_error: None,
+            }
         }
-        _ => DeliveryOutcome::Enqueued,
+        Ok(resp) => DeliveryReport {
+            outcome: DeliveryOutcome::Enqueued,
+            failure_kind: Some(DeliveryFailureKind::Http),
+            status_code: Some(resp.status()),
+            response_body: resp.into_string().ok(),
+            transport_error: None,
+        },
+        Err(ureq::Error::Status(code, resp)) => DeliveryReport {
+            outcome: DeliveryOutcome::Enqueued,
+            failure_kind: Some(DeliveryFailureKind::Http),
+            status_code: Some(code),
+            response_body: resp.into_string().ok(),
+            transport_error: None,
+        },
+        Err(ureq::Error::Transport(err)) => {
+            let transport_error = err.to_string();
+            DeliveryReport {
+                outcome: DeliveryOutcome::Enqueued,
+                failure_kind: Some(classify_transport_error(&err, &transport_error)),
+                status_code: None,
+                response_body: None,
+                transport_error: Some(transport_error),
+            }
+        }
     }
+}
+
+#[derive(Serialize)]
+struct LiveRequest<'a> {
+    hook_type: &'a str,
+    input_data: &'a serde_json::Value,
+    source: &'a str,
+}
+
+impl<'a> From<&'a Envelope> for LiveRequest<'a> {
+    fn from(envelope: &'a Envelope) -> Self {
+        Self {
+            hook_type: &envelope.hook_type,
+            input_data: &envelope.input_data,
+            source: &envelope.source,
+        }
+    }
+}
+
+fn classify_transport_error(err: &ureq::Transport, error_text: &str) -> DeliveryFailureKind {
+    use ureq::ErrorKind;
+
+    if matches!(
+        err.kind(),
+        ErrorKind::ConnectionFailed | ErrorKind::Dns | ErrorKind::ProxyConnect
+    ) {
+        return DeliveryFailureKind::Connect;
+    }
+
+    if error_text.to_ascii_lowercase().contains("timed out") {
+        return DeliveryFailureKind::Timeout;
+    }
+
+    DeliveryFailureKind::Other
 }
 
 /// Quarantine malformed stdin under the default `~/.gobby/hooks/inbox/quarantine/`.
@@ -190,6 +283,9 @@ pub fn quarantine_malformed_at(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
     use tempfile::tempdir;
 
     #[test]
@@ -255,5 +351,91 @@ mod tests {
         assert_eq!(meta_val["reason"], "malformed_stdin");
         assert_eq!(meta_val["json_error"], "expected value");
         assert!(meta_val["stdin_bytes_b64"].is_string());
+    }
+
+    #[test]
+    fn post_and_cleanup_captures_success_response_body() {
+        let dir = tempdir().unwrap();
+        let inbox = dir.path().join("inbox");
+        let mut headers = BTreeMap::new();
+        headers.insert("X-Gobby-Session-Id".to_string(), "s".to_string());
+        let envelope = Envelope::new(
+            false,
+            "SessionStart".into(),
+            serde_json::json!({"session_id":"s"}),
+            "codex".into(),
+            headers,
+        );
+        let path = enqueue_to(&envelope, &inbox).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 4096];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
+            assert!(request.contains("X-Gobby-Session-Id: s"));
+            assert!(request.contains("\"hook_type\":\"SessionStart\""));
+            assert!(request.contains("\"input_data\":{\"session_id\":\"s\"}"));
+            assert!(request.contains("\"source\":\"codex\""));
+            assert!(!request.contains("\"schema_version\""));
+            assert!(!request.contains("\"enqueued_at\""));
+            assert!(!request.contains("\"critical\""));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\n\r\n{\"decision\":\"accept\",\"reason\":\"ok\"}",
+                )
+                .unwrap();
+        });
+
+        let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+        handle.join().unwrap();
+
+        assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+        assert_eq!(report.failure_kind, None);
+        assert_eq!(report.status_code, Some(200));
+        assert_eq!(
+            report.response_body,
+            Some("{\"decision\":\"accept\",\"reason\":\"ok\"}".to_string())
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn post_and_cleanup_captures_http_error_body() {
+        let dir = tempdir().unwrap();
+        let inbox = dir.path().join("inbox");
+        let envelope = Envelope::new(
+            true,
+            "Stop".into(),
+            serde_json::json!({"session_id":"s"}),
+            "codex".into(),
+            BTreeMap::new(),
+        );
+        let path = enqueue_to(&envelope, &inbox).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 4096];
+            let _ = stream.read(&mut buf);
+            stream
+                .write_all(
+                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 4\r\n\r\nnope",
+                )
+                .unwrap();
+        });
+
+        let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+        handle.join().unwrap();
+
+        assert_eq!(report.outcome, DeliveryOutcome::Enqueued);
+        assert_eq!(report.failure_kind, Some(DeliveryFailureKind::Http));
+        assert_eq!(report.status_code, Some(500));
+        assert_eq!(report.response_body, Some("nope".to_string()));
+        assert!(path.exists());
     }
 }
