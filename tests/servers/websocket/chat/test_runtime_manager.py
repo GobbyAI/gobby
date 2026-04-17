@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.adapters.gemini_acp_client import StreamEvent
+from gobby.agents.sandbox import SandboxConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.provider_backends import (
@@ -61,6 +62,14 @@ class TestWebChatRuntimeManager:
 
 
 class TestGeminiBackend:
+    def test_backend_builds_sandboxed_acp_client(self) -> None:
+        with patch("gobby.servers.websocket.chat.provider_backends.GeminiACPClient") as mock_client:
+            GeminiWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
+
+        kwargs = mock_client.call_args.kwargs
+        assert kwargs["extra_args"] == ["-s"]
+        assert kwargs["env_overrides"]["SEATBELT_PROFILE"] == "permissive-proxied"
+
     @pytest.mark.asyncio
     async def test_start_marks_backend_unavailable_on_error(self) -> None:
         client = MagicMock()
@@ -113,10 +122,42 @@ class TestCodexBackend:
         session.project_path = "/tmp/project"
         await session.start(model="gpt-5.4")
 
-        client.start_thread.assert_awaited_once_with(cwd="/tmp/project", model="gpt-5.4")
+        client.start_thread.assert_awaited_once_with(
+            cwd="/tmp/project",
+            model="gpt-5.4",
+            approval_policy="unlessTrusted",
+            sandbox=None,
+        )
         assert session.sdk_session_id == "thread-1"
         assert session._thread_id == "thread-1"
         assert session._transcript_path == "/tmp/codex.jsonl"
+
+    @pytest.mark.asyncio
+    async def test_attach_session_passes_codex_sandbox_policy(self) -> None:
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.start_thread = AsyncMock(
+            return_value=SimpleNamespace(id="thread-1", path="/tmp/codex.jsonl")
+        )
+
+        backend = CodexWebChatBackend(
+            client=client,
+            sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
+        )
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        await session.start(model="gpt-5.4")
+
+        client.start_thread.assert_awaited_once_with(
+            cwd="/tmp/project",
+            model="gpt-5.4",
+            approval_policy="unlessTrusted",
+            sandbox="readOnly",
+        )
 
     @pytest.mark.asyncio
     async def test_managed_session_delegates_send_message(self) -> None:

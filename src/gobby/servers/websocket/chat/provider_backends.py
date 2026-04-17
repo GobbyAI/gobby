@@ -10,12 +10,20 @@ import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
 from gobby.adapters.qwen import QwenAdapter
+from gobby.agents.sandbox import (
+    CodexSandboxResolver,
+    GeminiSandboxResolver,
+    QwenSandboxResolver,
+    SandboxConfig,
+    compute_sandbox_paths,
+)
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -531,9 +539,11 @@ class ClaudeWebChatBackend:
 
     provider = "claude"
 
-    @staticmethod
-    def create_session(conversation_id: str) -> ChatSession:
-        return ChatSession(conversation_id=conversation_id)
+    def __init__(self, *, sandbox_config: SandboxConfig | None = None) -> None:
+        self._sandbox_config = sandbox_config
+
+    def create_session(self, conversation_id: str) -> ChatSession:
+        return ChatSession(conversation_id=conversation_id, sandbox_config=self._sandbox_config)
 
     @staticmethod
     def health() -> ProviderBackendHealth:
@@ -556,10 +566,23 @@ class GeminiWebChatBackend:
         default_model: str | None = None,
         provider: str = "gemini",
         display_name: str = "Gemini",
+        sandbox_config: SandboxConfig | None = None,
     ) -> None:
         self.provider = provider
         self._display_name = display_name
-        self._client = client or GeminiACPClient(cli_name=provider, display_name=display_name)
+        self._sandbox_config = sandbox_config
+        sandbox_args: list[str] = []
+        sandbox_env: dict[str, str] = {}
+        if sandbox_config and sandbox_config.enabled:
+            resolver = GeminiSandboxResolver()
+            paths = compute_sandbox_paths(sandbox_config, workspace_path=str(Path.home()))
+            sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+        self._client = client or GeminiACPClient(
+            cli_name=provider,
+            display_name=display_name,
+            extra_args=sandbox_args,
+            env_overrides=sandbox_env,
+        )
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._default_model = default_model
         self._startup_task: asyncio.Task[None] | None = None
@@ -703,17 +726,27 @@ class QwenWebChatBackend(GeminiWebChatBackend):
         *,
         client: GeminiACPClient | None = None,
         default_model: str | None = None,
+        sandbox_config: SandboxConfig | None = None,
     ) -> None:
+        sandbox_args: list[str] = []
+        sandbox_env: dict[str, str] = {}
+        if sandbox_config and sandbox_config.enabled:
+            resolver = QwenSandboxResolver()
+            paths = compute_sandbox_paths(sandbox_config, workspace_path=str(Path.home()))
+            sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
         super().__init__(
             client=client
             or GeminiACPClient(
                 cli_name="qwen",
                 display_name="Qwen",
                 prompt_timeout_env="GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS",
+                extra_args=sandbox_args,
+                env_overrides=sandbox_env,
             ),
             default_model=default_model,
             provider="qwen",
             display_name="Qwen",
+            sandbox_config=sandbox_config,
         )
 
 
@@ -728,8 +761,10 @@ class CodexWebChatBackend:
         client: CodexAppServerClient | None = None,
         transcript_retry_attempts: int = _CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
         transcript_retry_delay_seconds: float = _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
+        sandbox_config: SandboxConfig | None = None,
     ) -> None:
         self._client = client
+        self._sandbox_config = sandbox_config
         self._health = ProviderBackendHealth(
             provider=self.provider,
             available=False,
@@ -828,6 +863,7 @@ class CodexWebChatBackend:
                 cwd=session.project_path or ".",
                 model=session._model,
                 approval_policy=_CODEX_WEB_CHAT_APPROVAL_POLICY,
+                sandbox=CodexSandboxResolver.thread_sandbox_policy(self._sandbox_config),
             )
 
         session._thread_id = thread.id

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.agents.sandbox import SandboxConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.provider_backends import (
@@ -30,14 +31,19 @@ class WebChatRuntimeManager:
         codex_transcript_retry_attempts: int = 5,
         codex_transcript_retry_delay_seconds: float = 0.1,
     ) -> None:
-        self._claude_backend = ClaudeWebChatBackend()
+        web_chat_sandbox = SandboxConfig(enabled=True, mode="permissive", allow_network=True)
+        self._claude_backend = ClaudeWebChatBackend(sandbox_config=web_chat_sandbox)
         self._codex_backend = CodexWebChatBackend(
             client=codex_client,
             transcript_retry_attempts=codex_transcript_retry_attempts,
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
+            sandbox_config=web_chat_sandbox,
         )
-        self._gemini_backend = GeminiWebChatBackend(default_model=gemini_default_model)
-        self._qwen_backend = QwenWebChatBackend()
+        self._gemini_backend = GeminiWebChatBackend(
+            default_model=gemini_default_model,
+            sandbox_config=web_chat_sandbox,
+        )
+        self._qwen_backend = QwenWebChatBackend(sandbox_config=web_chat_sandbox)
 
     @property
     def codex_client(self) -> CodexAppServerClient | None:

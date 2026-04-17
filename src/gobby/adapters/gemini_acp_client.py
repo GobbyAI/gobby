@@ -122,12 +122,16 @@ class GeminiACPClient:
         cli_name: str = "gemini",
         display_name: str = "Gemini",
         prompt_timeout_env: str = ACP_PROMPT_TIMEOUT_ENV,
+        extra_args: list[str] | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> None:
         self._cli_path = cli_path
         self._cwd = cwd
         self._request_timeout = request_timeout
         self._cli_name = cli_name
         self._display_name = display_name
+        self._extra_args = list(extra_args or [])
+        self._env_overrides = dict(env_overrides or {})
         self._prompt_timeout = _resolve_timeout(
             prompt_timeout,
             env_name=prompt_timeout_env,
@@ -182,10 +186,14 @@ class GeminiACPClient:
         cmd = [path, "--acp"]
         if model:
             cmd.extend(["--model", model])
+        if self._extra_args:
+            cmd.extend(self._extra_args)
 
         env = os.environ.copy()
         # Prevent inherited CLI hooks from registering nested daemon sessions.
         env["GOBBY_HOOKS_DISABLED"] = "1"
+        if self._env_overrides:
+            env.update(self._env_overrides)
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,

@@ -7,7 +7,7 @@ create_http_server() with real managers backed by temp_db.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
@@ -206,6 +206,46 @@ class TestSpawnAgent:
         updated = task_manager.get_task(task.id)
         assert updated.status == "needs_review"
         assert updated.assignee == existing_owner.id
+
+    def test_terminal_spawn_defaults_to_sandboxed_runtime(
+        self,
+        client: TestClient,
+        server,
+        task_manager: LocalTaskManager,
+        test_project,
+    ) -> None:
+        """Web launcher terminal spawns should pass the default sandbox contract."""
+        task = _create_task(task_manager, test_project.id, "Sandboxed terminal task")
+        server.services.agent_runner = MagicMock()
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": test_project.id},
+            ),
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+                new=AsyncMock(
+                    return_value={
+                        "success": True,
+                        "run_id": "run-123",
+                        "child_session_id": "child-456",
+                        "isolation": "none",
+                    }
+                ),
+            ) as mock_spawn,
+        ):
+            response = client.post("/api/agents/spawn", json={"task_id": task.id})
+
+        assert response.status_code == 200
+        kwargs = mock_spawn.await_args.kwargs
+        assert kwargs["sandbox"] is True
+        assert kwargs["sandbox_mode"] == "permissive"
+        assert kwargs["sandbox_allow_network"] is True
 
 
 # ---------------------------------------------------------------------------

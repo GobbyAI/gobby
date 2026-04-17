@@ -131,6 +131,13 @@ class TestBuildCodexResume:
         cmd = build_codex_command_with_resume("ext-123", working_directory="/tmp")
         assert cmd == ["codex", "resume", "ext-123", "-C", "/tmp"]
 
+    def test_resume_with_sandbox_args(self):
+        cmd = build_codex_command_with_resume(
+            "ext-123",
+            sandbox_args=["--sandbox", "workspace-write"],
+        )
+        assert cmd == ["codex", "resume", "ext-123", "--sandbox", "workspace-write"]
+
     def test_resume_with_gobby_session(self):
         cmd = build_codex_command_with_resume(
             "ext-123", gobby_session_id="gob-789", prompt="fix it"

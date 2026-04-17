@@ -39,6 +39,7 @@ from claude_agent_sdk.types import (
     UserPromptSubmitHookSpecificOutput,
 )
 
+from gobby.agents.sandbox import SandboxConfig, materialize_claude_settings
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -77,6 +78,7 @@ from gobby.servers.chat_session_permissions import ChatSessionPermissionsMixin
 logger = logging.getLogger(__name__)
 ClaudeReasoningEffort = Literal["low", "medium", "high", "max"]
 _CLAUDE_REASONING_EFFORTS = frozenset({"low", "medium", "high", "max"})
+_HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
 
 
 @dataclass
@@ -138,6 +140,7 @@ class ChatSession(ChatSessionPermissionsMixin):
     _transcript_path_captured: bool = field(default=False, repr=False)
     _active_reasoning_effort: str | None = field(default=None, repr=False)
     _preapproved_tool_use_ids: set[str] = field(default_factory=set, repr=False)
+    sandbox_config: SandboxConfig | None = field(default=None, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
@@ -284,6 +287,12 @@ class ChatSession(ChatSessionPermissionsMixin):
                 )
 
         resolved_effort = self._resolve_reasoning_effort()
+        settings_path = materialize_claude_settings(
+            base_settings_path=_HEADLESS_SETTINGS,
+            config=self.sandbox_config or SandboxConfig(enabled=False),
+            workspace_path=cwd,
+            name="web-chat",
+        )
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=None,
@@ -302,6 +311,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             # creating ghost claude_sdk sessions on every hook call.
             # Note: [""] not [] — empty list is falsy, SDK skips the flag.
             # [""] produces --setting-sources "" which CLI parses as no sources.
+            settings=settings_path,
             setting_sources=cast(list[SettingSource], [""]),
             env=env or {},
             # Enable partial messages so we receive StreamEvent objects with
@@ -407,7 +417,8 @@ class ChatSession(ChatSessionPermissionsMixin):
                 tool_use_id: str | None,
                 ctx: HookContext,
             ) -> SyncHookJSONOutput:
-                tool_name = inp.get("tool_name", "")
+                raw_tool_name = inp.get("tool_name", "")
+                tool_name = raw_tool_name if isinstance(raw_tool_name, str) else ""
                 tool_input = inp.get("tool_input", {})
                 if not isinstance(tool_input, dict):
                     tool_input = {}

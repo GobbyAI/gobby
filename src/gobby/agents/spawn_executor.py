@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.sandbox import (
+    CodexSandboxResolver,
     GeminiSandboxResolver,
     SandboxConfig,
     compute_sandbox_paths,
@@ -490,6 +491,15 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     codex_session_id = spawn_context.env_vars["GOBBY_CODEX_EXTERNAL_ID"]
 
     # Build command with session context injected into prompt
+    sandbox_args: list[str] = []
+    if request.sandbox_config and request.sandbox_config.enabled:
+        resolver = CodexSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=request.sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, _ = resolver.resolve(request.sandbox_config, paths)
+
     cmd = build_codex_command_with_resume(
         codex_external_id=codex_session_id,
         prompt=request.prompt,
@@ -497,6 +507,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         gobby_session_id=gobby_session_id,
         working_directory=request.cwd,
         model=request.model,
+        sandbox_args=sandbox_args,
     )
 
     # Spawn in terminal

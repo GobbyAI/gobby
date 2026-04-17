@@ -205,6 +205,7 @@ def build_codex_command_with_resume(
     gobby_session_id: str | None = None,
     working_directory: str | None = None,
     model: str | None = None,
+    sandbox_args: list[str] | None = None,
 ) -> list[str]:
     """
     Build Codex CLI command with session resume.
@@ -219,6 +220,7 @@ def build_codex_command_with_resume(
         gobby_session_id: Gobby session ID to inject into context
         working_directory: Optional working directory override
         model: Optional model name to pass to the CLI (--model flag)
+        sandbox_args: Optional sandbox flags to insert before the prompt
 
     Returns:
         Command list for subprocess execution
@@ -232,6 +234,8 @@ def build_codex_command_with_resume(
 
     if working_directory:
         command.extend(["-C", working_directory])
+    if sandbox_args:
+        command.extend(sandbox_args)
 
     # Build prompt with session context
     if gobby_session_id:
