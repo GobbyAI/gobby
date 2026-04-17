@@ -199,6 +199,8 @@ class WebSocketServer(
             async for message in websocket:
                 try:
                     await self._handle_message(websocket, message)
+                except ConnectionClosed:
+                    raise
                 except json.JSONDecodeError:
                     await self._send_error(websocket, "Invalid JSON format")
                 except Exception:
