@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from shutil import copy2
@@ -42,6 +43,103 @@ def _urlopen_https(req: Request, *, timeout: int) -> Any:
     if parsed.scheme != "https":
         raise ValueError(f"Only HTTPS URLs are allowed, got: {parsed.scheme}://...")
     return urlopen(req, timeout=timeout)  # nosec B310 # scheme validated above
+
+
+def _release_archive_extension(target: str) -> str:
+    """Return the packaged release archive extension for a target triple."""
+    return "zip" if "windows" in target else "tar.gz"
+
+
+def _build_release_download_url(
+    artifact_name: str,
+    target: str,
+    *,
+    version: str | None,
+    tag_prefix: str,
+) -> str:
+    """Build the GitHub Releases download URL for a binary artifact."""
+    archive_ext = _release_archive_extension(target)
+    artifact_filename = f"{artifact_name}-{target}.{archive_ext}"
+    if version:
+        return (
+            "https://github.com/GobbyAI/gobby-cli/releases/download/"
+            f"{tag_prefix}{version}/{artifact_filename}"
+        )
+    return f"https://github.com/GobbyAI/gobby-cli/releases/latest/download/{artifact_filename}"
+
+
+def _extract_binary_from_release_archive(
+    archive_bytes: bytes,
+    *,
+    archive_ext: str,
+    binary_name: str,
+    bin_dir: Path,
+    label: str,
+) -> bool:
+    """Extract one binary from a release archive into ``bin_dir``."""
+    dest = bin_dir / binary_name
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if archive_ext == "zip":
+            with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
+                for member_name in archive.namelist():
+                    if member_name.endswith(f"/{binary_name}") or member_name == binary_name:
+                        with archive.open(member_name) as fileobj:
+                            dest.write_bytes(fileobj.read())
+                        dest.chmod(0o755)
+                        return True
+        else:
+            with tarfile.open(fileobj=BytesIO(archive_bytes), mode="r:gz") as archive:
+                for member in archive.getmembers():
+                    if member.name.endswith(f"/{binary_name}") or member.name == binary_name:
+                        fileobj = archive.extractfile(member)
+                        if fileobj is None:
+                            continue
+                        dest.write_bytes(fileobj.read())
+                        dest.chmod(0o755)
+                        return True
+    except (OSError, tarfile.TarError, zipfile.BadZipFile) as e:
+        logger.warning("%s: failed extracting release archive: %s", label, e)
+        return False
+
+    logger.warning("%s binary not found in release archive", label)
+    return False
+
+
+def _download_release_binary(
+    bin_dir: Path,
+    *,
+    binary_name: str,
+    artifact_name: str,
+    target: str,
+    version: str | None,
+    tag_prefix: str,
+    label: str,
+) -> bool:
+    """Download and extract a native binary from GitHub Releases."""
+    archive_ext = _release_archive_extension(target)
+    url = _build_release_download_url(
+        artifact_name,
+        target,
+        version=version,
+        tag_prefix=tag_prefix,
+    )
+    try:
+        logger.info("Downloading %s from %s", label, url)
+        req = Request(url, headers={"User-Agent": "gobby-installer/1.0"})
+        with _urlopen_https(req, timeout=30) as resp:
+            archive_bytes = resp.read()
+        return _extract_binary_from_release_archive(
+            archive_bytes,
+            archive_ext=archive_ext,
+            binary_name=binary_name,
+            bin_dir=bin_dir,
+            label=label,
+        )
+    except (URLError, OSError) as e:
+        logger.warning("%s: GitHub download failed: %s", label, e)
+        return False
 
 
 def ensure_daemon_config() -> dict[str, Any]:
@@ -218,6 +316,25 @@ def run_daemon_setup(project_path: Path) -> None:
     except Exception as e:
         click.echo(f"Warning: Failed to install gcode: {e}")
 
+    # Install ghook binary (hook manager for sandbox-tolerant CLI hooks)
+    try:
+        ghook_result = _install_ghook()
+        if ghook_result.get("installed"):
+            verb = "Upgraded" if ghook_result.get("upgraded") else "Installed"
+            click.echo(
+                f"{verb} ghook {ghook_result.get('version', '')} "
+                f"via {ghook_result.get('method', 'unknown')} (hook manager)"
+            )
+        elif ghook_result.get("skipped"):
+            reason = ghook_result.get("reason", "")
+            suffix = f" ({reason})" if reason else ""
+            click.echo(f"ghook already installed and up to date{suffix}")
+        else:
+            reason = ghook_result.get("reason", "unknown error")
+            click.echo(f"Warning: Failed to install ghook: {reason}")
+    except Exception as e:
+        click.echo(f"Warning: Failed to install ghook: {e}")
+
     # Configure VS Code terminal title (any CLI may run inside VS Code's terminal)
     try:
         from .installers.ide_config import configure_ide_terminal_title
@@ -229,13 +346,7 @@ def run_daemon_setup(project_path: Path) -> None:
         click.echo(f"Warning: Failed to configure VS Code terminal title: {e}")
 
 
-# GitHub release URL patterns for gsqz binaries
-_GSQZ_RELEASE_URL = (
-    "https://github.com/GobbyAI/gobby-cli/releases/latest/download/gsqz-{target}.tar.gz"
-)
-_GSQZ_VERSIONED_RELEASE_URL = (
-    "https://github.com/GobbyAI/gobby-cli/releases/download/v{version}/gsqz-{target}.tar.gz"
-)
+_GSQZ_RELEASE_TAG_PREFIX = "gsqz-v"
 _GSQZ_CRATES_API = "https://crates.io/api/v1/crates/gobby-squeeze"
 _GSQZ_VERSION_STAMP = ".gsqz-version"
 _GSQZ_BIN_NAME = "gsqz.exe" if sys.platform == "win32" else "gsqz"
@@ -311,32 +422,15 @@ def _install_gsqz_from_github(bin_dir: Path, target: str, version: str | None = 
     Returns:
         ``True`` on success, ``False`` on any failure.
     """
-    try:
-        if version:
-            url = _GSQZ_VERSIONED_RELEASE_URL.format(version=version, target=target)
-        else:
-            url = _GSQZ_RELEASE_URL.format(target=target)
-        logger.info("Downloading gsqz from %s", url)
-        req = Request(url, headers={"User-Agent": "gobby-installer/1.0"})
-        with _urlopen_https(req, timeout=30) as resp:
-            tarball = BytesIO(resp.read())
-
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(fileobj=tarball, mode="r:gz") as tar:
-            for member in tar.getmembers():
-                if member.name.endswith(f"/{_GSQZ_BIN_NAME}") or member.name == _GSQZ_BIN_NAME:
-                    fileobj = tar.extractfile(member)
-                    if fileobj is None:
-                        continue
-                    dest = bin_dir / _GSQZ_BIN_NAME
-                    dest.write_bytes(fileobj.read())
-                    dest.chmod(0o755)
-                    return True
-            logger.warning("gsqz binary not found in release tarball")
-            return False
-    except (URLError, OSError, tarfile.TarError) as e:
-        logger.warning("gsqz: GitHub download failed: %s", e)
-        return False
+    return _download_release_binary(
+        bin_dir,
+        binary_name=_GSQZ_BIN_NAME,
+        artifact_name="gsqz",
+        target=target,
+        version=version,
+        tag_prefix=_GSQZ_RELEASE_TAG_PREFIX,
+        label="gsqz",
+    )
 
 
 def _install_gsqz_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
@@ -534,12 +628,7 @@ def _install_gsqz(force: bool = False) -> dict[str, Any]:
 
 # ── gcode (code index CLI) ──────────────────────────────────────────
 
-_GCODE_RELEASE_URL = (
-    "https://github.com/GobbyAI/gobby-cli/releases/latest/download/gcode-{target}.tar.gz"
-)
-_GCODE_VERSIONED_RELEASE_URL = (
-    "https://github.com/GobbyAI/gobby-cli/releases/download/v{version}/gcode-{target}.tar.gz"
-)
+_GCODE_RELEASE_TAG_PREFIX = "gcode-v"
 _GCODE_VERSION_STAMP = ".gcode-version"
 _GCODE_BIN_NAME = "gcode.exe" if sys.platform == "win32" else "gcode"
 _GCODE_TARGETS = _PLATFORM_TARGETS  # Same platform mapping
@@ -598,32 +687,15 @@ def _install_gcode_from_github(bin_dir: Path, target: str, version: str | None =
     Returns:
         ``True`` on success, ``False`` on any failure.
     """
-    try:
-        if version:
-            url = _GCODE_VERSIONED_RELEASE_URL.format(version=version, target=target)
-        else:
-            url = _GCODE_RELEASE_URL.format(target=target)
-        logger.info("Downloading gcode from %s", url)
-        req = Request(url, headers={"User-Agent": "gobby-installer/1.0"})
-        with _urlopen_https(req, timeout=30) as resp:
-            tarball = BytesIO(resp.read())
-
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(fileobj=tarball, mode="r:gz") as tar:
-            for member in tar.getmembers():
-                if member.name.endswith(f"/{_GCODE_BIN_NAME}") or member.name == _GCODE_BIN_NAME:
-                    fileobj = tar.extractfile(member)
-                    if fileobj is None:
-                        continue
-                    dest = bin_dir / _GCODE_BIN_NAME
-                    dest.write_bytes(fileobj.read())
-                    dest.chmod(0o755)
-                    return True
-            logger.warning("gcode binary not found in release tarball")
-            return False
-    except (URLError, OSError, tarfile.TarError) as e:
-        logger.warning("gcode: GitHub download failed: %s", e)
-        return False
+    return _download_release_binary(
+        bin_dir,
+        binary_name=_GCODE_BIN_NAME,
+        artifact_name="gcode",
+        target=target,
+        version=version,
+        tag_prefix=_GCODE_RELEASE_TAG_PREFIX,
+        label="gcode",
+    )
 
 
 def _install_gcode_from_submodule(bin_dir: Path) -> bool:
@@ -873,3 +945,236 @@ def _install_gcode(force: bool = False) -> dict[str, Any]:
         "version": resolved_version,
         "method": method,
     }
+
+
+# ── ghook (hook manager) ────────────────────────────────────────────
+
+_GHOOK_RELEASE_TAG_PREFIX = "gobby-hooks-v"
+_GHOOK_CRATES_API = "https://crates.io/api/v1/crates/gobby-hooks"
+_GHOOK_VERSION_STAMP = ".ghook-version"
+_GHOOK_COMPATIBILITY_STAMP = ".ghook-compatibility"
+_GHOOK_BIN_NAME = "ghook.exe" if sys.platform == "win32" else "ghook"
+_GHOOK_TARGETS = _PLATFORM_TARGETS
+_GHOOK_INSTALL_VERSION_ENV = "GOBBY_INSTALL_GHOOK_VERSION"
+_GHOOK_INSTALL_METHOD_ENV = "GOBBY_INSTALL_GHOOK_METHOD"
+_GHOOK_ALLOWED_METHODS = {"auto", "github", "cargo-binstall", "cargo-install"}
+
+
+def _get_latest_ghook_version() -> str | None:
+    """Query crates.io for the latest ghook version."""
+    try:
+        req = Request(_GHOOK_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"})
+        with _urlopen_https(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return str(data["crate"]["max_version"])
+    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
+        logger.debug("ghook: could not check latest version: %s", e)
+        return None
+
+
+def _get_installed_ghook_version(bin_dir: Path) -> str | None:
+    """Read the installed ghook version from stamp file."""
+    stamp = bin_dir / _GHOOK_VERSION_STAMP
+    binary = bin_dir / _GHOOK_BIN_NAME
+    if stamp.exists():
+        content = stamp.read_text().strip()
+        return content if content else None
+    if binary.exists():
+        return "unknown"
+    return None
+
+
+def _write_ghook_version_stamp(bin_dir: Path, version: str) -> None:
+    """Atomically write the ghook version stamp."""
+    stamp = bin_dir / _GHOOK_VERSION_STAMP
+    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=".ghook-version-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(version + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, stamp)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
+def _install_ghook_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
+    """Download and extract ghook from GitHub Releases."""
+    return _download_release_binary(
+        bin_dir,
+        binary_name=_GHOOK_BIN_NAME,
+        artifact_name="ghook",
+        target=target,
+        version=version,
+        tag_prefix=_GHOOK_RELEASE_TAG_PREFIX,
+        label="ghook",
+    )
+
+
+def _install_ghook_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
+    """Install ghook via cargo-binstall."""
+    if not shutil.which("cargo-binstall"):
+        return False
+    try:
+        crate = f"gobby-hooks@{version}" if version else "gobby-hooks"
+        result = subprocess.run(
+            [
+                "cargo-binstall",
+                crate,
+                "--install-path",
+                str(bin_dir),
+                "--no-confirm",
+                "--no-symlinks",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("ghook: cargo-binstall failed: %s", e)
+        return False
+
+
+def _install_ghook_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
+    """Compile and install ghook from source via ``cargo install``."""
+    if not shutil.which("cargo"):
+        return False
+    try:
+        cmd = ["cargo", "install", "gobby-hooks", "--root", str(bin_dir.parent)]
+        if version:
+            cmd.extend(["--version", version])
+        click.echo("  Compiling ghook from source (this may take 30-60 seconds)...")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("ghook: cargo install failed: %s", e)
+        return False
+
+
+def _get_ghook_version_override() -> str | None:
+    """Return an optional explicit ghook version override from the environment."""
+    value = os.environ.get(_GHOOK_INSTALL_VERSION_ENV, "").strip()
+    return value or None
+
+
+def _get_ghook_method_override() -> str | None:
+    """Return an optional ghook install-method override from the environment."""
+    value = os.environ.get(_GHOOK_INSTALL_METHOD_ENV, "").strip().lower()
+    if not value or value == "auto":
+        return None
+    if value not in _GHOOK_ALLOWED_METHODS:
+        logger.warning(
+            "ghook: ignoring unsupported %s=%s",
+            _GHOOK_INSTALL_METHOD_ENV,
+            value,
+        )
+        return None
+    return value
+
+
+def _probe_ghook_version(ghook_path: Path) -> str | None:
+    """Probe the ghook binary for version and trigger compatibility stamp generation."""
+    try:
+        result = subprocess.run(
+            [str(ghook_path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning("ghook: failed running --version probe: %s", e)
+        return None
+
+    if result.returncode != 0:
+        logger.warning("ghook: --version probe failed: %s", result.stderr.strip())
+        return None
+
+    output = (result.stdout or result.stderr).strip()
+    return output.split()[-1] if output else None
+
+
+def _install_ghook(force: bool = False) -> dict[str, Any]:
+    """Install or upgrade the ghook binary with the public release fallback chain."""
+    bin_dir = Path.home() / ".gobby" / "bin"
+    ghook_path = bin_dir / _GHOOK_BIN_NAME
+
+    os_name = sys.platform
+    machine = platform.machine().lower()
+    target = _GHOOK_TARGETS.get((os_name, machine))
+    if target is None:
+        logger.warning("ghook: unsupported platform %s/%s", os_name, machine)
+        return {
+            "installed": False,
+            "skipped": True,
+            "reason": f"unsupported platform {os_name}/{machine}",
+        }
+
+    installed_version = _get_installed_ghook_version(bin_dir)
+    requested_version = _get_ghook_version_override()
+    target_version = requested_version or _get_latest_ghook_version()
+    method_override = _get_ghook_method_override()
+
+    if ghook_path.exists() and not force:
+        if target_version and installed_version == target_version:
+            return {"installed": False, "skipped": True, "version": installed_version}
+        if installed_version and installed_version != "unknown" and target_version is None:
+            return {
+                "installed": False,
+                "skipped": True,
+                "version": installed_version,
+                "reason": "version check failed, keeping current",
+            }
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    method = None
+
+    if method_override == "github":
+        if _install_ghook_from_github(bin_dir, target, target_version):
+            method = "github"
+    elif method_override == "cargo-binstall":
+        if _install_ghook_from_cargo_binstall(bin_dir, target_version):
+            method = "cargo-binstall"
+    elif method_override == "cargo-install":
+        if _install_ghook_from_cargo_install(bin_dir, target_version):
+            method = "cargo-install"
+    else:
+        if _install_ghook_from_github(bin_dir, target, target_version):
+            method = "github"
+        elif _install_ghook_from_cargo_binstall(bin_dir, target_version):
+            method = "cargo-binstall"
+        elif _install_ghook_from_cargo_install(bin_dir, target_version):
+            method = "cargo-install"
+
+    if method is None:
+        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
+
+    ghook_path.chmod(0o755)
+
+    resolved_version = _probe_ghook_version(ghook_path) or target_version or "unknown"
+    _write_ghook_version_stamp(bin_dir, resolved_version)
+
+    path_result = _ensure_gobby_bin_on_path()
+    if path_result.get("added"):
+        click.echo(
+            f"  Added ~/.gobby/bin to PATH in {path_result['rc_file']} (restart shell or source it)"
+        )
+
+    is_upgrade = installed_version is not None and installed_version != resolved_version
+    result = {
+        "installed": True,
+        "upgraded": is_upgrade,
+        "version": resolved_version,
+        "method": method,
+    }
+    compatibility_stamp = bin_dir / _GHOOK_COMPATIBILITY_STAMP
+    if compatibility_stamp.exists():
+        result["compatibility"] = str(compatibility_stamp)
+    return result

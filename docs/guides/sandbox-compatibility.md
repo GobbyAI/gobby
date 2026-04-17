@@ -9,6 +9,11 @@ landed under the sandbox epic. It is intentionally split into two layers:
 The local runner suite assumes prerelease binaries are installed on the
 machine already. It does not assume GitHub Releases or crates.io are live.
 
+Separate from that local suite, Gobby now has an opt-in public-artifact
+validation entrypoint for `ghook`. It installs a specific released version
+from GitHub Releases or crates.io and then runs the same diagnose/sandbox
+contract against that installed binary.
+
 ## Current Contract
 
 Gobby now owns sandbox policy at the daemon layer instead of exposing
@@ -77,6 +82,40 @@ uv run pytest tests/integration/sandbox/test_runner_infrastructure.py -v --run-s
 uv run pytest tests/integration/sandbox/run_codex_sandbox.py --collect-only
 uv run mypy tests/integration/sandbox
 ```
+
+## Running Public `ghook` Artifact Validation
+
+Use the public-artifact validator when you want to prove the released
+`gobby-hooks` package installs and behaves correctly through Gobby's own
+installer path.
+
+GitHub Releases:
+
+```bash
+GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
+GOBBY_INSTALL_GHOOK_METHOD=github \
+uv run pytest tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
+```
+
+crates.io via `cargo-binstall`:
+
+```bash
+GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
+GOBBY_INSTALL_GHOOK_METHOD=cargo-binstall \
+uv run pytest tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
+```
+
+crates.io via `cargo install`:
+
+```bash
+GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
+GOBBY_INSTALL_GHOOK_METHOD=cargo-install \
+uv run pytest tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
+```
+
+The validator installs into an isolated temporary `HOME`, checks the
+resulting `~/.gobby/bin/ghook` and stamp files, and then runs the live
+`ghook --diagnose` matrix for Claude, Codex, Gemini, and Qwen.
 
 ## Regenerating Observations
 
