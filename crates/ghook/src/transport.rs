@@ -288,6 +288,44 @@ mod tests {
     use std::thread;
     use tempfile::tempdir;
 
+    fn read_http_request(stream: &mut impl Read) -> String {
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        let mut header_end = None;
+        let mut content_length = None;
+
+        loop {
+            let n = stream.read(&mut chunk).unwrap();
+            assert!(n > 0, "client closed before request body was fully read");
+            request.extend_from_slice(&chunk[..n]);
+
+            if header_end.is_none()
+                && let Some(pos) = request.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let end = pos + 4;
+                header_end = Some(end);
+                let headers = String::from_utf8_lossy(&request[..end]);
+                content_length = Some(
+                    headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("Content-Length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0),
+                );
+            }
+
+            if let (Some(end), Some(len)) = (header_end, content_length)
+                && request.len() >= end + len
+            {
+                return String::from_utf8(request).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn ts13_is_13_digits() {
         let s = ts13();
@@ -372,9 +410,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0_u8; 4096];
-            let n = stream.read(&mut buf).unwrap();
-            let request = String::from_utf8_lossy(&buf[..n]);
+            let request = read_http_request(&mut stream);
             assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
             assert!(request.contains("X-Gobby-Session-Id: s"));
             assert!(request.contains("\"hook_type\":\"SessionStart\""));
@@ -420,8 +456,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0_u8; 4096];
-            let _ = stream.read(&mut buf);
+            let _ = read_http_request(&mut stream);
             stream
                 .write_all(
                     b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 4\r\n\r\nnope",
