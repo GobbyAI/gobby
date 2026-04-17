@@ -548,7 +548,7 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
 
       const chatMsg: ChatMessage = {
         id,
-        role: (m.role as "user" | "assistant" | "system") || "assistant",
+        role: normalizeChatRole(m.role, m.content, m.content_blocks),
         content: m.content || "",
         timestamp,
         contentBlocks: m.content_blocks,

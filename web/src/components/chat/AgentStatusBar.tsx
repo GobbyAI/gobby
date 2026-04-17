@@ -8,39 +8,87 @@ interface AgentStatusBarProps {
   onAttach?: () => void
   onResume?: () => void
   onDetach?: () => void
+  onTogglePanel?: () => void
+  isPanelPinned?: boolean
 }
 
-function formatSessionType(sessionType: SessionObservationMeta['sessionType']): string {
-  return sessionType === 'web_chat' ? 'Web Chat' : 'tmux'
+function getSessionKindBadge(sessionType: SessionObservationMeta['sessionType']): {
+  label: string
+  className: string
+} {
+  if (sessionType === 'web_chat') {
+    return { label: 'WEB', className: 'session-kind-badge--web' }
+  }
+
+  return { label: 'TMUX', className: 'session-kind-badge--tmux' }
+}
+
+function formatSessionStateText(
+  interactionMode: SessionInteractionMode,
+  isAttached: boolean,
+): string {
+  if (interactionMode === 'proxy' || isAttached) {
+    return 'Attached'
+  }
+
+  return 'Watching live'
+}
+
+function PanelIcon({ pinned }: { pinned: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+      {pinned && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
+    </svg>
+  )
 }
 
 export function AgentStatusBar({
   viewingMeta,
-  interactionMode: _interactionMode,
+  interactionMode,
   isAttached = false,
   isAutonomousSession = false,
   onAttach,
   onResume,
   onDetach,
+  onTogglePanel,
+  isPanelPinned = false,
 }: AgentStatusBarProps) {
-  const sessionTypeLabel = formatSessionType(viewingMeta.sessionType)
+  const sessionBadge = getSessionKindBadge(viewingMeta.sessionType)
+  const stateText = formatSessionStateText(interactionMode, isAttached)
 
   return (
     <div className="agent-status-bar" data-testid="agent-status-bar">
       <div className="agent-status-bar__summary">
         <div className="chat-session-status">
-          {viewingMeta.model && (
-            <span className="chat-session-status__model">{viewingMeta.model}</span>
-          )}
-          <span className="chat-session-status__kind">{sessionTypeLabel}</span>
-          {(viewingMeta.agentName || viewingMeta.workflowName) && (
-            <span className="chat-session-status__agent">
-              {viewingMeta.agentName ?? viewingMeta.workflowName}
-            </span>
-          )}
+          <span className="chat-session-status__state">{stateText}</span>
+          <span className={`session-kind-badge ${sessionBadge.className}`}>
+            {sessionBadge.label}
+          </span>
         </div>
       </div>
       <div className="agent-status-bar__actions">
+        {onTogglePanel && (
+          <button
+            type="button"
+            className="session-pane-action session-pane-action--icon"
+            onClick={onTogglePanel}
+            aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
+            title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
+          >
+            <PanelIcon pinned={isPanelPinned} />
+          </button>
+        )}
         {!isAttached && !isAutonomousSession && onAttach && (
           <button
             type="button"

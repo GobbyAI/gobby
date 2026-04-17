@@ -212,6 +212,35 @@ def test_render_transcript_renders_turn_aborted_as_protocol_tool():
     assert block.tool_calls[0].result.content == "The user interrupted the previous turn."
 
 
+def test_render_transcript_reclassifies_bootstrap_user_text_as_system_protocol():
+    msgs = [
+        make_msg(
+            0,
+            "user",
+            """AGENTS.md instructions for /Users/josh/Projects/gobby
+
+# Personality
+You are a deeply pragmatic engineer.
+
+## Interaction Style
+Stay concise and direct.
+""",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+
+    assert len(rendered) == 1
+    assert rendered[0].role == "system"
+    assert rendered[0].content == ""
+    assert len(rendered[0].content_blocks) == 1
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert block.tool_calls[0].arguments == {"tag": "system_instructions"}
+    assert block.tool_calls[0].result is not None
+    assert "AGENTS.md instructions for" in str(block.tool_calls[0].result.content)
+
+
 def test_render_transcript_interleaves_environment_context_protocol_tool():
     msgs = [
         make_msg(

@@ -4,9 +4,18 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ChatState, ConversationState, VoiceProps } from "../../../types/chat";
 import { ChatPage } from "../ChatPage";
 
-const { clearArtifactsSpy, scrollToBottomSpy } = vi.hoisted(() => ({
+const {
+  clearArtifactsSpy,
+  scrollToBottomSpy,
+  setIsPinnedSpy,
+  togglePanelSpy,
+  isMobileState,
+} = vi.hoisted(() => ({
   clearArtifactsSpy: vi.fn(),
   scrollToBottomSpy: vi.fn(),
+  setIsPinnedSpy: vi.fn(),
+  togglePanelSpy: vi.fn(),
+  isMobileState: { value: false },
 }));
 
 vi.mock("../MessageList", async () => {
@@ -33,6 +42,8 @@ vi.mock("../ChatInput", () => ({
     disabledAriaLabel,
     provider,
     currentModel,
+    onToggleActivityPanel,
+    isActivityPanelPinned,
   }: {
     proxyDeliveryNotice?: string | null;
     disabled?: boolean;
@@ -40,6 +51,8 @@ vi.mock("../ChatInput", () => ({
     disabledAriaLabel?: string;
     provider?: string | null;
     currentModel?: string;
+    onToggleActivityPanel?: () => void;
+    isActivityPanelPinned?: boolean;
   }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
@@ -48,6 +61,15 @@ vi.mock("../ChatInput", () => ({
       <span data-testid="chat-input-notice">{proxyDeliveryNotice ?? ""}</span>
       <span data-testid="chat-input-provider">{provider ?? ""}</span>
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
+      {onToggleActivityPanel && (
+        <button
+          type="button"
+          data-testid="chat-input-panel-toggle"
+          onClick={onToggleActivityPanel}
+        >
+          {isActivityPanelPinned ? "Hide panel" : "Show panel"}
+        </button>
+      )}
     </div>
   ),
 }));
@@ -74,9 +96,13 @@ vi.mock("../../activity/ActivityPanel", () => ({
   ActivityPanel: ({
     onSwapSession,
     chatSessionId,
+    onApprovePlan,
+    onRequestPlanChanges,
   }: {
     onSwapSession?: (target: { sessionId: string; sessionType: "terminal" | "web_chat" | null; agentRunId: string | null }) => void
     chatSessionId?: string | null
+    onApprovePlan?: () => void
+    onRequestPlanChanges?: (feedback: string) => void
   }) => (
     <div data-testid="activity-panel">
       <span data-testid="activity-panel-chat-session-id">
@@ -108,6 +134,20 @@ vi.mock("../../activity/ActivityPanel", () => ({
       >
         Swap Autonomous
       </button>
+      <button
+        type="button"
+        data-testid="approve-plan"
+        onClick={() => onApprovePlan?.()}
+      >
+        Approve Plan
+      </button>
+      <button
+        type="button"
+        data-testid="request-plan-changes"
+        onClick={() => onRequestPlanChanges?.("Needs changes")}
+      >
+        Request Changes
+      </button>
     </div>
   ),
 }));
@@ -118,20 +158,19 @@ vi.mock("../VoiceStatusBar", () => ({
 
 vi.mock("../AgentStatusBar", () => ({
   AgentStatusBar: ({
-    viewingMeta,
     isAttached,
     onAttach,
     onResume,
     onDetach,
+    onTogglePanel,
   }: {
-    viewingMeta: { title?: string | null; source: string };
     isAttached?: boolean;
     onAttach?: () => void;
     onResume?: () => void;
     onDetach?: () => void;
+    onTogglePanel?: () => void;
   }) => (
     <div data-testid="agent-status-bar">
-      <span>{viewingMeta.title ?? viewingMeta.source}</span>
       <span data-testid="agent-status-attached">{String(Boolean(isAttached))}</span>
       {onAttach && (
         <button type="button" data-testid="agent-status-attach" onClick={onAttach}>
@@ -148,12 +187,17 @@ vi.mock("../AgentStatusBar", () => ({
           Detach
         </button>
       )}
+      {onTogglePanel && (
+        <button type="button" data-testid="agent-status-panel-toggle" onClick={onTogglePanel}>
+          Toggle Panel
+        </button>
+      )}
     </div>
   ),
 }));
 
 vi.mock("../../../hooks/useIsMobile", () => ({
-  useIsMobile: () => false,
+  useIsMobile: () => isMobileState.value,
 }));
 
 vi.mock("../../../hooks/useArtifacts", () => ({
@@ -176,9 +220,10 @@ vi.mock("../../activity/useActivityPanel", () => ({
     isPinned: false,
     panelWidth: 320,
     setActiveTab: vi.fn(),
-    setIsPinned: vi.fn(),
+    setIsPinned: setIsPinnedSpy,
     setPanelWidth: vi.fn(),
     showTab: vi.fn(),
+    togglePanel: togglePanelSpy,
   }),
 }));
 
@@ -270,6 +315,7 @@ function createVoice(): VoiceProps {
 describe("ChatPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isMobileState.value = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -384,13 +430,12 @@ describe("ChatPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("agent-status-bar")).toHaveTextContent(
-        "Observed Terminal",
-      );
+      expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
       expect(screen.getByTestId("agent-status-attached")).toHaveTextContent(
         "true",
       );
+      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
@@ -461,6 +506,10 @@ describe("ChatPage", () => {
     expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
     expect(screen.getByTestId("agent-status-attach")).toBeInTheDocument();
     expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
   it("shows only Resume for swapped terminals that cannot proxy attach", async () => {
@@ -624,6 +673,23 @@ describe("ChatPage", () => {
     });
   });
 
+  it("renders the activity-panel toggle inside the chat input when the input is visible", async () => {
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("chat-input-panel-toggle"));
+    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps non-autonomous terminal swaps in observe mode", async () => {
     const continueSessionInChat = vi.fn(async () => "continued-session");
     const viewSession = vi.fn();
@@ -675,5 +741,50 @@ describe("ChatPage", () => {
     expect(continueSessionInChat).not.toHaveBeenCalled();
     expect(viewSession).toHaveBeenCalledWith("terminal-auto");
     expect(observeSession).toHaveBeenCalledWith("terminal-auto", "observe");
+  });
+
+  it("keeps the activity panel open after plan approval on desktop", async () => {
+    const onApprovePlan = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({
+          planPendingApproval: true,
+          onApprovePlan,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("approve-plan"));
+    });
+
+    expect(onApprovePlan).toHaveBeenCalledTimes(1);
+    expect(setIsPinnedSpy).not.toHaveBeenCalled();
+  });
+
+  it("closes the activity panel after plan changes are requested on mobile", async () => {
+    isMobileState.value = true;
+    const onRequestPlanChanges = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({
+          planPendingApproval: true,
+          onRequestPlanChanges,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("request-plan-changes"));
+    });
+
+    expect(onRequestPlanChanges).toHaveBeenCalledWith("Needs changes");
+    expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
   });
 });

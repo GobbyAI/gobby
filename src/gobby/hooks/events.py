@@ -62,6 +62,7 @@ class SessionSource(str, Enum):
     GEMINI = "gemini"
     QWEN = "qwen"
     CODEX = "codex"
+    PIPELINE = "pipeline"
 
 
 @dataclass

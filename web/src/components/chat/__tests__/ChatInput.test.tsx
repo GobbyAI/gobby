@@ -206,6 +206,31 @@ describe('ChatInput', () => {
     expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
   })
 
+  it('renders the activity panel toggle beside the agent selector and keeps it enabled while input is disabled', async () => {
+    const onToggleActivityPanel = vi.fn()
+    const { container } = render(
+      <ChatInput
+        {...defaultProps}
+        disabled={true}
+        onAgentChange={vi.fn()}
+        agentName="default"
+        agentDefinitions={[{ name: 'default', source: 'project' } as any]}
+        onToggleActivityPanel={onToggleActivityPanel}
+      />,
+    )
+
+    const toggle = screen.getByRole('button', { name: 'Show activity panel' })
+    expect(toggle).toBeEnabled()
+
+    const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
+    const agentIndicator = screen.getByTestId('agent-indicator')
+    expect(toolbarLeft?.children[toolbarLeft.children.length - 2]).toBe(agentIndicator)
+    expect(toolbarLeft?.lastElementChild).toBe(toggle)
+
+    await userEvent.click(toggle)
+    expect(onToggleActivityPanel).toHaveBeenCalledTimes(1)
+  })
+
   it('shows a mic button in PTT mode with empty input', () => {
     render(
       <ChatInput

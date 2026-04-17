@@ -19,6 +19,35 @@ function isHookFeedback(content: string): boolean {
   )
 }
 
+const SYSTEM_BOOTSTRAP_PREFIX_RE =
+  /^\s*(?:#\s*)?(?:AGENTS\.md instructions for\b|System instructions\b|Gobby Session ID:)/i
+const SYSTEM_BOOTSTRAP_HEADING_RE = /^\s{0,3}(?:#{1,6}\s+)?([^:#]+):?\s*$/
+const SYSTEM_BOOTSTRAP_HEADINGS = new Set([
+  'platform context',
+  'capabilities',
+  'lifecycle model',
+  'behavior',
+  'role',
+  'personality',
+  'values',
+  'interaction style',
+  'general',
+  'tools',
+  'working with the user',
+  'formatting rules',
+  'final answer instructions',
+  'intermediary updates',
+])
+const HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS = new Set([
+  'platform context',
+  'capabilities',
+  'lifecycle model',
+  'personality',
+  'interaction style',
+  'final answer instructions',
+  'intermediary updates',
+])
+
 function isProtocolToolCall(toolCall: ToolCall): boolean {
   return toolCall.tool_type === 'protocol' ||
     toolCall.tool_name === 'protocol_context' ||
@@ -54,6 +83,47 @@ function hasProtocolOnlyContentBlocks(contentBlocks: ContentBlock[] | undefined)
   return sawProtocolToolCall
 }
 
+export function looksLikeSystemBootstrapText(content: string): boolean {
+  const stripped = content.trim()
+  if (!stripped) {
+    return false
+  }
+
+  if (SYSTEM_BOOTSTRAP_PREFIX_RE.test(stripped)) {
+    return true
+  }
+
+  const matchedHeadings = new Set<string>()
+  const matchedHighSignalHeadings = new Set<string>()
+
+  for (const rawLine of stripped.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) {
+      continue
+    }
+
+    const match = SYSTEM_BOOTSTRAP_HEADING_RE.exec(line)
+    if (!match) {
+      continue
+    }
+
+    const normalizedHeading = match[1].trim().toLowerCase()
+    if (!SYSTEM_BOOTSTRAP_HEADINGS.has(normalizedHeading)) {
+      continue
+    }
+
+    matchedHeadings.add(normalizedHeading)
+    if (HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS.has(normalizedHeading)) {
+      matchedHighSignalHeadings.add(normalizedHeading)
+    }
+  }
+
+  return matchedHeadings.size >= 3 || (
+    matchedHeadings.size >= 2 &&
+    matchedHighSignalHeadings.size >= 1
+  )
+}
+
 export function normalizeChatRole(
   role: unknown,
   content: unknown,
@@ -71,6 +141,7 @@ export function normalizeChatRole(
   const textContent = typeof content === 'string' ? content : ''
   if (
     isHookFeedback(textContent) ||
+    looksLikeSystemBootstrapText(textContent) ||
     hasProtocolToolContent(textContent) ||
     hasProtocolOnlyContentBlocks(contentBlocks)
   ) {

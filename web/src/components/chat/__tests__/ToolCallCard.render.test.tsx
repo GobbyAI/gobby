@@ -75,8 +75,6 @@ describe('ToolCallCard rendering', () => {
       />,
     )
 
-    fireEvent.click(screen.getByText('call_tool'))
-
     const code = container.querySelector('code')?.textContent ?? ''
     expect(code).toContain('"success": true')
     expect(code).toContain('"response_time_ms": 42')
@@ -104,11 +102,51 @@ describe('ToolCallCard rendering', () => {
 
     expect(screen.getByText('Protocol')).toBeInTheDocument()
     expect(screen.getByText('environment_context')).toBeInTheDocument()
+    expect(container.querySelector('code')).toBeNull()
 
     fireEvent.click(screen.getByText('Protocol'))
 
     const code = container.querySelector('code')?.textContent ?? ''
     expect(code).toContain('"shell": "zsh"')
     expect(code).toContain('"timezone": "America/Chicago"')
+  })
+
+  it('collapses grouped protocol tool calls by default', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'protocol_context',
+            tool_type: 'protocol',
+            arguments: { tag: 'system_instructions' },
+            result: {
+              content: 'System instructions',
+              content_type: 'text',
+              truncated: false,
+            },
+          }),
+          makeCall({
+            id: 'tool-2',
+            tool_name: 'protocol_context',
+            tool_type: 'protocol',
+            arguments: { tag: 'environment_context' },
+            result: {
+              content: { shell: 'zsh' },
+              content_type: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('Protocol')).toBeInTheDocument()
+    expect(container.querySelector('code')).toBeNull()
+
+    fireEvent.click(screen.getByText('Protocol'))
+
+    expect(container.textContent).toContain('system_instructions')
+    expect(container.textContent).toContain('environment_context')
   })
 })

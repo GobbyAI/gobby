@@ -36,24 +36,6 @@ import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
 
 const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
-function getViewedSessionStateLabel(
-  interactionMode: ChatState["sessionInteractionMode"],
-  hasViewedSession: boolean,
-  isWatchingLive: boolean,
-  isAttached: boolean,
-): string | null {
-  if (!hasViewedSession && !isAttached && interactionMode === "none") {
-    return null;
-  }
-  if (interactionMode === "proxy" || isAttached) {
-    return "Attached";
-  }
-  if (isWatchingLive) {
-    return "Watching live";
-  }
-  return "Watching";
-}
-
 interface ChatPageProps {
   chat: ChatState;
   conversations: ConversationState;
@@ -243,12 +225,6 @@ export function ChatPage({
   );
   const canAttachViewedSession =
     !isAutonomousSession && canProxyAttachObservationMeta(viewingMeta);
-  const viewedSessionStateLabel = getViewedSessionStateLabel(
-    chat.sessionInteractionMode,
-    Boolean(viewingMeta),
-    canAttachViewedSession,
-    Boolean(chat.attachedSessionId),
-  );
   const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
   const providerPickerDisabledReason = isAutonomousSession
@@ -614,16 +590,20 @@ export function ChatPage({
   const handleApprovePlan = useCallback(() => {
     setPendingPlanArtifactId(null);
     onApprovePlan?.();
-    setIsPinned(false);
-  }, [onApprovePlan, setIsPinned]);
+    if (isMobile) {
+      setIsPinned(false);
+    }
+  }, [isMobile, onApprovePlan, setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
       setPendingPlanArtifactId(null);
       onRequestPlanChanges?.(feedback);
-      setIsPinned(false);
+      if (isMobile) {
+        setIsPinned(false);
+      }
     },
-    [onRequestPlanChanges, setIsPinned],
+    [isMobile, onRequestPlanChanges, setIsPinned],
   );
 
   // Close artifact and auto-close activity panel if it was opened programmatically
@@ -689,7 +669,6 @@ export function ChatPage({
             activeTitle
           }
           sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
-          sessionStateLabel={viewedSessionStateLabel}
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
@@ -752,6 +731,8 @@ export function ChatPage({
                 canControlViewedSession ? handleResumeViewedSession : undefined
               }
               onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+              onTogglePanel={!showChatInput ? togglePanel : undefined}
+              isPanelPinned={isPinned}
             />
           )}
 
@@ -815,6 +796,8 @@ export function ChatPage({
               hasMessages={chat.messages.length > 0}
               proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
+              onToggleActivityPanel={togglePanel}
+              isActivityPanelPinned={isPinned}
             />
           )}
         </ArtifactContext.Provider>

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from opentelemetry.trace import Status, StatusCode
 
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import DatabaseProtocol
@@ -65,6 +65,15 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
             if server and tool:
                 return f"{server}:{tool}"
     return str(tool_name)
+
+
+def _is_pipeline_direct_mcp_event(event: HookEvent) -> bool:
+    """Return True for synthetic direct MCP calls emitted by pipeline sessions."""
+    if event.source != SessionSource.PIPELINE:
+        return False
+
+    tool_name = event.data.get("tool_name", "")
+    return tool_name in ("call_tool", "mcp__gobby__call_tool")
 
 
 def _event_value(event_type: HookEventType | str) -> str:
@@ -189,29 +198,33 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 # _last_blocked_tool is only set by pre-execution gate/enforcement blocks.
                 # tool_block_pending is reserved for real tool execution failures.
                 if is_before_tool and variables.get("_last_blocked_tool"):
-                    tool_name = _get_tool_identity(event.data)
-                    last_blocked = variables.get("_last_blocked_tool", "")
-                    if tool_name == last_blocked:
-                        count = variables.get("consecutive_tool_blocks", 0) + 1
-                        variables["consecutive_tool_blocks"] = count
-                        if count >= 2:
-                            resp = HookResponse(
-                                decision="block",
-                                reason=(
-                                    "Rule enforced by Gobby: [consecutive-tool-block]\n"
-                                    f"You have attempted {tool_name} {count + 1} times consecutively "
-                                    "without addressing the error.\n"
-                                    "STOP retrying the same action. Read the previous error messages "
-                                    "and take a DIFFERENT action to resolve the underlying issue first."
-                                ),
-                            )
-                            if span.is_recording():
-                                span.set_attribute("final_decision", resp.decision)
-                                span.set_attribute("block_reason", resp.reason)
-                            return resp
-                    else:
-                        # Different tool — reset counter, let it through to rule evaluation
+                    if _is_pipeline_direct_mcp_event(event):
                         variables["consecutive_tool_blocks"] = 0
+                        variables["_last_blocked_tool"] = ""
+                    else:
+                        tool_name = _get_tool_identity(event.data)
+                        last_blocked = variables.get("_last_blocked_tool", "")
+                        if tool_name == last_blocked:
+                            count = variables.get("consecutive_tool_blocks", 0) + 1
+                            variables["consecutive_tool_blocks"] = count
+                            if count >= 2:
+                                resp = HookResponse(
+                                    decision="block",
+                                    reason=(
+                                        "Rule enforced by Gobby: [consecutive-tool-block]\n"
+                                        f"You have attempted {tool_name} {count + 1} times consecutively "
+                                        "without addressing the error.\n"
+                                        "STOP retrying the same action. Read the previous error messages "
+                                        "and take a DIFFERENT action to resolve the underlying issue first."
+                                    ),
+                                )
+                                if span.is_recording():
+                                    span.set_attribute("final_decision", resp.decision)
+                                    span.set_attribute("block_reason", resp.reason)
+                                return resp
+                        else:
+                            # Different tool — reset counter, let it through to rule evaluation
+                            variables["consecutive_tool_blocks"] = 0
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
                     if _is_write_like_event_data(event.data):

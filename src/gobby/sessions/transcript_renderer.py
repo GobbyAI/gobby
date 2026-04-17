@@ -239,10 +239,8 @@ def render_incremental(
         if msg.content_type in _INTERNAL_CONTENT_TYPES:
             continue
 
-        # 1. Classify role and detect hook feedback
-        role = msg.role
-        if _is_hook_feedback(msg):
-            role = "system"
+        # 1. Classify role and detect hook/protocol/bootstrap feedback
+        role = _classify_render_role(msg)
 
         # 2. Tool result pairing (can bypass turn logic if paired)
         is_tool_result = msg.content_type in ["tool_result", "mcp_tool_result"]
@@ -313,6 +311,7 @@ _PROTOCOL_TOOL_TAGS: tuple[str, ...] = (
     "permission instructions",
     "collaboration_mode",
     "turn_aborted",
+    "system_instructions",
     "instructions",
     "skills_instructions",
 )
@@ -349,6 +348,40 @@ _PROTOCOL_CHILD_RE = re.compile(
 )
 
 _PROTOCOL_ATTR_RE = re.compile(r"""([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_SYSTEM_BOOTSTRAP_PREFIX_RE = re.compile(
+    r"^\s*(?:#\s*)?(?:AGENTS\.md instructions for\b|System instructions\b|Gobby Session ID:)",
+    re.IGNORECASE,
+)
+_SYSTEM_BOOTSTRAP_HEADING_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s+)?(?P<heading>[^:#]+):?\s*$")
+_SYSTEM_BOOTSTRAP_HEADINGS: frozenset[str] = frozenset(
+    {
+        "platform context",
+        "capabilities",
+        "lifecycle model",
+        "behavior",
+        "role",
+        "personality",
+        "values",
+        "interaction style",
+        "general",
+        "tools",
+        "working with the user",
+        "formatting rules",
+        "final answer instructions",
+        "intermediary updates",
+    }
+)
+_HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS: frozenset[str] = frozenset(
+    {
+        "platform context",
+        "capabilities",
+        "lifecycle model",
+        "personality",
+        "interaction style",
+        "final answer instructions",
+        "intermediary updates",
+    }
+)
 
 
 def _sanitize_visible_protocol_text(content: str) -> str:
@@ -357,6 +390,42 @@ def _sanitize_visible_protocol_text(content: str) -> str:
         return content
     content = _INLINE_WRAPPER_PROTOCOL_TAG_RE.sub("", content)
     return re.sub(r"\n{3,}", "\n\n", content)
+
+
+def _count_bootstrap_heading_matches(content: str) -> tuple[int, int]:
+    matched_headings: set[str] = set()
+    matched_high_signal_headings: set[str] = set()
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        heading_match = _SYSTEM_BOOTSTRAP_HEADING_RE.match(line)
+        if not heading_match:
+            continue
+
+        normalized_heading = heading_match.group("heading").strip().lower()
+        if normalized_heading not in _SYSTEM_BOOTSTRAP_HEADINGS:
+            continue
+
+        matched_headings.add(normalized_heading)
+        if normalized_heading in _HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS:
+            matched_high_signal_headings.add(normalized_heading)
+
+    return len(matched_headings), len(matched_high_signal_headings)
+
+
+def _looks_like_system_bootstrap_text(content: str) -> bool:
+    stripped = content.strip()
+    if not stripped:
+        return False
+
+    if _SYSTEM_BOOTSTRAP_PREFIX_RE.match(stripped):
+        return True
+
+    heading_count, high_signal_heading_count = _count_bootstrap_heading_matches(stripped)
+    return heading_count >= 3 or (heading_count >= 2 and high_signal_heading_count >= 1)
 
 
 def _parse_protocol_attributes(attr_text: str) -> dict[str, str]:
@@ -431,6 +500,14 @@ def _make_protocol_tool_call(
     )
 
 
+def _make_plain_text_protocol_tool_call(
+    tag: str,
+    body: str,
+    source_index: int,
+) -> RenderedToolCall:
+    return _make_protocol_tool_call(tag, body, "", source_index, 0)
+
+
 def _extract_protocol_content_segments(
     content: str, source_index: int
 ) -> list[_ProtocolContentSegment]:
@@ -470,6 +547,36 @@ def _extract_protocol_content_segments(
 
     sanitized = _sanitize_visible_protocol_text(content)
     return [_ProtocolContentSegment(kind="text", text=sanitized)] if sanitized.strip() else []
+
+
+def _is_protocol_only_text(content: str) -> bool:
+    segments = _extract_protocol_content_segments(content, source_index=0)
+    has_protocol_segment = False
+
+    for segment in segments:
+        if segment.kind == "protocol_tool":
+            has_protocol_segment = True
+            continue
+
+        if segment.text and segment.text.strip():
+            return False
+
+    return has_protocol_segment
+
+
+def _classify_render_role(msg: ParsedMessage) -> str:
+    if _is_hook_feedback(msg):
+        return "system"
+
+    if (
+        msg.role == "user"
+        and msg.content_type == "text"
+        and isinstance(msg.content, str)
+        and (_is_protocol_only_text(msg.content) or _looks_like_system_bootstrap_text(msg.content))
+    ):
+        return "system"
+
+    return msg.role
 
 
 def _append_text_content_block(
@@ -574,10 +681,26 @@ def _process_message_block(
     block_content: Any = block_text
 
     if block_type == "text" and isinstance(block_text, str):
+        if _looks_like_system_bootstrap_text(block_text):
+            state.current_message.role = "system"
+            _append_protocol_tool_call_block(
+                state,
+                _make_plain_text_protocol_tool_call(
+                    "system_instructions",
+                    block_text.strip(),
+                    msg.index,
+                ),
+                msg.index,
+            )
+            return
+
+        is_protocol_only = _is_protocol_only_text(block_text)
         for segment in _extract_protocol_content_segments(block_text, msg.index):
             if segment.kind == "text" and segment.text is not None:
                 _append_text_content_block(state, segment.text, msg.index)
             elif segment.kind == "protocol_tool" and segment.tool_call is not None:
+                if is_protocol_only:
+                    state.current_message.role = "system"
                 _append_protocol_tool_call_block(state, segment.tool_call, msg.index)
         return
 

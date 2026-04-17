@@ -777,6 +777,32 @@ class TestConsecutiveBlockScoping:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_pipeline_direct_mcp_retry_clears_stale_counter(self, db) -> None:
+        """Pipeline-scoped direct MCP calls should not inherit interactive retry state."""
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "_last_blocked_tool": "gobby-workflows:list_pipeline_executions",
+            "consecutive_tool_blocks": 2,
+        }
+
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-workflows",
+                    "tool_name": "list_pipeline_executions",
+                },
+            },
+            source=SessionSource.PIPELINE,
+        )
+        response = await engine.evaluate(event, "sess-1", variables)
+
+        assert response.decision == "allow"
+        assert variables.get("consecutive_tool_blocks") == 0
+        assert variables.get("_last_blocked_tool") == ""
+
+    @pytest.mark.asyncio
     async def test_different_tool_blocked_starts_own_counter(self, db) -> None:
         """If a different tool is also rule-blocked, it starts its own counter."""
         engine = RuleEngine(db)

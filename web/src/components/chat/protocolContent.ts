@@ -21,6 +21,7 @@ const PROTOCOL_TOOL_TAGS = [
   'permission instructions',
   'collaboration_mode',
   'turn_aborted',
+  'system_instructions',
   'instructions',
   'skills_instructions',
 ] as const
