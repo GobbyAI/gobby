@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
@@ -254,7 +255,7 @@ async def _call_internal_tool(
             },
         )
     try:
-        result = await registry.call(tool_name, arguments or {})
+        result = normalize_internal_success_result(await registry.call(tool_name, arguments or {}))
         response_time_ms = (time.perf_counter() - start_time) * 1000
         inc_counter("mcp_tool_calls_succeeded_total")
         return {

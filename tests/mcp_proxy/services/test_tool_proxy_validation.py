@@ -397,7 +397,9 @@ class TestCallToolInternalServer:
         """Verify valid internal tool calls execute successfully."""
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
-        mock_registry.call = AsyncMock(return_value={"id": "gt-123", "title": "Test"})
+        mock_registry.call = AsyncMock(
+            return_value={"success": True, "id": "gt-123", "title": "Test"}
+        )
         mock_internal_manager.get_registry.return_value = mock_registry
 
         async def mock_get_schema(server, tool):
@@ -423,6 +425,7 @@ class TestCallToolInternalServer:
             arguments={"task_id": "gt-123"},
         )
 
+        assert "success" not in result
         assert result["id"] == "gt-123"
         mock_registry.call.assert_called_once_with("get_task", {"task_id": "gt-123"})
 

@@ -959,7 +959,7 @@ class TestCallMCPTool:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert "result" in data
+        assert data["result"] == {"tool": "list_tasks"}
         assert "response_time_ms" in data
 
     def test_call_tool_internal_server_failure(self, session_storage: LocalSessionManager) -> None:
@@ -1708,6 +1708,7 @@ class TestMCPProxy:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
+        assert data["result"] == {"tool": "list_tasks"}
 
     def test_proxy_internal_server_fallthrough(self, session_storage: LocalSessionManager) -> None:
         """Test proxy falls through to MCP manager when no internal manager."""

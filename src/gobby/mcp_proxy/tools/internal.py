@@ -73,6 +73,20 @@ def _get_json_schema_type(annotation: Any) -> str:
     return "string"
 
 
+def normalize_internal_success_result(result: Any) -> Any:
+    """Strip legacy top-level success markers from successful internal tool results.
+
+    Internal MCP tools should return raw payloads on success and reserve
+    ``{"success": False, ...}`` for legacy error-style dicts. This keeps callers
+    from surfacing nested ``success`` envelopes like
+    ``{"success": true, "result": {"success": true, ...}}``.
+    """
+    if not isinstance(result, dict) or result.get("success") is not True:
+        return result
+
+    return {key: value for key, value in result.items() if key != "success"}
+
+
 @dataclass
 class InternalTool:
     """Represents an internal tool with its metadata and implementation."""

@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from gobby.mcp_proxy.tools.internal import InternalToolRegistry, _get_json_schema_type
+from gobby.mcp_proxy.tools.internal import (
+    InternalToolRegistry,
+    _get_json_schema_type,
+    normalize_internal_success_result,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -282,3 +286,19 @@ async def test_context_param_is_ignored() -> None:
     ctx = {"session_id": "sess-1", "conversation_id": "conv-1"}
     result = await registry.call("simple", {"query": "hello"}, context=ctx)
     assert result["query"] == "hello"
+
+
+def test_normalize_internal_success_result_strips_legacy_success() -> None:
+    """Successful internal results should not keep a redundant top-level success flag."""
+    result = normalize_internal_success_result(
+        {"success": True, "memory": {"id": "mem-123"}, "similar_existing": []}
+    )
+
+    assert result == {"memory": {"id": "mem-123"}, "similar_existing": []}
+
+
+def test_normalize_internal_success_result_preserves_error_envelope() -> None:
+    """Legacy error-style dicts must keep success=False for caller-side error handling."""
+    result = normalize_internal_success_result({"success": False, "error": "boom"})
+
+    assert result == {"success": False, "error": "boom"}

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
+from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -716,7 +717,8 @@ class ToolProxyService:
             if self._internal_manager and self._internal_manager.is_internal(server_name):
                 registry = self._internal_manager.get_registry(server_name)
                 if registry:
-                    return await registry.call(tool_name, arguments)
+                    result = await registry.call(tool_name, arguments)
+                    return normalize_internal_success_result(result)
 
                 error_msg = f"Internal server '{server_name}' not found"
                 suggestion = self._get_server_suggestion(server_name)
