@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
   block-reopen-task:
-    description: "Block reopen_task unless explicitly instructed by user"
+    description: "Block reopen_task for tasks claimed by the current session"
     event: before_tool
     enabled: true
     priority: 30
@@ -10,10 +10,17 @@ rules:
       event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
       and tool_input.get('server_name') == 'gobby-tasks'
       and tool_input.get('tool_name') == 'reopen_task'
+      and (
+        tool_input.get('task_id') in (variables.get('claimed_tasks') or {})
+        or tool_input.get('task_id') in (variables.get('claimed_tasks') or {}).values()
+        or (
+          not str(tool_input.get('task_id') or '').startswith('#')
+          and ('#' + str(tool_input.get('task_id'))) in (variables.get('claimed_tasks') or {}).values()
+        )
+      )
     effects:
       - type: block
         reason: |
-          reopen_task is blocked. Do not use it to bounce active work or silently drop ownership.
-          Only the user can instruct you to reopen a task.
+          reopen_task is blocked for tasks claimed by this session. Do not use it to bounce your own active work or silently drop ownership.
           If work is blocked, use escalate_task.
           If an escalated task is ready to resume, use de_escalate_task instead of reopen_task.
