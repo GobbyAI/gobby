@@ -108,10 +108,11 @@ pub fn search_symbols_by_name(
     path: Option<&str>,
     limit: usize,
 ) -> Vec<Symbol> {
-    let pattern = format!("%{query}%");
+    let escaped_query = escape_like(query);
+    let pattern = format!("%{escaped_query}%");
     let mut conditions = vec![
         "project_id = ?".to_string(),
-        "(name LIKE ? OR qualified_name LIKE ?)".to_string(),
+        "(name LIKE ? ESCAPE '\\' OR qualified_name LIKE ? ESCAPE '\\')".to_string(),
     ];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
         Box::new(project_id.to_string()),
@@ -249,10 +250,11 @@ pub fn count_text(conn: &Connection, query: &str, project_id: &str, path: Option
     }
 
     // Fallback to LIKE count
-    let pattern = format!("%{query}%");
+    let escaped_query = escape_like(query);
+    let pattern = format!("%{escaped_query}%");
     let mut conditions = vec![
         "project_id = ?".to_string(),
-        "(name LIKE ? OR qualified_name LIKE ?)".to_string(),
+        "(name LIKE ? ESCAPE '\\' OR qualified_name LIKE ? ESCAPE '\\')".to_string(),
     ];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
         Box::new(project_id.to_string()),
@@ -310,8 +312,12 @@ pub fn count_content(
     }
 
     // Fallback to LIKE count
-    let like_query = format!("%{query}%");
-    let mut conditions = vec!["project_id = ?".to_string(), "content LIKE ?".to_string()];
+    let escaped_query = escape_like(query);
+    let like_query = format!("%{escaped_query}%");
+    let mut conditions = vec![
+        "project_id = ?".to_string(),
+        "content LIKE ? ESCAPE '\\'".to_string(),
+    ];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
         vec![Box::new(project_id.to_string()), Box::new(like_query)];
     if let Some(like) = path.and_then(glob_to_like_prefix) {
@@ -394,8 +400,12 @@ pub fn search_content(
         Ok(hits) if !hits.is_empty() => hits,
         _ => {
             // Fallback to LIKE search
-            let like_query = format!("%{query}%");
-            let mut conditions = vec!["project_id = ?".to_string(), "content LIKE ?".to_string()];
+            let escaped_query = escape_like(query);
+            let like_query = format!("%{escaped_query}%");
+            let mut conditions = vec![
+                "project_id = ?".to_string(),
+                "content LIKE ? ESCAPE '\\'".to_string(),
+            ];
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
                 Box::new(query.to_string()),
                 Box::new(project_id.to_string()),
