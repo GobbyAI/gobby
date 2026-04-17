@@ -208,12 +208,6 @@ export function ActivityPanel({
   const useOverlay = isMobile || narrowViewport;
   const activeTabConfig = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
 
-  useEffect(() => {
-    if (!useOverlay) {
-      setShowMobileTabMenu(false);
-    }
-  }, [useOverlay]);
-
   if (!isPinned) return null;
 
   // Mobile: close handler
