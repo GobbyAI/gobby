@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from gobby.agents.sandbox import (
+    web_chat_policy_mismatch_message,
+    web_chat_sandbox_config,
+    web_chat_sandbox_policy_hash,
+)
 from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
 from gobby.telemetry.instruments import inc_counter
 
@@ -136,6 +141,7 @@ async def _compute_resumability(
     # Active web chat session IDs
     ws_server = server.services.websocket_server
     active_chat_db_ids: set[str] = set()
+    runtime_manager = server.services.web_chat_runtime_manager
     if ws_server:
         chat_sessions = getattr(ws_server, "_chat_sessions", {})
         for cs in chat_sessions.values():
@@ -162,6 +168,12 @@ async def _compute_resumability(
         if sid in active_chat_db_ids:
             result[sid] = (False, "active in web chat")
             continue
+
+        if runtime_manager and getattr(session, "session_type", None) == "web_chat":
+            mismatch_reason = runtime_manager.policy_mismatch_reason(session)
+            if mismatch_reason:
+                result[sid] = (False, web_chat_policy_mismatch_message())
+                continue
 
         result[sid] = (True, None)
 
@@ -199,6 +211,13 @@ def register_core_routes(
             chat_mode = (
                 body.chat_mode if isinstance(body.chat_mode, str) and body.chat_mode else None
             )
+            runtime_manager = server.services.web_chat_runtime_manager
+            if runtime_manager is not None:
+                sandbox_enabled = runtime_manager.sandbox_config.enabled
+                sandbox_policy_hash = runtime_manager.sandbox_policy_hash
+            else:
+                sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
+                sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
 
             session = server.session_manager.create_web_chat_session(
                 machine_id=machine_id,
@@ -207,6 +226,8 @@ def register_core_routes(
                 title=body.title,
                 model=model,
                 chat_mode=chat_mode,
+                sandbox_enabled=sandbox_enabled,
+                sandbox_policy_hash=sandbox_policy_hash,
             )
 
             inc_counter("session_registrations_total")
@@ -275,6 +296,7 @@ def register_core_routes(
                 title=request_data.title,
                 git_branch=git_branch,
                 parent_session_id=request_data.parent_session_id,
+                sandbox_enabled=request_data.sandbox_enabled,
             )
 
             inc_counter("session_registrations_total")

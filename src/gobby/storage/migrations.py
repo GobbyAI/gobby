@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 213
+BASELINE_VERSION = 214
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -311,6 +311,13 @@ def _add_column_if_missing(db: LocalDatabase, table: str, column_sql: str, colum
     """Add a column only when it is absent, allowing migration reruns after version rewinds."""
     if not _column_exists(db, table, column):
         db.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+
+
+def _migrate_sessions_sandbox_fields(db: LocalDatabase) -> None:
+    """Add sandbox metadata columns and drop the unshipped cli_sandbox config surface."""
+    _add_column_if_missing(db, "sessions", "sandbox_enabled BOOLEAN DEFAULT 0", "sandbox_enabled")
+    _add_column_if_missing(db, "sessions", "sandbox_policy_hash TEXT", "sandbox_policy_hash")
+    db.execute("DELETE FROM config_store WHERE key LIKE 'cli_sandbox.%'")
 
 
 def _migrate_claimed_by_session_id(db: LocalDatabase) -> None:
@@ -1141,6 +1148,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         213,
         "Add title_source column to sessions",
         lambda db: _add_column_if_missing(db, "sessions", "title_source TEXT", "title_source"),
+    ),
+    (
+        214,
+        "Add sandbox metadata to sessions and remove cli_sandbox config",
+        _migrate_sessions_sandbox_fields,
     ),
 ]
 

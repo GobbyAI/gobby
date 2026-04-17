@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
 from gobby.telemetry.instruments import inc_counter
@@ -236,12 +237,22 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             from gobby.utils.machine_id import get_machine_id
 
+            runtime_manager = server.services.web_chat_runtime_manager
+            if runtime_manager is not None:
+                sandbox_enabled = runtime_manager.sandbox_config.enabled
+                sandbox_policy_hash = runtime_manager.sandbox_policy_hash
+            else:
+                sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
+                sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
+
             conversation = session_manager.create_web_chat_session(
                 machine_id=get_machine_id() or "web",
                 project_id=effective_project_id,
                 source=req.provider or "claude",
                 title=task.title,
                 model=req.model,
+                sandbox_enabled=sandbox_enabled,
+                sandbox_policy_hash=sandbox_policy_hash,
             )
             conversation_id = conversation.id
             task_updated = False

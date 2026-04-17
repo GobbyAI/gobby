@@ -148,6 +148,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         title=request.title,
         agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
     )
 
     gobby_session_id = spawn_context.session_id
@@ -266,6 +267,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         title=request.title,
         agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
     )
 
     gobby_session_id = spawn_context.session_id
@@ -378,6 +380,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         title=request.title,
         agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
     )
 
     gobby_session_id = spawn_context.session_id
@@ -467,6 +470,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
             workflow_name=request.workflow,
             initial_variables=request.initial_variables,
             git_branch=request.branch_name,
+            sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
         )
     except FileNotFoundError as e:
         return SpawnResult(

@@ -41,6 +41,14 @@ class SandboxConfig(BaseModel):
     extra_write_paths: list[str] = Field(default_factory=list)
 
 
+_DAEMON_OWNED_SANDBOX_MODE: Literal["permissive", "restrictive"] = "permissive"
+_DAEMON_OWNED_ALLOW_NETWORK = True
+_DAEMON_SANDBOX_POLICY_VERSION = 1
+_WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
+    "This chat was created under a different sandbox policy. Continue it in a new chat."
+)
+
+
 def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
     """Normalize a config-like object into SandboxConfig."""
     if config is None:
@@ -59,21 +67,70 @@ def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
     )
 
 
-def sandbox_config_for_provider(provider: str, daemon_config: Any | None) -> SandboxConfig | None:
-    """Return runtime sandbox defaults for the given provider from daemon config."""
-    if daemon_config is None:
-        return None
+def daemon_owned_sandbox_config(
+    config: Any | None,
+    *,
+    default_enabled: bool = True,
+) -> SandboxConfig:
+    """Resolve daemon-owned sandbox config into the internal runtime model."""
+    if config is None:
+        return SandboxConfig(
+            enabled=default_enabled,
+            mode=_DAEMON_OWNED_SANDBOX_MODE,
+            allow_network=_DAEMON_OWNED_ALLOW_NETWORK,
+        )
 
-    cli_sandbox = getattr(daemon_config, "cli_sandbox", None)
-    if cli_sandbox is None:
-        return None
-
-    provider_config = (
-        cli_sandbox.for_provider(provider)
-        if hasattr(cli_sandbox, "for_provider")
-        else getattr(cli_sandbox, provider, None)
+    return SandboxConfig(
+        enabled=bool(getattr(config, "enabled", default_enabled)),
+        mode=_DAEMON_OWNED_SANDBOX_MODE,
+        allow_network=_DAEMON_OWNED_ALLOW_NETWORK,
+        extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
+        extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
     )
-    return coerce_sandbox_config(provider_config)
+
+
+def web_chat_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
+    """Return the daemon-owned web-chat sandbox config."""
+    raw_config = getattr(daemon_config, "web_chat_sandbox", None) if daemon_config else None
+    return daemon_owned_sandbox_config(raw_config, default_enabled=True)
+
+
+def agent_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
+    """Return the daemon-owned spawned-agent sandbox config."""
+    raw_config = getattr(daemon_config, "agent_sandbox", None) if daemon_config else None
+    return daemon_owned_sandbox_config(raw_config, default_enabled=True)
+
+
+def daemon_owned_sandbox_policy_hash(
+    config: Any | None,
+    *,
+    scope: str,
+    default_enabled: bool = True,
+) -> str:
+    """Return a stable hash for daemon-owned sandbox policy snapshots."""
+    resolved = daemon_owned_sandbox_config(config, default_enabled=default_enabled)
+    payload = {
+        "version": _DAEMON_SANDBOX_POLICY_VERSION,
+        "scope": scope,
+        "enabled": resolved.enabled,
+        "mode": resolved.mode,
+        "allow_network": resolved.allow_network,
+        "extra_read_paths": resolved.extra_read_paths,
+        "extra_write_paths": resolved.extra_write_paths,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def web_chat_sandbox_policy_hash(daemon_config: Any | None) -> str:
+    """Return the current daemon-owned web-chat sandbox policy hash."""
+    raw_config = getattr(daemon_config, "web_chat_sandbox", None) if daemon_config else None
+    return daemon_owned_sandbox_policy_hash(raw_config, scope="web_chat", default_enabled=True)
+
+
+def web_chat_policy_mismatch_message() -> str:
+    """Return the standard web-chat sandbox policy mismatch message."""
+    return _WEB_CHAT_POLICY_MISMATCH_MESSAGE
 
 
 class ResolvedSandboxPaths(BaseModel):

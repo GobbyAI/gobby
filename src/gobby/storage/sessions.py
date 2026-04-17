@@ -57,6 +57,8 @@ class LocalSessionManager:
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         session_type: str = "terminal",
+        sandbox_enabled: bool | None = None,
+        sandbox_policy_hash: str | None = None,
     ) -> Session:
         """
         Register a new session or return existing one.
@@ -110,6 +112,8 @@ class LocalSessionManager:
                     transcript_path = COALESCE(?, transcript_path),
                     git_branch = COALESCE(?, git_branch),
                     parent_session_id = COALESCE(?, parent_session_id),
+                    sandbox_enabled = COALESCE(?, sandbox_enabled),
+                    sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
                     status = 'active',
                     updated_at = ?
                 WHERE id = ?
@@ -119,6 +123,8 @@ class LocalSessionManager:
                     transcript_path,
                     git_branch,
                     parent_session_id,
+                    sandbox_enabled,
+                    sandbox_policy_hash,
                     now,
                     existing.id,
                 ),
@@ -149,10 +155,11 @@ class LocalSessionManager:
                         id, external_id, machine_id, source, project_id, title, title_source,
                         transcript_path, git_branch, parent_session_id,
                         agent_depth, spawned_by_agent_id, terminal_context,
-                        workflow_name, session_type, status, created_at, updated_at, seq_num,
+                        workflow_name, session_type, sandbox_enabled, sandbox_policy_hash,
+                        status, created_at, updated_at, seq_num,
                         had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
                     """,
                     (
                         session_id,
@@ -169,6 +176,8 @@ class LocalSessionManager:
                         json.dumps(terminal_context) if terminal_context else None,
                         workflow_name,
                         session_type,
+                        int(bool(sandbox_enabled)),
+                        sandbox_policy_hash,
                         now,
                         now,
                         next_seq_num,
@@ -201,6 +210,8 @@ class LocalSessionManager:
         title: str | None = None,
         model: str | None = None,
         chat_mode: str | None = None,
+        sandbox_enabled: bool,
+        sandbox_policy_hash: str,
     ) -> Session:
         """Create a new web-chat session with a temporary runtime identity.
 
@@ -221,6 +232,8 @@ class LocalSessionManager:
             project_id=project_id,
             title=title,
             session_type="web_chat",
+            sandbox_enabled=sandbox_enabled,
+            sandbox_policy_hash=sandbox_policy_hash,
         )
         if model is None and chat_mode is None:
             return session
@@ -686,6 +699,8 @@ class LocalSessionManager:
         git_branch: str | None = None,
         terminal_context: dict[str, Any] | None = None,
         project_id: str | None = None,
+        sandbox_enabled: bool | None = None,
+        sandbox_policy_hash: str | None = None,
     ) -> Session | None:
         """
         Update multiple session fields at once.
@@ -704,6 +719,8 @@ class LocalSessionManager:
             git_branch: New git branch (optional)
             terminal_context: New terminal context (optional)
             project_id: New project ID (optional)
+            sandbox_enabled: Whether the session runtime is sandboxed (optional)
+            sandbox_policy_hash: Stable daemon-owned sandbox policy hash (optional)
 
         Returns:
             Updated Session or None if not found
@@ -746,6 +763,10 @@ class LocalSessionManager:
             values["terminal_context"] = json.dumps(terminal_context)
         if project_id is not None:
             values["project_id"] = project_id
+        if sandbox_enabled is not None:
+            values["sandbox_enabled"] = int(sandbox_enabled)
+        if sandbox_policy_hash is not None:
+            values["sandbox_policy_hash"] = sandbox_policy_hash
 
         if not values:
             return self.get(session_id)

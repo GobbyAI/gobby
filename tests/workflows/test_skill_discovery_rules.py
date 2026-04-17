@@ -109,18 +109,19 @@ class TestInjectPythonSkillStructure:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
 
-    def test_has_mcp_call_and_set_variable_effects(self, db, manager) -> None:
+    def test_has_block_mcp_call_and_set_variable_effects(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-python-skill")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        assert len(body.effects) == 2
-        assert body.effects[0].type == "mcp_call"
-        assert body.effects[0].server == "gobby-skills"
-        assert body.effects[0].tool == "get_skill"
-        assert body.effects[0].inject_result is True
-        assert body.effects[1].type == "set_variable"
-        assert body.effects[1].variable == "injected_skills"
+        assert len(body.effects) == 3
+        assert body.effects[0].type == "block"
+        assert body.effects[1].type == "mcp_call"
+        assert body.effects[1].server == "gobby-skills"
+        assert body.effects[1].tool == "get_skill"
+        assert body.effects[1].inject_result is True
+        assert body.effects[2].type == "set_variable"
+        assert body.effects[2].variable == "injected_skills"
 
 
 # --- inject-python-skill condition evaluation ---
@@ -131,36 +132,35 @@ class TestInjectPythonSkillCondition:
 
     CONDITION = (
         "'python' not in variables.get('injected_skills', []) "
-        "and event.data.get('canonical_tool_kind') == 'read' "
-        "and event.data.get('canonical_file_path', '').endswith('.py')"
+        "and event.data.get('tool_name') in ('Write', 'Edit') "
+        "and tool_input.get('file_path', '').endswith('.py')"
     )
 
     def _eval(
         self,
         file_path: str,
         *,
-        canonical_tool_kind: str = "read",
+        tool_name: str = "Write",
         injected_skills: list[str] | None = None,
     ) -> bool:
         context = {
             "variables": {"injected_skills": injected_skills or []},
             "event": SimpleNamespace(
                 data={
-                    "canonical_tool_kind": canonical_tool_kind,
-                    "canonical_file_path": file_path,
+                    "tool_name": tool_name,
                 }
             ),
-            "tool_input": {},
+            "tool_input": {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         return evaluator.evaluate(self.CONDITION)
 
-    def test_matches_python_file(self) -> None:
+    def test_matches_python_write(self) -> None:
         assert self._eval("/project/src/main.py") is True
 
-    def test_matches_nested_python_file(self) -> None:
-        assert self._eval("/project/src/gobby/deep/module.py") is True
+    def test_matches_python_edit(self) -> None:
+        assert self._eval("/project/src/gobby/deep/module.py", tool_name="Edit") is True
 
     def test_skips_non_python_file(self) -> None:
         assert self._eval("/project/config.yaml") is False
@@ -171,11 +171,11 @@ class TestInjectPythonSkillCondition:
     def test_skips_when_already_injected(self) -> None:
         assert self._eval("/project/src/main.py", injected_skills=["python"]) is False
 
-    def test_skips_non_read_tool(self) -> None:
-        assert self._eval("/project/src/main.py", canonical_tool_kind="write") is False
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/main.py", tool_name="Read") is False
 
-    def test_skips_bash_tool(self) -> None:
-        assert self._eval("/project/src/main.py", canonical_tool_kind="shell") is False
+    def test_skips_other_tool(self) -> None:
+        assert self._eval("/project/src/main.py", tool_name="Bash") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
@@ -195,18 +195,19 @@ class TestInjectRustSkillStructure:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
 
-    def test_has_mcp_call_and_set_variable_effects(self, db, manager) -> None:
+    def test_has_block_mcp_call_and_set_variable_effects(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-rust-skill")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        assert len(body.effects) == 2
-        assert body.effects[0].type == "mcp_call"
-        assert body.effects[0].server == "gobby-skills"
-        assert body.effects[0].tool == "get_skill"
-        assert body.effects[0].inject_result is True
-        assert body.effects[1].type == "set_variable"
-        assert body.effects[1].variable == "injected_skills"
+        assert len(body.effects) == 3
+        assert body.effects[0].type == "block"
+        assert body.effects[1].type == "mcp_call"
+        assert body.effects[1].server == "gobby-skills"
+        assert body.effects[1].tool == "get_skill"
+        assert body.effects[1].inject_result is True
+        assert body.effects[2].type == "set_variable"
+        assert body.effects[2].variable == "injected_skills"
 
 
 # --- inject-rust-skill condition evaluation ---
@@ -217,36 +218,35 @@ class TestInjectRustSkillCondition:
 
     CONDITION = (
         "'rust' not in variables.get('injected_skills', []) "
-        "and event.data.get('canonical_tool_kind') == 'read' "
-        "and event.data.get('canonical_file_path', '').endswith('.rs')"
+        "and event.data.get('tool_name') in ('Write', 'Edit') "
+        "and tool_input.get('file_path', '').endswith('.rs')"
     )
 
     def _eval(
         self,
         file_path: str,
         *,
-        canonical_tool_kind: str = "read",
+        tool_name: str = "Write",
         injected_skills: list[str] | None = None,
     ) -> bool:
         context = {
             "variables": {"injected_skills": injected_skills or []},
             "event": SimpleNamespace(
                 data={
-                    "canonical_tool_kind": canonical_tool_kind,
-                    "canonical_file_path": file_path,
+                    "tool_name": tool_name,
                 }
             ),
-            "tool_input": {},
+            "tool_input": {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         return evaluator.evaluate(self.CONDITION)
 
-    def test_matches_rust_file(self) -> None:
+    def test_matches_rust_write(self) -> None:
         assert self._eval("/project/src/main.rs") is True
 
-    def test_matches_nested_rust_file(self) -> None:
-        assert self._eval("/project/src/deep/lib.rs") is True
+    def test_matches_rust_edit(self) -> None:
+        assert self._eval("/project/src/deep/lib.rs", tool_name="Edit") is True
 
     def test_skips_non_rust_file(self) -> None:
         assert self._eval("/project/config.yaml") is False
@@ -257,8 +257,8 @@ class TestInjectRustSkillCondition:
     def test_skips_when_already_injected(self) -> None:
         assert self._eval("/project/src/main.rs", injected_skills=["rust"]) is False
 
-    def test_skips_non_read_tool(self) -> None:
-        assert self._eval("/project/src/main.rs", canonical_tool_kind="write") is False
+    def test_skips_non_edit_write_tool(self) -> None:
+        assert self._eval("/project/src/main.rs", tool_name="Read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False

@@ -54,6 +54,9 @@ class ChildSessionConfig:
     lifecycle_variables: dict[str, Any] | None = None
     """Lifecycle variables for the session."""
 
+    sandbox_enabled: bool = False
+    """Whether the spawned runtime is expected to run sandboxed."""
+
 
 class ChildSessionManager:
     """
@@ -185,6 +188,7 @@ class ChildSessionManager:
             agent_depth=child_depth,
             spawned_by_agent_id=config.agent_id,
             workflow_name=config.workflow_name,
+            sandbox_enabled=config.sandbox_enabled,
         )
 
         child_id = child.id

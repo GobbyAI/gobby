@@ -206,6 +206,8 @@ CREATE TABLE sessions (
     last_assistant_content TEXT,
     approved_tools_json TEXT,
     session_type TEXT NOT NULL DEFAULT 'terminal',
+    sandbox_enabled BOOLEAN DEFAULT 0,
+    sandbox_policy_hash TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

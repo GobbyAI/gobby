@@ -103,6 +103,7 @@ def prepare_terminal_spawn(
     task_id: str | None = None,
     claimed_session_id: str | None = None,
     timeout_seconds: float | None = None,
+    sandbox_enabled: bool = False,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -128,6 +129,7 @@ def prepare_terminal_spawn(
         task_id: Optional task ID to link to the agent
         claimed_session_id: Session that owned the task when the run was created.
         timeout_seconds: Optional timeout for the agent run in seconds.
+        sandbox_enabled: Whether the spawned runtime should be recorded as sandboxed.
 
     Returns:
         PreparedSpawn with all necessary spawn configuration
@@ -147,6 +149,7 @@ def prepare_terminal_spawn(
         workflow_name=workflow_name,
         title=title,
         git_branch=git_branch,
+        sandbox_enabled=sandbox_enabled,
     )
 
     # Create the child session
@@ -243,6 +246,7 @@ async def prepare_gemini_spawn_with_preflight(
     prompt: str | None = None,
     max_agent_depth: int = 5,
     preflight_timeout: float = 10.0,
+    sandbox_enabled: bool = False,
 ) -> PreparedSpawn:
     """
     Prepare a Gemini terminal spawn with preflight session ID capture.
@@ -265,6 +269,7 @@ async def prepare_gemini_spawn_with_preflight(
         prompt: Optional initial prompt
         max_agent_depth: Maximum agent depth
         preflight_timeout: Timeout for preflight capture (default 10s)
+        sandbox_enabled: Whether the spawned runtime should be recorded as sandboxed.
 
     Returns:
         PreparedSpawn with gemini_external_id set in env_vars
@@ -293,6 +298,7 @@ async def prepare_gemini_spawn_with_preflight(
         title=title,
         git_branch=git_branch,
         external_id=gemini_info.session_id,  # Link to Gemini's session
+        sandbox_enabled=sandbox_enabled,
     )
 
     # Create the child session
@@ -370,6 +376,7 @@ async def prepare_codex_spawn_with_preflight(
     prompt: str | None = None,
     max_agent_depth: int = 5,
     preflight_timeout: float = 30.0,
+    sandbox_enabled: bool = False,
 ) -> PreparedSpawn:
     """
     Prepare a Codex terminal spawn with preflight session ID capture.
@@ -393,6 +400,7 @@ async def prepare_codex_spawn_with_preflight(
         prompt: Optional initial prompt
         max_agent_depth: Maximum agent depth
         preflight_timeout: Timeout for preflight capture (default 30s)
+        sandbox_enabled: Whether the spawned runtime should be recorded as sandboxed.
 
     Returns:
         PreparedSpawn with codex_external_id set in env_vars
@@ -421,6 +429,7 @@ async def prepare_codex_spawn_with_preflight(
         title=title,
         git_branch=git_branch,
         external_id=codex_info.session_id,  # Link to Codex's session
+        sandbox_enabled=sandbox_enabled,
     )
 
     # Create the child session

@@ -90,7 +90,8 @@ class TestGetConfigValues:
         assert "secret_keys" in data
         assert data["values"]["daemon_port"] == 60887
         assert "websocket" in data["values"]
-        assert "cli_sandbox" in data["values"]
+        assert "web_chat_sandbox" in data["values"]
+        assert "agent_sandbox" in data["values"]
 
     def test_values_contain_expected_keys(
         self, client: TestClient, real_config: DaemonConfig
@@ -135,17 +136,20 @@ class TestSaveConfigValues:
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
-    def test_save_cli_sandbox_values_to_config_store(self, client: TestClient, temp_db) -> None:
-        """Per-provider sandbox config should persist through the config store."""
+    def test_save_daemon_owned_sandbox_values_to_config_store(
+        self, client: TestClient, temp_db
+    ) -> None:
+        """Daemon-owned sandbox config should persist through the config store."""
         response = client.put(
             "/api/config/values",
             json={
                 "values": {
-                    "cli_sandbox": {
-                        "codex": {
-                            "mode": "restrictive",
-                            "allow_network": False,
-                        }
+                    "web_chat_sandbox": {
+                        "enabled": False,
+                        "extra_write_paths": ["/tmp/web-chat-cache"],
+                    },
+                    "agent_sandbox": {
+                        "extra_read_paths": ["/tmp/agent-read"],
                     }
                 }
             },
@@ -153,8 +157,9 @@ class TestSaveConfigValues:
 
         assert response.status_code == 200
         store = ConfigStore(temp_db)
-        assert store.get("cli_sandbox.codex.mode") == "restrictive"
-        assert store.get("cli_sandbox.codex.allow_network") is False
+        assert store.get("web_chat_sandbox.enabled") is False
+        assert store.get("web_chat_sandbox.extra_write_paths") == ["/tmp/web-chat-cache"]
+        assert store.get("agent_sandbox.extra_read_paths") == ["/tmp/agent-read"]
 
     def test_save_invalid_values_returns_400(self, client: TestClient) -> None:
         """Invalid config values cause a 400."""

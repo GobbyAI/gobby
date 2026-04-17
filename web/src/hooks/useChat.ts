@@ -1674,6 +1674,21 @@ export function useChat() {
               .catch(() => {});
           }
           clearContinuationRollback();
+          const resumeNotice =
+            typeof continued.resume_notice === "string"
+              ? continued.resume_notice
+              : null;
+          if (resumeNotice) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `system-resume-notice-${uuid()}`,
+                role: "system" as const,
+                content: resumeNotice,
+                timestamp: new Date(),
+              },
+            ]);
+          }
           console.log("Session continued:", data);
         } else if (data.type === "error") {
           const err = data as Record<string, unknown>;

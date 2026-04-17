@@ -322,6 +322,8 @@ class SessionStartMixin(EventHandlersBase):
                 agent_depth_val = int(agent_depth)
             except (ValueError, TypeError):
                 pass
+        sandbox_enabled = input_data.get("sandbox_enabled")
+        sandbox_enabled_val = sandbox_enabled if isinstance(sandbox_enabled, bool) else None
 
         session_id = None
         if self._session_manager:
@@ -336,6 +338,7 @@ class SessionStartMixin(EventHandlersBase):
                 terminal_context=terminal_context,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth_val,
+                sandbox_enabled=sandbox_enabled_val,
             )
 
         # Step 2b: Mark parent session as expired after successful handoff

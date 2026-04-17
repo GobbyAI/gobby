@@ -149,6 +149,23 @@ class TestLocalSessionManager:
         assert row["tool_call_count"] == 0
         assert row["last_assistant_content"] is None
 
+    def test_register_persists_sandbox_metadata(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="sandboxed-session",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            sandbox_enabled=True,
+            sandbox_policy_hash="policy-abc",
+        )
+
+        assert session.sandbox_enabled is True
+        assert session.sandbox_policy_hash == "policy-abc"
+
     def test_register_upserts_on_conflict(
         self,
         session_manager: LocalSessionManager,
@@ -528,15 +545,21 @@ class TestLocalSessionManager:
             title="Web Chat",
             model="claude-opus-4-5-20251101",
             chat_mode="accept_edits",
+            sandbox_enabled=True,
+            sandbox_policy_hash="policy-hash-123",
         )
 
         assert session.model == "claude-opus-4-5-20251101"
         assert session.chat_mode == "accept_edits"
+        assert session.sandbox_enabled is True
+        assert session.sandbox_policy_hash == "policy-hash-123"
 
         reloaded = session_manager.get(session.id)
         assert reloaded is not None
         assert reloaded.model == "claude-opus-4-5-20251101"
         assert reloaded.chat_mode == "accept_edits"
+        assert reloaded.sandbox_enabled is True
+        assert reloaded.sandbox_policy_hash == "policy-hash-123"
 
     def test_update_summary(
         self,

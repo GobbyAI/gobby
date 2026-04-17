@@ -237,7 +237,7 @@ class TestProviderResolution:
 
     @pytest.mark.asyncio
     async def test_sandbox_defaults_come_from_daemon_config(self) -> None:
-        """When sandbox params are omitted, daemon config should provide provider defaults."""
+        """Spawned agents should inherit daemon-owned sandbox defaults."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
@@ -274,13 +274,10 @@ class TestProviderResolution:
                 provider="codex",
                 parent_session_id="parent-session-xyz",
                 daemon_config=DaemonConfig(
-                    cli_sandbox={
-                        "codex": {
-                            "enabled": True,
-                            "mode": "restrictive",
-                            "allow_network": False,
-                        }
-                    }
+                    agent_sandbox={
+                        "enabled": True,
+                        "extra_write_paths": ["/tmp/agent-write"],
+                    },
                 ),
             )
 
@@ -288,12 +285,13 @@ class TestProviderResolution:
         spawn_request = mock_execute.call_args[0][0]
         assert spawn_request.sandbox_config is not None
         assert spawn_request.sandbox_config.enabled is True
-        assert spawn_request.sandbox_config.mode == "restrictive"
-        assert spawn_request.sandbox_config.allow_network is False
+        assert spawn_request.sandbox_config.mode == "permissive"
+        assert spawn_request.sandbox_config.allow_network is True
+        assert spawn_request.sandbox_config.extra_write_paths == ["/tmp/agent-write"]
 
     @pytest.mark.asyncio
-    async def test_explicit_sandbox_params_override_daemon_config(self) -> None:
-        """Explicit sandbox params should beat config-store defaults."""
+    async def test_agent_sandbox_can_be_disabled_via_daemon_config(self) -> None:
+        """Daemon config can explicitly opt agents out of sandboxing."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
@@ -328,26 +326,14 @@ class TestProviderResolution:
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
-                sandbox=True,
-                sandbox_mode="permissive",
-                sandbox_allow_network=True,
                 parent_session_id="parent-session-xyz",
-                daemon_config=DaemonConfig(
-                    cli_sandbox={
-                        "codex": {
-                            "enabled": True,
-                            "mode": "restrictive",
-                            "allow_network": False,
-                        }
-                    }
-                ),
+                daemon_config=DaemonConfig(agent_sandbox={"enabled": False}),
             )
 
         assert result["success"] is True
         spawn_request = mock_execute.call_args[0][0]
         assert spawn_request.sandbox_config is not None
-        assert spawn_request.sandbox_config.mode == "permissive"
-        assert spawn_request.sandbox_config.allow_network is True
+        assert spawn_request.sandbox_config.enabled is False
 
 
 # ═══════════════════════════════════════════════════════════════════════

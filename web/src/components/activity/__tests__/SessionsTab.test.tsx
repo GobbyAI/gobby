@@ -73,6 +73,8 @@ const activeSessions = [
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: { session_name: "dev" },
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
   },
   {
     id: "web-current",
@@ -98,6 +100,8 @@ const activeSessions = [
     parent_session_id: null,
     session_type: "web_chat",
     terminal_context: null,
+    sandbox_enabled: true,
+    sandbox_policy_hash: "policy-web",
   },
   {
     id: "web-other",
@@ -123,6 +127,8 @@ const activeSessions = [
     parent_session_id: null,
     session_type: "web_chat",
     terminal_context: null,
+    sandbox_enabled: true,
+    sandbox_policy_hash: "policy-web",
   },
   {
     id: "pipeline-1",
@@ -148,6 +154,8 @@ const activeSessions = [
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: null,
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
   },
   {
     id: "cron-1",
@@ -173,6 +181,8 @@ const activeSessions = [
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: null,
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
   },
 ];
 
@@ -201,6 +211,8 @@ const pausedSessions = [
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: { tmux_pane: "%44", parent_pid: 1234 },
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
   },
   {
     id: "terminal-paused-stale",
@@ -226,6 +238,8 @@ const pausedSessions = [
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: null,
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
   },
 ];
 
@@ -255,6 +269,8 @@ const handoffReadySessions = [
     session_type: "terminal",
     terminal_context: { tmux_pane: "%45", parent_pid: 4321 },
     can_proxy_attach: true,
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
   },
 ];
 
@@ -297,6 +313,7 @@ describe("SessionsTab", () => {
 
     expect(screen.getAllByText(/^tmux$/i)).toHaveLength(1);
     expect(screen.getAllByText(/^web$/i)).toHaveLength(1);
+    expect(screen.getAllByText(/^SB$/i)).toHaveLength(1);
     expect(screen.getAllByLabelText("Session actions")).toHaveLength(2);
     expect(screen.queryByText("Close")).toBeNull();
   });

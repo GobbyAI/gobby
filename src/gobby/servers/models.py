@@ -29,6 +29,9 @@ class SessionRegisterRequest(BaseModel):
     )
     git_branch: str | None = Field(None, description="Current git branch name")
     cwd: str | None = Field(None, description="Current working directory")
+    sandbox_enabled: bool | None = Field(
+        None, description="Whether the session runtime was launched sandboxed"
+    )
 
 
 class WebChatSessionRequest(BaseModel):

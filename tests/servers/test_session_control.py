@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -291,6 +291,8 @@ class TestContinueInChatTerminalKill:
             title="CLI Session",
             terminal_context={},
             project_id="proj-1",
+            sandbox_enabled=True,
+            sandbox_policy_hash=ANY,
         )
         session_manager.update_parent_session_id.assert_not_called()
 
@@ -563,6 +565,8 @@ class TestContinueInChatTerminalKill:
             title="Terminal Session",
             terminal_context={},
             project_id="proj-1",
+            sandbox_enabled=True,
+            sandbox_policy_hash=ANY,
         )
         session_manager.update_parent_session_id.assert_not_called()
 
@@ -668,6 +672,8 @@ class TestContinueInChatTerminalKill:
             title="Terminal Session",
             terminal_context={},
             project_id="proj-1",
+            sandbox_enabled=True,
+            sandbox_policy_hash=ANY,
         )
         assert mock_chat_session.chat_mode == "accept_edits"
         assert mock_chat_session.reasoning_effort == "high"
@@ -676,6 +682,88 @@ class TestContinueInChatTerminalKill:
         response = json.loads(payload)
         assert response["chat_mode"] == "accept_edits"
         assert response["reasoning_effort"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_continue_in_chat_drops_sdk_resume_when_web_chat_policy_mismatches(self) -> None:
+        """Web-chat continuations should fork instead of SDK-resuming across policy changes."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "web_chat"
+        source_session.external_id = "sdk-session-123"
+        source_session.project_id = "proj-1"
+        source_session.transcript_path = None
+        source_session.source = "claude"
+        source_session.title = "Old Web Chat"
+        source_session.chat_mode = "plan"
+        source_session.model = "sonnet"
+        source_session.terminal_context = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(side_effect=lambda session_id: source_session if session_id == "source-uuid" else None)
+        session_manager.update = MagicMock()
+        session_manager.update_parent_session_id = MagicMock()
+
+        mock_chat_session = MagicMock()
+        mock_chat_session.db_session_id = "new-db-id"
+        mock_chat_session.seq_num = 88
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.agent_run_manager = None
+        host._send_error = AsyncMock()
+        host.web_chat_runtime_manager = MagicMock()
+        host.web_chat_runtime_manager.policy_mismatch_reason.return_value = (
+            "This chat was created under a different sandbox policy. Continue it in a new chat."
+        )
+        host.web_chat_runtime_manager.sandbox_config.enabled = True
+        host.web_chat_runtime_manager.sandbox_policy_hash = "policy-new"
+
+        captured: dict[str, object] = {}
+
+        async def fake_create_chat_session(
+            conv_id,
+            model=None,
+            project_id=None,
+            resume_session_id=None,
+            provider=None,
+            reasoning_effort=None,
+        ):
+            captured["conversation_id"] = conv_id
+            captured["resume_session_id"] = resume_session_id
+            captured["provider"] = provider
+            return mock_chat_session
+
+        host._create_chat_session = fake_create_chat_session
+
+        with patch(
+            "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await SessionControlMixin._handle_continue_in_chat(
+                host,
+                ws,
+                {
+                    "source_session_id": "source-uuid",
+                    "conversation_id": "new-conv-id",
+                },
+            )
+
+        assert captured["conversation_id"] == "new-conv-id"
+        assert captured["resume_session_id"] is None
+        session_manager.update_parent_session_id.assert_called_once_with("new-db-id", "source-uuid")
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["resumed"] is False
+        assert response["resume_notice"] == (
+            "This chat was created under a different sandbox policy. Continue it in a new chat."
+        )
 
     @pytest.mark.asyncio
     async def test_attach_to_session_returns_extended_metadata(self) -> None:

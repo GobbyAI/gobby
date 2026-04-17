@@ -217,9 +217,7 @@ class TestSpawnAgent:
         """Web launcher terminal spawns should defer sandbox defaults to daemon config."""
         task = _create_task(task_manager, test_project.id, "Sandboxed terminal task")
         server.services.agent_runner = MagicMock()
-        server.services.config = DaemonConfig(
-            cli_sandbox={"claude": {"mode": "restrictive", "allow_network": False}}
-        )
+        server.services.config = DaemonConfig(agent_sandbox={"enabled": False})
 
         with (
             patch(
@@ -248,8 +246,6 @@ class TestSpawnAgent:
         kwargs = mock_spawn.await_args.kwargs
         assert kwargs["daemon_config"] is server.services.config
         assert "sandbox" not in kwargs
-        assert "sandbox_mode" not in kwargs
-        assert "sandbox_allow_network" not in kwargs
 
 
 # ---------------------------------------------------------------------------

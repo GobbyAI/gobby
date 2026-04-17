@@ -71,6 +71,8 @@ class Session:
     approved_tools_json: str | None = None
     # Session type: 'terminal' (CLI) or 'web_chat' (browser UI)
     session_type: str = "terminal"
+    sandbox_enabled: bool = False
+    sandbox_policy_hash: str | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> Session:
@@ -124,6 +126,12 @@ class Session:
             if "approved_tools_json" in row.keys()
             else None,
             session_type=row["session_type"] if "session_type" in row.keys() else "terminal",
+            sandbox_enabled=bool(row["sandbox_enabled"])
+            if "sandbox_enabled" in row.keys()
+            else False,
+            sandbox_policy_hash=row["sandbox_policy_hash"]
+            if "sandbox_policy_hash" in row.keys()
+            else None,
         )
 
     @classmethod
@@ -234,6 +242,8 @@ class Session:
             "last_assistant_content": self.last_assistant_content,
             "approved_tools_json": self.approved_tools_json,
             "session_type": self.session_type,
+            "sandbox_enabled": self.sandbox_enabled,
+            "sandbox_policy_hash": self.sandbox_policy_hash,
             "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -257,6 +267,8 @@ class Session:
             "turn_count": self.turn_count,
             "tool_call_count": self.tool_call_count,
             "session_type": self.session_type,
+            "sandbox_enabled": self.sandbox_enabled,
+            "sandbox_policy_hash": self.sandbox_policy_hash,
             "can_proxy_attach": self.can_proxy_attach,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

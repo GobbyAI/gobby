@@ -116,6 +116,7 @@ class SessionManager:
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         agent_depth: int = 0,
+        sandbox_enabled: bool | None = None,
     ) -> str:
         """
         Register new session with local storage.
@@ -133,6 +134,7 @@ class SessionManager:
             terminal_context: Optional terminal context for correlation
             workflow_name: Optional workflow to auto-activate for this session
             agent_depth: Depth in agent hierarchy (0 = root session)
+            sandbox_enabled: Whether the runtime was launched with sandboxing enabled
 
         Returns:
             session_id (database UUID)
@@ -164,6 +166,7 @@ class SessionManager:
                 terminal_context=terminal_context,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,
+                sandbox_enabled=sandbox_enabled,
             )
 
             session_id: str = session.id
@@ -184,6 +187,7 @@ class SessionManager:
                     "git_branch": git_branch,
                     "workflow_name": workflow_name,
                     "agent_depth": agent_depth,
+                    "sandbox_enabled": sandbox_enabled,
                 }
 
             self.logger.debug(f"Registered session {session_id} (external_id={external_id})")

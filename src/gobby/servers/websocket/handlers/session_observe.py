@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.sessions.transcript_archive import restore_transcript
@@ -191,6 +192,15 @@ async def handle_continue_in_chat(
         # Resuming a tmux session preserves the same durable session identity.
         conversation_id = source_session_id
 
+    runtime_manager = getattr(mixin, "web_chat_runtime_manager", None)
+    daemon_config = getattr(mixin, "daemon_config", None)
+    if runtime_manager is not None:
+        current_web_chat_sandbox_enabled = bool(runtime_manager.sandbox_config.enabled)
+        current_web_chat_policy_hash = runtime_manager.sandbox_policy_hash
+    else:
+        current_web_chat_sandbox_enabled = bool(web_chat_sandbox_config(daemon_config).enabled)
+        current_web_chat_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
+
     # --- Resume guard: reject if source session is actively in use ---
     if source_session:
         blocked_reason = await check_resume_blocked(mixin, source_session)
@@ -217,6 +227,17 @@ async def handle_continue_in_chat(
     can_sdk_resume = (
         not effective_provider or not source_provider or effective_provider == source_provider
     )
+    resume_notice: str | None = None
+
+    if (
+        can_sdk_resume
+        and source_session
+        and getattr(source_session, "session_type", None) == "web_chat"
+        and runtime_manager is not None
+    ):
+        resume_notice = runtime_manager.policy_mismatch_reason(source_session)
+        if resume_notice:
+            can_sdk_resume = False
 
     # 1. Source session's external_id IS the SDK session ID
     #    (web chat sessions update external_id -> SDK session ID after first turn)
@@ -269,6 +290,8 @@ async def handle_continue_in_chat(
                 title=source_title,
                 terminal_context={},
                 project_id=project_id,
+                sandbox_enabled=current_web_chat_sandbox_enabled,
+                sandbox_policy_hash=current_web_chat_policy_hash,
             )
         except Exception as e:
             logger.error(
@@ -379,6 +402,7 @@ async def handle_continue_in_chat(
                 "reasoning_effort": target_reasoning_effort,
                 "session_type": "web_chat",
                 "status": "active",
+                "resume_notice": resume_notice,
             }
         )
     )

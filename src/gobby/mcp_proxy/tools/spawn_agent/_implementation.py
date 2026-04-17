@@ -16,7 +16,7 @@ from gobby.agents.isolation import (
     SpawnConfig,
     get_isolation_handler,
 )
-from gobby.agents.sandbox import SandboxConfig, sandbox_config_for_provider
+from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
@@ -59,11 +59,6 @@ async def spawn_agent_impl(
     # Limits
     timeout: float | None = None,
     max_turns: int | None = None,
-    # Sandbox
-    sandbox: bool | None = None,
-    sandbox_mode: Literal["permissive", "restrictive"] | None = None,
-    sandbox_allow_network: bool | None = None,
-    sandbox_extra_paths: list[str] | None = None,
     # Context
     parent_session_id: str | None = None,
     project_path: str | None = None,
@@ -97,10 +92,6 @@ async def spawn_agent_impl(
         model: Model to use
         timeout: Timeout in seconds
         max_turns: Maximum conversation turns
-        sandbox: Enable sandbox (True/False/None)
-        sandbox_mode: Sandbox mode (permissive/restrictive)
-        sandbox_allow_network: Allow network access
-        sandbox_extra_paths: Extra paths for sandbox write access
         parent_session_id: Parent session ID
         project_path: Project path override
         initial_variables: Pre-built initial variables from factory (merged with impl's own)
@@ -197,24 +188,8 @@ async def spawn_agent_impl(
             effective_base_branch = None
     effective_base_branch = effective_base_branch or "main"
 
-    # Build sandbox config from tool params (no agent_def.sandbox in simplified model)
-    effective_sandbox_config: SandboxConfig | None = None
-
-    sandbox_enabled = sandbox
-    has_explicit_sandbox_overrides = (
-        sandbox_mode is not None or sandbox_allow_network is not None or bool(sandbox_extra_paths)
-    )
-    if sandbox_enabled is True or (sandbox_enabled is None and has_explicit_sandbox_overrides):
-        effective_sandbox_config = SandboxConfig(
-            enabled=True,
-            mode=sandbox_mode or "permissive",
-            allow_network=sandbox_allow_network if sandbox_allow_network is not None else True,
-            extra_write_paths=sandbox_extra_paths or [],
-        )
-    elif sandbox_enabled is False:
-        effective_sandbox_config = SandboxConfig(enabled=False)
-    else:
-        effective_sandbox_config = sandbox_config_for_provider(effective_provider, daemon_config)
+    # Daemon-owned agent sandboxes inherit from config-store defaults only.
+    effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
 
     # 2. Resolve project context
     ctx = get_project_context(Path(project_path) if project_path else None)
@@ -351,36 +326,6 @@ async def spawn_agent_impl(
             except Exception as cleanup_err:
                 logger.warning(f"Cleanup after prepare failure also failed: {cleanup_err}")
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
-
-    # 7b. Add main repo path to sandbox read AND write paths for worktree isolation
-    if (
-        effective_isolation == "worktree"
-        and effective_sandbox_config
-        and effective_sandbox_config.enabled
-        and isolation_ctx.extra.get("main_repo_path")
-    ):
-        main_repo_path = isolation_ctx.extra["main_repo_path"]
-        main_repo_path_str = str(main_repo_path)
-        existing_read_paths = list(effective_sandbox_config.extra_read_paths or [])
-        existing_write_paths = list(effective_sandbox_config.extra_write_paths or [])
-        paths_updated = False
-        if main_repo_path_str not in existing_read_paths:
-            existing_read_paths.append(main_repo_path_str)
-            paths_updated = True
-        if main_repo_path_str not in existing_write_paths:
-            existing_write_paths.append(main_repo_path_str)
-            paths_updated = True
-        if paths_updated:
-            effective_sandbox_config = SandboxConfig(
-                enabled=effective_sandbox_config.enabled,
-                mode=effective_sandbox_config.mode,
-                allow_network=effective_sandbox_config.allow_network,
-                extra_read_paths=existing_read_paths,
-                extra_write_paths=existing_write_paths,
-            )
-            logger.debug(
-                f"Added main repo path {main_repo_path} to sandbox read/write paths for worktree"
-            )
 
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)

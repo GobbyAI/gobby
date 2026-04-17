@@ -46,6 +46,7 @@ interface SessionEntry {
   startedAt?: string;
   seqNum?: number | null;
   hasTmux: boolean;
+  sandboxEnabled: boolean;
 }
 
 interface SessionContextMenu {
@@ -78,6 +79,14 @@ function getAgentBadge(agentRunId: string | null | undefined): {
   return { label: "auto", className: "session-kind-badge--auto" };
 }
 
+function getSandboxBadge(sandboxEnabled: boolean): {
+  label: string;
+  className: string;
+} | null {
+  if (!sandboxEnabled) return null;
+  return { label: "SB", className: "session-kind-badge--sandbox" };
+}
+
 function isWatchableActivitySession(session: GobbySession): boolean {
   if (session.source === "pipeline" || session.source === "cron") {
     return false;
@@ -95,11 +104,17 @@ function isWatchableActivitySession(session: GobbySession): boolean {
 function renderBadges(entry: SessionEntry) {
   const typeBadge = getSessionTypeBadge(entry.sessionType);
   const agentBadge = getAgentBadge(entry.agentRunId);
+  const sandboxBadge = getSandboxBadge(entry.sandboxEnabled);
   return (
     <>
       <span className={`session-kind-badge ${typeBadge.className}`}>
         {typeBadge.label}
       </span>
+      {sandboxBadge && (
+        <span className={`session-kind-badge ${sandboxBadge.className}`}>
+          {sandboxBadge.label}
+        </span>
+      )}
       {agentBadge && (
         <span className={`session-kind-badge ${agentBadge.className}`}>
           {agentBadge.label}
@@ -226,6 +241,7 @@ export const SessionsTab = memo(function SessionsTab({
         startedAt: a.started_at,
         seqNum: matchedSession?.seq_num,
         hasTmux: !!a.pid,
+        sandboxEnabled: matchedSession?.sandbox_enabled ?? false,
       };
     });
 
@@ -246,6 +262,7 @@ export const SessionsTab = memo(function SessionsTab({
           startedAt: s.updated_at,
           seqNum: s.seq_num,
           hasTmux: !!s.terminal_context,
+          sandboxEnabled: s.sandbox_enabled ?? false,
         };
       });
 

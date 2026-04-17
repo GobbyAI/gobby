@@ -155,11 +155,6 @@ def create_spawn_agent_registry(
         # Limits
         timeout: float | None = None,
         max_turns: int | None = None,
-        # Sandbox
-        sandbox: bool | None = None,
-        sandbox_mode: Literal["permissive", "restrictive"] | None = None,
-        sandbox_allow_network: bool | None = None,
-        sandbox_extra_paths: list[str] | None = None,
         # Context
         parent_session_id: str | None = None,
         project_path: str | None = None,
@@ -181,10 +176,6 @@ def create_spawn_agent_registry(
             model: Model to use
             timeout: Timeout in seconds
             max_turns: Maximum conversation turns
-            sandbox: Enable sandbox (True/False/None)
-            sandbox_mode: Sandbox mode (permissive/restrictive)
-            sandbox_allow_network: Allow network access
-            sandbox_extra_paths: Extra paths for sandbox write access
             parent_session_id: Session reference (accepts #N, N, UUID, or prefix) for the parent session
             project_path: Project path override
 
@@ -317,10 +308,6 @@ def create_spawn_agent_registry(
             model=model,
             timeout=timeout,
             max_turns=max_turns,
-            sandbox=sandbox,
-            sandbox_mode=sandbox_mode,
-            sandbox_allow_network=sandbox_allow_network,
-            sandbox_extra_paths=sandbox_extra_paths,
             parent_session_id=resolved_parent_session_id,
             project_path=project_path,
             initial_variables=initial_variables,

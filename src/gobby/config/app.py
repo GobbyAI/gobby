@@ -19,11 +19,11 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Internal imports for DaemonConfig fields - NOT re-exported
-from gobby.config.cli_sandbox import CLISandboxConfig
 from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.conductor import ConductorConfig
 from gobby.config.cron import CronConfig
+from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
 from gobby.config.extensions import HookExtensionsConfig
 from gobby.config.features import (
     ChatConfig,
@@ -386,9 +386,13 @@ class DaemonConfig(BaseModel):
         default_factory=LLMProvidersConfig,
         description="Multi-provider LLM configuration",
     )
-    cli_sandbox: CLISandboxConfig = Field(
-        default_factory=CLISandboxConfig,
-        description="Per-CLI runtime sandbox defaults for daemon-managed sessions.",
+    web_chat_sandbox: DaemonOwnedSandboxConfig = Field(
+        default_factory=DaemonOwnedSandboxConfig,
+        description="Daemon-owned sandbox defaults for web chat runtimes.",
+    )
+    agent_sandbox: DaemonOwnedSandboxConfig = Field(
+        default_factory=DaemonOwnedSandboxConfig,
+        description="Daemon-owned sandbox defaults for spawned agent runtimes.",
     )
     communications: CommunicationsConfig = Field(
         default_factory=CommunicationsConfig,

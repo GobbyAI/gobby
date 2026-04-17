@@ -2600,6 +2600,11 @@
   color: #fb923c;
 }
 
+.session-kind-badge--sandbox {
+  background: color-mix(in srgb, #d97706 18%, transparent);
+  color: #fbbf24;
+}
+
 /* --- Session context menu --- */
 .session-ctx-backdrop {
   position: fixed;
