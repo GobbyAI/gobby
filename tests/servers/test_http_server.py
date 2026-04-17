@@ -896,10 +896,8 @@ class TestMCPEndpointsWithManager:
         # Tool-level errors return 200 with error in body (application-level error)
         assert response.status_code == 200
         data = response.json()
-        assert data.get("success") is False  # Wrapper propagates inner result success
-        result = data.get("result", {})
-        assert result.get("success") is False  # Inner error from ToolProxyService
-        assert "Tool not found" in result.get("error", "")
+        assert data.get("success") is False
+        assert "Tool not found" in data.get("error", "")
 
     def test_add_mcp_server_success(
         self,

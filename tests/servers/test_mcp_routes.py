@@ -933,6 +933,45 @@ class TestCallMCPTool:
         assert response.status_code == 400
         assert "server_name" in response.json()["detail"]["error"]
 
+    def test_call_tool_tool_proxy_failure_is_flattened(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """ToolProxy failures should stay flat at the HTTP boundary."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._tools_handler = MagicMock()
+        server._tools_handler.tool_proxy = MagicMock()
+        server._tools_handler.tool_proxy.call_tool = AsyncMock(
+            return_value={
+                "success": False,
+                "error": "Tool not found",
+                "error_code": "TOOL_NOT_FOUND",
+                "server_name": "gobby-tasks",
+                "tool_name": "missing_tool",
+            }
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                json={
+                    "server_name": "gobby-tasks",
+                    "tool_name": "missing_tool",
+                    "arguments": {},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"] == "Tool not found"
+        assert data["error_code"] == "TOOL_NOT_FOUND"
+        assert "result" not in data
+        assert "response_time_ms" in data
+
     def test_call_tool_internal_server_success(self, session_storage: LocalSessionManager) -> None:
         """Test calling tool on internal server."""
         server = create_http_server(
