@@ -172,6 +172,7 @@ export function ChatInput({
   const latchedRef = useRef(false)
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
+  const attachmentsDisabledRef = useRef(attachmentsDisabled)
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
 
@@ -181,12 +182,27 @@ export function ChatInput({
     queuedFilesRef.current = queuedFiles
   }, [queuedFiles])
   useEffect(() => {
+    attachmentsDisabledRef.current = attachmentsDisabled
+  }, [attachmentsDisabled])
+  const clearQueuedFiles = useCallback(() => {
+    queuedFilesRef.current.forEach((qf) => {
+      if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
+    })
+    queuedFilesRef.current = []
+    setQueuedFiles([])
+  }, [])
+  useEffect(() => {
     return () => {
       queuedFilesRef.current.forEach((qf) => {
         if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
       })
     }
   }, [])
+  useEffect(() => {
+    if (attachmentsDisabled) {
+      clearQueuedFiles()
+    }
+  }, [attachmentsDisabled, clearQueuedFiles])
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -224,16 +240,17 @@ export function ChatInput({
 
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim()
-    const hasFiles = queuedFiles.length > 0
+    const filesToSend = attachmentsDisabled ? [] : queuedFiles
+    const hasFiles = filesToSend.length > 0
     if ((trimmed || hasFiles) && !disabled) {
-      onSend(trimmed, hasFiles ? queuedFiles : undefined, {
+      onSend(trimmed, hasFiles ? filesToSend : undefined, {
         reasoningEffort: currentReasoning,
       })
       setInput('')
-      setQueuedFiles([])
+      clearQueuedFiles()
       onScrollToBottom?.()
     }
-  }, [currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
+  }, [attachmentsDisabled, clearQueuedFiles, currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
 
   const handleChange = useCallback((value: string) => {
     setInput(value)
@@ -267,6 +284,10 @@ export function ChatInput({
       reader.onload = () => {
         const result = reader.result as string
         const base64 = result.split(',')[1] || null
+        if (attachmentsDisabledRef.current) {
+          if (previewUrl) URL.revokeObjectURL(previewUrl)
+          return
+        }
         setQueuedFiles((prev) => [...prev, { id, file, previewUrl, base64 }])
       }
       reader.onerror = () => {

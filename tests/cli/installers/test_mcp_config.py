@@ -22,6 +22,7 @@ from gobby.cli.installers.mcp_config import (
     remove_project_mcp_server,
     strip_mcp_tool_overrides_toml,
 )
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 
 pytestmark = pytest.mark.unit
 
@@ -668,7 +669,7 @@ class TestInstallDefaultMCPServers:
         )
         assert chrome_server["args"] == [
             "-y",
-            "chrome-devtools-mcp@latest",
+            CHROME_DEVTOOLS_NPM_PACKAGE,
             "--no-usage-statistics",
         ]
 

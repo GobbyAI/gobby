@@ -65,10 +65,10 @@ describe('test utilities', () => {
       const original = win.fetch
 
       Reflect.deleteProperty(win, 'fetch')
-      mockFetch = createMockFetch()
+      const localMockFetch = createMockFetch()
       expect(typeof win.fetch).toBe('function')
 
-      mockFetch.restore()
+      localMockFetch.restore()
       expect('fetch' in win).toBe(false)
 
       if (original === undefined) {

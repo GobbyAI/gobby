@@ -1626,6 +1626,59 @@ describe("useChat", () => {
     expect(result.current.messages[0].id).toBe("db-msg-1");
   });
 
+  it("reconciles duplicate proxy messages by FIFO session order instead of matching on content", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "claude",
+        title: "Proxy session",
+        status: "active",
+        model: "sonnet",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.sendMessage("repeat me");
+      result.current.sendMessage("repeat me");
+    });
+
+    expect(result.current.messages).toHaveLength(2);
+    const firstPendingId = result.current.messages[0].id;
+    const secondPendingId = result.current.messages[1].id;
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-proxy",
+        message: {
+          id: "db-msg-1",
+          role: "user",
+          content: "repeat me",
+          timestamp: "2026-04-17T20:00:00Z",
+        },
+      });
+    });
+
+    expect(result.current.messages[0].id).toBe("db-msg-1");
+    expect(result.current.messages[1].id).toBe(secondPendingId);
+    expect(result.current.messages[1].id).not.toBe(firstPendingId);
+  });
+
   it("keeps paused terminal sessions view-only instead of enabling proxy send mode", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

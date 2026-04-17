@@ -11,6 +11,16 @@ type RenderedMessageLike = {
   content_blocks?: ContentBlock[]
 }
 
+let fallbackMessageIdCounter = 0
+
+function createFallbackMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `ws-${crypto.randomUUID()}`
+  }
+  fallbackMessageIdCounter += 1
+  return `ws-${fallbackMessageIdCounter}`
+}
+
 function isHookFeedback(content: string): boolean {
   return (
     /^Stop hook feedback:/.test(content) ||
@@ -156,13 +166,14 @@ export function mapRenderedMessageToChatMessage(
 ): ChatMessage {
   const contentBlocks = message.content_blocks
   const chatMsg: ChatMessage = {
-    id: String(message.id ?? `ws-${Date.now()}`),
+    id: message.id == null ? createFallbackMessageId() : String(message.id),
     role: normalizeChatRole(message.role, message.content, contentBlocks),
     content: typeof message.content === 'string' ? message.content : '',
     timestamp: new Date((message.timestamp as string | Date | undefined) ?? Date.now()),
     contentBlocks,
   }
 
+  const thinkingParts: string[] = []
   if (chatMsg.contentBlocks) {
     for (const block of chatMsg.contentBlocks) {
       if (block.type === 'tool_chain' && block.tool_calls?.length) {
@@ -171,9 +182,12 @@ export function mapRenderedMessageToChatMessage(
         }
         chatMsg.toolCalls.push(...block.tool_calls)
       } else if (block.type === 'thinking') {
-        chatMsg.thinkingContent = (chatMsg.thinkingContent || '') + block.content
+        thinkingParts.push(block.content)
       }
     }
+  }
+  if (thinkingParts.length > 0) {
+    chatMsg.thinkingContent = thinkingParts.join('')
   }
 
   return chatMsg

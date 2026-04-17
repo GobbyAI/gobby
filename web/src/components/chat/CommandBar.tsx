@@ -16,7 +16,6 @@ interface CommandBarProps {
   sessionRef: string | null
   title: string | null
   sessionSource?: string | null
-  sessionStateLabel?: string | null
   onOpenPalette: () => void
   onOpenActiveSessions: () => void
   onNewChat: (agentName?: string) => void

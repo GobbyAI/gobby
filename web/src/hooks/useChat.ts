@@ -65,7 +65,6 @@ interface PendingProxyMessage {
   clientMessageId: string;
   currentMessageId: string;
   sessionId: string;
-  content: string;
 }
 
 interface ToolStatusMessage {
@@ -189,10 +188,9 @@ function isValidSessionType(value: unknown): value is "terminal" | "web_chat" {
 function findPendingProxyMessage(
   pending: Map<string, PendingProxyMessage>,
   sessionId: string,
-  content: string,
 ): PendingProxyMessage | null {
   for (const entry of pending.values()) {
-    if (entry.sessionId === sessionId && entry.content === content) {
+    if (entry.sessionId === sessionId) {
       return entry;
     }
   }
@@ -1982,7 +1980,6 @@ export function useChat() {
               ? findPendingProxyMessage(
                   pendingProxyMessagesRef.current,
                   smSessionId,
-                  renderedMessage.content,
                 )
               : null;
           setMessages((prev) => {
@@ -2976,7 +2973,6 @@ export function useChat() {
           clientMessageId,
           currentMessageId: messageId,
           sessionId: proxySessionId,
-          content,
         });
         setMessages((prev) => [
           ...prev,

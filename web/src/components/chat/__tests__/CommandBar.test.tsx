@@ -10,7 +10,6 @@ describe("CommandBar", () => {
         sessionRef="#42"
         title="Viewed web chat"
         sessionSource="codex"
-        sessionStateLabel="Watching live"
         onOpenPalette={vi.fn()}
         onOpenActiveSessions={vi.fn()}
         onNewChat={vi.fn()}

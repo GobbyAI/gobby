@@ -108,6 +108,11 @@ def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
             **task_item,
             "id": pfx(task_item["id"]),
             "phase_id": pfx(task_item["phase_id"]),
+            "execution_group": (
+                pfx(task_item["execution_group"])
+                if task_item.get("execution_group")
+                else task_item.get("execution_group")
+            ),
         }
         for task_item in spec.get("tasks") or []
     ]

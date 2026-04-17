@@ -4,6 +4,7 @@ Tests for Sandbox Configuration Models.
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,9 +17,11 @@ from gobby.agents.sandbox import (
     ResolvedSandboxPaths,
     SandboxConfig,
     SandboxResolver,
+    coerce_sandbox_config,
     compute_sandbox_paths,
     get_sandbox_resolver,
     materialize_claude_settings,
+    materialize_claude_settings_async,
 )
 
 pytestmark = pytest.mark.unit
@@ -186,6 +189,14 @@ class TestSandboxConfig:
         # Original should be unchanged (deep copy)
         assert "/new" not in original.extra_read_paths
         assert "/new" in copy.extra_read_paths
+
+    def test_coerce_sandbox_config_invalid_object_mode_defaults_to_permissive(self) -> None:
+        """Invalid object-like sandbox modes should be normalized before model construction."""
+        config = coerce_sandbox_config(SimpleNamespace(enabled=True, mode="broken"))
+
+        assert config is not None
+        assert config.enabled is True
+        assert config.mode == "permissive"
 
 
 @pytest.mark.unit
@@ -437,6 +448,42 @@ class TestClaudeSandboxResolver:
         payload = json.loads(Path(settings_path).read_text(encoding="utf-8"))
         assert payload["hooks"]["SessionStart"] == []
         assert payload["sandbox"]["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_materialize_claude_settings_async_matches_sync_output(self, tmp_path) -> None:
+        """Async wrapper should preserve sync helper behavior while moving work off-loop."""
+        base_settings = tmp_path / "headless.json"
+        base_settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+
+        settings_path = await materialize_claude_settings_async(
+            base_settings_path=base_settings,
+            config=SandboxConfig(enabled=True),
+            workspace_path="/project",
+            name="test-async",
+        )
+
+        assert settings_path is not None
+        payload = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+        assert payload["hooks"]["SessionStart"] == []
+        assert payload["sandbox"]["enabled"] is True
+
+    def test_materialize_claude_settings_logs_invalid_base_settings(
+        self, tmp_path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Invalid base settings should warn and still fall back to an empty payload."""
+        base_settings = tmp_path / "headless.json"
+        base_settings.write_text("{invalid", encoding="utf-8")
+
+        with caplog.at_level("WARNING"):
+            settings_path = materialize_claude_settings(
+                base_settings_path=base_settings,
+                config=SandboxConfig(enabled=True),
+                workspace_path="/project",
+                name="test-invalid",
+            )
+
+        assert settings_path is not None
+        assert "Failed to read Claude base settings for runtime sandbox overlay" in caplog.text
 
 
 @pytest.mark.unit

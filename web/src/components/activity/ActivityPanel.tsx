@@ -1,6 +1,7 @@
 import {
   useState,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
@@ -125,6 +126,8 @@ const PANEL_MAX_WIDTH = 1200;
 const CHAT_MIN_WIDTH = 400;
 const LAYOUT_BUFFER = 24;
 
+type ActivityTabConfig = (typeof TABS)[number];
+
 interface ActivityPanelProps {
   isPinned: boolean;
   onPinnedChange: (pinned: boolean) => void;
@@ -164,6 +167,63 @@ interface ActivityPanelProps {
   isMobile?: boolean;
 }
 
+interface TabMenuProps {
+  tabs: ActivityTabConfig[];
+  activeTab: ActivityTab;
+  activeTabConfig: ActivityTabConfig;
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelect: (tab: ActivityTab) => void;
+  wrapperRef: React.Ref<HTMLDivElement>;
+}
+
+function TabMenu({
+  tabs,
+  activeTab,
+  activeTabConfig,
+  isOpen,
+  onToggle,
+  onSelect,
+  wrapperRef,
+}: TabMenuProps) {
+  return (
+    <div className="activity-panel-mobile-select-wrap" ref={wrapperRef}>
+      <button
+        type="button"
+        className="activity-panel-mobile-trigger"
+        onClick={onToggle}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+      >
+        <span className="activity-panel-mobile-trigger__value">
+          <span className="activity-panel-tab-icon">{activeTabConfig.icon}</span>
+          <span>{activeTabConfig.label}</span>
+        </span>
+        <span className="activity-panel-mobile-trigger__caret">
+          {isOpen ? "\u25B2" : "\u25BC"}
+        </span>
+      </button>
+      {isOpen && (
+        <div className="activity-panel-mobile-menu" role="menu">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={activeTab === tab.id}
+              className={`activity-panel-mobile-menu__item${activeTab === tab.id ? " active" : ""}`}
+              onClick={() => onSelect(tab.id)}
+            >
+              <span className="activity-panel-tab-icon">{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ActivityPanel({
   isPinned,
   onPinnedChange,
@@ -200,11 +260,38 @@ export function ActivityPanel({
     () => window.innerWidth < 1100,
   );
   const [showMobileTabMenu, setShowMobileTabMenu] = useState(false);
+  const mobileTabMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+  useEffect(() => {
+    if (!showMobileTabMenu) {
+      return;
+    }
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (!mobileTabMenuRef.current?.contains(event.target)) {
+        setShowMobileTabMenu(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowMobileTabMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showMobileTabMenu]);
   const useOverlay = isMobile || narrowViewport;
   const activeTabConfig = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
 
@@ -214,6 +301,10 @@ export function ActivityPanel({
   const handleClose = () => {
     setShowMobileTabMenu(false);
     onPinnedChange(false);
+  };
+  const handleTabSelect = (tab: ActivityTab) => {
+    onTabChange(tab);
+    setShowMobileTabMenu(false);
   };
 
   const tabContent = () => {
@@ -276,43 +367,15 @@ export function ActivityPanel({
       <div className="activity-panel-mobile-overlay">
         <div className="activity-panel">
           <div className="activity-panel-tabs">
-            <div className="activity-panel-mobile-select-wrap">
-              <button
-                type="button"
-                className="activity-panel-mobile-trigger"
-                onClick={() => setShowMobileTabMenu((open) => !open)}
-                aria-haspopup="menu"
-                aria-expanded={showMobileTabMenu}
-              >
-                <span className="activity-panel-mobile-trigger__value">
-                  <span className="activity-panel-tab-icon">{activeTabConfig.icon}</span>
-                  <span>{activeTabConfig.label}</span>
-                </span>
-                <span className="activity-panel-mobile-trigger__caret">
-                  {showMobileTabMenu ? "\u25B2" : "\u25BC"}
-                </span>
-              </button>
-              {showMobileTabMenu && (
-                <div className="activity-panel-mobile-menu" role="menu">
-                  {TABS.map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={activeTab === tab.id}
-                      className={`activity-panel-mobile-menu__item${activeTab === tab.id ? " active" : ""}`}
-                      onClick={() => {
-                        onTabChange(tab.id);
-                        setShowMobileTabMenu(false);
-                      }}
-                    >
-                      <span className="activity-panel-tab-icon">{tab.icon}</span>
-                      <span>{tab.label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <TabMenu
+              tabs={TABS}
+              activeTab={activeTab}
+              activeTabConfig={activeTabConfig}
+              isOpen={showMobileTabMenu}
+              onToggle={() => setShowMobileTabMenu((open) => !open)}
+              onSelect={handleTabSelect}
+              wrapperRef={mobileTabMenuRef}
+            />
             <button
               className="activity-panel-close"
               onClick={handleClose}
@@ -347,43 +410,15 @@ export function ActivityPanel({
         }}
       >
         <div className="activity-panel-tabs">
-          <div className="activity-panel-mobile-select-wrap">
-            <button
-              type="button"
-              className="activity-panel-mobile-trigger"
-              onClick={() => setShowMobileTabMenu((open) => !open)}
-              aria-haspopup="menu"
-              aria-expanded={showMobileTabMenu}
-            >
-              <span className="activity-panel-mobile-trigger__value">
-                <span className="activity-panel-tab-icon">{activeTabConfig.icon}</span>
-                <span>{activeTabConfig.label}</span>
-              </span>
-              <span className="activity-panel-mobile-trigger__caret">
-                {showMobileTabMenu ? "\u25B2" : "\u25BC"}
-              </span>
-            </button>
-            {showMobileTabMenu && (
-              <div className="activity-panel-mobile-menu" role="menu">
-                {TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={activeTab === tab.id}
-                    className={`activity-panel-mobile-menu__item${activeTab === tab.id ? " active" : ""}`}
-                    onClick={() => {
-                      onTabChange(tab.id);
-                      setShowMobileTabMenu(false);
-                    }}
-                  >
-                    <span className="activity-panel-tab-icon">{tab.icon}</span>
-                    <span>{tab.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <TabMenu
+            tabs={TABS}
+            activeTab={activeTab}
+            activeTabConfig={activeTabConfig}
+            isOpen={showMobileTabMenu}
+            onToggle={() => setShowMobileTabMenu((open) => !open)}
+            onSelect={handleTabSelect}
+            wrapperRef={mobileTabMenuRef}
+          />
           <button
             className="activity-panel-pin"
             onClick={() => {

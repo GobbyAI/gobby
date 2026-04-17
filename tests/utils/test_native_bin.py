@@ -21,6 +21,12 @@ def test_native_bin_name_adds_windows_suffix() -> None:
         assert native_bin_name("ghook.exe") == "ghook.exe"
 
 
+def test_native_bin_name_is_unchanged_on_non_windows() -> None:
+    with patch("gobby.utils.native_bin.sys.platform", "linux"):
+        assert native_bin_name("ghook") == "ghook"
+        assert native_bin_name("ghook.exe") == "ghook.exe"
+
+
 def test_local_native_bin_path_prefers_gobby_home(temp_dir: Path) -> None:
     with patch.object(Path, "home", return_value=temp_dir):
         assert local_native_bin_path("ghook") == temp_dir / ".gobby" / "bin" / "ghook"

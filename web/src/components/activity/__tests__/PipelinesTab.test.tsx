@@ -97,4 +97,37 @@ describe('PipelinesTab', () => {
       expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('tabindex', '-1')
     })
   })
+
+  it('navigates filters with keyboard arrows', async () => {
+    render(<PipelinesTab projectId="proj-1" />)
+
+    const allButton = await screen.findByRole('radio', { name: 'All' })
+    allButton.focus()
+    fireEvent.keyDown(allButton, { key: 'ArrowRight' })
+
+    await waitFor(() => {
+      const completedButton = screen.getByRole('radio', { name: 'Completed' })
+      expect(completedButton).toHaveAttribute('aria-checked', 'true')
+      expect(completedButton).toHaveAttribute('tabindex', '0')
+      expect(completedButton).toHaveFocus()
+    })
+
+    const completedButton = screen.getByRole('radio', { name: 'Completed' })
+    fireEvent.keyDown(completedButton, { key: 'End' })
+
+    await waitFor(() => {
+      const runningButton = screen.getByRole('radio', { name: 'Running' })
+      expect(runningButton).toHaveAttribute('aria-checked', 'true')
+      expect(runningButton).toHaveFocus()
+    })
+
+    const runningButton = screen.getByRole('radio', { name: 'Running' })
+    fireEvent.keyDown(runningButton, { key: 'Home' })
+
+    await waitFor(() => {
+      const resetAllButton = screen.getByRole('radio', { name: 'All' })
+      expect(resetAllButton).toHaveAttribute('aria-checked', 'true')
+      expect(resetAllButton).toHaveFocus()
+    })
+  })
 })

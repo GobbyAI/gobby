@@ -1045,7 +1045,7 @@ class TestBeforeToolBlockTracking:
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables.get("_last_blocked_tool") == "Edit"
-        assert variables.get("tool_block_pending") is not True
+        assert variables.get("tool_block_pending") is None
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_not_set_on_stop_block(

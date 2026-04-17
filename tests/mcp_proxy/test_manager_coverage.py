@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen, CircuitState
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import (
@@ -318,7 +319,7 @@ class TestMCPClientManagerAddServer:
             command="npx",
             args=[
                 "-y",
-                "chrome-devtools-mcp@latest",
+                CHROME_DEVTOOLS_NPM_PACKAGE,
                 "--executable-path=/tmp/chrome",
                 "--no-usage-statistics",
             ],
@@ -331,7 +332,7 @@ class TestMCPClientManagerAddServer:
         assert call_kwargs["project_id"] == "00000000-0000-0000-0000-000000000002"
         assert call_kwargs["args"] == [
             "-y",
-            "chrome-devtools-mcp@latest",
+            CHROME_DEVTOOLS_NPM_PACKAGE,
             "--no-usage-statistics",
         ]
 

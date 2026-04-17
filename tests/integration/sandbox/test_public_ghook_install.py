@@ -71,6 +71,7 @@ def test_public_ghook_install_and_live_sandbox_contract(
     )
     assert version_probe.returncode == 0, version_probe.stderr or version_probe.stdout
     assert (ghook_bin.parent / _GHOOK_COMPATIBILITY_STAMP).exists()
+    assert ALL_SANDBOX_SPECS, "Expected at least one sandbox spec to validate public ghook install"
 
     for spec in ALL_SANDBOX_SPECS:
         runner = SandboxRunner(spec)

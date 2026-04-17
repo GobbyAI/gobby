@@ -76,7 +76,7 @@ def _inspect_reference_audio(reference_audio: Path) -> dict[str, Any]:
             channels = wav_file.getnchannels()
             sample_rate = wav_file.getframerate()
             frames = wav_file.getnframes()
-    except Exception:
+    except (wave.Error, EOFError):
         return details
 
     duration_seconds = 0.0
@@ -118,7 +118,7 @@ class VoxCPMProvider(BaseTTSProvider):
     def _availability(self) -> tuple[bool, str]:
         try:
             import voxcpm  # noqa: F401
-        except Exception:
+        except ImportError:
             return (
                 False,
                 "voxcpm not installed in this Python runtime "

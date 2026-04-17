@@ -73,7 +73,7 @@ const unclosedBlockProtocolTagPattern = buildTagPattern(UNCLOSED_BLOCK_PROTOCOL_
 const wrapperOnlyProtocolTagPattern = buildTagPattern(WRAPPER_ONLY_PROTOCOL_TAGS)
 
 const blockProtocolTagRe = new RegExp(
-  `<(?:${blockProtocolTagPattern})(?=[\\s>])[^>]*>[\\s\\S]*?</(?:${blockProtocolTagPattern})\\s*>`,
+  `<(${blockProtocolTagPattern})(?=[\\s>])[^>]*>[\\s\\S]*?</\\1\\s*>`,
   'gi',
 )
 

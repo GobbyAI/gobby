@@ -101,6 +101,28 @@ class TestVoxCPMProvider:
         assert status.available is False
         assert "Configured VoxCPM model path not found" in status.reason
 
+    def test_status_marks_known_provider_unavailable_when_factory_import_fails(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        with patch("gobby.voice.providers.importlib.import_module", side_effect=ImportError("missing")):
+            status = get_tts_provider_status(voice_config)
+
+        assert status.available is False
+        assert status.reason == "TTS provider unavailable: voxcpm"
+
+    def test_create_tts_provider_returns_none_when_factory_init_raises(
+        self, voice_config: VoiceConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def broken_factory(config: VoiceConfig) -> object:
+            raise RuntimeError(f"boom: {config.tts_provider}")
+
+        with caplog.at_level(logging.WARNING):
+            with patch("gobby.voice.providers._load_provider_factory", return_value=broken_factory):
+                provider = create_tts_provider(voice_config)
+
+        assert provider is None
+        assert "Failed to initialize TTS provider voxcpm" in caplog.text
+
     @pytest.mark.asyncio
     async def test_synthesize_stream_uses_reference_audio_only(
         self, voice_config: VoiceConfig

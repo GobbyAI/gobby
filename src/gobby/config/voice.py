@@ -24,7 +24,7 @@ class VoiceConfig(BaseModel):
         description="Enable text-to-speech output in voice mode (requires enabled=True).",
     )
     tts_provider: str = Field(
-        default="voxcpm",
+        default="chatterbox",
         description=(
             "TTS provider: 'chatterbox' (voice cloning), 'kokoro' (fixed voices), "
             "or 'voxcpm' (voice cloning with optional reference_text)."

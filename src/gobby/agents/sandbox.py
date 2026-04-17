@@ -5,11 +5,13 @@ same rules can be reused by terminal spawns, web-chat backends, and any future
 installer/runtime glue that needs to materialize provider settings.
 """
 
+import asyncio
 import hashlib
 import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +49,7 @@ _DAEMON_SANDBOX_POLICY_VERSION = 1
 _WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
     "This chat was created under a different sandbox policy. Continue it in a new chat."
 )
+logger = logging.getLogger(__name__)
 
 
 def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
@@ -58,9 +61,15 @@ def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
     if isinstance(config, dict):
         return SandboxConfig(**config)
 
+    raw_mode = str(getattr(config, "mode", "permissive"))
+    mode = cast(
+        Literal["permissive", "restrictive"],
+        raw_mode if raw_mode in {"permissive", "restrictive"} else "permissive",
+    )
+
     return SandboxConfig(
         enabled=bool(getattr(config, "enabled", False)),
-        mode=getattr(config, "mode", "permissive"),
+        mode=mode,
         allow_network=bool(getattr(config, "allow_network", True)),
         extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
         extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
@@ -370,7 +379,16 @@ def materialize_claude_settings(
                 raw_payload = json.loads(source_path.read_text(encoding="utf-8"))
                 if isinstance(raw_payload, dict):
                     payload = raw_payload
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "Failed to read Claude base settings for runtime sandbox overlay",
+                    extra={
+                        "path": str(source_path),
+                        "settings_purpose": "runtime_sandbox_overlay",
+                        "error": str(exc),
+                    },
+                    exc_info=True,
+                )
                 payload = {}
 
     resolved_paths = compute_sandbox_paths(config, workspace_path=workspace_path)
@@ -384,6 +402,23 @@ def materialize_claude_settings(
     if not target.exists():
         target.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return str(target)
+
+
+async def materialize_claude_settings_async(
+    *,
+    base_settings_path: str | Path | None,
+    config: SandboxConfig,
+    workspace_path: str,
+    name: str = "runtime",
+) -> str | None:
+    """Materialize Claude settings without blocking the event loop."""
+    return await asyncio.to_thread(
+        materialize_claude_settings,
+        base_settings_path=base_settings_path,
+        config=config,
+        workspace_path=workspace_path,
+        name=name,
+    )
 
 
 def get_sandbox_resolver(cli: str) -> SandboxResolver:

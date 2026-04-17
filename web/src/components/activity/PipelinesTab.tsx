@@ -42,6 +42,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   const [loadingMore, setLoadingMore] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const filterButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const selectedIdRef = useRef<string | null>(null)
   const PAGE_SIZE = 50
 
   // Fetch executions
@@ -117,11 +118,16 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     setSelectedId(id)
     fetchDetail(id)
   }, [fetchDetail])
+  useEffect(() => {
+    selectedIdRef.current = selectedId
+  }, [selectedId])
 
   const selectStatusFilter = useCallback((nextFilter: StatusFilter, focusIndex?: number) => {
     setStatusFilter(nextFilter)
     if (focusIndex != null) {
-      filterButtonRefs.current[focusIndex]?.focus()
+      queueMicrotask(() => {
+        filterButtonRefs.current[focusIndex]?.focus()
+      })
     }
   }, [])
 
@@ -147,19 +153,30 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
 
   useEffect(() => {
     if (executions.length === 0) {
-      if (selectedId !== null) setSelectedId(null)
+      if (selectedIdRef.current !== null) {
+        selectedIdRef.current = null
+        setSelectedId(null)
+      }
       if (detailExec !== null) setDetailExec(null)
       return
     }
 
-    if (!selectedId || !executions.some((exec) => exec.id === selectedId)) {
-      const nextId = executions[0].id
+    const currentSelectedId = selectedIdRef.current
+    const nextId =
+      currentSelectedId && executions.some((exec) => exec.id === currentSelectedId)
+        ? currentSelectedId
+        : executions[0].id
+
+    if (currentSelectedId !== nextId) {
+      selectedIdRef.current = nextId
       setSelectedId(nextId)
+    }
+    if (detailExec?.id !== nextId) {
       fetchDetail(nextId)
     }
-  }, [executions, fetchDetail, selectedId])
+  }, [detailExec, executions, fetchDetail])
 
-  if (loading) {
+  if (loading && executions.length === 0) {
     return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>
   }
 

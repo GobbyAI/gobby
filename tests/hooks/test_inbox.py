@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks.inbox import drain_hook_inbox_once
+from gobby.hooks.inbox import _load_envelope, drain_hook_inbox_once
 
 pytestmark = pytest.mark.unit
 
@@ -78,3 +78,20 @@ async def test_drain_hook_inbox_keeps_failed_replay_files(tmp_path: Path) -> Non
 
     assert replayed == 0
     assert envelope_path.exists()
+
+
+def test_load_envelope_skips_quarantine_failure_without_raising(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / "n-0000000000001-abcd.json"
+    envelope_path.write_text("{invalid", encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        with patch("gobby.hooks.inbox.Path.write_text", side_effect=OSError("disk full")):
+            envelope = _load_envelope(envelope_path)
+
+    assert envelope is None
+    assert envelope_path.exists()
+    assert "Skipping hook inbox file" in caplog.text

@@ -4,8 +4,7 @@ Tests verify that LinearIntegration correctly detects Linear MCP server availabi
 and provides graceful error messages when unavailable.
 """
 
-import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,13 +22,6 @@ def mock_mcp_manager():
         "linear": MagicMock(state="connected"),
     }
     return manager
-
-
-@pytest.fixture
-def linear_integration(mock_mcp_manager):
-    """Create a LinearIntegration instance with mock manager."""
-    return LinearIntegration(mock_mcp_manager)
-
 
 class TestLinearIntegrationAvailability:
     """Test is_available() method."""
@@ -93,19 +85,12 @@ class TestLinearIntegrationCaching:
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.health = {"linear": MagicMock(state="connected")}
 
-        # Use very short TTL for testing
         integration = LinearIntegration(mock_mcp_manager, cache_ttl_seconds=0.1)
-
-        # First call
-        integration.is_available()
-        first_call_count = mock_mcp_manager.has_server.call_count
-
-        # Wait for cache to expire
-        time.sleep(0.15)
-
-        # Second call should check again
-        integration.is_available()
-        second_call_count = mock_mcp_manager.has_server.call_count
+        with patch("gobby.integrations.linear.time.time", side_effect=[100.0, 100.25, 100.25]):
+            integration.is_available()
+            first_call_count = mock_mcp_manager.has_server.call_count
+            integration.is_available()
+            second_call_count = mock_mcp_manager.has_server.call_count
 
         assert second_call_count > first_call_count
 

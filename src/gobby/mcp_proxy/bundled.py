@@ -13,6 +13,7 @@ from typing import Any
 from gobby.mcp_proxy.models import MCPServerConfig
 
 CHROME_DEVTOOLS_SERVER_NAME = "chrome-devtools"
+CHROME_DEVTOOLS_NPM_PACKAGE = "chrome-devtools-mcp@0.21.0"
 PLAYWRIGHT_SERVER_NAME = "playwright"
 LEGACY_GLOBAL_PROJECT_IDS = frozenset({"global"})
 # Keep this helper module leaf-level to avoid import cycles through gobby.storage.__init__.
@@ -64,7 +65,8 @@ DEFAULT_EXTERNAL_MCP_SERVERS: list[dict[str, Any]] = [
         "name": CHROME_DEVTOOLS_SERVER_NAME,
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
+        # Pin the package version so local installs and CI use the same DevTools server build.
+        "args": ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"],
         "description": "Chrome DevTools MCP for browser debugging and automation",
     },
 ]

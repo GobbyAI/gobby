@@ -32,7 +32,11 @@ jobs:
           trap 'rm -rf "$tmp_dir"' EXIT
 
           for file in inbox-envelope.v1.schema.json diagnose-output.v1.schema.json; do
-            curl -fsSL "${base_url}/${file}" -o "${tmp_dir}/${file}"
+            url="${base_url}/${file}"
+            if ! curl_error="$(curl -fSL --show-error "$url" -o "${tmp_dir}/${file}" 2>&1)"; then
+              echo "Failed to fetch ${url}: ${curl_error}"
+              exit 1
+            fi
 
             local_sha="$(sha256sum "schemas/${file}" | awk '{print $1}')"
             remote_sha="$(sha256sum "${tmp_dir}/${file}" | awk '{print $1}')"

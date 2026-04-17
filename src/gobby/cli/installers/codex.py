@@ -11,7 +11,7 @@ import os
 import tempfile
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import tomlkit
 from tomlkit.items import Table
@@ -74,7 +74,7 @@ def _insert_top_level_table(config: TOMLDocument, table_name: str, table_value: 
 def _set_toml_value(config: TOMLDocument, key: str, value: Any) -> None:
     """Set a dotted TOML key inside a parsed config dict."""
     parts = key.split(".")
-    current = config
+    current: TOMLDocument | Table | dict[str, Any] = config
     for index, part in enumerate(parts[:-1]):
         existing = current.get(part)
         if isinstance(existing, (dict, Table)):
@@ -84,7 +84,7 @@ def _set_toml_value(config: TOMLDocument, key: str, value: Any) -> None:
         new_table = tomlkit.table()
         if index == 0:
             _insert_top_level_table(config, part, new_table)
-            current = config[part]
+            current = cast(Table, config[part])
         else:
             current[part] = new_table
             current = new_table
@@ -271,11 +271,11 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
     codex_config_path = codex_home / "config.toml"
     try:
         existing_config = ""
-        parsed_config: dict[str, Any] = {}
+        parsed_config: TOMLDocument = tomlkit.document()
         if codex_config_path.exists():
             existing_config = codex_config_path.read_text(encoding="utf-8")
             parsed_config = _load_toml_config(existing_config)
-        updated_config = deepcopy(parsed_config)
+        updated_config: TOMLDocument = deepcopy(parsed_config)
 
         # Migrate from legacy notify mechanism
         _migrate_from_notify(updated_config, hooks_dir)

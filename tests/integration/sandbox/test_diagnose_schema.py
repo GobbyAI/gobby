@@ -15,10 +15,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.slow]
 )
 def test_live_diagnose_output_validates_against_schema(cli_name: str, hook_type: str) -> None:
     spec = next(
-        spec
-        for spec in ALL_SANDBOX_SPECS
-        if spec.cli_name == cli_name and spec.hook_type == hook_type
+        (
+            spec
+            for spec in ALL_SANDBOX_SPECS
+            if spec.cli_name == cli_name and spec.hook_type == hook_type
+        ),
+        None,
     )
+    assert spec is not None, f"Missing sandbox spec for cli={cli_name} hook_type={hook_type}"
     runner = SandboxRunner(spec)
     result = runner.run_diagnose()
 

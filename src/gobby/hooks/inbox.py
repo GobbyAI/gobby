@@ -39,7 +39,7 @@ def _iter_inbox_files(inbox_dir: Path) -> list[Path]:
     )
 
 
-def _quarantine_file(path: Path, *, reason: str, detail: str) -> None:
+def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
     """Move an unreadable or invalid inbox file into quarantine with metadata."""
     quarantine_dir = get_hook_quarantine_dir(path.parent)
     quarantine_dir.mkdir(parents=True, exist_ok=True)
@@ -51,8 +51,26 @@ def _quarantine_file(path: Path, *, reason: str, detail: str) -> None:
         path.unlink(missing_ok=True)
         meta_path.write_text(json.dumps({"reason": reason, "detail": detail}, indent=2) + "\n")
     except Exception as exc:
-        logger.error("Failed to quarantine hook inbox file %s: %s", path, exc, exc_info=True)
-        raise
+        logger.error(
+            "Failed to quarantine hook inbox file %s (reason=%s, detail=%s): %s",
+            path,
+            reason,
+            detail,
+            exc,
+            exc_info=True,
+        )
+        return False
+    return True
+
+
+def _quarantine_or_warn(path: Path, *, reason: str, detail: str) -> None:
+    """Best-effort quarantine with a warning when quarantine itself fails."""
+    if not _quarantine_file(path, reason=reason, detail=detail):
+        logger.warning(
+            "Skipping hook inbox file %s after quarantine failed (reason=%s)",
+            path,
+            reason,
+        )
 
 
 def _load_envelope(path: Path) -> dict[str, Any] | None:
@@ -60,15 +78,17 @@ def _load_envelope(path: Path) -> dict[str, Any] | None:
     try:
         raw = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        _quarantine_file(path, reason="invalid_json", detail=str(exc))
+        _quarantine_or_warn(path, reason="invalid_json", detail=str(exc))
         return None
 
     if not isinstance(raw, dict):
-        _quarantine_file(path, reason="invalid_envelope", detail="Envelope must be a JSON object")
+        _quarantine_or_warn(
+            path, reason="invalid_envelope", detail="Envelope must be a JSON object"
+        )
         return None
 
     if raw.get("schema_version") != SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION:
-        _quarantine_file(
+        _quarantine_or_warn(
             path,
             reason="invalid_envelope",
             detail=(
@@ -79,7 +99,7 @@ def _load_envelope(path: Path) -> dict[str, Any] | None:
         return None
 
     if not raw.get("hook_type") or not raw.get("source"):
-        _quarantine_file(
+        _quarantine_or_warn(
             path,
             reason="invalid_envelope",
             detail="Envelope must include hook_type and source",

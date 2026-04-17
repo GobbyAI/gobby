@@ -104,8 +104,9 @@ def _rewrite_commands(node: Any, command: str) -> None:
     if not isinstance(node, dict):
         return
 
-    if isinstance(node.get("command"), str):
-        node["command"] = command
+    for field in ("command", "cmd", "script"):
+        if isinstance(node.get(field), str):
+            node[field] = command
 
     for value in node.values():
         _rewrite_commands(value, command)

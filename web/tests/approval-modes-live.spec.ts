@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   getModelsForProvider,
@@ -29,6 +31,7 @@ interface SessionListEntry {
   status: string;
   session_type?: string | null;
   agent_run_id?: string | null;
+  can_proxy_attach?: boolean | null;
 }
 
 function sanitizeToken(value: string): string {
@@ -224,7 +227,10 @@ async function verifyActModeApproval(
   runId: string,
 ): Promise<void> {
   const token = `act-${sanitizeToken(provider)}-${runId}`;
-  const filePath = `/tmp/gobby-approval-${sanitizeToken(provider)}-${runId}-act.txt`;
+  const filePath = join(
+    tmpdir(),
+    `gobby-approval-${sanitizeToken(provider)}-${runId}-act.txt`,
+  );
   await removeFile(filePath);
 
   await openFreshChat(page, `${runId}-${sanitizeToken(provider)}-act`);
@@ -260,7 +266,10 @@ async function verifyAutoModeSuppression(
   runId: string,
 ): Promise<void> {
   const token = `auto-${sanitizeToken(provider)}-${runId}`;
-  const filePath = `/tmp/gobby-approval-${sanitizeToken(provider)}-${runId}-auto.txt`;
+  const filePath = join(
+    tmpdir(),
+    `gobby-approval-${sanitizeToken(provider)}-${runId}-auto.txt`,
+  );
   await removeFile(filePath);
 
   await openFreshChat(page, `${runId}-${sanitizeToken(provider)}-auto`);
@@ -287,10 +296,17 @@ async function loadInteractiveTerminalSession(
   const body = await response.json();
   const sessions = Array.isArray(body?.sessions) ? (body.sessions as SessionListEntry[]) : [];
   const terminalSession = sessions.find(
-    (session) => session.session_type === "terminal" && !session.agent_run_id,
+    (session) =>
+      session.session_type === "terminal" &&
+      session.status === "paused" &&
+      !session.agent_run_id &&
+      session.can_proxy_attach !== false,
   );
 
-  expect(terminalSession, "Expected at least one interactive terminal session").toBeTruthy();
+  expect(
+    terminalSession,
+    "Expected at least one paused interactive terminal session that supports attach/resume",
+  ).toBeTruthy();
   return terminalSession!;
 }
 

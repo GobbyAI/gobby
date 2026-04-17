@@ -43,4 +43,33 @@ Stay concise and direct.`
 
     expect(message.toolCalls?.map((tool) => tool.id)).toEqual(['tool-1', 'tool-2'])
   })
+
+  it('creates unique fallback ids when rendered messages omit ids', () => {
+    const first = mapRenderedMessageToChatMessage({
+      role: 'assistant',
+      content: 'First',
+    })
+    const second = mapRenderedMessageToChatMessage({
+      role: 'assistant',
+      content: 'Second',
+    })
+
+    expect(first.id).not.toBe(second.id)
+    expect(first.id.startsWith('ws-')).toBe(true)
+    expect(second.id.startsWith('ws-')).toBe(true)
+  })
+
+  it('joins thinking blocks in order', () => {
+    const message = mapRenderedMessageToChatMessage({
+      id: 'msg-thinking',
+      role: 'assistant',
+      content: '',
+      content_blocks: [
+        { type: 'thinking', content: 'one ' },
+        { type: 'thinking', content: 'two' },
+      ],
+    })
+
+    expect(message.thinkingContent).toBe('one two')
+  })
 })

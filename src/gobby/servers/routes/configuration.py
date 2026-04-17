@@ -18,6 +18,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from gobby.config.app import (
     DaemonConfig,
@@ -822,10 +823,10 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     async def get_global_tool_approval_rules() -> JSONResponse:
         """Return daemon-wide approval rules plus read-only built-in exemptions."""
         try:
-            config_store = _get_config_store()
+            rules = await run_in_threadpool(lambda: get_global_approval_rules(_get_config_store()))
             return JSONResponse(
                 content={
-                    "rules": get_global_approval_rules(config_store),
+                    "rules": rules,
                     "default_rules": list(DEFAULT_GLOBAL_APPROVAL_RULES),
                     "built_in_exemptions": list(BUILT_IN_EXEMPTION_LABELS),
                 }
@@ -838,8 +839,9 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     async def save_global_tool_approval_rules(request: SaveApprovalRulesRequest) -> JSONResponse:
         """Persist daemon-wide approval rules."""
         try:
-            config_store = _get_config_store()
-            rules = set_global_approval_rules(config_store, request.rules)
+            rules = await run_in_threadpool(
+                lambda: set_global_approval_rules(_get_config_store(), request.rules)
+            )
             return JSONResponse(
                 content={
                     "ok": True,

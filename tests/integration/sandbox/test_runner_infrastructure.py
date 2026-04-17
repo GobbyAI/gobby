@@ -9,6 +9,8 @@ from .runner import ALL_SANDBOX_SPECS, CODEX_SPEC, SandboxRunner, load_diagnose_
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
+    # Keep this assertion in sync with ALL_SANDBOX_SPECS when a new CLI/provider
+    # is added so the runner contract coverage remains explicit.
 def test_runner_specs_cover_supported_clis() -> None:
     cli_names = {spec.cli_name for spec in ALL_SANDBOX_SPECS}
     assert cli_names == {"claude", "codex", "gemini", "qwen"}

@@ -39,7 +39,7 @@ from claude_agent_sdk.types import (
     UserPromptSubmitHookSpecificOutput,
 )
 
-from gobby.agents.sandbox import SandboxConfig, materialize_claude_settings
+from gobby.agents.sandbox import SandboxConfig, materialize_claude_settings_async
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -287,7 +287,7 @@ class ChatSession(ChatSessionPermissionsMixin):
                 )
 
         resolved_effort = self._resolve_reasoning_effort()
-        settings_path = materialize_claude_settings(
+        settings_path = await materialize_claude_settings_async(
             base_settings_path=_HEADLESS_SETTINGS,
             config=self.sandbox_config or SandboxConfig(enabled=False),
             workspace_path=cwd,

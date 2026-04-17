@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 from gobby.storage.database import LocalDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
@@ -193,7 +194,7 @@ class TestLocalMCPManager:
             command="npx",
             args=[
                 "-y",
-                "chrome-devtools-mcp@latest",
+                CHROME_DEVTOOLS_NPM_PACKAGE,
                 "--executable-path=/tmp/chrome",
                 "--no-usage-statistics",
             ],
@@ -201,7 +202,7 @@ class TestLocalMCPManager:
         )
 
         assert server.project_id == GLOBAL_PROJECT_ID
-        assert server.args == ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]
+        assert server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
 
         project_row = temp_db.fetchone(
             "SELECT * FROM mcp_servers WHERE name = ? AND project_id = ?",
@@ -1035,7 +1036,7 @@ class TestLocalMCPManager:
                 json.dumps(
                     [
                         "-y",
-                        "chrome-devtools-mcp@latest",
+                        CHROME_DEVTOOLS_NPM_PACKAGE,
                         "--executable-path=/tmp/chrome",
                         "--no-usage-statistics",
                     ]
@@ -1066,7 +1067,7 @@ class TestLocalMCPManager:
         global_server = mcp_manager.get_server("chrome-devtools", project_id=GLOBAL_PROJECT_ID)
         assert global_server is not None
         assert global_server.project_id == GLOBAL_PROJECT_ID
-        assert global_server.args == ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"]
+        assert global_server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
 
         legacy_row = temp_db.fetchone(
             "SELECT * FROM mcp_servers WHERE id = ?",

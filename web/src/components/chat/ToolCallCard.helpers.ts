@@ -56,10 +56,11 @@ function getShellCommand(args: Record<string, unknown>): string | null {
 
 export function getToolDisplayName(call: ToolCall): string {
   const name = formatToolName(call.tool_name)
-  if (resolveToolType(call) === 'protocol') {
+  const toolType = resolveToolType(call)
+  if (toolType === 'protocol') {
     return 'Protocol'
   }
-  if (resolveToolType(call) === 'bash' && SHELL_ALIAS_NAMES.has(name.toLowerCase())) {
+  if (toolType === 'bash' && SHELL_ALIAS_NAMES.has(name.toLowerCase())) {
     return 'Bash'
   }
   return name
@@ -127,7 +128,12 @@ function normalizeDisplayResult(
     ? parsedContent.result
     : {
         success: parsedContent.success,
-        error: parsedContent.error,
+        error:
+          parsedContent.success
+            ? parsedContent.error
+            : (typeof parsedContent.error === 'string' && parsedContent.error
+                ? parsedContent.error
+                : 'Unknown error'),
       }
 
   if (isRecord(innerContent) && mergedMetadata.response_time_ms != null) {

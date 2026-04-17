@@ -177,7 +177,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             import chatterbox  # noqa: F401
 
             return True, ""
-        except Exception:
+        except ImportError:
             return False, "chatterbox not installed (uv sync --extra voice)"
 
     def _status_details(self) -> dict[str, Any]:

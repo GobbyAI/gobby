@@ -693,7 +693,6 @@ class TestBlockReopenTask:
     async def test_blocks_reopen_for_claimed_task_only(self, db) -> None:
         """A reopen call should block only when the task is claimed by this session."""
         _sync_bundled(db)
-        db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
         engine = RuleEngine(db)
 
         claimed_event = _make_reopen_event("#1")
@@ -723,7 +722,6 @@ class TestBlockReopenTask:
     async def test_allows_reopen_for_task_claimed_by_other_session(self, db) -> None:
         """A task absent from this session's claimed_tasks should not be blocked."""
         _sync_bundled(db)
-        db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
         engine = RuleEngine(db)
 
         response = await engine.evaluate(

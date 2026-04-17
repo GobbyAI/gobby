@@ -78,12 +78,12 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
               ],
               source: "static",
             },
-              {
+            {
                 provider: "gemini",
                 available: true,
                 models: [
-                { value: "gemini-3.1-pro-preview", label: "pro-3.1" },
-                { value: "gemini-3-flash-preview", label: "flash-3" },
+                { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+                { value: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
                 ],
                 source: "static",
               },
@@ -91,10 +91,10 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
               provider: "codex",
               available: true,
               models: [
-                { value: "gpt-5.4", label: "codex-5.4" },
-                { value: "gpt-5.4-mini", label: "mini-5.4" },
-                { value: "gpt-5.3-codex", label: "codex-5.3" },
-                { value: "gpt-5.3-codex-spark", label: "spark-5.3" },
+                { value: "gpt-5.4", label: "GPT 5.4" },
+                { value: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
+                { value: "gpt-5.3-codex", label: "GPT 5.3 Codex" },
+                { value: "gpt-5.3-codex-spark", label: "GPT 5.3 Codex Spark" },
               ],
               source: "static",
             },

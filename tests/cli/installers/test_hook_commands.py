@@ -28,8 +28,9 @@ def test_build_hook_command_prefers_local_ghook(temp_dir: Path) -> None:
     assert "--cli=codex --type=SessionStart" in command
 
 
-def test_build_hook_command_falls_back_to_dispatcher(temp_dir: Path) -> None:
-    hooks_dir = Path("/tmp/hooks")
+def test_build_hook_command_falls_back_to_dispatcher(temp_dir: Path, tmp_path: Path) -> None:
+    hooks_dir = tmp_path / "hooks"
+    hooks_dir.mkdir()
     with patch.object(Path, "home", return_value=temp_dir):
         command = build_hook_command(
             "gemini",

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.bundled import resolve_runtime_stdio_args
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, resolve_runtime_stdio_args
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.stdio import (
     StdioTransportConnection,
@@ -179,12 +179,12 @@ class TestResolveRuntimeStdioArgs:
     def test_injects_chrome_executable_at_runtime(self, _mock_path: MagicMock) -> None:
         args = resolve_runtime_stdio_args(
             "chrome-devtools",
-            ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
+            ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"],
         )
 
         assert args == [
             "-y",
-            "chrome-devtools-mcp@latest",
+            CHROME_DEVTOOLS_NPM_PACKAGE,
             "--no-usage-statistics",
             "--executable-path=/tmp/chrome",
         ]
@@ -198,7 +198,7 @@ class TestResolveRuntimeStdioArgs:
             "chrome-devtools",
             [
                 "-y",
-                "chrome-devtools-mcp@latest",
+                CHROME_DEVTOOLS_NPM_PACKAGE,
                 "--executable-path=/tmp/old-chrome",
                 "--no-usage-statistics",
             ],

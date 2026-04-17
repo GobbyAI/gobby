@@ -6,6 +6,7 @@ Each function returns None if the tool is not installed/available.
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess  # nosec B404 # needed for version detection
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.cli.installers.hook_commands import is_gobby_hook_command
+
+logger = logging.getLogger(__name__)
 
 
 def _run_cmd(args: list[str], timeout: int = 5) -> str | None:
@@ -324,7 +327,7 @@ def get_configured_embedding_provider() -> str | None:
         if provider is not None:
             return provider
     except Exception:
-        pass
+        logger.debug("Failed to resolve configured embeddings provider from persisted config", exc_info=True)
     return _infer_embedding_provider_from_api_base(api_base)
 
 

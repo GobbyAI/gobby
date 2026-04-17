@@ -6,16 +6,20 @@ mocking only scan_skill to control findings.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.skills.scanner import scan_skill_content
 
+if TYPE_CHECKING:
+    from skill_scanner.core.models import Finding, Severity, ThreatCategory
+
 skill_scanner_models = pytest.importorskip("skill_scanner.core.models")
-Finding = skill_scanner_models.Finding
-Severity = skill_scanner_models.Severity
-ThreatCategory = skill_scanner_models.ThreatCategory
+Finding = cast(Any, skill_scanner_models.Finding)
+Severity = cast(Any, skill_scanner_models.Severity)
+ThreatCategory = cast(Any, skill_scanner_models.ThreatCategory)
 
 pytestmark = pytest.mark.unit
 

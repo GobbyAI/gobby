@@ -424,9 +424,9 @@ class TestDepCheck:
 
 
 class TestVoiceConfigTTSDefaults:
-    def test_provider_defaults_to_voxcpm(self) -> None:
+    def test_provider_defaults_to_chatterbox(self) -> None:
         config = VoiceConfig()
-        assert config.tts_provider == "voxcpm"
+        assert config.tts_provider == "chatterbox"
         assert config.tts_reference_audio == "~/.gobby/voice/reference.wav"
         assert config.tts_reference_text is None
         assert config.tts_temperature == 0.55
