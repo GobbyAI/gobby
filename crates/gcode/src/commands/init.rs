@@ -30,10 +30,8 @@ pub fn run(project_root: &Path, format: Format, quiet: bool) -> anyhow::Result<(
                     }
                     installed_skills.push(cli.name.to_string());
                 }
-                Err(e) => {
-                    if !quiet {
-                        eprintln!("Warning: failed to install skill for {}: {}", cli.name, e);
-                    }
+                Err(e) if !quiet => {
+                    eprintln!("Warning: failed to install skill for {}: {}", cli.name, e);
                 }
                 _ => {}
             }
