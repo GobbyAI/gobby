@@ -188,11 +188,25 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
     // Enqueue first (atomic write to ~/.gobby/hooks/inbox/).
     let inbox = match transport::inbox_dir() {
         Ok(d) => d,
-        Err(e) => return emit_action(action_from_failure(hook_type, &cfg, transport::DeliveryFailureKind::Other, &e.to_string())),
+        Err(e) => {
+            return emit_action(action_from_failure(
+                hook_type,
+                &cfg,
+                transport::DeliveryFailureKind::Other,
+                &e.to_string(),
+            ));
+        }
     };
     let enqueued_path = match transport::enqueue_to(&env, &inbox) {
         Ok(p) => p,
-        Err(e) => return emit_action(action_from_failure(hook_type, &cfg, transport::DeliveryFailureKind::Other, &e.to_string())),
+        Err(e) => {
+            return emit_action(action_from_failure(
+                hook_type,
+                &cfg,
+                transport::DeliveryFailureKind::Other,
+                &e.to_string(),
+            ));
+        }
     };
 
     // Detach *after* project walk-up and enqueue — the file on disk is
@@ -209,7 +223,12 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
             let body = report.response_body.as_deref().unwrap_or_default();
             match action_from_success_response(cfg.source, hook_type, body) {
                 Ok(action) => action,
-                Err(error) => action_from_failure(hook_type, &cfg, transport::DeliveryFailureKind::Other, &error),
+                Err(error) => action_from_failure(
+                    hook_type,
+                    &cfg,
+                    transport::DeliveryFailureKind::Other,
+                    &error,
+                ),
             }
         }
         transport::DeliveryOutcome::Enqueued => {
@@ -220,7 +239,9 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
             action_from_failure(
                 hook_type,
                 &cfg,
-                report.failure_kind.unwrap_or(transport::DeliveryFailureKind::Other),
+                report
+                    .failure_kind
+                    .unwrap_or(transport::DeliveryFailureKind::Other),
                 &detail,
             )
         }
@@ -308,9 +329,9 @@ fn action_from_failure(
             transport::DeliveryFailureKind::Connect => format!(
                 "Daemon connection failed on critical hook '{hook_type}' — blocking to fail safe."
             ),
-            transport::DeliveryFailureKind::Timeout => format!(
-                "Hook timeout on critical hook '{hook_type}' — blocking to fail safe."
-            ),
+            transport::DeliveryFailureKind::Timeout => {
+                format!("Hook timeout on critical hook '{hook_type}' — blocking to fail safe.")
+            }
             transport::DeliveryFailureKind::Other => format!(
                 "Hook failure on critical hook '{hook_type}' — blocking to fail safe. Error: {detail}"
             ),
@@ -454,7 +475,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(action.exit_code, 0);
-        assert!(action.stdout_json.unwrap().contains(r#""permissionDecision":"deny""#));
+        assert!(
+            action
+                .stdout_json
+                .unwrap()
+                .contains(r#""permissionDecision":"deny""#)
+        );
         assert_eq!(action.stderr_message, None);
     }
 
@@ -487,10 +513,12 @@ mod tests {
         );
         assert_eq!(action.exit_code, 2);
         assert!(action.stdout_json.is_none());
-        assert!(action
-            .stderr_message
-            .unwrap()
-            .contains("Hook error on critical hook 'SessionStart'"));
+        assert!(
+            action
+                .stderr_message
+                .unwrap()
+                .contains("Hook error on critical hook 'SessionStart'")
+        );
     }
 
     #[test]
