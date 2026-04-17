@@ -86,6 +86,10 @@ function ProtocolAwareText({
 export const MessageItem = memo(function MessageItem({ message, isStreaming = false, isThinking = false, onRespondToQuestion, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: MessageItemProps) {
   const isCommandResult = message.role === 'system' && message.toolCalls?.length && !message.content
   const isModelSwitch = message.role === 'system' && message.id.startsWith('model-switch-')
+  const lastTextBlockIndex = message.contentBlocks?.reduce(
+    (last, block, index) => (block.type === 'text' ? index : last),
+    -1,
+  ) ?? -1
 
   // Don't render empty messages (e.g. compact acknowledgements with no body)
   const hasContent = message.content || message.thinkingContent ||
@@ -146,7 +150,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                     key={`${message.id}-b${i}`}
                     content={block.content}
                     id={`${message.id}-${i}`}
-                    isStreaming={isStreaming}
+                    isStreaming={isStreaming && i === lastTextBlockIndex}
                     onRespondToQuestion={onRespondToQuestion}
                     onRespondToApproval={onRespondToApproval}
                     canvasSurfaces={canvasSurfaces}

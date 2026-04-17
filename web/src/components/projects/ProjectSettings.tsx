@@ -1,6 +1,18 @@
 import { useState, useCallback } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
 
+type ApprovalRuleRow = { id: string; value: string }
+let approvalRuleRowId = 0
+
+function createApprovalRuleRow(value = ''): ApprovalRuleRow {
+  approvalRuleRowId += 1
+  return { id: `project-approval-rule-${approvalRuleRowId}`, value }
+}
+
+function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {
+  return rules.map((rule) => createApprovalRuleRow(rule))
+}
+
 interface ProjectSettingsProps {
   project: ProjectWithStats
   onSave: (fields: Record<string, string | string[] | null>) => Promise<boolean>
@@ -11,7 +23,9 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
   const [githubUrl, setGithubUrl] = useState(project.github_url ?? '')
   const [githubRepo, setGithubRepo] = useState(project.github_repo ?? '')
   const [linearTeamId, setLinearTeamId] = useState(project.linear_team_id ?? '')
-  const [approvalRules, setApprovalRules] = useState<string[]>(project.approval_rules ?? [])
+  const [approvalRules, setApprovalRules] = useState<ApprovalRuleRow[]>(
+    () => toApprovalRuleRows(project.approval_rules ?? []),
+  )
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -26,7 +40,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
       github_url: githubUrl || null,
       github_repo: githubRepo || null,
       linear_team_id: linearTeamId || null,
-      approval_rules: approvalRules.map((rule) => rule.trim()).filter(Boolean),
+      approval_rules: approvalRules.map((rule) => rule.value.trim()).filter(Boolean),
     })
     setSaving(false)
     setMessage(ok
@@ -113,14 +127,16 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
 
           <div className="projects-settings-rules">
             {approvalRules.map((rule, index) => (
-              <div key={`${index}-${rule}`} className="projects-settings-rule-row">
+              <div key={rule.id} className="projects-settings-rule-row">
                 <input
                   type="text"
                   className="projects-settings-input"
-                  value={rule}
+                  value={rule.value}
                   onChange={(e) =>
                     setApprovalRules((prev) =>
-                      prev.map((value, i) => (i === index ? e.target.value : value)),
+                      prev.map((value, i) =>
+                        i === index ? { ...value, value: e.target.value } : value,
+                      ),
                     )
                   }
                   placeholder="tool:Write or mcp:gobby-tasks:*"
@@ -142,7 +158,9 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
             <button
               type="button"
               className="projects-settings-save"
-              onClick={() => setApprovalRules((prev) => [...prev, ''])}
+              onClick={() =>
+                setApprovalRules((prev) => [...prev, createApprovalRuleRow('')])
+              }
             >
               Add Rule
             </button>

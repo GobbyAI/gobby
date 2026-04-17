@@ -271,7 +271,7 @@ class ChatSessionPermissionsMixin:
         """Whether an AskUserQuestion is currently awaiting a response."""
         return self._pending_question is not None
 
-    def _normalized_approved_tools(self) -> set[str]:
+    def _ensure_normalized_approved_tools(self) -> set[str]:
         normalized = normalize_approved_tool_keys(self._approved_tools)
         if normalized != self._approved_tools:
             self._approved_tools = normalized
@@ -302,7 +302,7 @@ class ChatSessionPermissionsMixin:
 
         project_rules = load_project_approval_rules(self.project_path)
         global_rules = self._global_approval_rules()
-        session_rules = self._normalized_approved_tools()
+        session_rules = self._ensure_normalized_approved_tools()
         return not is_tool_auto_allowed(
             tool_name,
             input_data,

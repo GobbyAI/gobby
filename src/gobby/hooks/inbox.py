@@ -46,9 +46,13 @@ def _quarantine_file(path: Path, *, reason: str, detail: str) -> None:
     target = quarantine_dir / path.name
     meta_path = quarantine_dir / f"{path.name}.meta.json"
 
-    target.write_text(path.read_text())
-    path.unlink(missing_ok=True)
-    meta_path.write_text(json.dumps({"reason": reason, "detail": detail}, indent=2) + "\n")
+    try:
+        target.write_text(path.read_text())
+        path.unlink(missing_ok=True)
+        meta_path.write_text(json.dumps({"reason": reason, "detail": detail}, indent=2) + "\n")
+    except Exception as exc:
+        logger.error("Failed to quarantine hook inbox file %s: %s", path, exc, exc_info=True)
+        raise
 
 
 def _load_envelope(path: Path) -> dict[str, Any] | None:
@@ -89,7 +93,9 @@ async def _post_envelope(app: Any, envelope: dict[str, Any]) -> httpx.Response:
     """Replay an inbox envelope through the real hook ingress route."""
     headers = envelope.get("headers")
     request_headers = (
-        {str(key): str(value) for key, value in headers.items()} if isinstance(headers, dict) else {}
+        {str(key): str(value) for key, value in headers.items()}
+        if isinstance(headers, dict)
+        else {}
     )
 
     transport = httpx.ASGITransport(app=app)

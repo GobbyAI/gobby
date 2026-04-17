@@ -11,6 +11,7 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
+from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.provider_backends import (
@@ -35,7 +36,7 @@ class WebChatRuntimeManager:
         gemini_default_model: str | None = None,
         codex_transcript_retry_attempts: int = 5,
         codex_transcript_retry_delay_seconds: float = 0.1,
-        daemon_config: Any | None = None,
+        daemon_config: DaemonConfig | None = None,
     ) -> None:
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)

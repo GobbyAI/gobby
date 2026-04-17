@@ -117,7 +117,11 @@ def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
         if edge.get("task_id") and edge.get("depends_on")
     ]
     execution_groups = [
-        {**group, "task_ids": [pfx(tid) for tid in group.get("task_ids") or []]}
+        {
+            **group,
+            "id": pfx(group["id"]) if group.get("id") else group.get("id"),
+            "task_ids": [pfx(tid) for tid in group.get("task_ids") or []],
+        }
         for group in spec.get("execution_groups") or []
     ]
     return {
@@ -862,6 +866,8 @@ class ExpansionService:
                 message=f"Compiling phase {section['number']}: {section['title']}",
             )
             raw = await self._generate_raw_spec_for_phase(run, task, section)
+            if not (raw.get("tasks") or []):
+                raise ValueError(f"Phase {section['number']} spec produced no tasks")
             normalized = self._normalize_native_compiled_spec(
                 raw, task=task, plan_file=run.plan_file
             )

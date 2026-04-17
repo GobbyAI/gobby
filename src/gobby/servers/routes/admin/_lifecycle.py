@@ -112,6 +112,8 @@ def _run_direct_restart_helper(current_pid: int) -> None:
         if not _wait_for_process_exit(current_pid, timeout=30.0):
             _force_stop_process(current_pid)
 
+        # Give the old daemon time to release sockets/PID-file state before
+        # the replacement process starts, or restart races can fail the handoff.
         time.sleep(2.0)
 
         gobby_home = Path(os.environ.get("GOBBY_HOME", os.path.expanduser("~/.gobby")))
@@ -123,9 +125,10 @@ def _run_direct_restart_helper(current_pid: int) -> None:
 
         log_dir = gobby_home / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        with (log_dir / "gobby-client.log").open("a", encoding="utf-8") as log_file, (
-            log_dir / "gobby-client-error.log"
-        ).open("a", encoding="utf-8") as err_file:
+        with (
+            (log_dir / "gobby-client.log").open("a", encoding="utf-8") as log_file,
+            (log_dir / "gobby-client-error.log").open("a", encoding="utf-8") as err_file,
+        ):
             proc = subprocess.Popen(  # nosec B603
                 [sys.executable, "-m", "gobby.runner"],
                 stdout=log_file,

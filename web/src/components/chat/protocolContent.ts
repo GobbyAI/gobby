@@ -34,6 +34,7 @@ const INLINE_WRAPPER_PROTOCOL_TAGS = [
 
 const PROTOCOL_CHILD_RE = /\s*<(?<tag>[\w:-]+)>(?<body>.*?)<\/\k<tag>\s*>/sy
 const PROTOCOL_ATTR_RE = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+const MAX_PROTOCOL_PARSE_DEPTH = 10
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -79,9 +80,9 @@ function parseProtocolAttributes(attrText: string): Record<string, string> | und
   return Object.keys(attributes).length > 0 ? attributes : undefined
 }
 
-function parseProtocolPayload(content: string): unknown {
+function parseProtocolPayload(content: string, depth = 0): unknown {
   const trimmed = content.trim()
-  if (!trimmed || !trimmed.includes('<')) {
+  if (!trimmed || !trimmed.includes('<') || depth >= MAX_PROTOCOL_PARSE_DEPTH) {
     return trimmed
   }
 
@@ -98,7 +99,7 @@ function parseProtocolPayload(content: string): unknown {
 
     matchedChild = true
     const tag = match.groups.tag
-    const value = parseProtocolPayload(match.groups.body)
+    const value = parseProtocolPayload(match.groups.body, depth + 1)
     const existing = parsedChildren[tag]
     if (existing === undefined) {
       parsedChildren[tag] = value

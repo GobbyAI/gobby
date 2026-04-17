@@ -9,12 +9,13 @@ import json
 import logging
 import os
 import tempfile
-import tomllib
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-import tomli_w
+import tomlkit
+from tomlkit.items import Table
+from tomlkit.toml_document import TOMLDocument
 
 from gobby.cli.utils import get_install_dir
 
@@ -39,28 +40,24 @@ def _get_hooks_dir() -> Path:
     return Path(os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks")))
 
 
-def _load_toml_config(content: str) -> dict[str, Any]:
-    """Parse a TOML config string into a mutable dict."""
+def _load_toml_config(content: str) -> TOMLDocument:
+    """Parse a TOML config string into a mutable TOML document."""
     if not content.strip():
-        return {}
-    parsed = tomllib.loads(content)
-    if not isinstance(parsed, dict):
-        return {}
+        return tomlkit.document()
+    parsed = tomlkit.parse(content)
     return parsed
 
 
-def _insert_top_level_table(
-    config: dict[str, Any], table_name: str, table_value: dict[str, Any]
-) -> None:
+def _insert_top_level_table(config: TOMLDocument, table_name: str, table_value: Table) -> None:
     """Insert a new top-level table before existing table sections."""
     if table_name in config:
         config[table_name] = table_value
         return
 
-    reordered: dict[str, Any] = {}
+    reordered = tomlkit.document()
     inserted = False
     for key, value in config.items():
-        if not inserted and isinstance(value, dict):
+        if not inserted and isinstance(value, Table):
             reordered[table_name] = table_value
             inserted = True
         reordered[key] = value
@@ -68,21 +65,23 @@ def _insert_top_level_table(
     if not inserted:
         reordered[table_name] = table_value
 
-    config.clear()
-    config.update(reordered)
+    for key in list(config.keys()):
+        del config[key]
+    for key, value in reordered.items():
+        config[key] = value
 
 
-def _set_toml_value(config: dict[str, Any], key: str, value: Any) -> None:
+def _set_toml_value(config: TOMLDocument, key: str, value: Any) -> None:
     """Set a dotted TOML key inside a parsed config dict."""
     parts = key.split(".")
     current = config
     for index, part in enumerate(parts[:-1]):
         existing = current.get(part)
-        if isinstance(existing, dict):
+        if isinstance(existing, (dict, Table)):
             current = existing
             continue
 
-        new_table: dict[str, Any] = {}
+        new_table = tomlkit.table()
         if index == 0:
             _insert_top_level_table(config, part, new_table)
             current = config[part]
@@ -90,18 +89,18 @@ def _set_toml_value(config: dict[str, Any], key: str, value: Any) -> None:
             current[part] = new_table
             current = new_table
 
-    current[parts[-1]] = value
+    current[parts[-1]] = tomlkit.item(value)
 
 
-def _remove_toml_key(config: dict[str, Any], key: str) -> None:
+def _remove_toml_key(config: TOMLDocument, key: str) -> None:
     """Remove a dotted TOML key from a parsed config dict."""
     parts = key.split(".")
-    current: dict[str, Any] = config
-    parents: list[tuple[dict[str, Any], str]] = []
+    current: dict[str, Any] | Table = config
+    parents: list[tuple[dict[str, Any] | Table, str]] = []
 
     for part in parts[:-1]:
         child = current.get(part)
-        if not isinstance(child, dict):
+        if not isinstance(child, (dict, Table)):
             return
         parents.append((current, part))
         current = child
@@ -113,19 +112,18 @@ def _remove_toml_key(config: dict[str, Any], key: str) -> None:
 
     for parent, part in reversed(parents):
         child = parent.get(part)
-        if isinstance(child, dict) and not child:
+        if isinstance(child, (dict, Table)) and not child:
             del parent[part]
             continue
         break
 
 
-def _dump_toml_config(config_path: Path, config: dict[str, Any]) -> None:
-    """Write a parsed TOML config back to disk."""
-    with open(config_path, "wb") as f:
-        tomli_w.dump(config, f, multiline_strings=True)
+def _dump_toml_config(config_path: Path, config: TOMLDocument) -> None:
+    """Write a parsed TOML config back to disk without stripping comments."""
+    config_path.write_text(tomlkit.dumps(config), encoding="utf-8")
 
 
-def _migrate_from_notify(config: dict[str, Any], hooks_dir: Path) -> None:
+def _migrate_from_notify(config: TOMLDocument, hooks_dir: Path) -> None:
     """Remove legacy notify config and clean up old notify script."""
     _remove_toml_key(config, "notify")
 
@@ -144,6 +142,7 @@ def _migrate_from_notify(config: dict[str, Any], hooks_dir: Path) -> None:
                 old_notify_dir.rmdir()
             except OSError:
                 pass
+
 
 def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
     """Load hooks-template.json, substitute $HOOKS_DIR, merge into ~/.codex/hooks.json.

@@ -59,6 +59,24 @@ describe('test utilities', () => {
       const res = await fetch('/api/fail')
       expect(res.status).toBe(500)
     })
+
+    it('restores window.fetch when it was originally undefined', () => {
+      const win = window as Window & { fetch?: typeof fetch }
+      const original = win.fetch
+
+      Reflect.deleteProperty(win, 'fetch')
+      mockFetch = createMockFetch()
+      expect(typeof win.fetch).toBe('function')
+
+      mockFetch.restore()
+      expect('fetch' in win).toBe(false)
+
+      if (original === undefined) {
+        Reflect.deleteProperty(win, 'fetch')
+      } else {
+        win.fetch = original
+      }
+    })
   })
 
   describe('mock localStorage', () => {

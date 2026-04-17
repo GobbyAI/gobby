@@ -372,6 +372,16 @@ class TestBootstrapSessionTitle:
         assert result == {"success": True, "title": "Bootstrap Title"}
 
     @pytest.mark.asyncio
+    async def test_requires_session_manager(self, mock_memory_manager: MagicMock) -> None:
+        registry = create_memory_registry(mock_memory_manager, session_manager=None)
+        result = await registry.call(
+            "bootstrap_session_title",
+            {"session_id": "sess-123", "prompt_text": "Fix the auth bug"},
+        )
+
+        assert result == {"success": False, "error": "session_manager is required"}
+
+    @pytest.mark.asyncio
     async def test_skipped(
         self,
         mock_memory_manager: MagicMock,

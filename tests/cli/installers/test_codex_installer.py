@@ -605,7 +605,8 @@ class TestUninstallCodex:
 
         # Verify feature flag removed, model preserved
         config_data = _load_toml_file(config_path)
-        assert "features" not in config_data or "codex_hooks" not in config_data["features"]
+        features = config_data.get("features")
+        assert not isinstance(features, dict) or "codex_hooks" not in features
         assert config_data["model"] == "gpt-4"
 
     def test_uninstall_preserves_non_gobby_hooks(self, mock_home: Path, mock_mcp_remove) -> None:
@@ -668,7 +669,8 @@ class TestUninstallCodex:
         assert result["success"] is True
         config_data = _load_toml_file(config_path)
         assert "notify" not in config_data
-        assert "features" not in config_data or "codex_hooks" not in config_data["features"]
+        features = config_data.get("features")
+        assert not isinstance(features, dict) or "codex_hooks" not in features
 
     def test_uninstall_no_hooks_json(self, mock_home: Path, mock_mcp_remove) -> None:
         """Test uninstallation when hooks.json doesn't exist."""
@@ -1008,6 +1010,7 @@ debug = true
         assert new_config["advanced"]["debug"] is True
         assert "notify" not in new_config
         assert new_config["features"]["codex_hooks"] is True
+        assert "# Comment at top" in config_path.read_text()
 
     def test_install_corrupt_hooks_json_is_overwritten(
         self, mock_home: Path, temp_dir: Path

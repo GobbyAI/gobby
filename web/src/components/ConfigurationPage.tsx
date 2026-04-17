@@ -9,8 +9,19 @@ import './ConfigurationPage.css'
 // =============================================================================
 
 type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
+type ApprovalRuleRow = { id: string; value: string }
 
 const BACKEND_SECRET_MASK = '********'
+let approvalRuleRowId = 0
+
+function createApprovalRuleRow(value = ''): ApprovalRuleRow {
+  approvalRuleRowId += 1
+  return { id: `approval-rule-${approvalRuleRowId}`, value }
+}
+
+function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {
+  return rules.map((rule) => createApprovalRuleRow(rule))
+}
 
 // =============================================================================
 // Secret field detection
@@ -412,17 +423,28 @@ function ApprovalRulesTab({
   builtInExemptions,
   onSave,
 }: ApprovalRulesTabProps) {
-  const [localRules, setLocalRules] = useState<string[]>(rules)
+  const [localRules, setLocalRules] = useState<ApprovalRuleRow[]>(() => toApprovalRuleRows(rules))
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
-    setLocalRules(rules)
+    setLocalRules(toApprovalRuleRows(rules))
+    setSaveError(null)
   }, [rules])
 
   const handleSave = async () => {
     setSaving(true)
-    await onSave(localRules.map((rule) => rule.trim()).filter(Boolean))
-    setSaving(false)
+    setSaveError(null)
+    try {
+      const ok = await onSave(localRules.map((rule) => rule.value.trim()).filter(Boolean))
+      if (!ok) {
+        setSaveError('Failed to save approval rules.')
+      }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save approval rules.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -456,22 +478,30 @@ function ApprovalRulesTab({
         </div>
         <div className="config-section-body">
           {localRules.map((rule, index) => (
-            <div key={`${index}-${rule}`} className="config-toggle-row" style={{ marginBottom: 12, gap: 8 }}>
+            <div key={rule.id} className="config-toggle-row" style={{ marginBottom: 12, gap: 8 }}>
               <input
                 type="text"
                 className="config-input"
-                value={rule}
+                value={rule.value}
                 onChange={(e) =>
-                  setLocalRules((prev) =>
-                    prev.map((value, i) => (i === index ? e.target.value : value)),
-                  )
+                  setLocalRules((prev) => {
+                    setSaveError(null)
+                    return prev.map((value, i) =>
+                      i === index ? { ...value, value: e.target.value } : value,
+                    )
+                  })
                 }
                 placeholder="tool:Write or mcp:gobby-tasks:*"
               />
               <button
                 type="button"
                 className="config-toolbar-btn"
-                onClick={() => setLocalRules((prev) => prev.filter((_, i) => i !== index))}
+                onClick={() =>
+                  setLocalRules((prev) => {
+                    setSaveError(null)
+                    return prev.filter((_, i) => i !== index)
+                  })
+                }
               >
                 Remove
               </button>
@@ -486,14 +516,22 @@ function ApprovalRulesTab({
             <button
               type="button"
               className="config-toolbar-btn"
-              onClick={() => setLocalRules((prev) => [...prev, ''])}
+              onClick={() =>
+                setLocalRules((prev) => {
+                  setSaveError(null)
+                  return [...prev, createApprovalRuleRow('')]
+                })
+              }
             >
               Add Rule
             </button>
             <button
               type="button"
               className="config-toolbar-btn"
-              onClick={() => setLocalRules(defaultRules)}
+              onClick={() => {
+                setSaveError(null)
+                setLocalRules(toApprovalRuleRows(defaultRules))
+              }}
             >
               Reset To Defaults
             </button>
@@ -506,6 +544,15 @@ function ApprovalRulesTab({
               {saving ? 'Saving...' : 'Save Rules'}
             </button>
           </div>
+          {saveError && (
+            <div
+              className="config-field-help"
+              role="alert"
+              style={{ color: 'var(--status-escalated, #ef4444)', marginTop: 8 }}
+            >
+              {saveError}
+            </div>
+          )}
         </div>
       </div>
     </div>

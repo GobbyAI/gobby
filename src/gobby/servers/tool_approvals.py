@@ -58,6 +58,63 @@ BUILT_IN_EXEMPTION_LABELS = (
     "tool:Bash (gcode / safe gsqz input only)",
 )
 
+GOBBY_EXEMPT_SERVERS = frozenset(
+    {
+        "gobby",
+        "gobby-agent",
+        "gobby-agents",
+        "gobby-canvas",
+        "gobby-clone",
+        "gobby-clones",
+        "gobby-communications",
+        "gobby-config",
+        "gobby-cron",
+        "gobby-hub",
+        "gobby-memory",
+        "gobby-merge",
+        "gobby-metrics",
+        "gobby-pipeline",
+        "gobby-pipelines",
+        "gobby-rule",
+        "gobby-rules",
+        "gobby-schedule",
+        "gobby-scheduler",
+        "gobby-session",
+        "gobby-sessions",
+        "gobby-skill",
+        "gobby-skills",
+        "gobby-spawn-agent",
+        "gobby-task",
+        "gobby-tasks",
+        "gobby-tasks-affected-files-core",
+        "gobby-tasks-affected-files-ops",
+        "gobby-tasks-commits",
+        "gobby-tasks-crud",
+        "gobby-tasks-dependencies",
+        "gobby-tasks-expansion",
+        "gobby-tasks-github",
+        "gobby-tasks-lifecycle",
+        "gobby-tasks-ops",
+        "gobby-tasks-readiness",
+        "gobby-tasks-reindex",
+        "gobby-tasks-search",
+        "gobby-tasks-session",
+        "gobby-tasks-validation",
+        "gobby-variable",
+        "gobby-variables",
+        "gobby-voice",
+        "gobby-workflow",
+        "gobby-workflows",
+        "gobby-worktree",
+        "gobby-worktrees",
+        "gobby-worktrees-cleanup",
+        "gobby-worktrees-create",
+        "gobby-worktrees-crud",
+        "gobby-worktrees-lifecycle",
+        "gobby-worktrees-sync",
+    }
+)
+
 _WRITE_PATH_KEYS = (
     "file_path",
     "path",
@@ -90,8 +147,12 @@ def normalize_stored_approval_key(key: str) -> str:
     if value.startswith(("tool:", "mcp:")):
         return value
     if value.startswith("call_tool:"):
-        _, _, server, tool = value.split(":", 3)
-        return f"mcp:{server}:{tool}"
+        parts = value.split(":", 3)
+        if len(parts) == 4:
+            _, _, server, tool = parts
+            return f"mcp:{server}:{tool}"
+        logger.debug("Ignoring malformed legacy approval key: %s", value)
+        return ""
     if value.startswith("mcp__"):
         parts = value.split("__", 2)
         if len(parts) == 3:
@@ -206,7 +267,7 @@ def is_builtin_auto_exempt(tool_name: str, input_data: dict[str, Any]) -> bool:
         return True
 
     server, inner_tool = _extract_mcp_target(canonical, input_data)
-    if server and inner_tool and server.startswith("gobby"):
+    if server and inner_tool and server in GOBBY_EXEMPT_SERVERS:
         return True
     return False
 

@@ -295,6 +295,7 @@ export const TasksTab = memo(function TasksTab({
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
   const [taskMenu, setTaskMenu] = useState<TaskContextMenu | null>(null);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
     () => new Set(),
@@ -303,6 +304,8 @@ export const TasksTab = memo(function TasksTab({
   // Fetch tasks, then apply canonical bucket filters client-side.
   const abortRef = useRef<AbortController | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
+  const selectedTaskIdRef = useRef<string | null>(null);
+  const userSelectedRef = useRef(false);
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
   // arrives or when the component unmounts.
   const detailFetchControllerRef = useRef<AbortController | null>(null);
@@ -354,7 +357,10 @@ export const TasksTab = memo(function TasksTab({
 
       if (event === "task_deleted") {
         setTasks((prev) => prev.filter((t) => t.id !== taskId));
-        if (taskId === selectedTaskId) setSelectedTaskId(null);
+        if (taskId === selectedTaskId) {
+          userSelectedRef.current = false;
+          setSelectedTaskId(null);
+        }
       } else if (event === "task_created") {
         const newTask = taskData as unknown as GobbyTask;
         setTasks((prev) => {
@@ -535,20 +541,25 @@ export const TasksTab = memo(function TasksTab({
   );
 
   useEffect(() => {
+    selectedTaskIdRef.current = selectedTaskId;
+  }, [selectedTaskId]);
+
+  useEffect(() => {
     if (visibleRows.length === 0) {
-      if (selectedTaskId !== null) {
+      if (selectedTaskIdRef.current !== null) {
         setSelectedTaskId(null);
       }
+      userSelectedRef.current = false;
       return;
     }
 
-    if (
-      !selectedTaskId ||
-      !visibleRows.some((row) => row.node.task.id === selectedTaskId)
-    ) {
+    const hasVisibleSelection = visibleRows.some(
+      (row) => row.node.task.id === selectedTaskIdRef.current,
+    );
+    if (!hasVisibleSelection && !userSelectedRef.current) {
       setSelectedTaskId(visibleRows[0].node.task.id);
     }
-  }, [selectedTaskId, visibleRows]);
+  }, [visibleRows]);
 
   const closeTaskMenu = useCallback(() => setTaskMenu(null), []);
 
@@ -564,8 +575,10 @@ export const TasksTab = memo(function TasksTab({
       event.stopPropagation();
       const rect = event.currentTarget.getBoundingClientRect();
       const menuWidth = 180;
+      const candidateX = rect.left - menuWidth;
+      const x = Math.max(0, Math.min(candidateX, window.innerWidth - menuWidth));
       setTaskMenu({
-        x: rect.left - menuWidth,
+        x,
         y: rect.top,
         task,
       });
@@ -580,6 +593,7 @@ export const TasksTab = memo(function TasksTab({
     const taskId = taskMenu.task.id;
     closeTaskMenu();
     setAssigningTaskId(taskId);
+    setClaimError(null);
     try {
       const response = await fetch(
         `${getBaseUrl()}/api/tasks/${encodeURIComponent(taskId)}/claim`,
@@ -601,13 +615,16 @@ export const TasksTab = memo(function TasksTab({
       if (selectedTaskId === taskId) {
         setTaskDetail((claimedTask?.task ?? claimedTask) as GobbyTaskDetail);
       }
-      fetchTasks();
     } catch (error) {
-      console.error("Failed to assign task to main chat:", error);
+      setClaimError(
+        error instanceof Error
+          ? `Failed to assign task to main chat: ${error.message}`
+          : "Failed to assign task to main chat.",
+      );
     } finally {
       setAssigningTaskId(null);
     }
-  }, [chatSessionId, closeTaskMenu, fetchTasks, selectedTaskId, taskMenu]);
+  }, [chatSessionId, closeTaskMenu, selectedTaskId, taskMenu]);
 
   const toggleTaskOpen = useCallback((taskId: string) => {
     setCollapsedTaskIds((prev) => {
@@ -642,7 +659,11 @@ export const TasksTab = memo(function TasksTab({
           role="treeitem"
           aria-level={row.depth + 1}
           aria-expanded={row.isInternal ? row.isOpen : undefined}
-          onClick={() => setSelectedTaskId(task.id)}
+          onClick={() => {
+            userSelectedRef.current = true;
+            setClaimError(null);
+            setSelectedTaskId(task.id);
+          }}
         >
           {row.isInternal ? (
             <button
@@ -746,6 +767,15 @@ export const TasksTab = memo(function TasksTab({
           />
         )}
       </div>
+      {claimError && (
+        <div
+          className="px-2.5 py-1.5 border-b border-border text-xs"
+          role="alert"
+          style={{ color: "var(--status-escalated, #ef4444)" }}
+        >
+          {claimError}
+        </div>
+      )}
 
       {/* Tree pane */}
       <div

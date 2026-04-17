@@ -46,9 +46,13 @@ uv pip install voxcpm
 Notes:
 
 - The current Gobby integration treats VoxCPM as an optional provider, not a baseline dependency.
-- Upstream VoxCPM currently documents embedded usage around Python `<3.13`. If it does not
-  install cleanly into the daemon runtime on your machine, keep using another provider until a
-  dedicated external runtime path is added.
+- Gobby targets Python `3.13+`, but upstream VoxCPM still documents embedded usage around
+  Python `<3.13`.
+- If `tts_provider: voxcpm` does not install cleanly into the daemon runtime on your machine,
+  install `voxcpm` separately with `uv pip install voxcpm`, or use an external runtime /
+  interactive installer path instead of expecting it to be bundled into `uv sync --extra voice`.
+- Plan on an external runtime or another provider until upstream VoxCPM's `3.13+` embedded
+  support is stable enough for Gobby to treat it as a clean in-daemon install.
 
 ## Configuration
 

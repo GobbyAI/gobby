@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useRef } from 'react'
+import { memo, useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
 import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
@@ -7,6 +7,15 @@ import '../workflows/PipelinesPage.css'
 interface PipelinesTabProps {
   projectId?: string | null
 }
+
+const FILTER_OPTIONS = [
+  { id: 'all', label: 'All' },
+  { id: 'completed', label: 'Completed' },
+  { id: 'failed', label: 'Failed' },
+  { id: 'running', label: 'Running' },
+] as const
+
+type StatusFilter = typeof FILTER_OPTIONS[number]['id']
 
 interface PipelineExecution {
   id: string
@@ -17,13 +26,6 @@ interface PipelineExecution {
   steps?: StepData[]
 }
 
-const FILTER_OPTIONS = [
-  { id: 'all', label: 'All' },
-  { id: 'completed', label: 'Completed' },
-  { id: 'failed', label: 'Failed' },
-  { id: 'running', label: 'Running' },
-] as const
-
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
 }
@@ -31,7 +33,7 @@ function getBaseUrl(): string {
 export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesTabProps) {
   const [executions, setExecutions] = useState<PipelineExecution[]>([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed' | 'running'>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topHeight, setTopHeight] = useState(40)
   const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)
@@ -39,6 +41,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const filterButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
   const PAGE_SIZE = 50
 
   // Fetch executions
@@ -115,6 +118,33 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     fetchDetail(id)
   }, [fetchDetail])
 
+  const selectStatusFilter = useCallback((nextFilter: StatusFilter, focusIndex?: number) => {
+    setStatusFilter(nextFilter)
+    if (focusIndex != null) {
+      filterButtonRefs.current[focusIndex]?.focus()
+    }
+  }, [])
+
+  const handleFilterKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      nextIndex = (index + 1) % FILTER_OPTIONS.length
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      nextIndex = (index - 1 + FILTER_OPTIONS.length) % FILTER_OPTIONS.length
+    } else if (event.key === 'Home') {
+      nextIndex = 0
+    } else if (event.key === 'End') {
+      nextIndex = FILTER_OPTIONS.length - 1
+    }
+
+    if (nextIndex == null) {
+      return
+    }
+
+    event.preventDefault()
+    selectStatusFilter(FILTER_OPTIONS[nextIndex].id, nextIndex)
+  }, [selectStatusFilter])
+
   useEffect(() => {
     if (executions.length === 0) {
       if (selectedId !== null) setSelectedId(null)
@@ -127,7 +157,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       setSelectedId(nextId)
       fetchDetail(nextId)
     }
-  }, [detailExec, executions, fetchDetail, selectedId])
+  }, [executions, fetchDetail, selectedId])
 
   if (loading) {
     return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>
@@ -141,9 +171,13 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           {FILTER_OPTIONS.map((option, index) => (
             <button
               key={option.id}
+              ref={(node) => {
+                filterButtonRefs.current[index] = node
+              }}
               type="button"
               role="radio"
               aria-checked={statusFilter === option.id}
+              tabIndex={statusFilter === option.id ? 0 : -1}
               className={`px-2 py-1 transition-colors ${
                 index === 0 ? 'rounded-l-md' : ''
               } ${
@@ -153,7 +187,8 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                   ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-muted'
               }`}
-              onClick={() => setStatusFilter(option.id)}
+              onClick={() => selectStatusFilter(option.id, index)}
+              onKeyDown={(event) => handleFilterKeyDown(event, index)}
             >
               {option.label}
             </button>

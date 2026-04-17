@@ -678,6 +678,8 @@ def create_memory_registry(
         """
         if not session_id:
             return {"success": False, "error": "session_id is required"}
+        if session_manager is None:
+            return {"success": False, "error": "session_manager is required"}
         try:
             title = await _bootstrap_session_title(session_manager, session_id, prompt_text)
             if not title:

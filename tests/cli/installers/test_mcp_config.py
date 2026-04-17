@@ -320,6 +320,22 @@ class TestRemoveMCPServerTOML:
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
 
+    def test_preserves_comments(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            "# top comment\n"
+            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
+            "# keep this comment\n"
+            '[mcp_servers.other]\ncommand = "node"\n'
+        )
+
+        result = remove_mcp_server_toml(config)
+
+        assert result["success"] is True
+        content = config.read_text()
+        assert "# top comment" in content
+        assert "# keep this comment" in content
+
 
 # ---------------------------------------------------------------------------
 # strip_mcp_tool_overrides_toml
@@ -449,6 +465,23 @@ class TestStripMCPToolOverridesTOML:
             result = strip_mcp_tool_overrides_toml(config)
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
+
+    def test_preserves_comments(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            "# top comment\n"
+            '[mcp_servers.gobby]\ncommand = "uv"\n'
+            "# keep server comment\n\n"
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n'
+        )
+
+        result = strip_mcp_tool_overrides_toml(config)
+
+        assert result["success"] is True
+        content = config.read_text()
+        assert "# top comment" in content
+        assert "# keep server comment" in content
 
 
 # ---------------------------------------------------------------------------

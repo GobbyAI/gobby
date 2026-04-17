@@ -219,6 +219,7 @@ class TestPrefixSpecIds:
         assert {t["phase_id"] for t in result["tasks"]} == {"phase-0-phase-1"}
         dep = result["dependencies"][0]
         assert dep == {"task_id": "phase-0-t-2", "depends_on": "phase-0-t-1"}
+        assert result["execution_groups"][0]["id"] == "phase-0-group-1"
         assert result["execution_groups"][0]["task_ids"] == ["phase-0-t-1", "phase-0-t-2"]
 
     def test_idempotent_on_already_prefixed_ids(self) -> None:

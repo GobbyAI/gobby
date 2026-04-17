@@ -41,19 +41,6 @@ export const FileChangesTab = memo(function FileChangesTab({
   const [loadingDiff, setLoadingDiff] = useState(false)
   const [topHeight, setTopHeight] = useState(35)
 
-  const loadDiff = useCallback(async (path: string) => {
-    setLoadingDiff(true)
-    try {
-      const result = await fetchDiff(path)
-      setDiff(result)
-    } catch (err) {
-      console.error('Failed to fetch diff:', err)
-      setDiff('')
-    } finally {
-      setLoadingDiff(false)
-    }
-  }, [fetchDiff])
-
   const handleSelect = useCallback(
     (path: string) => {
       if (path === selectedPath) {
@@ -69,15 +56,38 @@ export const FileChangesTab = memo(function FileChangesTab({
   useEffect(() => {
     if (!selectedPath) {
       setDiff('')
+      setLoadingDiff(false)
       return
     }
     if (!changedFiles.some((file) => file.path === selectedPath)) {
       setSelectedPath(null)
       setDiff('')
+      setLoadingDiff(false)
       return
     }
-    void loadDiff(selectedPath)
-  }, [changedFiles, loadDiff, selectedPath])
+    let isStale = false
+    setLoadingDiff(true)
+    void fetchDiff(selectedPath)
+      .then((result) => {
+        if (!isStale) {
+          setDiff(result)
+        }
+      })
+      .catch((err) => {
+        if (!isStale) {
+          console.error('Failed to fetch diff:', err)
+          setDiff('')
+        }
+      })
+      .finally(() => {
+        if (!isStale) {
+          setLoadingDiff(false)
+        }
+      })
+    return () => {
+      isStale = true
+    }
+  }, [changedFiles, fetchDiff, selectedPath])
 
   if (changedFiles.length === 0) {
     return (

@@ -67,7 +67,7 @@ class TestSession:
             source="qwen",
             project_id="proj-1",
             title="Live tmux session",
-            status="handoff_ready",
+            status="paused",
             transcript_path=None,
             summary_path=None,
             summary_markdown=None,

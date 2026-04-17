@@ -7,6 +7,7 @@ Handles configuring/removing MCP server entries in JSON and TOML config files.
 
 import json
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -14,6 +15,51 @@ from shutil import copy2
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:
+    """Remove a TOML table and nested subtables while preserving trailing comments."""
+
+    header_re = re.compile(r"(?m)^[ \t]*\[(?P<header>[^\]\n]+)\][ \t]*(?:#.*)?\n?")
+    headers = list(header_re.finditer(existing_text))
+    if not headers:
+        return existing_text
+
+    target_prefix = f"{table_prefix}."
+    rebuilt: list[str] = []
+    cursor = 0
+    index = 0
+
+    while index < len(headers):
+        header = headers[index].group("header").strip()
+        if header != table_prefix and not header.startswith(target_prefix):
+            index += 1
+            continue
+
+        run_start = headers[index].start()
+        next_index = index + 1
+        while next_index < len(headers):
+            next_header = headers[next_index].group("header").strip()
+            if next_header == table_prefix or next_header.startswith(target_prefix):
+                next_index += 1
+                continue
+            break
+
+        block_end = headers[next_index].start() if next_index < len(headers) else len(existing_text)
+        preserved_suffix = ""
+        if next_index < len(headers):
+            block = existing_text[run_start:block_end]
+            suffix_match = re.search(r"(?s)(?P<suffix>(?:[ \t]*\n|[ \t]*#.*\n)+)\Z", block)
+            if suffix_match:
+                preserved_suffix = suffix_match.group("suffix")
+
+        rebuilt.append(existing_text[cursor:run_start])
+        rebuilt.append(preserved_suffix)
+        cursor = block_end
+        index = next_index
+
+    rebuilt.append(existing_text[cursor:])
+    return "".join(rebuilt)
 
 
 def configure_project_mcp_server(project_path: Path, server_name: str = "gobby") -> dict[str, Any]:
@@ -405,8 +451,8 @@ def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby")
     so that tool approval inherits the session's approval mode instead of
     being forced to a specific value (e.g. "approve").
 
-    Uses tomllib (stdlib) for reading and tomli_w for writing to properly
-    handle TOML syntax.
+    Uses tomlkit for round-trip parsing so comments and formatting survive
+    installer cleanup.
 
     Args:
         config_path: Path to the config.toml file (e.g., ~/.codex/config.toml)
@@ -415,9 +461,7 @@ def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby")
     Returns:
         Dict with 'success', 'stripped', 'backup_path', and 'error' keys
     """
-    import tomllib
-
-    import tomli_w
+    import tomlkit
 
     result: dict[str, Any] = {
         "success": False,
@@ -433,8 +477,8 @@ def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby")
     # Read and parse TOML (single read; reuse buffer for backup + parse)
     try:
         existing_text = config_path.read_text(encoding="utf-8")
-        config = tomllib.loads(existing_text)
-    except tomllib.TOMLDecodeError as e:
+        config = tomlkit.parse(existing_text)
+    except tomlkit.exceptions.ParseError as e:
         result["error"] = f"Failed to parse TOML {config_path}: {e}"
         return result
     except OSError as e:
@@ -462,8 +506,7 @@ def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby")
 
     # Write updated config
     try:
-        with open(config_path, "wb") as f:
-            tomli_w.dump(config, f, multiline_strings=True)
+        config_path.write_text(tomlkit.dumps(config), encoding="utf-8")
     except OSError as e:
         result["error"] = f"Failed to write {config_path}: {e}"
         return result
@@ -476,8 +519,8 @@ def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby")
 def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dict[str, Any]:
     """Remove Gobby MCP server from a TOML config file.
 
-    Uses tomllib (stdlib) for reading and tomli_w for writing to properly
-    handle TOML syntax including multi-line strings.
+    Uses tomlkit for round-trip parsing so comments and formatting survive
+    installer cleanup.
 
     Args:
         config_path: Path to the config.toml file
@@ -486,9 +529,7 @@ def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dic
     Returns:
         Dict with 'success', 'removed', 'backup_path', and 'error' keys
     """
-    import tomllib
-
-    import tomli_w
+    import tomlkit
 
     result: dict[str, Any] = {
         "success": False,
@@ -504,8 +545,8 @@ def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dic
     # Read existing TOML file (single read; reuse buffer for backup + parse)
     try:
         existing_text = config_path.read_text(encoding="utf-8")
-        config = tomllib.loads(existing_text)
-    except tomllib.TOMLDecodeError as e:
+        config = tomlkit.parse(existing_text)
+    except tomlkit.exceptions.ParseError as e:
         result["error"] = f"Failed to parse TOML {config_path}: {e}"
         return result
     except OSError as e:
@@ -528,19 +569,23 @@ def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dic
         result["error"] = f"Failed to create backup: {e}"
         return result
 
-    # Remove the server from config
-    del mcp_servers[server_name]
-
-    # Clean up empty mcp_servers section
-    if not mcp_servers:
-        del config["mcp_servers"]
-    else:
-        config["mcp_servers"] = mcp_servers
-
-    # Write updated config using tomli_w
+    # Remove the server from config while preserving user comments/spacing.
+    updated_text = _remove_toml_table_block(
+        existing_text, table_prefix=f"mcp_servers.{server_name}"
+    )
     try:
-        with open(config_path, "wb") as f:
-            tomli_w.dump(config, f, multiline_strings=True)
+        config = tomlkit.parse(updated_text)
+    except tomlkit.exceptions.ParseError as e:
+        result["error"] = f"Failed to parse updated TOML {config_path}: {e}"
+        return result
+
+    # Clean up empty mcp_servers section if the removed server was the last entry.
+    mcp_servers = config.get("mcp_servers")
+    if mcp_servers is not None and not mcp_servers:
+        del config["mcp_servers"]
+
+    try:
+        config_path.write_text(tomlkit.dumps(config), encoding="utf-8")
     except OSError as e:
         result["error"] = f"Failed to write {config_path}: {e}"
         return result

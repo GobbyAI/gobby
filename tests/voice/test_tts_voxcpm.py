@@ -17,7 +17,9 @@ from gobby.voice.providers import create_tts_provider, get_tts_provider_status
 pytestmark = pytest.mark.unit
 
 
-def _write_wav(path: Path, *, duration_seconds: float, channels: int = 1, sample_rate: int = 16000) -> None:
+def _write_wav(
+    path: Path, *, duration_seconds: float, channels: int = 1, sample_rate: int = 16000
+) -> None:
     frame_count = int(duration_seconds * sample_rate)
     silence = b"\x00\x00" * frame_count * channels
     with wave.open(str(path), "wb") as wav_file:
@@ -30,7 +32,7 @@ def _write_wav(path: Path, *, duration_seconds: float, channels: int = 1, sample
 @pytest.fixture
 def voice_config(tmp_path: Path) -> VoiceConfig:
     ref = tmp_path / "reference.wav"
-    ref.write_bytes(b"RIFF" + b"\x00" * 100)
+    _write_wav(ref, duration_seconds=1.0)
     return VoiceConfig(
         enabled=True,
         tts_enabled=True,
@@ -157,9 +159,7 @@ class TestVoxCPMProvider:
         assert call.kwargs["prompt_text"] == "Reference transcript"
 
     @pytest.mark.asyncio
-    async def test_synthesize_stream_uses_reference_text_from_sidecar(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_stream_uses_reference_text_from_sidecar(self, tmp_path: Path) -> None:
         from gobby.voice.tts_voxcpm import VoxCPMProvider
 
         ref = tmp_path / "reference.wav"

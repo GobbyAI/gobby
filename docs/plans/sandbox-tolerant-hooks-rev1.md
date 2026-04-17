@@ -176,7 +176,7 @@ the new and legacy code path on every `gobby install`.
 
 **Detection rule (evaluated at `gobby install` time, per CLI):**
 
-```
+```python
 ghook_bin = native_bin.resolve("ghook")   # ~/.gobby/bin/ghook, then PATH
 if ghook_bin:
     register_hook_command(f"{ghook_bin} --gobby-owned --cli=X --type=Y")
@@ -355,7 +355,7 @@ matches `gsqz`/`gcode` workspace consistency.
 
 ### 2.2 CLI surface
 
-```
+```shell
 ghook --gobby-owned --cli=<claude|codex|gemini|qwen> --type=<hook-type> [--critical] [--detach]
 ghook --diagnose --cli=<...> --type=<...>
 ghook --version

@@ -112,7 +112,7 @@ describe("TasksTab", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: taskList });
-    mockFetch.mockJsonResponse('/api/tasks/task-review', {
+    mockFetch.mockJsonResponse(/\/api\/tasks\/task-review$/, {
       task: {
         ...taskList[0],
         description: "Review approved task detail",
@@ -393,6 +393,10 @@ describe("TasksTab", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
+    const initialTaskListFetches = mockFetch.fn.mock.calls.filter(([url]) =>
+      String(url).includes("/api/tasks?"),
+    ).length;
+
     fireEvent.click(screen.getAllByRole("button", { name: "Task actions" })[0]);
 
     const assignButton = await screen.findByRole("button", {
@@ -413,5 +417,30 @@ describe("TasksTab", () => {
         body: JSON.stringify({ session_id: "main-chat-1", force: true }),
       });
     });
+
+    const finalTaskListFetches = mockFetch.fn.mock.calls.filter(([url]) =>
+      String(url).includes("/api/tasks?"),
+    ).length;
+    expect(finalTaskListFetches).toBe(initialTaskListFetches);
+  });
+
+  it("shows an inline error when assigning a task to the main chat fails", async () => {
+    mockFetch.mockErrorResponse("/api/tasks/task-review/claim", 500, "Server Error");
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Task actions" })[0]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Assign to Main Chat" }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(
+      "Failed to assign task to main chat: Failed to claim task (500)",
+    );
   });
 });

@@ -58,6 +58,7 @@ describe('PipelinesTab', () => {
       expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true')
       expect(screen.getByText('Nightly sync')).toBeInTheDocument()
     })
+    await screen.findByTestId('resize-handle')
 
     const executionCalls = mockFetch.fn.mock.calls
       .map(([url]) => String(url))
@@ -78,7 +79,8 @@ describe('PipelinesTab', () => {
     render(<PipelinesTab projectId="proj-1" />)
 
     await waitFor(() => {
-      expect(screen.getByText('Nightly sync')).toBeInTheDocument()
+      expect(screen.getByTestId('resize-handle')).toBeInTheDocument()
+      expect(screen.getByText('No steps available')).toBeInTheDocument()
       expect(screen.queryByText('Close')).toBeNull()
     })
   })
@@ -91,6 +93,8 @@ describe('PipelinesTab', () => {
 
     await waitFor(() => {
       expect(failedButton).toHaveAttribute('aria-checked', 'true')
+      expect(failedButton).toHaveAttribute('tabindex', '0')
+      expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('tabindex', '-1')
     })
   })
 })

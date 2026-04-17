@@ -158,6 +158,29 @@ describe('MessageItem', () => {
     expect(container.querySelector('.cursor')).toBeTruthy()
   })
 
+  it('only shows one streaming cursor on the final text content block', () => {
+    const { container } = render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            { type: 'text', content: 'First text' },
+            {
+              type: 'tool_chain',
+              tool_calls: [
+                { id: 'tc-1', tool_name: 'read', server_name: 'b', tool_type: 'read', status: 'completed' },
+              ],
+            },
+            { type: 'text', content: 'Second text' },
+          ],
+        })}
+        isStreaming={true}
+      />,
+    )
+
+    expect(container.querySelectorAll('.cursor')).toHaveLength(1)
+  })
+
   it('returns null for empty messages', () => {
     const { container } = render(
       <MessageItem

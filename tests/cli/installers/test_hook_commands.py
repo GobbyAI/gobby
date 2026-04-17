@@ -3,12 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from gobby.cli.installers.hook_commands import (
     build_hook_command,
     config_contains_gobby_hook,
     is_gobby_hook_command,
     rewrite_hook_template_commands,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def test_build_hook_command_prefers_local_ghook(temp_dir: Path) -> None:

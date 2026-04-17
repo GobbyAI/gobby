@@ -3,12 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from gobby.utils.native_bin import (
     local_native_bin_path,
     native_bin_name,
     resolve_native_bin,
     resolve_native_bin_or_default,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def test_native_bin_name_adds_windows_suffix() -> None:

@@ -81,8 +81,13 @@ export function createMockFetch(): MockFetchInstance {
     },
     restore() {
       globalThis.fetch = originalFetch
-      if (typeof window !== 'undefined' && originalWindowFetch) {
-        window.fetch = originalWindowFetch
+      if (typeof window !== 'undefined') {
+        const win = window as Window & { fetch?: typeof fetch }
+        if (originalWindowFetch === undefined) {
+          Reflect.deleteProperty(win, 'fetch')
+        } else {
+          win.fetch = originalWindowFetch
+        }
       }
     },
   }

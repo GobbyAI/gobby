@@ -284,3 +284,38 @@ class TestCompileMultiPhaseMaxSubtasks:
             ):
                 with pytest.raises(ValueError, match=r"Phase 1.*exceeds max_subtasks"):
                     await service.compile_run(run.id)
+
+    @pytest.mark.asyncio
+    async def test_empty_phase_spec_is_rejected(
+        self,
+        service: ExpansionService,
+        task_manager: LocalTaskManager,
+        run_manager: LocalExpansionRunManager,
+        sample_project: dict,
+        tmp_path: Path,
+    ) -> None:
+        plan = _write_plan(
+            tmp_path,
+            "## Phase 0: A\n\nA.\n\n## Phase 1: B\n\nB.\n",
+        )
+        parent = task_manager.create_task(project_id=sample_project["id"], title="Root")
+        run = run_manager.create(
+            parent_task_id=parent.id,
+            project_id=sample_project["id"],
+            triggering_session_id=None,
+            input_source="plan",
+            plan_file=str(plan),
+        )
+
+        with patch.object(
+            service,
+            "_generate_raw_spec_for_phase",
+            AsyncMock(
+                side_effect=[
+                    _phase_spec("p-a", "A", ["T1"]),
+                    _phase_spec("p-b", "B", []),
+                ]
+            ),
+        ):
+            with pytest.raises(ValueError, match=r"Phase 1 spec produced no tasks"):
+                await service.compile_run(run.id)

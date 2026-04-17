@@ -213,7 +213,7 @@ class TestCodexBackend:
             cwd="/tmp/project",
             model="gpt-5.4",
             approval_policy="unlessTrusted",
-            sandbox="readOnly",
+            sandbox="read-only",
         )
 
     @pytest.mark.asyncio

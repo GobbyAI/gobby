@@ -584,14 +584,16 @@ def _append_text_content_block(
     text: str,
     source_line: int,
 ) -> None:
-    last_block = state.current_message.content_blocks[-1] if state.current_message.content_blocks else None
+    if state.current_message is None:
+        return
+    if not state.current_message.content_blocks:
+        state.current_message.content_blocks = []
 
-    if (
-        state.current_message
-        and last_block
-        and last_block.type == "text"
-        and isinstance(last_block.content, str)
-    ):
+    last_block = (
+        state.current_message.content_blocks[-1] if state.current_message.content_blocks else None
+    )
+
+    if last_block and last_block.type == "text" and isinstance(last_block.content, str):
         last_block.content += text
     else:
         state.current_message.content_blocks.append(
@@ -616,7 +618,14 @@ def _append_protocol_tool_call_block(
     tool_call: RenderedToolCall,
     source_line: int,
 ) -> None:
-    last_block = state.current_message.content_blocks[-1] if state.current_message.content_blocks else None
+    if state.current_message is None:
+        return
+    if not state.current_message.content_blocks:
+        state.current_message.content_blocks = []
+
+    last_block = (
+        state.current_message.content_blocks[-1] if state.current_message.content_blocks else None
+    )
     if (
         last_block
         and last_block.type == "tool_chain"

@@ -165,8 +165,11 @@ export function mapRenderedMessageToChatMessage(
 
   if (chatMsg.contentBlocks) {
     for (const block of chatMsg.contentBlocks) {
-      if (block.type === 'tool_chain' && block.tool_calls) {
-        chatMsg.toolCalls = [...(chatMsg.toolCalls || []), ...block.tool_calls]
+      if (block.type === 'tool_chain' && block.tool_calls?.length) {
+        if (!chatMsg.toolCalls) {
+          chatMsg.toolCalls = []
+        }
+        chatMsg.toolCalls.push(...block.tool_calls)
       } else if (block.type === 'thinking') {
         chatMsg.thinkingContent = (chatMsg.thinkingContent || '') + block.content
       }

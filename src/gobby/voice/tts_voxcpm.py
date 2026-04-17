@@ -29,9 +29,7 @@ def _maybe_local_model_path(model_ref: str) -> Path | None:
     return None
 
 
-def _should_warn_runtime_device_fallback(
-    requested_device: str, runtime_device: str | None
-) -> bool:
+def _should_warn_runtime_device_fallback(requested_device: str, runtime_device: str | None) -> bool:
     """Warn only when VoxCPM falls back to CPU despite a stronger explicit request."""
     return (
         runtime_device == "cpu"
@@ -89,7 +87,9 @@ def _inspect_reference_audio(reference_audio: Path) -> dict[str, Any]:
     if channels > 1:
         warnings.append("Reference clip is stereo; VoxCPM downmixes to mono internally.")
     if duration_seconds > 20:
-        warnings.append("Reference clip is longer than 20s; VoxCPM usually clones better from 8-15s.")
+        warnings.append(
+            "Reference clip is longer than 20s; VoxCPM usually clones better from 8-15s."
+        )
 
     details["tts_reference_audio_channels"] = channels
     details["tts_reference_audio_duration_seconds"] = round(duration_seconds, 2)
@@ -232,6 +232,7 @@ class VoxCPMProvider(BaseTTSProvider):
             raise
         except Exception:
             logger.error("VoxCPM TTS synthesis failed", exc_info=True)
+            raise
 
     @property
     def sample_rate(self) -> int:

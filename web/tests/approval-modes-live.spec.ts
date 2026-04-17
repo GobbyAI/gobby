@@ -207,10 +207,11 @@ async function sendPrompt(
 }
 
 function buildCommandPrompt(filePath: string, token: string): string {
+  const safeToken = sanitizeToken(token);
   return [
     "Use a shell or terminal tool to execute this exact command:",
-    `printf '%s' '${token}' > '${filePath}'`,
-    `After the command succeeds, reply with exactly ${token} and nothing else.`,
+    `printf '%s' '${safeToken}' > '${filePath}'`,
+    `After the command succeeds, reply with exactly ${safeToken} and nothing else.`,
     "Do not answer from memory. You must actually use a tool.",
   ].join("\n");
 }

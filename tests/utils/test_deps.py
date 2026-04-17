@@ -3,6 +3,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from gobby.utils import deps
 
 
@@ -223,6 +225,7 @@ def test_lmstudio_info_exception():
             assert deps.get_lmstudio_info() == {"running": False}
 
 
+@pytest.mark.unit
 def test_get_configured_embedding_provider():
     config = MagicMock()
     config.database_path = "/tmp/gobby-hub.db"
@@ -240,6 +243,7 @@ def test_get_configured_embedding_provider():
         assert deps.get_configured_embedding_provider() == "lmstudio"
 
 
+@pytest.mark.unit
 def test_get_configured_embedding_provider_falls_back_to_api_base():
     config = MagicMock()
     config.database_path = "/tmp/gobby-hub.db"

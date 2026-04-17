@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from claude_agent_sdk import PermissionResultAllow
+
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
@@ -31,6 +33,7 @@ from gobby.llm.claude_models import (
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
+    _PLAN_FILE_PATTERN,
     PendingApproval,
     build_compaction_context,
 )
@@ -1005,10 +1008,7 @@ class CodexWebChatBackend:
                 if (
                     not isinstance(file_path, str)
                     or not file_path
-                    or not re.match(
-                        r"^(?:.*[/\\])?\.(?:claude|gobby|gemini|qwen|codex)[/\\].*\.md$",
-                        file_path,
-                    )
+                    or not _PLAN_FILE_PATTERN.match(file_path)
                 ):
                     return self._decline_response(method)
             elif tool_name == "Bash" and _BASH_WRITE_PATTERNS.search(
@@ -1029,8 +1029,7 @@ class CodexWebChatBackend:
             return self._accept_response(method)
 
         approval = await session._wait_for_tool_approval(tool_name, input_data)
-        decision = approval.get("decision")
-        if decision == "accept":
+        if isinstance(approval, PermissionResultAllow):
             return self._accept_response(method)
         return self._decline_response(method)
 

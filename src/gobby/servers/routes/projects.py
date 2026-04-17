@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from gobby.servers.tool_approvals import load_project_approval_rules, save_project_approval_rules
-from gobby.storage.projects import SYSTEM_PROJECT_NAMES, LocalProjectManager
+from gobby.storage.projects import SYSTEM_PROJECT_NAMES, LocalProjectManager, Project
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -66,11 +66,13 @@ def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
     }
 
 
-def _project_to_response(server: HTTPServer, project: Any) -> dict[str, Any]:
+def _project_to_response(server: HTTPServer, project: Project) -> dict[str, Any]:
     data = project.to_dict()
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
     data.update(_get_project_stats(server, project.id))
-    data["approval_rules"] = load_project_approval_rules(project.repo_path)
+    data["approval_rules"] = (
+        load_project_approval_rules(project.repo_path) if project.repo_path else []
+    )
     return cast(dict[str, Any], data)
 
 
@@ -117,11 +119,12 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             if approval_rules is None:
                 return _project_to_response(server, project)
 
-        updated: Any = project
         if fields:
             updated = pm.update(project_id, **fields)
             if not updated:
                 raise HTTPException(500, "Failed to update project")
+        else:
+            updated = project
 
         if approval_rules is not None:
             if not updated.repo_path:

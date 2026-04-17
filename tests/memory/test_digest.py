@@ -115,6 +115,9 @@ class TestBuildHeuristicTitle:
         )
         assert title == "Fix the auth bug in login.py"
 
+    def test_rejects_titles_that_truncate_to_too_short(self) -> None:
+        assert _build_heuristic_title("A") is None
+
 
 class TestBootstrapSessionTitle:
     """Tests for bootstrap_session_title helper."""

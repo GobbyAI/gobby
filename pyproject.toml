@@ -34,13 +34,14 @@ dependencies = [
     "jinja2>=3.1.0",
     "claude-agent-sdk>=0.1.39",
     "wcwidth>=0.2.14",
+    "tomlkit>=0.13.3",
     "tomli-w>=1.0.0",
     "msgspec>=0.20.0",
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "qdrant-client>=1.12.0",
-    # python-multipart <0.0.26 has CVE-2026-24486 - pin to fixed version
-    "python-multipart>=0.0.26",
+    # python-multipart <0.0.22 has CVE-2026-24486 - pin to fixed version
+    "python-multipart>=0.0.22",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
     # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
