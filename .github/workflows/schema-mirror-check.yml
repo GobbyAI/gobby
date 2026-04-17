@@ -1,0 +1,46 @@
+name: Schema Mirror Check
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/schema-mirror-check.yml"
+      - "schemas/**"
+  workflow_dispatch:
+
+jobs:
+  verify-mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out Repo
+        uses: actions/checkout@v4
+
+      - name: Validate SOURCE_COMMIT
+        run: |
+          set -euo pipefail
+          source_commit="$(tr -d '\n' < schemas/SOURCE_COMMIT)"
+          if ! printf '%s' "$source_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "schemas/SOURCE_COMMIT must contain a bare 40-character hex SHA"
+            exit 1
+          fi
+          echo "SOURCE_COMMIT=$source_commit" >> "$GITHUB_ENV"
+
+      - name: Compare Mirrored Schemas
+        run: |
+          set -euo pipefail
+          base_url="https://raw.githubusercontent.com/GobbyAI/gobby-cli/${SOURCE_COMMIT}/crates/ghook/schemas"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$tmp_dir"' EXIT
+
+          for file in inbox-envelope.v1.schema.json diagnose-output.v1.schema.json; do
+            curl -fsSL "${base_url}/${file}" -o "${tmp_dir}/${file}"
+
+            local_sha="$(sha256sum "schemas/${file}" | awk '{print $1}')"
+            remote_sha="$(sha256sum "${tmp_dir}/${file}" | awk '{print $1}')"
+
+            if [[ "$local_sha" != "$remote_sha" ]]; then
+              echo "Schema mirror drift detected for ${file}"
+              echo "  local:  ${local_sha}"
+              echo "  remote: ${remote_sha}"
+              exit 1
+            fi
+          done

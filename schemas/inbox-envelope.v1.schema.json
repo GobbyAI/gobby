@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://gobby.ai/schemas/ghook/inbox-envelope.v1.schema.json",
+  "title": "Gobby ghook inbox envelope",
+  "description": "Envelope written by ghook to ~/.gobby/hooks/inbox/ and replayed by the daemon drain worker. Schema version 1.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "enqueued_at",
+    "critical",
+    "hook_type",
+    "input_data",
+    "source",
+    "headers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Envelope schema version; consumers must reject unknown versions."
+    },
+    "enqueued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp when ghook enqueued this envelope."
+    },
+    "critical": {
+      "type": "boolean",
+      "description": "When true, ghook exited 2 on failure to signal the host CLI."
+    },
+    "hook_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Host-CLI-specific hook name (e.g. session-start, SessionStart, PreToolUse)."
+    },
+    "input_data": {
+      "description": "Original stdin payload from the host CLI, optionally enriched with a terminal_context object for hooks that request it."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Source CLI identifier passed to the daemon (claude, codex, gemini, qwen)."
+    },
+    "headers": {
+      "type": "object",
+      "description": "HTTP headers mirroring what ghook sent (or would have sent) to the daemon. Omitted headers are absent keys; empty-string values are never emitted.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "properties": {
+        "X-Gobby-Project-Id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "X-Gobby-Session-Id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
