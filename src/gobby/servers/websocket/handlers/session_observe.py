@@ -534,6 +534,7 @@ async def handle_attach_to_session(
                 "title": _as_str(getattr(session, "title", None)),
                 "status": _as_str(getattr(session, "status", None)) or "unknown",
                 "model": _as_str(getattr(session, "model", None)),
+                "reasoning_effort": _as_str(getattr(session, "reasoning_effort", None)),
                 "ref": ref,
                 "chat_mode": _as_str(getattr(session, "chat_mode", None)),
                 "git_branch": _as_str(getattr(session, "git_branch", None)),
@@ -579,6 +580,7 @@ async def handle_send_to_cli_session(
     """
     session_id = data.get("session_id")
     content = data.get("content", "").strip()
+    client_message_id = _as_str(data.get("client_message_id"))
     if not session_id or not content:
         await mixin._send_error(websocket, "send_to_cli_session requires session_id and content")
         return
@@ -668,6 +670,7 @@ async def handle_send_to_cli_session(
                 "delivered": delivered_via_tmux,
                 "delivery_method": "tmux" if delivered_via_tmux else "hook_piggyback",
                 "message_id": msg_id,
+                "client_message_id": client_message_id,
             }
         )
     )

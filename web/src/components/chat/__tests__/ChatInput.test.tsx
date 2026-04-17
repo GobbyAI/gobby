@@ -5,16 +5,24 @@ import { useState } from 'react'
 import { ChatInput } from '../ChatInput'
 
 vi.mock('../ModeSelector', () => ({
-  ModeSelector: ({ mode }: { mode: string }) => <div data-testid="mode-selector">{mode}</div>,
+  ModeSelector: ({ mode, disabled }: { mode: string; disabled?: boolean }) => (
+    <div data-testid="mode-selector" data-disabled={String(Boolean(disabled))}>
+      {mode}
+    </div>
+  ),
 }))
 vi.mock('../ContextUsageIndicator', () => ({
   ContextUsageIndicator: () => <div data-testid="context-usage" />,
 }))
 vi.mock('../BranchIndicator', () => ({
-  BranchIndicator: () => <div data-testid="branch-indicator" />,
+  BranchIndicator: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="branch-indicator" data-disabled={String(Boolean(disabled))} />
+  ),
 }))
 vi.mock('../ActiveAgentIndicator', () => ({
-  ActiveAgentIndicator: () => <div data-testid="agent-indicator" />,
+  ActiveAgentIndicator: ({ disabled }: { disabled?: boolean }) => (
+    <div data-testid="agent-indicator" data-disabled={String(Boolean(disabled))} />
+  ),
 }))
 vi.mock('./ui/Button', () => ({
   Button: ({ children, onClick, disabled, ...props }: any) => (
@@ -204,6 +212,31 @@ describe('ChatInput', () => {
 
     const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
     expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
+  })
+
+  it('disables proxy-owned footer controls while leaving text entry enabled', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        onModeChange={vi.fn()}
+        mode="plan"
+        modeDisabled={true}
+        attachmentsDisabled={true}
+        onAgentChange={vi.fn()}
+        agentName="default"
+        agentDefinitions={[{ name: 'default', source: 'project' } as any]}
+        onWorktreeChange={vi.fn()}
+        worktreePickerDisabled={true}
+        currentBranch="main"
+        agentPickerDisabled={true}
+      />,
+    )
+
+    expect(screen.getByRole('textbox')).not.toBeDisabled()
+    expect(screen.getByTestId('mode-selector')).toHaveAttribute('data-disabled', 'true')
+    expect(screen.getByTestId('agent-indicator')).toHaveAttribute('data-disabled', 'true')
+    expect(screen.getAllByTestId('branch-indicator')[0]).toHaveAttribute('data-disabled', 'true')
+    expect(screen.getByTitle('Attached session owns attachments')).toBeDisabled()
   })
 
   it('renders the activity panel toggle beside the agent selector and keeps it enabled while input is disabled', async () => {

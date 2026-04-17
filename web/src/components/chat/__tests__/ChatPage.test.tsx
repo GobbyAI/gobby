@@ -40,8 +40,14 @@ vi.mock("../ChatInput", () => ({
     disabled,
     disabledPlaceholder,
     disabledAriaLabel,
+    modeDisabled,
+    attachmentsDisabled,
+    agentPickerDisabled,
+    worktreePickerDisabled,
     provider,
     currentModel,
+    currentReasoning,
+    providerPickerDisabledReason,
     onToggleActivityPanel,
     isActivityPanelPinned,
   }: {
@@ -49,8 +55,14 @@ vi.mock("../ChatInput", () => ({
     disabled?: boolean;
     disabledPlaceholder?: string;
     disabledAriaLabel?: string;
+    modeDisabled?: boolean;
+    attachmentsDisabled?: boolean;
+    agentPickerDisabled?: boolean;
+    worktreePickerDisabled?: boolean;
     provider?: string | null;
     currentModel?: string;
+    currentReasoning?: string;
+    providerPickerDisabledReason?: string | null;
     onToggleActivityPanel?: () => void;
     isActivityPanelPinned?: boolean;
   }) => (
@@ -59,8 +71,14 @@ vi.mock("../ChatInput", () => ({
       <span data-testid="chat-input-placeholder">{disabledPlaceholder ?? ""}</span>
       <span data-testid="chat-input-aria-label">{disabledAriaLabel ?? ""}</span>
       <span data-testid="chat-input-notice">{proxyDeliveryNotice ?? ""}</span>
+      <span data-testid="chat-input-mode-disabled">{String(Boolean(modeDisabled))}</span>
+      <span data-testid="chat-input-attachments-disabled">{String(Boolean(attachmentsDisabled))}</span>
+      <span data-testid="chat-input-agent-disabled">{String(Boolean(agentPickerDisabled))}</span>
+      <span data-testid="chat-input-worktree-disabled">{String(Boolean(worktreePickerDisabled))}</span>
       <span data-testid="chat-input-provider">{provider ?? ""}</span>
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
+      <span data-testid="chat-input-reasoning">{currentReasoning ?? ""}</span>
+      <span data-testid="chat-input-provider-disabled-reason">{providerPickerDisabledReason ?? ""}</span>
       {onToggleActivityPanel && (
         <button
           type="button"
@@ -449,6 +467,49 @@ describe("ChatPage", () => {
       statusBar.compareDocumentPosition(chatInput) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("locks CLI-owned footer controls while proxy-attached and shows attached session settings", async () => {
+    render(
+      <ChatPage
+        chat={createChat({
+          provider: "claude",
+          attachedSessionId: "terminal-9",
+          sessionInteractionMode: "proxy",
+          activeAgent: "default",
+          currentBranch: "feature/local",
+          viewingSessionMeta: {
+            ref: "#59",
+            source: "codex",
+            title: "Attached Terminal",
+            status: "active",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            externalId: "term-59",
+            sessionType: "terminal",
+            gitBranch: "feature/attached",
+          },
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("chat-input-disabled")).toHaveTextContent("false");
+    expect(screen.getByTestId("chat-input-mode-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-attachments-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-agent-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-worktree-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-provider")).toHaveTextContent("codex");
+    expect(screen.getByTestId("chat-input-model")).toHaveTextContent("gpt-5.4");
+    expect(screen.getByTestId("chat-input-reasoning")).toHaveTextContent("high");
+    expect(screen.getByTestId("chat-input-provider-disabled-reason")).toHaveTextContent(
+      "Attached session owns provider, model, and reasoning",
+    );
   });
 
   it("treats a read-only swapped terminal as the main session for the activity panel", async () => {

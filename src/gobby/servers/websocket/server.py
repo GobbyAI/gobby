@@ -345,7 +345,7 @@ class WebSocketServer(
         await self._cleanup_tmux()
 
         # Stop voice subsystem
-        await self._cleanup_voice()
+        await self.cleanup_voice()
 
         # Stop all chat sessions (fire SESSION_END before each)
         for conv_id, session in list(self._chat_sessions.items()):

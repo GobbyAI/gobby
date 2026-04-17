@@ -223,15 +223,19 @@ export function ChatPage({
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
   );
+  const isProxyAttached =
+    Boolean(chat.attachedSessionId) && chat.sessionInteractionMode === "proxy";
   const canAttachViewedSession =
     !isAutonomousSession && canProxyAttachObservationMeta(viewingMeta);
   const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
-  const providerPickerDisabledReason = isAutonomousSession
-    ? chat.sessionInteractionMode === "proxy"
-      ? "Cannot change provider on a pipeline-managed session"
-      : "Observing autonomous session"
-    : null;
+  const providerPickerDisabledReason = isProxyAttached
+    ? "Attached session owns provider, model, and reasoning"
+    : isAutonomousSession
+      ? chat.sessionInteractionMode === "proxy"
+        ? "Cannot change provider on a pipeline-managed session"
+        : "Observing autonomous session"
+      : null;
   const mainInputSelection = resolveProviderModelPair(
     providerModelCatalog,
     {
@@ -260,19 +264,26 @@ export function ChatPage({
   const effectiveInputModel = isSwappedTerminal
     ? viewedInputSelection.model ?? ""
     : mainInputSelection.model ?? "";
+  const effectiveAgentName = isSwappedTerminal
+    ? viewingMeta?.agentName ?? chat.activeAgent
+    : chat.activeAgent;
   const effectiveBranch = viewingMeta?.gitBranch ?? chat.currentBranch;
   const effectiveReasoningPreferenceKey = buildReasoningPreferenceKey(
     effectiveInputProvider,
     effectiveInputModel,
   );
-  const effectiveInputReasoning = getPreferredReasoningEffort(
-    providerModelCatalog,
-    effectiveInputProvider,
-    effectiveInputModel,
-    effectiveReasoningPreferenceKey
-      ? reasoningPreferences[effectiveReasoningPreferenceKey]
-      : null,
-  );
+  const preferredReasoningEffort = effectiveReasoningPreferenceKey
+    ? reasoningPreferences[effectiveReasoningPreferenceKey]
+    : null;
+  const effectiveInputReasoning =
+    isSwappedTerminal && viewingMeta?.reasoningEffort
+      ? viewingMeta.reasoningEffort
+      : getPreferredReasoningEffort(
+          providerModelCatalog,
+          effectiveInputProvider,
+          effectiveInputModel,
+          preferredReasoningEffort,
+        );
   const isReadOnlySession =
     isSwappedTerminal && chat.sessionInteractionMode !== "proxy";
   const showChatInput = !isReadOnlySession;
@@ -750,14 +761,17 @@ export function ChatPage({
               onPaletteSelect={handlePaletteSelect}
               mode={chat.mode}
               onModeChange={chat.onModeChange}
+              modeDisabled={isProxyAttached}
               modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
               contextUsage={chat.contextUsage}
               currentBranch={effectiveBranch}
               worktreePath={chat.worktreePath}
               projectId={projectId ?? null}
               onWorktreeChange={chat.onWorktreeChange}
-              agentName={chat.activeAgent}
+              worktreePickerDisabled={isProxyAttached}
+              agentName={effectiveAgentName}
               onAgentChange={chat.onAgentChange}
+              agentPickerDisabled={isProxyAttached}
               agentDefinitions={agentDefinitions}
               agentGlobalDefs={agentGlobalDefs}
               agentProjectDefs={agentProjectDefs}
@@ -796,6 +810,7 @@ export function ChatPage({
               hasMessages={chat.messages.length > 0}
               proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
+              attachmentsDisabled={isProxyAttached}
               onToggleActivityPanel={togglePanel}
               isActivityPanelPinned={isPinned}
             />

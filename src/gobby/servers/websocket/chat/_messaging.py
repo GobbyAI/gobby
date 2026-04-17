@@ -430,17 +430,19 @@ class ChatMessagingMixin:
                     session_info_msg["agent_name"] = agent_name
                     await websocket.send(json.dumps(session_info_msg))
                 except Exception as e:
-                    logger.error(f"Failed to start chat session: {e}")
-                    await websocket.send(
-                        json.dumps(
-                            _base_msg(
-                                type="chat_error",
-                                message_id=assistant_message_id,
-                                conversation_id=conversation_id,
-                                error="Failed to start chat session. Please try again.",
-                            )
-                        )
+                    logger.exception(
+                        "Failed to start chat session for conversation %s",
+                        conversation_id,
                     )
+                    error_payload = _base_msg(
+                        type="chat_error",
+                        message_id=assistant_message_id,
+                        conversation_id=conversation_id,
+                        error="Failed to start chat session. Please try again.",
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        error_payload["error_detail"] = f"{type(e).__name__}: {e}"
+                    await websocket.send(json.dumps(error_payload))
                     return
 
             if reasoning_effort is not None:

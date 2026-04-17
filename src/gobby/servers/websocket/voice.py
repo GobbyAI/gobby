@@ -307,11 +307,20 @@ class VoiceMixin:
     async def stop_voice_warmup(self) -> None:
         """Cancel background voice warmup if it is still in progress."""
         task = self._voice_warmup_task
-        if task is None or task.done():
+        if task is None:
             return
 
-        task.cancel()
+        self._voice_warmup_task = None
+        if not task.done():
+            task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+    def _reset_voice_warmup_state(self) -> None:
+        """Reset warmup bookkeeping so the next prepare request starts fresh."""
+        self._stt_warmup_status = _WARMUP_IDLE
+        self._tts_warmup_status = _WARMUP_IDLE
+        self._stt_warmup_error = ""
+        self._tts_warmup_error = ""
 
     def get_voice_status(self) -> dict[str, Any]:
         """Return voice feature availability and warmup state."""
@@ -714,19 +723,11 @@ class VoiceMixin:
             self._tts_provider = None
             unloaded.append("TTS")
 
+        self._reset_voice_warmup_state()
+        self._voice_warmup_task = None
+
         if not unloaded:
             return
-
-        # Reset warmup status so next mic-click triggers a fresh load
-        self._stt_warmup_status = _WARMUP_IDLE
-        self._tts_warmup_status = _WARMUP_IDLE
-        self._stt_warmup_error = ""
-        self._tts_warmup_error = ""
-
-        # Cancel in-flight warmup task
-        if self._voice_warmup_task and not self._voice_warmup_task.done():
-            self._voice_warmup_task.cancel()
-        self._voice_warmup_task = None
 
         # Reclaim memory
         gc.collect()
@@ -752,11 +753,18 @@ class VoiceMixin:
         if models_loaded:
             self._unload_voice_models()
 
+    async def cleanup_voice(self) -> None:
+        """Public voice cleanup hook for daemon and WebSocket shutdown paths."""
+        await self._cleanup_voice()
+
     async def _cleanup_voice(self) -> None:
         """Clean up voice state. Called from stop()."""
         # Cancel all active TTS pipelines
         for conv_id in list(self._active_tts_pipelines):
             await self._cancel_tts(conv_id)
+
+        await self.stop_voice_warmup()
+
         # Cancel any in-flight background tasks (dep installs, etc.)
         for task in list(self._background_tasks):
             if not task.done():
@@ -764,5 +772,7 @@ class VoiceMixin:
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
+
+        self._unload_voice_models()
         self._voice_enabled.clear()
         logger.debug("Voice subsystem cleaned up")

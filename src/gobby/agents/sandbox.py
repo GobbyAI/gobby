@@ -269,7 +269,7 @@ class CodexSandboxResolver(SandboxResolver):
         """Return the app-server sandbox policy for web-chat threads."""
         if config is None or not config.enabled:
             return None
-        return "readOnly" if config.mode == "restrictive" else "workspaceWrite"
+        return "read-only" if config.mode == "restrictive" else "workspace-write"
 
     def resolve(
         self, config: SandboxConfig, paths: ResolvedSandboxPaths

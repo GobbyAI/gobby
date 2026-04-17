@@ -66,6 +66,82 @@ def get_startup_tracker() -> StartupTracker | None:
     return _startup_tracker
 
 
+async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) -> None:
+    """Stop the WebSocket server before HTTP lifespan teardown finishes."""
+    websocket_task = getattr(runner, "_websocket_task", None)
+    websocket_server = runner.websocket_server
+
+    if websocket_task is not None and not websocket_task.done():
+        logger.debug("Waiting for WebSocket startup task to finish before shutdown")
+        try:
+            await asyncio.wait_for(websocket_task, timeout=timeout)
+        except TimeoutError:
+            logger.warning("WebSocket startup task did not finish before shutdown; cancelling")
+            websocket_task.cancel()
+            try:
+                await asyncio.wait_for(websocket_task, timeout=1.0)
+            except (asyncio.CancelledError, TimeoutError):
+                logger.warning("WebSocket startup task shutdown timed out or cancelled")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"WebSocket startup task failed during shutdown: {e}")
+
+    if websocket_server and getattr(websocket_server, "_server", None) is not None:
+        logger.debug("Stopping WebSocket server before HTTP shutdown")
+        try:
+            await asyncio.wait_for(websocket_server.stop(), timeout=timeout)
+            logger.debug("WebSocket server stopped before HTTP shutdown")
+        except TimeoutError:
+            logger.warning("WebSocket server shutdown timed out")
+        except Exception as e:
+            logger.warning(f"WebSocket server shutdown failed: {e}")
+
+    if websocket_task is not None:
+        runner._websocket_task = None
+
+
+async def _reap_remaining_child_processes(timeout: float = 1.0) -> None:
+    """Terminate then force-kill child processes that survived graceful shutdown."""
+    try:
+        import psutil
+
+        current_process = psutil.Process(os.getpid())
+        children = current_process.children(recursive=True)
+        if not children:
+            logger.debug("No child processes remaining after graceful shutdown")
+            return
+
+        logger.info(
+            "Reaping %d remaining child process(es) after graceful shutdown",
+            len(children),
+        )
+        for child in children:
+            try:
+                child.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        gone, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout)
+        logger.debug(
+            "Child process termination sweep complete",
+            extra={"terminated": len(gone), "remaining": len(alive)},
+        )
+
+        if alive:
+            logger.warning(
+                "Force-killing %d child process(es) still alive after graceful shutdown",
+                len(alive),
+            )
+            for child in alive:
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+    except Exception as e:
+        logger.warning(f"Child process reap failed: {e}")
+
+
 async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> None:
     """Heavy initialization that runs after HTTP is already serving.
 
@@ -579,37 +655,27 @@ async def run_daemon(runner: GobbyRunner) -> None:
 
         # Cleanup with timeouts to prevent hanging
         # Use timeout slightly longer than uvicorn's graceful shutdown to let it finish
+        logger.debug("Shutdown requested; beginning graceful shutdown")
         server.should_exit = True
 
-        # Reap child processes immediately — before the HTTP drain.
-        # MCP stdio subprocesses, gemini --acp, codex app-server, gcode, etc.
-        # are children of this process and must not outlive us. The owning
-        # subsystems' shutdown logic runs later (lifespan shutdown after HTTP
-        # drain), which is far too late — kill them now so they're gone
-        # within seconds of SIGTERM, not tens of seconds later.
-        try:
-            import psutil
+        if (
+            hasattr(runner, "_subsystem_init_task")
+            and runner._subsystem_init_task
+            and not runner._subsystem_init_task.done()
+        ):
+            logger.debug("Cancelling subsystem initialization during shutdown")
+            runner._subsystem_init_task.cancel()
+            try:
+                await asyncio.wait_for(runner._subsystem_init_task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
 
-            _self = psutil.Process(os.getpid())
-            _children = _self.children(recursive=True)
-            if _children:
-                logger.info(f"Reaping {len(_children)} child process(es) on shutdown")
-                for _child in _children:
-                    try:
-                        _child.terminate()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                _gone, _alive = await asyncio.to_thread(psutil.wait_procs, _children, 1.0)
-                for _child in _alive:
-                    try:
-                        _child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-        except Exception as e:
-            logger.warning(f"Child process reap failed: {e}")
+        await _shutdown_websocket_server(runner)
 
         try:
+            logger.debug("Waiting for HTTP server lifespan shutdown")
             await asyncio.wait_for(server_task, timeout=graceful_shutdown_timeout + 5)
+            logger.debug("HTTP server lifespan shutdown complete")
         except TimeoutError:
             logger.warning("HTTP server shutdown timed out")
 
@@ -652,26 +718,6 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 await asyncio.wait_for(runner.communications_manager.stop(), timeout=5.0)
             except TimeoutError:
                 logger.warning("CommunicationsManager shutdown timed out")
-
-        # Cancel subsystem init if still running
-        if (
-            hasattr(runner, "_subsystem_init_task")
-            and runner._subsystem_init_task
-            and not runner._subsystem_init_task.done()
-        ):
-            runner._subsystem_init_task.cancel()
-            try:
-                await asyncio.wait_for(runner._subsystem_init_task, timeout=2.0)
-            except (asyncio.CancelledError, TimeoutError):
-                pass
-
-        websocket_task = getattr(runner, "_websocket_task", None)
-        if websocket_task:
-            websocket_task.cancel()
-            try:
-                await asyncio.wait_for(websocket_task, timeout=3.0)
-            except (asyncio.CancelledError, TimeoutError):
-                logger.warning("WebSocket server shutdown timed out or cancelled")
 
         # Cancel background pipeline tasks
         try:
@@ -837,22 +883,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
         except TimeoutError:
             logger.warning("MCP disconnect timed out")
 
-        # Force-kill any child processes still alive after graceful shutdown.
-        # SIGTERM was sent early; SIGKILL here handles stragglers.
-        try:
-            import psutil
-
-            _self = psutil.Process(os.getpid())
-            _children = _self.children(recursive=True)
-            if _children:
-                logger.info(f"Force-killing {len(_children)} remaining child process(es)")
-                for _child in _children:
-                    try:
-                        _child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-        except Exception as e:
-            logger.warning(f"Child process force-kill failed: {e}")
+        await _reap_remaining_child_processes()
 
         # Clean up PID file on graceful shutdown
         cleanup_pid_file()

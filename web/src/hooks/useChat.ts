@@ -58,6 +58,14 @@ interface ChatError {
   message_id?: string;
   request_id?: string;
   error: string;
+  error_detail?: string;
+}
+
+interface PendingProxyMessage {
+  clientMessageId: string;
+  currentMessageId: string;
+  sessionId: string;
+  content: string;
 }
 
 interface ToolStatusMessage {
@@ -176,6 +184,19 @@ function isChatProvider(value: unknown): value is string {
 
 function isValidSessionType(value: unknown): value is "terminal" | "web_chat" {
   return value === "terminal" || value === "web_chat";
+}
+
+function findPendingProxyMessage(
+  pending: Map<string, PendingProxyMessage>,
+  sessionId: string,
+  content: string,
+): PendingProxyMessage | null {
+  for (const entry of pending.values()) {
+    if (entry.sessionId === sessionId && entry.content === content) {
+      return entry;
+    }
+  }
+  return null;
 }
 
 function normalizeSessionType(value: unknown): "terminal" | "web_chat" | null {
@@ -926,6 +947,9 @@ export function useChat() {
   const [attachedSessionMeta, setAttachedSessionMeta] =
     useState<SessionObservationMeta | null>(null);
   const attachedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
+  const pendingProxyMessagesRef = useRef<Map<string, PendingProxyMessage>>(
+    new Map(),
+  );
   const [isContinuingSession, setIsContinuingSession] = useState(false);
   const continuingSessionIdRef = useRef<string | null>(null);
   const continuationRollbackRef = useRef<ContinuationRollbackSnapshot | null>(
@@ -1114,6 +1138,7 @@ export function useChat() {
       observedSessionMetaRef.current = null;
       attachedSessionIdRef.current = null;
       attachedSessionMetaRef.current = null;
+      pendingProxyMessagesRef.current.clear();
       sessionInteractionModeRef.current = "none";
       setObservedSessionId(null);
       setAttachedSessionId(null);
@@ -1831,14 +1856,33 @@ export function useChat() {
           const proxyCapable = canProxyAttachObservationMeta(meta);
           const nextMode =
             requestedMode === "proxy" && !proxyCapable ? "none" : requestedMode;
+          pendingProxyMessagesRef.current.clear();
           setSessionInteractionMode(nextMode);
+          sessionInteractionModeRef.current = nextMode;
           if (nextMode === "proxy") {
             setAttachedSessionId(sid);
+            attachedSessionIdRef.current = sid;
             setAttachedSessionMeta(meta);
+            attachedSessionMetaRef.current = meta;
             setProxyDeliveryNotice(null);
+            if (
+              meta.chatMode === "act" ||
+              meta.chatMode === "accept_edits" ||
+              meta.chatMode === "bypass" ||
+              meta.chatMode === "normal" ||
+              meta.chatMode === "plan"
+            ) {
+              const restored = normalizeChatMode(meta.chatMode);
+              if (restored !== currentModeRef.current) {
+                currentModeRef.current = restored;
+                onModeChangedRef.current?.(restored);
+              }
+            }
           } else {
             setAttachedSessionId(null);
+            attachedSessionIdRef.current = null;
             setAttachedSessionMeta(null);
+            attachedSessionMetaRef.current = null;
             setProxyDeliveryNotice(
               requestedMode === "proxy" && meta.sessionType === "terminal"
                 ? meta.status === "paused"
@@ -1903,8 +1947,13 @@ export function useChat() {
           setObservedSessionId(null);
           observedSessionMetaRef.current = null;
           setAttachedSessionId(null);
+          attachedSessionIdRef.current = null;
           setAttachedSessionMeta(null);
+          attachedSessionMetaRef.current = null;
+          pendingProxyMessagesRef.current.clear();
+          setProxyDeliveryNotice(null);
           setSessionInteractionMode("none");
+          sessionInteractionModeRef.current = "none";
           // Keep viewingSessionId/Meta — return to view-only mode
         } else if (
           data.type === "session_message" &&
@@ -1926,6 +1975,16 @@ export function useChat() {
           }
 
           const renderedMessage = mapRenderedMessageToChatMessage(msg);
+          const pendingProxyMessage =
+            renderedMessage.role === "user" &&
+            smSessionId === attachedSessionIdRef.current &&
+            sessionInteractionModeRef.current === "proxy"
+              ? findPendingProxyMessage(
+                  pendingProxyMessagesRef.current,
+                  smSessionId,
+                  renderedMessage.content,
+                )
+              : null;
           setMessages((prev) => {
             const existingIdx = prev.findIndex(
               (message) => message.id === renderedMessage.id,
@@ -1935,10 +1994,72 @@ export function useChat() {
               updated[existingIdx] = renderedMessage;
               return updated;
             }
+            if (pendingProxyMessage) {
+              const pendingIdx = prev.findIndex(
+                (message) => message.id === pendingProxyMessage.currentMessageId,
+              );
+              if (pendingIdx >= 0) {
+                const updated = [...prev];
+                updated[pendingIdx] = renderedMessage;
+                return updated;
+              }
+            }
+            if (
+              renderedMessage.role === "user" &&
+              smSessionId === attachedSessionIdRef.current &&
+              sessionInteractionModeRef.current === "proxy"
+            ) {
+              const optimisticIdx = prev.findIndex(
+                (message) =>
+                  message.role === "user" &&
+                  message.id.startsWith("user-") &&
+                  message.content === renderedMessage.content,
+              );
+              if (optimisticIdx >= 0) {
+                const updated = [...prev];
+                updated[optimisticIdx] = renderedMessage;
+                return updated;
+              }
+            }
             return [...prev, renderedMessage];
           });
+          if (pendingProxyMessage) {
+            pendingProxyMessage.currentMessageId = renderedMessage.id;
+          }
         } else if (data.type === "send_to_cli_session_result") {
           const result = data as Record<string, unknown>;
+          const clientMessageId =
+            typeof result.client_message_id === "string"
+              ? result.client_message_id
+              : null;
+          const messageId =
+            typeof result.message_id === "string" ? result.message_id : null;
+          if (clientMessageId) {
+            const pendingProxyMessage =
+              pendingProxyMessagesRef.current.get(clientMessageId) ?? null;
+            if (pendingProxyMessage) {
+              if (messageId) {
+                setMessages((prev) => {
+                  const messageIdx = prev.findIndex(
+                    (message) =>
+                      message.id === pendingProxyMessage.currentMessageId ||
+                      message.id === messageId,
+                  );
+                  if (messageIdx < 0) {
+                    return prev;
+                  }
+                  const updated = [...prev];
+                  updated[messageIdx] = {
+                    ...updated[messageIdx],
+                    id: messageId,
+                  };
+                  return updated;
+                });
+                pendingProxyMessage.currentMessageId = messageId;
+              }
+              pendingProxyMessagesRef.current.delete(clientMessageId);
+            }
+          }
           setProxyDeliveryNotice(
             result.delivered === false
               ? "Message queued until the session yields."
@@ -2084,6 +2205,9 @@ export function useChat() {
 
     setIsStreaming(false);
     setIsThinking(false);
+    if (import.meta.env.DEV && error.error_detail) {
+      console.error("Chat startup error detail:", error.error_detail);
+    }
     setMessages((prev) => [
       ...prev,
       {
@@ -2842,7 +2966,18 @@ export function useChat() {
 
       // Route to a swapped terminal session when proxy mode is active.
       if (isProxyTerminal) {
-        const messageId = `user-${uuid()}`;
+        const proxySessionId = attachedSessionIdRef.current;
+        if (!proxySessionId) {
+          return false;
+        }
+        const clientMessageId = uuid();
+        const messageId = `user-${clientMessageId}`;
+        pendingProxyMessagesRef.current.set(clientMessageId, {
+          clientMessageId,
+          currentMessageId: messageId,
+          sessionId: proxySessionId,
+          content,
+        });
         setMessages((prev) => [
           ...prev,
           {
@@ -2856,8 +2991,9 @@ export function useChat() {
         wsRef.current.send(
           JSON.stringify({
             type: "send_to_cli_session",
-            session_id: attachedSessionIdRef.current,
+            session_id: proxySessionId,
             content,
+            client_message_id: clientMessageId,
           }),
         );
         return true;
@@ -3325,8 +3461,15 @@ export function useChat() {
   const detachFromSession = useCallback(() => {
     if (!attachedSessionIdRef.current) return;
 
+    pendingProxyMessagesRef.current.clear();
+    attachedSessionIdRef.current = null;
+    attachedSessionMetaRef.current = null;
+    sessionInteractionModeRef.current = observedSessionIdRef.current
+      ? "observe"
+      : "none";
     setAttachedSessionId(null);
     setAttachedSessionMeta(null);
+    setProxyDeliveryNotice(null);
     setSessionInteractionMode(
       observedSessionIdRef.current ? "observe" : "none",
     );

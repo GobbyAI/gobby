@@ -1520,6 +1520,112 @@ describe("useChat", () => {
     );
   });
 
+  it("restores attached terminal chat mode from attach metadata", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    const modeChanged = vi.fn();
+    act(() => result.current.setOnModeChanged(modeChanged));
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "codex",
+        title: "Proxy session",
+        status: "active",
+        model: "gpt-5.4",
+        reasoning_effort: "high",
+        chat_mode: "accept_edits",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    expect(result.current.sessionInteractionMode).toBe("proxy");
+    expect(result.current.attachedSessionMeta?.reasoningEffort).toBe("high");
+    expect(modeChanged).toHaveBeenCalledWith("normal");
+  });
+
+  it("reconciles optimistic proxy messages when the session broadcast arrives before the ack", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "claude",
+        title: "Proxy session",
+        status: "active",
+        model: "sonnet",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.sendMessage("hello world");
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+    expect(sentMsg.type).toBe("send_to_cli_session");
+    expect(sentMsg.client_message_id).toEqual(expect.any(String));
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe(`user-${sentMsg.client_message_id}`);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-proxy",
+        message: {
+          id: "db-msg-1",
+          role: "user",
+          content: "hello world",
+          timestamp: "2026-04-17T20:00:00Z",
+        },
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe("db-msg-1");
+    expect(result.current.messages[0].content).toBe("hello world");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "send_to_cli_session_result",
+        session_id: "sess-proxy",
+        delivered: true,
+        delivery_method: "tmux",
+        message_id: "db-msg-1",
+        client_message_id: sentMsg.client_message_id,
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe("db-msg-1");
+  });
+
   it("keeps paused terminal sessions view-only instead of enabling proxy send mode", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

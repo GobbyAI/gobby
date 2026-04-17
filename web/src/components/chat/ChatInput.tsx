@@ -41,6 +41,7 @@ interface ChatInputProps {
   mode?: ChatMode
   onModeChange?: (mode: ChatMode) => void
   modeOptions?: ChatModeInfo[]
+  modeDisabled?: boolean
   sttEnabled?: boolean
   voiceInputMode?: VoiceInputMode
   isRecording?: boolean
@@ -52,8 +53,10 @@ interface ChatInputProps {
   worktreePath?: string | null
   projectId?: string | null
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void
+  worktreePickerDisabled?: boolean
   agentName?: string
   onAgentChange?: (agentName: string) => void
+  agentPickerDisabled?: boolean
   agentDefinitions?: AgentDefInfo[]
   agentGlobalDefs?: AgentDefInfo[]
   agentProjectDefs?: AgentDefInfo[]
@@ -85,6 +88,7 @@ interface ChatInputProps {
   showObserveOverlay?: boolean
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
+  attachmentsDisabled?: boolean
   onToggleActivityPanel?: () => void
   isActivityPanelPinned?: boolean
 }
@@ -112,6 +116,7 @@ export function ChatInput({
   mode = 'normal',
   onModeChange,
   modeOptions,
+  modeDisabled = false,
   sttEnabled = false,
   voiceInputMode = 'ptt',
   isRecording = false,
@@ -123,8 +128,10 @@ export function ChatInput({
   worktreePath,
   projectId,
   onWorktreeChange,
+  worktreePickerDisabled = false,
   agentName,
   onAgentChange,
+  agentPickerDisabled = false,
   agentDefinitions = [],
   agentGlobalDefs = [],
   agentProjectDefs = [],
@@ -148,6 +155,7 @@ export function ChatInput({
   showObserveOverlay = false,
   onAttachObservedSession,
   proxyDeliveryNotice = null,
+  attachmentsDisabled = false,
   onToggleActivityPanel,
   isActivityPanelPinned = false,
 }: ChatInputProps) {
@@ -245,7 +253,7 @@ export function ChatInput({
   }, [onPaletteSelect, onInputChange])
 
   const handleFilesSelected = useCallback((files: FileList | null) => {
-    if (!files) return
+    if (!files || attachmentsDisabled) return
     const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
     Array.from(files).forEach((file) => {
       if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -267,7 +275,7 @@ export function ChatInput({
       }
       reader.readAsDataURL(file)
     })
-  }, [])
+  }, [attachmentsDisabled])
 
   const removeFile = useCallback((id: string) => {
     setQueuedFiles((prev) => {
@@ -641,11 +649,21 @@ export function ChatInput({
                 <ModeSelector
                   mode={mode}
                   onModeChange={onModeChange}
-                  disabled={disabled}
+                  disabled={disabled || modeDisabled}
                   modes={modeOptions}
                 />
               )}
-              <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || attachmentsDisabled}
+                title={
+                  attachmentsDisabled
+                    ? 'Attached session owns attachments'
+                    : 'Attach file'
+                }
+              >
                 <PaperclipIcon />
               </Button>
               {onAgentChange && agentName && agentDefinitions.length > 0 && (
@@ -658,6 +676,7 @@ export function ChatInput({
                   showScopeToggle={agentShowScopeToggle}
                   hasGlobal={agentHasGlobal}
                   hasProject={agentHasProject}
+                  disabled={disabled || agentPickerDisabled}
                 />
               )}
               {onToggleActivityPanel && (
@@ -683,6 +702,7 @@ export function ChatInput({
                   worktreePath={worktreePath ?? null}
                   projectId={projectId ?? null}
                   onWorktreeChange={onWorktreeChange}
+                  disabled={disabled || worktreePickerDisabled}
                 />
               )}
               <ContextUsageIndicator
@@ -872,15 +892,16 @@ export function ChatInput({
                   </SelectContent>
                 </Select>
 
-                {onWorktreeChange && (
-                  <BranchIndicator
-                    currentBranch={currentBranch ?? null}
-                    worktreePath={worktreePath ?? null}
-                    projectId={projectId ?? null}
-                    onWorktreeChange={onWorktreeChange}
-                    variant="select"
-                  />
-                )}
+                      {onWorktreeChange && (
+                        <BranchIndicator
+                          currentBranch={currentBranch ?? null}
+                          worktreePath={worktreePath ?? null}
+                          projectId={projectId ?? null}
+                          onWorktreeChange={onWorktreeChange}
+                          disabled={disabled || worktreePickerDisabled}
+                          variant="select"
+                        />
+                      )}
               </div>
             </div>
           )}

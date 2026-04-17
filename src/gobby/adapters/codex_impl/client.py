@@ -275,7 +275,11 @@ class CodexAppServerClient:
         if approval_policy:
             params["approvalPolicy"] = approval_policy
         if sandbox:
-            params["sandbox"] = sandbox
+            params["sandbox"] = {
+                "readOnly": "read-only",
+                "workspaceWrite": "workspace-write",
+                "dangerFullAccess": "danger-full-access",
+            }.get(sandbox, sandbox)
 
         result = await self._send_request("thread/start", params)
 
