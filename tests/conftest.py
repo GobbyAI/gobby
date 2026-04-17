@@ -10,11 +10,29 @@ import pytest
 from filelock import FileLock
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register CLI flags for opt-in local-only test suites."""
+    parser.addoption(
+        "--run-sandbox",
+        action="store_true",
+        default=False,
+        help="run sandbox compatibility tests that require local CLI binaries",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """Sort e2e tests to run last, reducing port collision risk with production daemon."""
+    run_sandbox = bool(config.getoption("--run-sandbox"))
+    skip_sandbox = pytest.mark.skip(
+        reason="sandbox compatibility tests require --run-sandbox"
+    )
     non_e2e = []
     e2e = []
     for item in items:
+        if "tests/integration/sandbox/" in str(item.fspath) and not run_sandbox:
+            item.add_marker(skip_sandbox)
         if item.get_closest_marker("e2e") or "tests/e2e" in str(item.fspath):
             e2e.append(item)
         else:
