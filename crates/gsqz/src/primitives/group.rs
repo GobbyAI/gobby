@@ -370,7 +370,7 @@ fn group_by_extension(lines: Vec<String>) -> Vec<String> {
 
     // Sort by count descending
     let mut sorted: Vec<_> = groups.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
     let mut result = Vec::new();
     for (ext, files) in &sorted {
@@ -411,7 +411,7 @@ fn group_by_directory(lines: Vec<String>) -> Vec<String> {
     }
 
     let mut sorted: Vec<_> = groups.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
     let mut result = Vec::new();
     for (dirname, files) in &sorted {
