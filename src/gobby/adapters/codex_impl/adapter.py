@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.adapters.base import BaseAdapter
+from gobby.adapters.base import BaseAdapter, build_first_hook_session_metadata_lines
 from gobby.adapters.codex_impl.client import (
     CodexAppServerClient,
 )
@@ -1070,9 +1070,11 @@ class CodexHooksAdapter(BaseAdapter):
         if response.context:
             context_parts.append(response.context)
 
+        session_start_hook = hook_event_name == "SessionStart"
+
         # Route system_message by event type:
         # - systemMessage-only events (PreToolUse, Stop): visible systemMessage
-        # - SessionStart: BOTH systemMessage (visible banner) AND additionalContext (model-facing)
+        # - SessionStart: startup context only via additionalContext
         # - UserPromptSubmit, PostToolUse: additionalContext only (hidden from user)
         if response.system_message:
             if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
@@ -1080,58 +1082,18 @@ class CodexHooksAdapter(BaseAdapter):
             else:
                 # Always feed to model via additionalContext
                 context_parts.insert(0, response.system_message)
-                # SessionStart banner should also be visible to the user
-                if hook_event_name == "SessionStart":
-                    result["systemMessage"] = response.system_message
 
         # Session metadata (Gobby session ID, terminal context, etc.)
         if response.metadata:
             gobby_session_id = response.metadata.get("session_id")
-            session_ref = response.metadata.get("session_ref")
-            external_id = response.metadata.get("external_id")
-            is_first_hook = response.metadata.get("_first_hook_for_session", False)
 
             if gobby_session_id:
-                if is_first_hook:
-                    context_lines = []
-                    if session_ref:
-                        context_lines.append(
-                            f"Gobby Session ID: {session_ref} ({gobby_session_id})"
-                        )
-                    else:
-                        context_lines.append(f"Gobby Session ID: {gobby_session_id}")
-                    if external_id:
-                        context_lines.append(
-                            f"CLI-Specific Session ID (external_id): {external_id}"
-                        )
-                    if response.metadata.get("parent_session_id"):
-                        context_lines.append(
-                            f"parent_session_id: {response.metadata['parent_session_id']}"
-                        )
-                    if response.metadata.get("machine_id"):
-                        context_lines.append(f"machine_id: {response.metadata['machine_id']}")
-                    if response.metadata.get("project_id"):
-                        context_lines.append(f"project_id: {response.metadata['project_id']}")
-                    task_id = response.metadata.get("task_id")
-                    if task_id:
-                        context_lines.append(
-                            f"Assigned Task: {task_id}"
-                            " (use this for task operations, NOT the session ID above)"
-                        )
-                    if response.metadata.get("terminal_term_program"):
-                        context_lines.append(
-                            f"terminal: {response.metadata['terminal_term_program']}"
-                        )
-                    if response.metadata.get("terminal_parent_pid"):
-                        context_lines.append(
-                            f"parent_pid: {response.metadata['terminal_parent_pid']}"
-                        )
-                    for key in [
-                        "terminal_tmux_pane",
-                    ]:
-                        if response.metadata.get(key):
-                            friendly_name = key.replace("terminal_", "").replace("_", " ")
-                            context_lines.append(f"{friendly_name}: {response.metadata[key]}")
+                context_lines = build_first_hook_session_metadata_lines(
+                    response.metadata,
+                    include_session_id_line=not (session_start_hook and bool(response.system_message)),
+                    include_tty=False,
+                )
+                if context_lines:
                     context_parts.append("\n".join(context_lines))
 
         # Build hookSpecificOutput or systemMessage based on event type.

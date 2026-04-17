@@ -565,6 +565,39 @@ class TestTranslateFromHookResponse:
 
         assert result["systemMessage"] == "Session handoff in progress"
 
+    def test_session_start_routes_banner_to_additional_context_only(self, adapter) -> None:
+        """SessionStart keeps the startup banner in additionalContext only."""
+        banner = "Gobby Session ID: #42 (uuid-123)"
+        response = HookResponse(decision="allow", system_message=banner)
+
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        assert "systemMessage" not in result
+        assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
+
+    def test_session_start_banner_and_metadata_include_session_id_once(self, adapter) -> None:
+        """SessionStart does not duplicate the session ID between banner and metadata."""
+        banner = "Gobby Session ID: #42 (uuid-123)"
+        response = HookResponse(
+            decision="allow",
+            system_message=banner,
+            metadata={
+                "session_id": "uuid-123",
+                "session_ref": "#42",
+                "external_id": "ext-id-456",
+                "_first_hook_for_session": True,
+                "project_id": "proj-xyz",
+            },
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert ctx.count(banner) == 1
+        assert "ext-id-456" in ctx
+        assert "proj-xyz" in ctx
+
     def test_before_model_modify_args(self, adapter) -> None:
         """Translates modify_args for BeforeModel hook."""
         response = HookResponse(

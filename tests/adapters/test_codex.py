@@ -1912,20 +1912,18 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert hso["hookEventName"] == "UserPromptSubmit"
         assert "Session info" in hso["additionalContext"]
 
-    def test_system_message_both_visible_and_model_facing_for_session_start(self) -> None:
-        """SessionStart puts system_message in both systemMessage and additionalContext."""
+    def test_system_message_routes_only_to_additional_context_for_session_start(self) -> None:
+        """SessionStart keeps the banner in startup context only once."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", system_message="Session banner")
         result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
 
-        # Visible to user
-        assert result["systemMessage"] == "Session banner"
-        # Also fed to model
+        assert "systemMessage" not in result
         hso = result["hookSpecificOutput"]
         assert hso["hookEventName"] == "SessionStart"
-        assert "Session banner" in hso["additionalContext"]
+        assert hso["additionalContext"].count("Session banner") == 1
 
     def test_pre_tool_use_combines_system_message_and_context(self) -> None:
         """PreToolUse combines system_message and context_parts in systemMessage."""
@@ -1964,6 +1962,32 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert hso["hookEventName"] == "SessionStart"
         ctx = hso["additionalContext"]
         assert "Gobby Session ID: #100 (abc-123)" in ctx
+        assert "codex-ext-id" in ctx
+        assert "proj-1" in ctx
+
+    def test_session_start_banner_and_metadata_include_session_id_once(self) -> None:
+        """SessionStart does not duplicate the session ID between banner and metadata."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        banner = "Gobby Session ID: #100 (abc-123)"
+        response = HookResponse(
+            decision="allow",
+            system_message=banner,
+            metadata={
+                "session_id": "abc-123",
+                "session_ref": "#100",
+                "external_id": "codex-ext-id",
+                "_first_hook_for_session": True,
+                "project_id": "proj-1",
+            },
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert ctx.count(banner) == 1
         assert "codex-ext-id" in ctx
         assert "proj-1" in ctx
 

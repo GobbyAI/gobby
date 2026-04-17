@@ -23,7 +23,7 @@ Key differences from Claude Code:
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.adapters.base import BaseAdapter
+from gobby.adapters.base import BaseAdapter, build_first_hook_session_metadata_lines
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.llm.sdk_utils import compress_and_truncate
 
@@ -317,76 +317,40 @@ class GeminiAdapter(BaseAdapter):
         if response.reason:
             result["reason"] = response.reason
 
+        session_start_hook = hook_type == "SessionStart"
+
         # Build hookSpecificOutput based on hook type
         hook_specific: dict[str, Any] = {}
+        context_parts: list[str] = []
 
         # Add context injection if present
         if response.context:
-            hook_specific["additionalContext"] = response.context
+            context_parts.append(response.context)
+
+        # SessionStart startup context should be injected once via
+        # additionalContext, not duplicated into systemMessage.
+        if response.system_message:
+            if session_start_hook:
+                context_parts.insert(0, response.system_message)
+            else:
+                result["systemMessage"] = response.system_message
 
         # Add session/terminal context for hooks that support additionalContext
         # Parity with Claude Code: inject on SessionStart, BeforeAgent, BeforeTool, AfterTool
         hooks_with_context = {"SessionStart", "BeforeAgent", "BeforeTool", "AfterTool"}
         if hook_type in hooks_with_context and response.metadata:
             session_id = response.metadata.get("session_id")
-            session_ref = response.metadata.get("session_ref")
-            external_id = response.metadata.get("external_id")
-            is_first_hook = response.metadata.get("_first_hook_for_session", False)
 
             if session_id:
                 hook_event_name = self.HOOK_EVENT_NAME_MAP.get(hook_type, "Unknown")
-
-                if is_first_hook:
-                    # First hook: inject full metadata (~60-100 tokens)
-                    context_lines = []
-                    if session_ref:
-                        context_lines.append(f"Gobby Session ID: {session_ref} ({session_id})")
-                    else:
-                        context_lines.append(f"Gobby Session ID: {session_id}")
-                    if external_id:
-                        context_lines.append(
-                            f"CLI-Specific Session ID (external_id): {external_id}"
-                        )
-                    if response.metadata.get("parent_session_id"):
-                        context_lines.append(
-                            f"parent_session_id: {response.metadata['parent_session_id']}"
-                        )
-                    if response.metadata.get("machine_id"):
-                        context_lines.append(f"machine_id: {response.metadata['machine_id']}")
-                    if response.metadata.get("project_id"):
-                        context_lines.append(f"project_id: {response.metadata['project_id']}")
-                    # Add assigned task for agent sessions (disambiguate from session ref)
-                    task_id = response.metadata.get("task_id")
-                    if task_id:
-                        context_lines.append(
-                            f"Assigned Task: {task_id}"
-                            " (use this for task operations, NOT the session ID above)"
-                        )
-                    # Add terminal context (non-null values only)
-                    if response.metadata.get("terminal_term_program"):
-                        context_lines.append(
-                            f"terminal: {response.metadata['terminal_term_program']}"
-                        )
-                    if response.metadata.get("terminal_tty"):
-                        context_lines.append(f"tty: {response.metadata['terminal_tty']}")
-                    if response.metadata.get("terminal_parent_pid"):
-                        context_lines.append(
-                            f"parent_pid: {response.metadata['terminal_parent_pid']}"
-                        )
-                    for key in [
-                        "terminal_tmux_pane",
-                    ]:
-                        if response.metadata.get(key):
-                            friendly_name = key.replace("terminal_", "").replace("_", " ")
-                            context_lines.append(f"{friendly_name}: {response.metadata[key]}")
-
+                context_lines = build_first_hook_session_metadata_lines(
+                    response.metadata,
+                    include_session_id_line=not (session_start_hook and bool(response.system_message)),
+                )
+                if context_lines:
+                    context_parts.append("\n".join(context_lines))
+                if context_parts:
                     hook_specific["hookEventName"] = hook_event_name
-                    # Append to existing additionalContext if present
-                    existing = hook_specific.get("additionalContext", "")
-                    new_context = "\n".join(context_lines)
-                    hook_specific["additionalContext"] = (
-                        f"{existing}\n{new_context}" if existing else new_context
-                    )
 
         # Handle BeforeModel-specific output (llm_request modification)
         if hook_type == "BeforeModel" and response.modify_args:
@@ -396,19 +360,12 @@ class GeminiAdapter(BaseAdapter):
         if hook_type == "BeforeToolSelection" and response.modify_args:
             hook_specific["toolConfig"] = response.modify_args
 
-        # Compress + truncate additionalContext to SDK limit before emitting
-        if "additionalContext" in hook_specific:
-            hook_specific["additionalContext"] = compress_and_truncate(
-                hook_specific["additionalContext"]
-            )[0]
+        if context_parts:
+            hook_specific["additionalContext"] = compress_and_truncate("\n\n".join(context_parts))[0]
 
         # Only add hookSpecificOutput if there's content
         if hook_specific:
             result["hookSpecificOutput"] = hook_specific
-
-        # Add system message if present (user-visible notification)
-        if response.system_message:
-            result["systemMessage"] = response.system_message
 
         return result
 
