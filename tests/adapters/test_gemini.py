@@ -573,6 +573,7 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
 
         assert "systemMessage" not in result
+        assert result["hookSpecificOutput"]["hookEventName"] == "SessionStart"
         assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
 
     def test_session_start_banner_and_metadata_include_session_id_once(self, adapter) -> None:

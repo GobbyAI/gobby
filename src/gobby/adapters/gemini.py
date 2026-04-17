@@ -132,6 +132,15 @@ class GeminiAdapter(BaseAdapter):
         "delegate_to_agent": "Task",
     }
 
+    @classmethod
+    def _response_hook_event_name(cls, hook_type: str | None) -> str | None:
+        """Resolve the emitted hookEventName for response payloads."""
+        if not hook_type:
+            return None
+        if hook_type in cls.EVENT_MAP:
+            return hook_type
+        return cls.HOOK_EVENT_NAME_MAP.get(hook_type)
+
     def __init__(self, hook_manager: "HookManager | None" = None):
         """Initialize the Gemini CLI adapter.
 
@@ -317,6 +326,7 @@ class GeminiAdapter(BaseAdapter):
         if response.reason:
             result["reason"] = response.reason
 
+        hook_event_name = self._response_hook_event_name(hook_type)
         session_start_hook = hook_type == "SessionStart"
 
         # Build hookSpecificOutput based on hook type
@@ -342,15 +352,15 @@ class GeminiAdapter(BaseAdapter):
             session_id = response.metadata.get("session_id")
 
             if session_id:
-                hook_event_name = self.HOOK_EVENT_NAME_MAP.get(hook_type, "Unknown")
                 context_lines = build_first_hook_session_metadata_lines(
                     response.metadata,
                     include_session_id_line=not (session_start_hook and bool(response.system_message)),
                 )
                 if context_lines:
                     context_parts.append("\n".join(context_lines))
-                if context_parts:
-                    hook_specific["hookEventName"] = hook_event_name
+
+        if hook_type in hooks_with_context and context_parts and hook_event_name:
+            hook_specific["hookEventName"] = hook_event_name
 
         # Handle BeforeModel-specific output (llm_request modification)
         if hook_type == "BeforeModel" and response.modify_args:
