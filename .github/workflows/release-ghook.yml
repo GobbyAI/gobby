@@ -3,7 +3,7 @@ name: Release ghook
 on:
   push:
     tags:
-      - "gobby-hooks-v*"
+      - "ghook-v*"
 
 permissions:
   contents: write

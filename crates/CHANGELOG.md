@@ -36,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Low-savings marker** — Suppress `[gsqz:low-savings]` marker when prepending it would grow the output beyond the original. The marker now only annotates when the annotation itself doesn't make things worse. (#111)
 - **Outer compression header for `/no-op` strategy** — When the low-savings marker is suppressed (above), the resulting `{pipeline}/no-op` strategy now also skips the outer `[Output compressed by gsqz — …, 0% reduction]` header and the daemon savings report. The user sees the original output verbatim. `CompressionResult::is_passthrough()` classifies `passthrough`, `excluded`, and `*/no-op` together so both call sites stay in sync. (#121)
 
+## [0.2.0] — gobby-hooks
+
+### Changed
+
+#### gobby-hooks
+
+- **Dispatcher parity** — `ghook` now mirrors the Python `hook_dispatcher.py` contract for live hook requests, per-CLI critical-hook handling, SessionStart response forwarding, and host-visible stdout/stderr/exit behavior. This restores startup session-context injection for supported CLIs while keeping the Rust spool/replay internals. (#126)
+
+### Fixed
+
+#### CI/CD
+
+- **ghook release tags** — The `release-ghook` workflow now triggers on `ghook-v*` tags, matching the documented binary-specific release tag format used by this repo. (#126)
+
 ## [0.1.1] — gobby-hooks
 
 ### Fixed
