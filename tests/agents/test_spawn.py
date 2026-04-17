@@ -1,9 +1,8 @@
 """
 Tests for terminal spawn prepare functions.
 
-Verifies that prepare_terminal_spawn, prepare_gemini_spawn_with_preflight,
-and prepare_codex_spawn_with_preflight persist agent_run_id via
-update_terminal_pickup_metadata.
+Verifies that prepare_terminal_spawn and prepare_codex_spawn_with_preflight
+persist agent_run_id via update_terminal_pickup_metadata.
 """
 
 import re
@@ -14,7 +13,6 @@ import pytest
 from gobby.agents.spawn import (
     PreparedSpawn,
     prepare_codex_spawn_with_preflight,
-    prepare_gemini_spawn_with_preflight,
     prepare_terminal_spawn,
 )
 
@@ -87,66 +85,6 @@ class TestPrepareTerminalSpawnMetadata:
         assert result.agent_run_id.startswith("run-")
         assert len(result.agent_run_id) == 16
         assert re.match(r"^run-[0-9a-f]{12}$", result.agent_run_id)
-
-
-class TestPrepareGeminiSpawnMetadata:
-    """Tests for agent_run_id persistence in prepare_gemini_spawn_with_preflight."""
-
-    @pytest.mark.asyncio
-    async def test_calls_update_terminal_pickup_metadata(self) -> None:
-        """prepare_gemini_spawn_with_preflight persists agent_run_id."""
-        sm = _make_session_manager()
-
-        gemini_info = MagicMock()
-        gemini_info.session_id = "gemini-ext-1"
-        gemini_info.model = "gemini-2.5-pro"
-
-        with patch(
-            "gobby.agents.gemini_session.capture_gemini_session_id",
-            new_callable=AsyncMock,
-            return_value=gemini_info,
-        ):
-            result = await prepare_gemini_spawn_with_preflight(
-                session_manager=sm,
-                parent_session_id="parent-1",
-                project_id="proj-1",
-                machine_id="machine-1",
-                workflow_name="auto-task",
-            )
-
-        assert isinstance(result, PreparedSpawn)
-        sm.update_terminal_pickup_metadata.assert_called_once_with(
-            session_id="child-sess-1",
-            agent_run_id=result.agent_run_id,
-            workflow_name="auto-task",
-        )
-
-    @pytest.mark.asyncio
-    async def test_persists_none_workflow(self) -> None:
-        """prepare_gemini_spawn_with_preflight passes workflow_name=None when not provided."""
-        sm = _make_session_manager()
-
-        gemini_info = MagicMock()
-        gemini_info.session_id = "gemini-ext-2"
-        gemini_info.model = None
-
-        with patch(
-            "gobby.agents.gemini_session.capture_gemini_session_id",
-            new_callable=AsyncMock,
-            return_value=gemini_info,
-        ):
-            result = await prepare_gemini_spawn_with_preflight(
-                session_manager=sm,
-                parent_session_id="parent-1",
-                project_id="proj-1",
-                machine_id="machine-1",
-            )
-
-        sm.update_terminal_pickup_metadata.assert_called_once_with(
-            session_id="child-sess-1",
-            agent_run_id=result.agent_run_id,
-            workflow_name=None,
-        )
 
 
 class TestPrepareCodexSpawnMetadata:
