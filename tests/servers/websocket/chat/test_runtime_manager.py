@@ -11,6 +11,7 @@ import pytest
 
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
+from gobby.config.app import DaemonConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.provider_backends import (
@@ -59,6 +60,29 @@ class TestWebChatRuntimeManager:
         assert isinstance(codex_session, CodexManagedChatSession)
         assert codex_session._transcript_retry_attempts == 2
         assert codex_session._transcript_retry_delay_seconds == 0.25
+
+    def test_manager_uses_per_provider_sandbox_defaults(self) -> None:
+        manager = WebChatRuntimeManager(
+            codex_client=None,
+            daemon_config=DaemonConfig(
+                cli_sandbox={
+                    "claude": {"enabled": False},
+                    "codex": {"mode": "restrictive"},
+                    "gemini": {"allow_network": False},
+                    "qwen": {"mode": "restrictive", "allow_network": False},
+                }
+            ),
+        )
+
+        assert manager._claude_backend._sandbox_config is not None
+        assert manager._claude_backend._sandbox_config.enabled is False
+        assert manager._codex_backend._sandbox_config is not None
+        assert manager._codex_backend._sandbox_config.mode == "restrictive"
+        assert manager._gemini_backend._sandbox_config is not None
+        assert manager._gemini_backend._sandbox_config.allow_network is False
+        assert manager._qwen_backend._sandbox_config is not None
+        assert manager._qwen_backend._sandbox_config.mode == "restrictive"
+        assert manager._qwen_backend._sandbox_config.allow_network is False
 
 
 class TestGeminiBackend:

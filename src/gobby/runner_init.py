@@ -863,6 +863,7 @@ def init_servers(runner: GobbyRunner) -> None:
     services.web_chat_runtime_manager = WebChatRuntimeManager(
         codex_client=codex_client,
         gemini_default_model=gemini_default_model,
+        daemon_config=runner.config,
     )
 
     runner.http_server = HTTPServer(

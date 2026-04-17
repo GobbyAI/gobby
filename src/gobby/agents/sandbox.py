@@ -41,6 +41,41 @@ class SandboxConfig(BaseModel):
     extra_write_paths: list[str] = Field(default_factory=list)
 
 
+def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
+    """Normalize a config-like object into SandboxConfig."""
+    if config is None:
+        return None
+    if isinstance(config, SandboxConfig):
+        return config.model_copy(deep=True)
+    if isinstance(config, dict):
+        return SandboxConfig(**config)
+
+    return SandboxConfig(
+        enabled=bool(getattr(config, "enabled", False)),
+        mode=getattr(config, "mode", "permissive"),
+        allow_network=bool(getattr(config, "allow_network", True)),
+        extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
+        extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
+    )
+
+
+def sandbox_config_for_provider(provider: str, daemon_config: Any | None) -> SandboxConfig | None:
+    """Return runtime sandbox defaults for the given provider from daemon config."""
+    if daemon_config is None:
+        return None
+
+    cli_sandbox = getattr(daemon_config, "cli_sandbox", None)
+    if cli_sandbox is None:
+        return None
+
+    provider_config = (
+        cli_sandbox.for_provider(provider)
+        if hasattr(cli_sandbox, "for_provider")
+        else getattr(cli_sandbox, provider, None)
+    )
+    return coerce_sandbox_config(provider_config)
+
+
 class ResolvedSandboxPaths(BaseModel):
     """
     Resolved paths and settings for sandbox execution.

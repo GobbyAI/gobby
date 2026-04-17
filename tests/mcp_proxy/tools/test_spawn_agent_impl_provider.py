@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import IsolationContext
+from gobby.config.app import DaemonConfig
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
@@ -233,6 +234,108 @@ class TestProviderResolution:
         assert result["success"] is True
         spawn_request = mock_execute.call_args[0][0]
         assert spawn_request.provider == "claude"
+
+    @pytest.mark.asyncio
+    async def test_sandbox_defaults_come_from_daemon_config(self) -> None:
+        """When sandbox params are omitted, daemon config should provide provider defaults."""
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        runner = _make_runner()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+                return_value="machine-1",
+            ),
+        ):
+            mock_ctx.return_value = {
+                "id": "proj-abc",
+                "project_path": "/repo",
+            }
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
+            mock_handler.build_context_prompt.return_value = "Do the thing"
+            mock_get_handler.return_value = mock_handler
+
+            mock_execute.return_value = _make_execute_spawn_result()
+
+            result = await spawn_agent_impl(
+                prompt="Do the thing",
+                runner=runner,
+                provider="codex",
+                parent_session_id="parent-session-xyz",
+                daemon_config=DaemonConfig(
+                    cli_sandbox={"codex": {"mode": "restrictive", "allow_network": False}}
+                ),
+            )
+
+        assert result["success"] is True
+        spawn_request = mock_execute.call_args[0][0]
+        assert spawn_request.sandbox_config is not None
+        assert spawn_request.sandbox_config.enabled is True
+        assert spawn_request.sandbox_config.mode == "restrictive"
+        assert spawn_request.sandbox_config.allow_network is False
+
+    @pytest.mark.asyncio
+    async def test_explicit_sandbox_params_override_daemon_config(self) -> None:
+        """Explicit sandbox params should beat config-store defaults."""
+        from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+
+        runner = _make_runner()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+                return_value="machine-1",
+            ),
+        ):
+            mock_ctx.return_value = {
+                "id": "proj-abc",
+                "project_path": "/repo",
+            }
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
+            mock_handler.build_context_prompt.return_value = "Do the thing"
+            mock_get_handler.return_value = mock_handler
+
+            mock_execute.return_value = _make_execute_spawn_result()
+
+            result = await spawn_agent_impl(
+                prompt="Do the thing",
+                runner=runner,
+                provider="codex",
+                sandbox=True,
+                sandbox_mode="permissive",
+                sandbox_allow_network=True,
+                parent_session_id="parent-session-xyz",
+                daemon_config=DaemonConfig(
+                    cli_sandbox={"codex": {"mode": "restrictive", "allow_network": False}}
+                ),
+            )
+
+        assert result["success"] is True
+        spawn_request = mock_execute.call_args[0][0]
+        assert spawn_request.sandbox_config is not None
+        assert spawn_request.sandbox_config.mode == "permissive"
+        assert spawn_request.sandbox_config.allow_network is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

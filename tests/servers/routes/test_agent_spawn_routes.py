@@ -207,16 +207,19 @@ class TestSpawnAgent:
         assert updated.status == "needs_review"
         assert updated.assignee == existing_owner.id
 
-    def test_terminal_spawn_defaults_to_sandboxed_runtime(
+    def test_terminal_spawn_passes_daemon_config_for_sandbox_defaults(
         self,
         client: TestClient,
         server,
         task_manager: LocalTaskManager,
         test_project,
     ) -> None:
-        """Web launcher terminal spawns should pass the default sandbox contract."""
+        """Web launcher terminal spawns should defer sandbox defaults to daemon config."""
         task = _create_task(task_manager, test_project.id, "Sandboxed terminal task")
         server.services.agent_runner = MagicMock()
+        server.services.config = DaemonConfig(
+            cli_sandbox={"claude": {"mode": "restrictive", "allow_network": False}}
+        )
 
         with (
             patch(
@@ -243,9 +246,10 @@ class TestSpawnAgent:
 
         assert response.status_code == 200
         kwargs = mock_spawn.await_args.kwargs
-        assert kwargs["sandbox"] is True
-        assert kwargs["sandbox_mode"] == "permissive"
-        assert kwargs["sandbox_allow_network"] is True
+        assert kwargs["daemon_config"] is server.services.config
+        assert "sandbox" not in kwargs
+        assert "sandbox_mode" not in kwargs
+        assert "sandbox_allow_network" not in kwargs
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
-from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox import SandboxConfig, sandbox_config_for_provider
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.provider_backends import (
@@ -20,6 +20,14 @@ from gobby.servers.websocket.chat.provider_backends import (
 )
 
 
+def _default_runtime_sandbox(provider: str, daemon_config: Any | None) -> SandboxConfig:
+    """Resolve the runtime sandbox defaults for a provider."""
+    config = sandbox_config_for_provider(provider, daemon_config)
+    if config is not None:
+        return config
+    return SandboxConfig(enabled=True, mode="permissive", allow_network=True)
+
+
 class WebChatRuntimeManager:
     """Owns startup-managed provider backends for web chat."""
 
@@ -30,20 +38,24 @@ class WebChatRuntimeManager:
         gemini_default_model: str | None = None,
         codex_transcript_retry_attempts: int = 5,
         codex_transcript_retry_delay_seconds: float = 0.1,
+        daemon_config: Any | None = None,
     ) -> None:
-        web_chat_sandbox = SandboxConfig(enabled=True, mode="permissive", allow_network=True)
-        self._claude_backend = ClaudeWebChatBackend(sandbox_config=web_chat_sandbox)
+        self._claude_backend = ClaudeWebChatBackend(
+            sandbox_config=_default_runtime_sandbox("claude", daemon_config)
+        )
         self._codex_backend = CodexWebChatBackend(
             client=codex_client,
             transcript_retry_attempts=codex_transcript_retry_attempts,
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
-            sandbox_config=web_chat_sandbox,
+            sandbox_config=_default_runtime_sandbox("codex", daemon_config),
         )
         self._gemini_backend = GeminiWebChatBackend(
             default_model=gemini_default_model,
-            sandbox_config=web_chat_sandbox,
+            sandbox_config=_default_runtime_sandbox("gemini", daemon_config),
         )
-        self._qwen_backend = QwenWebChatBackend(sandbox_config=web_chat_sandbox)
+        self._qwen_backend = QwenWebChatBackend(
+            sandbox_config=_default_runtime_sandbox("qwen", daemon_config)
+        )
 
     @property
     def codex_client(self) -> CodexAppServerClient | None:

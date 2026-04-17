@@ -16,7 +16,7 @@ from gobby.agents.isolation import (
     SpawnConfig,
     get_isolation_handler,
 )
-from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox import SandboxConfig, sandbox_config_for_provider
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
@@ -201,10 +201,10 @@ async def spawn_agent_impl(
     effective_sandbox_config: SandboxConfig | None = None
 
     sandbox_enabled = sandbox
-    if sandbox_enabled is True or (
-        sandbox_enabled is None
-        and (sandbox_mode is not None or sandbox_allow_network is not None or sandbox_extra_paths)
-    ):
+    has_explicit_sandbox_overrides = (
+        sandbox_mode is not None or sandbox_allow_network is not None or bool(sandbox_extra_paths)
+    )
+    if sandbox_enabled is True or (sandbox_enabled is None and has_explicit_sandbox_overrides):
         effective_sandbox_config = SandboxConfig(
             enabled=True,
             mode=sandbox_mode or "permissive",
@@ -213,6 +213,8 @@ async def spawn_agent_impl(
         )
     elif sandbox_enabled is False:
         effective_sandbox_config = SandboxConfig(enabled=False)
+    else:
+        effective_sandbox_config = sandbox_config_for_provider(effective_provider, daemon_config)
 
     # 2. Resolve project context
     ctx = get_project_context(Path(project_path) if project_path else None)
