@@ -20,14 +20,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Sort e2e tests to run last, reducing port collision risk with production daemon."""
     run_sandbox = bool(config.getoption("--run-sandbox"))
-    skip_sandbox = pytest.mark.skip(
-        reason="sandbox compatibility tests require --run-sandbox"
-    )
+    skip_sandbox = pytest.mark.skip(reason="sandbox compatibility tests require --run-sandbox")
     non_e2e = []
     e2e = []
     for item in items:

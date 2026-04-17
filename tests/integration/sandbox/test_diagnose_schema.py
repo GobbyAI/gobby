@@ -13,9 +13,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.slow]
     ("cli_name", "hook_type"),
     [(spec.cli_name, spec.hook_type) for spec in ALL_SANDBOX_SPECS],
 )
-def test_live_diagnose_output_validates_against_schema(
-    cli_name: str, hook_type: str
-) -> None:
+def test_live_diagnose_output_validates_against_schema(cli_name: str, hook_type: str) -> None:
     spec = next(
         spec
         for spec in ALL_SANDBOX_SPECS

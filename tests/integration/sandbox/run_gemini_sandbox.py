@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from .runner import BaseSandboxRunnerTests, GEMINI_SPEC, SandboxRunner
+from .runner import GEMINI_SPEC, BaseSandboxRunnerTests, SandboxRunner
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
