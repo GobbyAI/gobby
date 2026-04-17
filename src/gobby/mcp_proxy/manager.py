@@ -14,6 +14,7 @@ from typing import Any, cast
 from mcp import ClientSession
 from opentelemetry.trace import Status, StatusCode
 
+from gobby.mcp_proxy.bundled import normalize_bundled_server_config
 from gobby.mcp_proxy.lazy import (
     CircuitBreakerOpen,
     LazyServerConnector,
@@ -113,8 +114,8 @@ class MCPClientManager:
         # Load server configs from database if not provided explicitly
         if server_configs is None and mcp_db_manager is not None:
             if project_id:
-                # Load servers for specific project
-                db_servers = mcp_db_manager.list_servers(
+                # Load project-scoped servers plus bundled global servers
+                db_servers = mcp_db_manager.list_runtime_servers(
                     project_id=project_id,
                     enabled_only=False,
                 )
@@ -197,6 +198,7 @@ class MCPClientManager:
 
     async def add_server(self, config: MCPServerConfig) -> dict[str, Any]:
         """Add and connect to a server."""
+        config = normalize_bundled_server_config(config)
         if config.name in self._configs:
             raise ValueError(f"MCP server '{config.name}' already exists")
 
@@ -298,7 +300,9 @@ class MCPClientManager:
 
         # Store configs if provided
         if configs:
-            for config in configs:
+            normalized_configs = [normalize_bundled_server_config(config) for config in configs]
+            configs_to_connect = normalized_configs
+            for config in normalized_configs:
                 self._configs[config.name] = config
                 self._lazy_connector.register_server(config.name)
 
@@ -889,6 +893,7 @@ class MCPClientManager:
 
     def add_server_config(self, config: MCPServerConfig) -> None:
         """Register a new server configuration."""
+        config = normalize_bundled_server_config(config)
         self._configs[config.name] = config
         if config.name not in self.health:
             initial_state = (

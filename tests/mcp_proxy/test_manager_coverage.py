@@ -70,7 +70,7 @@ class TestMCPClientManagerDatabaseInit:
     def test_init_with_db_manager_and_project_id(self) -> None:
         """Test loading servers from database with project_id."""
         mock_db = MagicMock()
-        mock_db.list_servers.return_value = [
+        mock_db.list_runtime_servers.return_value = [
             MockDBServer(
                 name="db-server-1",
                 transport="http",
@@ -95,7 +95,7 @@ class TestMCPClientManagerDatabaseInit:
         assert len(manager.server_configs) == 2
         assert manager.has_server("db-server-1")
         assert manager.has_server("db-server-2")
-        mock_db.list_servers.assert_called_once_with(
+        mock_db.list_runtime_servers.assert_called_once_with(
             project_id="test-project",
             enabled_only=False,
         )
@@ -121,7 +121,7 @@ class TestMCPClientManagerDatabaseInit:
     def test_init_with_db_manager_loads_cached_tools(self) -> None:
         """Test that cached tools are loaded from database."""
         mock_db = MagicMock()
-        mock_db.list_servers.return_value = [
+        mock_db.list_runtime_servers.return_value = [
             MockDBServer(
                 name="server-with-tools",
                 transport="http",
@@ -304,6 +304,36 @@ class TestMCPClientManagerAddServer:
         call_kwargs = mock_db.upsert.call_args[1]
         assert call_kwargs["name"] == "new-server"
         assert call_kwargs["project_id"] == "test-project"
+
+    @pytest.mark.asyncio
+    async def test_add_server_canonicalizes_bundled_server_scope(self):
+        """Bundled servers are persisted under the global project scope."""
+        mock_db = MagicMock()
+        manager = MCPClientManager(server_configs=[], mcp_db_manager=mock_db)
+
+        config = MCPServerConfig(
+            name="chrome-devtools",
+            project_id="test-project",
+            transport="stdio",
+            command="npx",
+            args=[
+                "-y",
+                "chrome-devtools-mcp@latest",
+                "--executable-path=/tmp/chrome",
+                "--no-usage-statistics",
+            ],
+            enabled=False,
+        )
+
+        await manager.add_server(config)
+
+        call_kwargs = mock_db.upsert.call_args[1]
+        assert call_kwargs["project_id"] == "00000000-0000-0000-0000-000000000002"
+        assert call_kwargs["args"] == [
+            "-y",
+            "chrome-devtools-mcp@latest",
+            "--no-usage-statistics",
+        ]
 
     @pytest.mark.asyncio
     async def test_add_server_connects_and_lists_tools(self):

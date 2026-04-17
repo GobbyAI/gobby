@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from gobby.mcp_proxy.bundled import resolve_runtime_stdio_args
 from gobby.mcp_proxy.models import ConnectionState, MCPError
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
 
@@ -113,7 +114,8 @@ class StdioTransportConnection(BaseTransportConnection):
                 raise RuntimeError("Command is required for stdio transport")
 
             # Expand ${VAR} patterns in args and env values
-            expanded_args = _expand_args(self.config.args) or []
+            runtime_args = resolve_runtime_stdio_args(self.config.name, self.config.args)
+            expanded_args = _expand_args(runtime_args) or []
             expanded_env = _expand_env_dict(self.config.env)
 
             params = StdioServerParameters(

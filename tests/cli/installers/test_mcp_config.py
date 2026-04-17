@@ -656,9 +656,13 @@ class TestInstallDefaultMCPServers:
         assert result["success"] is True
         assert len(result["servers_added"]) > 0
         assert "github" in result["servers_added"]
+        assert "playwright" in result["servers_added"]
         assert "chrome-devtools" in result["servers_added"]
+        mock_mcp_mgr.return_value.normalize_bundled_servers.assert_called_once_with()
 
         config = json.loads(mcp_path.read_text())
+        playwright_server = next(server for server in config["servers"] if server["name"] == "playwright")
+        assert playwright_server["args"] == ["-y", "@playwright/mcp@latest"]
         chrome_server = next(
             server for server in config["servers"] if server["name"] == "chrome-devtools"
         )
@@ -679,6 +683,7 @@ class TestInstallDefaultMCPServers:
                         {"name": "linear", "transport": "stdio", "command": "npx"},
                         {"name": "brave-search", "transport": "stdio", "command": "npx"},
                         {"name": "context7", "transport": "stdio", "command": "npx"},
+                        {"name": "playwright", "transport": "stdio", "command": "npx"},
                         {"name": "chrome-devtools", "transport": "stdio", "command": "npx"},
                     ]
                 }
@@ -698,8 +703,9 @@ class TestInstallDefaultMCPServers:
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 0
             result = install_default_mcp_servers()
         assert result["success"] is True
-        assert len(result["servers_skipped"]) == 5
+        assert len(result["servers_skipped"]) == 6
         assert len(result["servers_added"]) == 0
+        mock_mcp_mgr.return_value.normalize_bundled_servers.assert_called_once_with()
 
     def test_read_error(self, tmp_path: Path) -> None:
         mcp_path = tmp_path / ".gobby" / ".mcp.json"

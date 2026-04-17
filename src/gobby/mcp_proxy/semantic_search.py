@@ -483,7 +483,7 @@ class SemanticToolSearch:
                 stats["by_server"][registry.name] = server_stats
 
         # Embed external MCP server tools
-        servers = mcp_manager.list_servers(project_id=project_id, enabled_only=False)
+        servers = mcp_manager.list_runtime_servers(project_id=project_id, enabled_only=False)
 
         for server in servers:
             server_stats = {"embedded": 0, "skipped": 0, "failed": 0}

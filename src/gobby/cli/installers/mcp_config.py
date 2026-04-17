@@ -14,6 +14,8 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any
 
+from gobby.mcp_proxy.bundled import DEFAULT_EXTERNAL_MCP_SERVERS
+
 logger = logging.getLogger(__name__)
 
 
@@ -596,56 +598,15 @@ def remove_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> dic
 
 
 # Default external MCP servers to install
-DEFAULT_MCP_SERVERS: list[dict[str, Any]] = [
-    {
-        "name": "github",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "$secret:github_personal_access_token"},
-        "description": "GitHub API integration for issues, PRs, repos, and code search",
-    },
-    {
-        "name": "linear",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "mcp-linear"],
-        "env": {"LINEAR_API_KEY": "$secret:linear_api_key"},
-        "description": "Linear issue tracking integration",
-    },
-    {
-        "name": "brave-search",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@brave/brave-search-mcp-server"],
-        "env": {"BRAVE_API_KEY": "$secret:brave_api_key"},
-        "description": "Brave Search API for web search, local search, and news",
-    },
-    {
-        "name": "context7",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "@upstash/context7-mcp"],
-        "optional_secret_args": {"context7_api_key": ["--api-key"]},
-        "description": "Context7 library documentation lookup (set context7_api_key secret for private repos)",
-    },
-    {
-        "name": "chrome-devtools",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
-        "description": "Chrome DevTools MCP for browser debugging and automation",
-    },
-]
+DEFAULT_MCP_SERVERS = DEFAULT_EXTERNAL_MCP_SERVERS
 
 
 def install_default_mcp_servers() -> dict[str, Any]:
     """Install default external MCP servers to ~/.gobby/.mcp.json.
 
-    Adds default MCP servers (GitHub, Linear, Brave Search, context7, and
-    Chrome DevTools) if not already configured. Also syncs to the database so
-    the daemon proxy can serve them. These servers pull API keys from
-    environment variables where applicable.
+    Adds bundled external MCP servers if not already configured. Also syncs to
+    the database so the daemon proxy can serve them. These servers pull API
+    keys from environment variables where applicable.
 
     Returns:
         Dict with 'success', 'servers_added', 'servers_skipped', and 'error' keys
@@ -765,6 +726,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
         db = LocalDatabase()
         mcp_db = LocalMCPManager(db)
         imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
+        mcp_db.normalize_bundled_servers()
         if imported:
             logger.info(f"Synced {imported} MCP servers to database")
     except Exception as e:
