@@ -1,6 +1,6 @@
 """Tests for the SemanticToolSearch module."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -213,6 +213,7 @@ class TestSemanticToolSearch:
     async def test_store_embedding_qdrant(self, temp_db: LocalDatabase) -> None:
         """Test that store_embedding upserts to Qdrant with tool metadata."""
         mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
         await search.store_embedding(
@@ -224,6 +225,7 @@ class TestSemanticToolSearch:
             description="Does useful things",
         )
 
+        mock_vs.ensure_collection.assert_called_once_with("tool_embeddings", DEFAULT_EMBEDDING_DIM)
         mock_vs.upsert.assert_called_once()
         call_kwargs = mock_vs.upsert.call_args[1]
         assert call_kwargs["memory_id"] == "tool-1"
@@ -250,6 +252,7 @@ class TestSemanticToolSearch:
     async def test_has_embeddings_true(self, temp_db: LocalDatabase) -> None:
         """Test has_embeddings returns True when points exist."""
         mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
         mock_vs.search = AsyncMock(return_value=[("tool-1", 0.5)])
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
@@ -260,6 +263,7 @@ class TestSemanticToolSearch:
     async def test_has_embeddings_false(self, temp_db: LocalDatabase) -> None:
         """Test has_embeddings returns False when no points exist."""
         mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
         mock_vs.search = AsyncMock(return_value=[])
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
@@ -541,6 +545,7 @@ class TestSearchTools:
     def search_with_vs(self, temp_db: LocalDatabase) -> SemanticToolSearch:
         """Create SemanticToolSearch with a mock VectorStore."""
         mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(return_value=DEFAULT_EMBEDDING_DIM)
         mock_vs.search_with_payload = AsyncMock(return_value=[])
         return SemanticToolSearch(
             temp_db,
@@ -709,3 +714,96 @@ class TestSearchTools:
             assert results[0].server_name == "gobby-tasks"
             assert results[0].tool_name == "create_task"
             assert results[0].description == "Create a new task"
+
+    @pytest.mark.asyncio
+    async def test_store_embedding_repairs_dimension_mismatch_and_retries(
+        self,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Test store_embedding repairs tool collection mismatch and retries once."""
+        mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
+        mock_vs.upsert = AsyncMock(
+            side_effect=[RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"), None]
+        )
+        search = SemanticToolSearch(temp_db, vector_store=mock_vs)
+
+        await search.store_embedding(
+            tool_id="tool-1",
+            server_name="test-server",
+            project_id="proj-1",
+            embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
+        )
+
+        assert mock_vs.upsert.await_count == 2
+        assert mock_vs.ensure_collection.await_args_list == [
+            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
+            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_search_tools_repairs_dimension_mismatch_and_retries(
+        self,
+        search_with_vs: SemanticToolSearch,
+        sample_project: dict,
+    ) -> None:
+        """Test search_tools repairs tool collection mismatch and retries once."""
+        search_with_vs._vector_store.get_collection_dimension = AsyncMock(
+            side_effect=[DEFAULT_EMBEDDING_DIM, 1]
+        )
+        search_with_vs._vector_store.search_with_payload = AsyncMock(
+            side_effect=[
+                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
+                [
+                    (
+                        "tool-id-1",
+                        0.95,
+                        {
+                            "server_name": "search-server",
+                            "tool_name": "search_tool",
+                            "description": "Search for things",
+                            "project_id": sample_project["id"],
+                        },
+                    )
+                ],
+            ]
+        )
+
+        with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
+            mock_embed.return_value = [0.9] * DEFAULT_EMBEDDING_DIM
+
+            results = await search_with_vs.search_tools(
+                query="find something",
+                project_id=sample_project["id"],
+            )
+
+        assert len(results) == 1
+        assert results[0].tool_name == "search_tool"
+        assert search_with_vs._vector_store.search_with_payload.await_count == 2
+        assert search_with_vs._vector_store.ensure_collection.await_args_list == [
+            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
+            call("tool_embeddings", DEFAULT_EMBEDDING_DIM),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_runtime_repair_stays_scoped_to_tool_embeddings(
+        self,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Test runtime repair only targets the tool embeddings collection."""
+        mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
+        mock_vs.upsert = AsyncMock(
+            side_effect=[RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"), None]
+        )
+        search = SemanticToolSearch(temp_db, vector_store=mock_vs)
+
+        await search.store_embedding(
+            tool_id="tool-1",
+            server_name="test-server",
+            project_id="proj-1",
+            embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
+        )
+
+        for ensure_call in mock_vs.ensure_collection.await_args_list:
+            assert ensure_call.args[0] == SemanticToolSearch.TOOL_COLLECTION

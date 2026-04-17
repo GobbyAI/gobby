@@ -11,8 +11,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from gobby.storage.database import DatabaseProtocol
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
 
 logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 # Default embedding model
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
@@ -146,6 +148,88 @@ class SemanticToolSearch:
         self._api_base = api_base
         self._vector_store = vector_store
 
+    @staticmethod
+    def _is_dimension_mismatch_error(error: Exception) -> bool:
+        """Return True when Qdrant rejected an operation due to vector size mismatch."""
+        message = str(error).lower()
+        return (
+            "vector dimension error" in message
+            or "dimension mismatch" in message
+            or ("expected dim" in message and "got" in message)
+        )
+
+    async def _get_tool_collection_dimension(self) -> int | None:
+        """Return the current tool collection dimension when readable."""
+        if not self._vector_store:
+            return None
+
+        try:
+            existing_dim = await self._vector_store.get_collection_dimension(self.TOOL_COLLECTION)
+        except Exception:
+            return None
+
+        return existing_dim if isinstance(existing_dim, int) else None
+
+    async def _ensure_tool_collection(self, operation: str) -> None:
+        """Ensure tool collection exists with the configured embedding dimension."""
+        if not self._vector_store:
+            return
+
+        existing_dim = await self._get_tool_collection_dimension()
+        if existing_dim is not None and existing_dim != self.embedding_dim:
+            logger.warning(
+                "Semantic tool collection '%s' dimension drift detected before %s "
+                "(expected_dim=%s, observed_dim=%s); recreating",
+                self.TOOL_COLLECTION,
+                operation,
+                self.embedding_dim,
+                existing_dim,
+            )
+
+        await self._vector_store.ensure_collection(self.TOOL_COLLECTION, self.embedding_dim)
+
+        if existing_dim is not None and existing_dim != self.embedding_dim:
+            logger.info(
+                "Semantic tool collection '%s' repaired before %s "
+                "(expected_dim=%s, observed_dim=%s)",
+                self.TOOL_COLLECTION,
+                operation,
+                self.embedding_dim,
+                existing_dim,
+            )
+
+    async def _repair_tool_collection_and_retry(
+        self,
+        operation: str,
+        error: Exception,
+        action: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        """Repair the tool collection on runtime dimension mismatch and retry once."""
+        if not self._vector_store or not self._is_dimension_mismatch_error(error):
+            raise error
+
+        existing_dim = await self._get_tool_collection_dimension()
+        logger.warning(
+            "Semantic tool collection '%s' dimension mismatch during %s "
+            "(expected_dim=%s, observed_dim=%s): %s",
+            self.TOOL_COLLECTION,
+            operation,
+            self.embedding_dim,
+            existing_dim if existing_dim is not None else "unknown",
+            error,
+        )
+        await self._vector_store.ensure_collection(self.TOOL_COLLECTION, self.embedding_dim)
+        result = await action()
+        logger.info(
+            "Semantic tool collection '%s' repaired and retry succeeded during %s "
+            "(expected_dim=%s, observed_dim=%s)",
+            self.TOOL_COLLECTION,
+            operation,
+            self.embedding_dim,
+            existing_dim if existing_dim is not None else "unknown",
+        )
+        return result
+
     async def store_embedding(
         self,
         tool_id: str,
@@ -174,19 +258,32 @@ class SemanticToolSearch:
 
         now = datetime.now(UTC).isoformat()
 
-        await self._vector_store.upsert(
-            memory_id=tool_id,
-            embedding=embedding,
-            payload={
-                "server_name": server_name,
-                "tool_name": tool_name,
-                "description": description,
-                "project_id": project_id,
-                "embedding_model": self.embedding_model,
-                "updated_at": now,
-            },
-            collection_name=self.TOOL_COLLECTION,
-        )
+        payload = {
+            "server_name": server_name,
+            "tool_name": tool_name,
+            "description": description,
+            "project_id": project_id,
+            "embedding_model": self.embedding_model,
+            "updated_at": now,
+        }
+
+        async def _upsert() -> None:
+            await self._vector_store.upsert(
+                memory_id=tool_id,
+                embedding=embedding,
+                payload=payload,
+                collection_name=self.TOOL_COLLECTION,
+            )
+
+        await self._ensure_tool_collection("store_embedding")
+        try:
+            await _upsert()
+        except Exception as error:
+            await self._repair_tool_collection_and_retry(
+                "store_embedding",
+                error,
+                _upsert,
+            )
 
     async def has_embeddings(self, project_id: str) -> bool:
         """
@@ -202,6 +299,8 @@ class SemanticToolSearch:
             return False
 
         try:
+            await self._ensure_tool_collection("has_embeddings")
+
             # Use a dummy query to check for any points with this project_id
             results = await self._vector_store.search(
                 query_embedding=[0.0] * self.embedding_dim,
@@ -452,12 +551,23 @@ class SemanticToolSearch:
         if server_filter:
             filters["server_name"] = server_filter
 
-        qdrant_results = await self._vector_store.search_with_payload(
-            query_embedding=query_embedding,
-            limit=top_k,
-            filters=filters,
-            collection_name=self.TOOL_COLLECTION,
-        )
+        async def _search() -> list[tuple[str, float, dict[str, Any]]]:
+            return await self._vector_store.search_with_payload(
+                query_embedding=query_embedding,
+                limit=top_k,
+                filters=filters,
+                collection_name=self.TOOL_COLLECTION,
+            )
+
+        await self._ensure_tool_collection("search_tools")
+        try:
+            qdrant_results = await _search()
+        except Exception as error:
+            qdrant_results = await self._repair_tool_collection_and_retry(
+                "search_tools",
+                error,
+                _search,
+            )
 
         results: list[SearchResult] = []
         for tool_id, score, payload in qdrant_results:
