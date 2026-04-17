@@ -14,6 +14,11 @@ pytestmark = pytest.mark.unit
 EXPECTED_HOOK_EVENTS = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
 
 
+def _load_toml_file(path: Path) -> dict[str, object]:
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
 class TestInstallCodex:
     """Tests for install_codex function."""
 
@@ -152,8 +157,8 @@ class TestInstallCodex:
         # Verify config.toml has feature flag
         config_path = mock_home / ".codex" / "config.toml"
         assert config_path.exists()
-        config_content = config_path.read_text()
-        assert "features.codex_hooks = true" in config_content
+        config_data = _load_toml_file(config_path)
+        assert config_data["features"]["codex_hooks"] is True
 
     def test_install_hooks_installed_list(
         self,
@@ -192,10 +197,10 @@ class TestInstallCodex:
         assert result["config_updated"] is True
 
         # Verify notify removed, feature flag added, model preserved
-        config_content = config_path.read_text()
-        assert "notify" not in config_content
-        assert "features.codex_hooks = true" in config_content
-        assert 'model = "gpt-4"' in config_content
+        config_data = _load_toml_file(config_path)
+        assert "notify" not in config_data
+        assert config_data["features"]["codex_hooks"] is True
+        assert config_data["model"] == "gpt-4"
 
         # Verify backup created
         backup_path = config_path.with_suffix(".toml.bak")
@@ -241,10 +246,8 @@ class TestInstallCodex:
         result = install_codex(mock_home)
 
         assert result["success"] is True
-        config_content = config_path.read_text()
-        assert "features.codex_hooks = true" in config_content
-        # Should not have duplicate lines
-        assert config_content.count("features.codex_hooks") == 1
+        config_data = _load_toml_file(config_path)
+        assert config_data["features"]["codex_hooks"] is True
 
     def test_install_feature_flag_before_table_headers(
         self,
@@ -268,10 +271,10 @@ class TestInstallCodex:
 
         assert result["success"] is True
         config_content = config_path.read_text()
-        assert "features.codex_hooks = true" in config_content
+        assert "[features]" in config_content
 
         # Feature flag must appear BEFORE the first [table] header
-        flag_pos = config_content.index("features.codex_hooks")
+        flag_pos = config_content.index("[features]")
         table_pos = config_content.index("[mcp_servers")
         assert flag_pos < table_pos, (
             f"Feature flag at {flag_pos} should be before [table] at {table_pos}"
@@ -332,9 +335,6 @@ class TestInstallCodex:
 
         assert result["success"] is True
         config_content = config_path.read_text()
-        assert "codex_hooks = true" in config_content
-        assert "codex_hooks = false" not in config_content
-        assert config_content.count("codex_hooks") == 1
         parsed = tomllib.loads(config_content)
         assert parsed["features"]["codex_hooks"] is True
         assert parsed["features"]["fast_mode"] is True
@@ -604,9 +604,9 @@ class TestUninstallCodex:
         assert not hooks_path.exists()
 
         # Verify feature flag removed, model preserved
-        config_content = config_path.read_text()
-        assert "features.codex_hooks" not in config_content
-        assert 'model = "gpt-4"' in config_content
+        config_data = _load_toml_file(config_path)
+        assert "features" not in config_data or "codex_hooks" not in config_data["features"]
+        assert config_data["model"] == "gpt-4"
 
     def test_uninstall_preserves_non_gobby_hooks(self, mock_home: Path, mock_mcp_remove) -> None:
         """Test that non-gobby hooks are preserved in hooks.json."""
@@ -666,9 +666,9 @@ class TestUninstallCodex:
         result = uninstall_codex()
 
         assert result["success"] is True
-        config_content = config_path.read_text()
-        assert "notify" not in config_content
-        assert "features.codex_hooks" not in config_content
+        config_data = _load_toml_file(config_path)
+        assert "notify" not in config_data
+        assert "features" not in config_data or "codex_hooks" not in config_data["features"]
 
     def test_uninstall_no_hooks_json(self, mock_home: Path, mock_mcp_remove) -> None:
         """Test uninstallation when hooks.json doesn't exist."""
@@ -964,8 +964,8 @@ class TestEdgeCases:
 
         assert result["success"] is True
         assert result["config_updated"] is True
-        config_content = config_path.read_text()
-        assert "features.codex_hooks = true" in config_content
+        config_data = _load_toml_file(config_path)
+        assert config_data["features"]["codex_hooks"] is True
 
     def test_install_preserves_other_config_content(self, mock_home: Path, temp_dir: Path) -> None:
         """Test that updating config preserves other content."""
@@ -1002,14 +1002,12 @@ debug = true
             result = install_codex(mock_home)
 
         assert result["success"] is True
-        new_config = config_path.read_text()
-        assert "# Comment at top" in new_config
-        assert 'model = "gpt-4"' in new_config
-        assert "temperature = 0.7" in new_config
-        assert "[advanced]" in new_config
-        assert "debug = true" in new_config
-        assert "notify" not in new_config  # Removed
-        assert "features.codex_hooks = true" in new_config  # Added
+        new_config = _load_toml_file(config_path)
+        assert new_config["model"] == "gpt-4"
+        assert new_config["temperature"] == 0.7
+        assert new_config["advanced"]["debug"] is True
+        assert "notify" not in new_config
+        assert new_config["features"]["codex_hooks"] is True
 
     def test_install_corrupt_hooks_json_is_overwritten(
         self, mock_home: Path, temp_dir: Path

@@ -8,10 +8,13 @@ for OpenAI Codex CLI via hooks.json (codex_hooks feature).
 import json
 import logging
 import os
-import re
 import tempfile
+import tomllib
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+import tomli_w
 
 from gobby.cli.utils import get_install_dir
 
@@ -36,82 +39,95 @@ def _get_hooks_dir() -> Path:
     return Path(os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks")))
 
 
-def _set_toml_value(content: str, key: str, value: str) -> str:
-    """Set a top-level dotted key in TOML content (e.g., 'features.codex_hooks').
-
-    Note: This uses regex-based editing designed for the controlled Codex
-    config.toml shape only. It will not handle quoted keys, inline tables,
-    or multiline strings correctly. A proper TOML parser (e.g., tomli/tomllib)
-    would be required for full TOML compliance.
-
-    Replaces existing line if found. For dotted keys like ``features.codex_hooks``,
-    also checks for the bare key inside an existing ``[features]`` section.
-    When appending, inserts into the matching section if it exists, otherwise
-    before the first ``[table]`` header to stay top-level.
-    """
-    # Check for the exact dotted key first (e.g., features.codex_hooks = ...)
-    pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}\s*=.*$")
-    line = f"{key} = {value}"
-
-    if pattern.search(content):
-        return pattern.sub(line, content)
-
-    # For dotted keys, check if a matching [section] exists with the bare subkey
-    # e.g., key="features.codex_hooks" → look for [features] with codex_hooks = ...
-    if "." in key:
-        section, subkey = key.rsplit(".", 1)
-        section_pattern = re.compile(rf"(?m)^\[{re.escape(section)}\]\s*$")
-        # Use horizontal whitespace only so we don't consume the newline
-        # after ``[section]`` when replacing the first key in that section.
-        bare_pattern = re.compile(rf"(?m)^[ \t]*{re.escape(subkey)}\s*=.*$")
-
-        section_match = section_pattern.search(content)
-        if section_match:
-            # Section exists — look for the bare key inside it
-            section_start = section_match.end()
-            # Find end of section (next [header] or EOF)
-            next_section = re.search(r"(?m)^\[", content[section_start:])
-            section_end = section_start + next_section.start() if next_section else len(content)
-            section_body = content[section_start:section_end]
-
-            bare_match = bare_pattern.search(section_body)
-            if bare_match:
-                # Replace existing bare key in section
-                abs_start = section_start + bare_match.start()
-                abs_end = section_start + bare_match.end()
-                return content[:abs_start] + f"{subkey} = {value}" + content[abs_end:]
-            # Insert bare key at end of section
-            insert_pos = section_end
-            insert_line = f"{subkey} = {value}\n"
-            before = content[:insert_pos].rstrip()
-            after = content[insert_pos:]
-            return before + "\n" + insert_line + after
-
-    # No matching section — insert before first table header to stay top-level
-    table_match = re.search(r"(?m)^\[", content)
-    if table_match:
-        insert_pos = table_match.start()
-        before = content[:insert_pos].rstrip()
-        after = content[insert_pos:]
-        return (before + "\n" if before else "") + line + "\n\n" + after
-    return (content.rstrip() + "\n" if content.strip() else "") + line + "\n"
+def _load_toml_config(content: str) -> dict[str, Any]:
+    """Parse a TOML config string into a mutable dict."""
+    if not content.strip():
+        return {}
+    parsed = tomllib.loads(content)
+    if not isinstance(parsed, dict):
+        return {}
+    return parsed
 
 
-def _remove_toml_key(content: str, key: str) -> str:
-    """Remove a top-level key from TOML content.
+def _insert_top_level_table(
+    config: dict[str, Any], table_name: str, table_value: dict[str, Any]
+) -> None:
+    """Insert a new top-level table before existing table sections."""
+    if table_name in config:
+        config[table_name] = table_value
+        return
 
-    Same limitations as _set_toml_value — regex-based, for the controlled
-    Codex config.toml shape only.
-    """
-    pattern = re.compile(rf"(?m)^[ \t]*{re.escape(key)}\s*=.*$\n?")
-    result = pattern.sub("", content)
-    return re.sub(r"\n{3,}", "\n\n", result)
+    reordered: dict[str, Any] = {}
+    inserted = False
+    for key, value in config.items():
+        if not inserted and isinstance(value, dict):
+            reordered[table_name] = table_value
+            inserted = True
+        reordered[key] = value
+
+    if not inserted:
+        reordered[table_name] = table_value
+
+    config.clear()
+    config.update(reordered)
 
 
-def _migrate_from_notify(config_content: str, hooks_dir: Path) -> str:
+def _set_toml_value(config: dict[str, Any], key: str, value: Any) -> None:
+    """Set a dotted TOML key inside a parsed config dict."""
+    parts = key.split(".")
+    current = config
+    for index, part in enumerate(parts[:-1]):
+        existing = current.get(part)
+        if isinstance(existing, dict):
+            current = existing
+            continue
+
+        new_table: dict[str, Any] = {}
+        if index == 0:
+            _insert_top_level_table(config, part, new_table)
+            current = config[part]
+        else:
+            current[part] = new_table
+            current = new_table
+
+    current[parts[-1]] = value
+
+
+def _remove_toml_key(config: dict[str, Any], key: str) -> None:
+    """Remove a dotted TOML key from a parsed config dict."""
+    parts = key.split(".")
+    current: dict[str, Any] = config
+    parents: list[tuple[dict[str, Any], str]] = []
+
+    for part in parts[:-1]:
+        child = current.get(part)
+        if not isinstance(child, dict):
+            return
+        parents.append((current, part))
+        current = child
+
+    if parts[-1] not in current:
+        return
+
+    del current[parts[-1]]
+
+    for parent, part in reversed(parents):
+        child = parent.get(part)
+        if isinstance(child, dict) and not child:
+            del parent[part]
+            continue
+        break
+
+
+def _dump_toml_config(config_path: Path, config: dict[str, Any]) -> None:
+    """Write a parsed TOML config back to disk."""
+    with open(config_path, "wb") as f:
+        tomli_w.dump(config, f, multiline_strings=True)
+
+
+def _migrate_from_notify(config: dict[str, Any], hooks_dir: Path) -> None:
     """Remove legacy notify config and clean up old notify script."""
-    # Remove notify = [...] from config.toml
-    config_content = _remove_toml_key(config_content, "notify")
+    _remove_toml_key(config, "notify")
 
     # Clean up old installed notify script
     old_notify = hooks_dir / "codex" / "hook_dispatcher.py"
@@ -128,9 +144,6 @@ def _migrate_from_notify(config_content: str, hooks_dir: Path) -> str:
                 old_notify_dir.rmdir()
             except OSError:
                 pass
-
-    return config_content
-
 
 def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
     """Load hooks-template.json, substitute $HOOKS_DIR, merge into ~/.codex/hooks.json.
@@ -259,23 +272,24 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
     codex_config_path = codex_home / "config.toml"
     try:
         existing_config = ""
+        parsed_config: dict[str, Any] = {}
         if codex_config_path.exists():
             existing_config = codex_config_path.read_text(encoding="utf-8")
-
-        updated_config = existing_config
+            parsed_config = _load_toml_config(existing_config)
+        updated_config = deepcopy(parsed_config)
 
         # Migrate from legacy notify mechanism
-        updated_config = _migrate_from_notify(updated_config, hooks_dir)
+        _migrate_from_notify(updated_config, hooks_dir)
 
         # Enable codex_hooks feature flag
-        updated_config = _set_toml_value(updated_config, "features.codex_hooks", "true")
+        _set_toml_value(updated_config, "features.codex_hooks", True)
 
-        if updated_config != existing_config:
+        if updated_config != parsed_config:
             if codex_config_path.exists():
                 backup_path = codex_config_path.with_suffix(".toml.bak")
                 backup_path.write_text(existing_config, encoding="utf-8")
 
-            codex_config_path.write_text(updated_config, encoding="utf-8")
+            _dump_toml_config(codex_config_path, updated_config)
             result["config_updated"] = True
 
     except Exception as e:
@@ -359,19 +373,20 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
     codex_config_path = codex_home / "config.toml"
     try:
         if codex_config_path.exists():
-            existing = codex_config_path.read_text(encoding="utf-8")
-            updated = existing
+            existing_text = codex_config_path.read_text(encoding="utf-8")
+            existing = _load_toml_config(existing_text)
+            updated = deepcopy(existing)
 
             # Remove feature flag
-            updated = _remove_toml_key(updated, "features.codex_hooks")
+            _remove_toml_key(updated, "features.codex_hooks")
 
             # Remove legacy notify if still present
-            updated = _remove_toml_key(updated, "notify")
+            _remove_toml_key(updated, "notify")
 
             if updated != existing:
                 backup_path = codex_config_path.with_suffix(".toml.bak")
-                backup_path.write_text(existing, encoding="utf-8")
-                codex_config_path.write_text(updated, encoding="utf-8")
+                backup_path.write_text(existing_text, encoding="utf-8")
+                _dump_toml_config(codex_config_path, updated)
                 result["config_updated"] = True
     except Exception as e:
         logger.warning(f"Failed to update config.toml during uninstall: {e}")
