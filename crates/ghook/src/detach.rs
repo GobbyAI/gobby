@@ -33,7 +33,8 @@ pub fn detach() {
     #[cfg(windows)]
     {
         // SAFETY: FreeConsole is safe to call even with no attached console.
-        extern "system" {
+        // Edition 2024 requires extern blocks to be marked unsafe.
+        unsafe extern "system" {
             fn FreeConsole() -> i32;
         }
         unsafe {
