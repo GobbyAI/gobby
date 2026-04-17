@@ -11,7 +11,7 @@ class CLISandboxProviderConfig(BaseModel):
     """Runtime sandbox defaults for a single CLI provider."""
 
     enabled: bool = Field(
-        default=True,
+        default=False,
         description="Enable the provider's built-in sandbox for daemon-managed sessions.",
     )
     mode: Literal["permissive", "restrictive"] = Field(

@@ -25,7 +25,7 @@ def _default_runtime_sandbox(provider: str, daemon_config: Any | None) -> Sandbo
     config = sandbox_config_for_provider(provider, daemon_config)
     if config is not None:
         return config
-    return SandboxConfig(enabled=True, mode="permissive", allow_network=True)
+    return SandboxConfig(enabled=False)
 
 
 class WebChatRuntimeManager:

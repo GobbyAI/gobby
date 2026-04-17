@@ -274,7 +274,13 @@ class TestProviderResolution:
                 provider="codex",
                 parent_session_id="parent-session-xyz",
                 daemon_config=DaemonConfig(
-                    cli_sandbox={"codex": {"mode": "restrictive", "allow_network": False}}
+                    cli_sandbox={
+                        "codex": {
+                            "enabled": True,
+                            "mode": "restrictive",
+                            "allow_network": False,
+                        }
+                    }
                 ),
             )
 
@@ -327,7 +333,13 @@ class TestProviderResolution:
                 sandbox_allow_network=True,
                 parent_session_id="parent-session-xyz",
                 daemon_config=DaemonConfig(
-                    cli_sandbox={"codex": {"mode": "restrictive", "allow_network": False}}
+                    cli_sandbox={
+                        "codex": {
+                            "enabled": True,
+                            "mode": "restrictive",
+                            "allow_network": False,
+                        }
+                    }
                 ),
             )
 
