@@ -10,7 +10,6 @@ import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -19,10 +18,7 @@ from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
 from gobby.adapters.qwen import QwenAdapter
 from gobby.agents.sandbox import (
     CodexSandboxResolver,
-    GeminiSandboxResolver,
-    QwenSandboxResolver,
     SandboxConfig,
-    compute_sandbox_paths,
 )
 from gobby.llm.claude_models import (
     ChatEvent,
@@ -571,17 +567,13 @@ class GeminiWebChatBackend:
         self.provider = provider
         self._display_name = display_name
         self._sandbox_config = sandbox_config
-        sandbox_args: list[str] = []
-        sandbox_env: dict[str, str] = {}
-        if sandbox_config and sandbox_config.enabled:
-            resolver = GeminiSandboxResolver()
-            paths = compute_sandbox_paths(sandbox_config, workspace_path=str(Path.home()))
-            sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+        # Gemini CLI's ACP bootstrap currently hangs on macOS when launched with
+        # the daemon's full-process Seatbelt flags. Keep daemon-owned ACP
+        # startup unsandboxed and let Gemini's own tool sandboxing handle tool
+        # execution inside interactive sessions.
         self._client = client or GeminiACPClient(
             cli_name=provider,
             display_name=display_name,
-            extra_args=sandbox_args,
-            env_overrides=sandbox_env,
         )
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._default_model = default_model
@@ -601,6 +593,12 @@ class GeminiWebChatBackend:
                 timeout=_BACKEND_START_TIMEOUT_SECONDS,
             )
         except Exception as exc:
+            startup_error = _error_message(exc)
+            if isinstance(exc, TimeoutError) and startup_error == "TimeoutError":
+                startup_error = (
+                    f"Timed out starting {self._display_name} ACP backend after "
+                    f"{_BACKEND_START_TIMEOUT_SECONDS:.1f}s"
+                )
             try:
                 await self._client.stop()
             except Exception:
@@ -610,9 +608,9 @@ class GeminiWebChatBackend:
             self._health = ProviderBackendHealth(
                 provider=self.provider,
                 available=False,
-                startup_error=_error_message(exc),
+                startup_error=startup_error,
             )
-            logger.warning("%s ACP backend startup failed: %s", self._display_name, exc)
+            logger.warning("%s ACP backend startup failed: %s", self._display_name, startup_error)
             return
 
         self._health = ProviderBackendHealth(provider=self.provider, available=True)
@@ -728,20 +726,12 @@ class QwenWebChatBackend(GeminiWebChatBackend):
         default_model: str | None = None,
         sandbox_config: SandboxConfig | None = None,
     ) -> None:
-        sandbox_args: list[str] = []
-        sandbox_env: dict[str, str] = {}
-        if sandbox_config and sandbox_config.enabled:
-            resolver = QwenSandboxResolver()
-            paths = compute_sandbox_paths(sandbox_config, workspace_path=str(Path.home()))
-            sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
         super().__init__(
             client=client
             or GeminiACPClient(
                 cli_name="qwen",
                 display_name="Qwen",
                 prompt_timeout_env="GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS",
-                extra_args=sandbox_args,
-                env_overrides=sandbox_env,
             ),
             default_model=default_model,
             provider="qwen",

@@ -20,6 +20,7 @@ from gobby.servers.websocket.chat.provider_backends import (
     GeminiManagedChatSession,
     GeminiWebChatBackend,
     QwenManagedChatSession,
+    QwenWebChatBackend,
 )
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 
@@ -90,13 +91,15 @@ class TestWebChatRuntimeManager:
 
 
 class TestGeminiBackend:
-    def test_backend_builds_sandboxed_acp_client(self) -> None:
+    def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
         with patch("gobby.servers.websocket.chat.provider_backends.GeminiACPClient") as mock_client:
             GeminiWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
         kwargs = mock_client.call_args.kwargs
-        assert kwargs["extra_args"] == ["-s"]
-        assert kwargs["env_overrides"]["SEATBELT_PROFILE"] == "permissive-proxied"
+        assert kwargs["cli_name"] == "gemini"
+        assert kwargs["display_name"] == "Gemini"
+        assert "extra_args" not in kwargs
+        assert "env_overrides" not in kwargs
 
     @pytest.mark.asyncio
     async def test_start_marks_backend_unavailable_on_error(self) -> None:
@@ -110,6 +113,19 @@ class TestGeminiBackend:
         health = backend.health()
         assert health.available is False
         assert health.startup_error == "boom"
+
+    @pytest.mark.asyncio
+    async def test_start_reports_explicit_timeout_message(self) -> None:
+        client = MagicMock()
+        client.is_started = False
+        client.start = AsyncMock(side_effect=TimeoutError())
+
+        backend = GeminiWebChatBackend(client=client)
+        await backend.start()
+
+        health = backend.health()
+        assert health.available is False
+        assert health.startup_error == "Timed out starting Gemini ACP backend after 15.0s"
 
     @pytest.mark.asyncio
     async def test_managed_session_translates_stream_events(self) -> None:
@@ -130,6 +146,19 @@ class TestGeminiBackend:
 
         assert [e.content for e in events if isinstance(e, TextChunk)] == ["Hello ", "Gemini"]
         assert isinstance(events[-1], DoneEvent)
+
+
+class TestQwenBackend:
+    def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
+        with patch("gobby.servers.websocket.chat.provider_backends.GeminiACPClient") as mock_client:
+            QwenWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
+
+        kwargs = mock_client.call_args.kwargs
+        assert kwargs["cli_name"] == "qwen"
+        assert kwargs["display_name"] == "Qwen"
+        assert kwargs["prompt_timeout_env"] == "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
+        assert "extra_args" not in kwargs
+        assert "env_overrides" not in kwargs
 
 
 class TestCodexBackend:
