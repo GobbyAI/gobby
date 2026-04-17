@@ -623,6 +623,17 @@ class TestInstallDefaultMCPServers:
         assert result["success"] is True
         assert len(result["servers_added"]) > 0
         assert "github" in result["servers_added"]
+        assert "chrome-devtools" in result["servers_added"]
+
+        config = json.loads(mcp_path.read_text())
+        chrome_server = next(
+            server for server in config["servers"] if server["name"] == "chrome-devtools"
+        )
+        assert chrome_server["args"] == [
+            "-y",
+            "chrome-devtools-mcp@latest",
+            "--no-usage-statistics",
+        ]
 
     def test_skips_existing_servers(self, tmp_path: Path) -> None:
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
@@ -635,6 +646,7 @@ class TestInstallDefaultMCPServers:
                         {"name": "linear", "transport": "stdio", "command": "npx"},
                         {"name": "brave-search", "transport": "stdio", "command": "npx"},
                         {"name": "context7", "transport": "stdio", "command": "npx"},
+                        {"name": "chrome-devtools", "transport": "stdio", "command": "npx"},
                     ]
                 }
             )
@@ -653,7 +665,7 @@ class TestInstallDefaultMCPServers:
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 0
             result = install_default_mcp_servers()
         assert result["success"] is True
-        assert len(result["servers_skipped"]) == 4
+        assert len(result["servers_skipped"]) == 5
         assert len(result["servers_added"]) == 0
 
     def test_read_error(self, tmp_path: Path) -> None:

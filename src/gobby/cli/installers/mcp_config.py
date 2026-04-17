@@ -584,15 +584,23 @@ DEFAULT_MCP_SERVERS: list[dict[str, Any]] = [
         "optional_secret_args": {"context7_api_key": ["--api-key"]},
         "description": "Context7 library documentation lookup (set context7_api_key secret for private repos)",
     },
+    {
+        "name": "chrome-devtools",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "chrome-devtools-mcp@latest", "--no-usage-statistics"],
+        "description": "Chrome DevTools MCP for browser debugging and automation",
+    },
 ]
 
 
 def install_default_mcp_servers() -> dict[str, Any]:
     """Install default external MCP servers to ~/.gobby/.mcp.json.
 
-    Adds default MCP servers (GitHub, Linear, Brave Search, context7) if not
-    already configured. Also syncs to the database so the daemon proxy can
-    serve them. These servers pull API keys from environment variables.
+    Adds default MCP servers (GitHub, Linear, Brave Search, context7, and
+    Chrome DevTools) if not already configured. Also syncs to the database so
+    the daemon proxy can serve them. These servers pull API keys from
+    environment variables where applicable.
 
     Returns:
         Dict with 'success', 'servers_added', 'servers_skipped', and 'error' keys
