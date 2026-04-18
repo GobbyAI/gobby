@@ -32,6 +32,11 @@ class AgentRun:
     workflow_name: str | None = None
     agent_name: str | None = None
     model: str | None = None
+    requested_reasoning_effort: str | None = None
+    effective_reasoning_effort: str | None = None
+    reasoning_required: bool = False
+    reasoning_status: str = "not_requested"
+    reasoning_message: str | None = None
     result: str | None = None
     error: str | None = None
     tool_calls_count: int = 0
@@ -61,6 +66,25 @@ class AgentRun:
             agent_name=row["agent_name"] if "agent_name" in row.keys() else None,
             provider=row["provider"],
             model=row["model"],
+            requested_reasoning_effort=(
+                row["requested_reasoning_effort"]
+                if "requested_reasoning_effort" in row.keys()
+                else None
+            ),
+            effective_reasoning_effort=(
+                row["effective_reasoning_effort"]
+                if "effective_reasoning_effort" in row.keys()
+                else None
+            ),
+            reasoning_required=bool(row["reasoning_required"])
+            if "reasoning_required" in row.keys()
+            else False,
+            reasoning_status=(
+                row["reasoning_status"] if "reasoning_status" in row.keys() else "not_requested"
+            ),
+            reasoning_message=(
+                row["reasoning_message"] if "reasoning_message" in row.keys() else None
+            ),
             status=row["status"],
             prompt=row["prompt"],
             result=row["result"],
@@ -98,6 +122,11 @@ class AgentRun:
             "agent_name": self.agent_name,
             "provider": self.provider,
             "model": self.model,
+            "requested_reasoning_effort": self.requested_reasoning_effort,
+            "effective_reasoning_effort": self.effective_reasoning_effort,
+            "reasoning_required": self.reasoning_required,
+            "reasoning_status": self.reasoning_status,
+            "reasoning_message": self.reasoning_message,
             "status": self.status,
             "prompt": self.prompt,
             "result": self.result,
@@ -146,6 +175,11 @@ class LocalAgentRunManager:
         workflow_name: str | None = None,
         agent_name: str | None = None,
         model: str | None = None,
+        requested_reasoning_effort: str | None = None,
+        effective_reasoning_effort: str | None = None,
+        reasoning_required: bool = False,
+        reasoning_status: str = "not_requested",
+        reasoning_message: str | None = None,
         child_session_id: str | None = None,
         claimed_session_id: str | None = None,
         run_id: str | None = None,
@@ -179,10 +213,13 @@ class LocalAgentRunManager:
             INSERT OR REPLACE INTO agent_runs (
                 id, parent_session_id, child_session_id, claimed_session_id,
                 workflow_name, agent_name,
-                provider, model, status, prompt, task_id, timeout_seconds,
+                provider, model,
+                requested_reasoning_effort, effective_reasoning_effort,
+                reasoning_required, reasoning_status, reasoning_message,
+                status, prompt, task_id, timeout_seconds,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -193,6 +230,11 @@ class LocalAgentRunManager:
                 agent_name,
                 provider,
                 model,
+                requested_reasoning_effort,
+                effective_reasoning_effort,
+                int(reasoning_required),
+                reasoning_status,
+                reasoning_message,
                 prompt,
                 task_id,
                 timeout_seconds,

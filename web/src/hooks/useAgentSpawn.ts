@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react'
 
+import { AUTO_REASONING_EFFORT } from '../lib/providerModels'
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -11,6 +13,8 @@ export interface SpawnParams {
   isolation?: 'none' | 'worktree' | 'clone'
   provider?: string
   model?: string
+  reasoning_effort?: string | null
+  reasoning_required?: boolean
   workflow?: string
   branch_name?: string
   base_branch?: string
@@ -26,6 +30,14 @@ export interface SpawnResult {
   isolation?: string
   branch_name?: string
   pid?: number
+  message?: string
+  reasoning?: {
+    requested_effort?: string | null
+    effective_effort?: string | null
+    required?: boolean
+    status?: string
+    message?: string | null
+  }
   error?: string
 }
 
@@ -39,17 +51,21 @@ export interface CategoryDefaults {
   agent_name: string
   isolation: 'none' | 'worktree' | 'clone'
   model?: string
+  reasoning_effort?: string | null
+  reasoning_required?: boolean
 }
 
 export interface AgentDefinition {
-  definition: {
-    name: string
-    description?: string
-    role?: string
-    provider?: string
-    model?: string
-    isolation?: string
-  }
+    definition: {
+      name: string
+      description?: string
+      role?: string
+      provider?: string
+      model?: string
+      reasoning_effort?: string | null
+      reasoning_required?: boolean | null
+      isolation?: string
+    }
   source: string
   db_id: string
 }
@@ -67,14 +83,30 @@ export function useAgentSpawn() {
   const [spawning, setSpawning] = useState(false)
   const [lastResult, setLastResult] = useState<SpawnResult | null>(null)
 
+  const normalizeReasoningEffort = useCallback((value?: string | null): string | null => {
+    if (!value) {
+      return null
+    }
+    const normalized = value.trim().toLowerCase()
+    if (!normalized || normalized === AUTO_REASONING_EFFORT) {
+      return null
+    }
+    return normalized
+  }, [])
+
   const spawn = useCallback(async (params: SpawnParams): Promise<SpawnResult> => {
     setSpawning(true)
     setLastResult(null)
     try {
+      const reasoningEffort = normalizeReasoningEffort(params.reasoning_effort ?? null)
       const res = await fetch('/api/agents/spawn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
+        body: JSON.stringify({
+          ...params,
+          reasoning_effort: reasoningEffort,
+          reasoning_required: reasoningEffort ? Boolean(params.reasoning_required) : false,
+        }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -98,15 +130,23 @@ export function useAgentSpawn() {
     } finally {
       setSpawning(false)
     }
-  }, [])
+  }, [normalizeReasoningEffort])
 
   const spawnBatch = useCallback(async (spawns: SpawnParams[]): Promise<BatchResult> => {
     setSpawning(true)
     try {
+      const normalizedSpawns = spawns.map((spawn) => {
+        const reasoningEffort = normalizeReasoningEffort(spawn.reasoning_effort ?? null)
+        return {
+          ...spawn,
+          reasoning_effort: reasoningEffort,
+          reasoning_required: reasoningEffort ? Boolean(spawn.reasoning_required) : false,
+        }
+      })
       const res = await fetch('/api/agents/spawn/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spawns }),
+        body: JSON.stringify({ spawns: normalizedSpawns }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -118,7 +158,7 @@ export function useAgentSpawn() {
     } finally {
       setSpawning(false)
     }
-  }, [])
+  }, [normalizeReasoningEffort])
 
   const getDefaults = useCallback(async (projectId: string): Promise<Record<string, CategoryDefaults>> => {
     try {
@@ -146,12 +186,16 @@ export function useAgentSpawn() {
           project_id: projectId,
           category,
           ...defaults,
+          reasoning_effort: normalizeReasoningEffort(defaults.reasoning_effort ?? null),
+          reasoning_required: defaults.reasoning_effort
+            ? Boolean(defaults.reasoning_required)
+            : false,
         }),
       })
     } catch {
       // ignore
     }
-  }, [])
+  }, [normalizeReasoningEffort])
 
   const fetchDefinitions = useCallback(async (projectId?: string): Promise<AgentDefinition[]> => {
     try {

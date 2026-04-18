@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
+
+from gobby.agents.reasoning import normalize_reasoning_effort
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -32,6 +34,8 @@ class CreateAgentDefinitionRequest(BaseModel):
     instructions: str | None = None
     provider: str = "inherit"
     model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_required: bool | None = None
     fallback_agent: str | None = None
     mode: str = "inherit"
     isolation: str | None = "inherit"
@@ -46,6 +50,13 @@ class CreateAgentDefinitionRequest(BaseModel):
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
 
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_reasoning_effort(str(value))
+
 
 class UpdateAgentDefinitionRequest(BaseModel):
     """Request body for updating an agent definition."""
@@ -59,6 +70,8 @@ class UpdateAgentDefinitionRequest(BaseModel):
     instructions: str | None = None
     provider: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_required: bool | None = None
     fallback_agent: str | None = None
     mode: str | None = None
     isolation: str | None = None
@@ -76,6 +89,13 @@ class UpdateAgentDefinitionRequest(BaseModel):
     enabled: bool | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_reasoning_effort(str(value))
 
 
 async def _batch_load_session_info(
@@ -267,6 +287,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 instructions=request.instructions,
                 provider=request.provider,
                 model=request.model,
+                reasoning_effort=request.reasoning_effort,
+                reasoning_required=request.reasoning_required,
                 fallback_agent=request.fallback_agent,
                 mode=request.mode,
                 isolation=request.isolation,
@@ -321,6 +343,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 "instructions",
                 "provider",
                 "model",
+                "reasoning_effort",
+                "reasoning_required",
                 "fallback_agent",
                 "mode",
                 "isolation",

@@ -625,6 +625,20 @@ def _drop_agent_runs_mode(db: LocalDatabase) -> None:
     db.execute("PRAGMA foreign_keys=ON")
 
 
+def _migrate_agent_run_reasoning_fields(db: LocalDatabase) -> None:
+    """Add spawned-agent reasoning metadata columns to agent_runs."""
+    additions = (
+        ("requested_reasoning_effort", "TEXT"),
+        ("effective_reasoning_effort", "TEXT"),
+        ("reasoning_required", "INTEGER NOT NULL DEFAULT 0"),
+        ("reasoning_status", "TEXT NOT NULL DEFAULT 'not_requested'"),
+        ("reasoning_message", "TEXT"),
+    )
+    for column, ddl in additions:
+        if not _column_exists(db, "agent_runs", column):
+            db.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
+
+
 # Migrations beyond v171.
 # Add new migrations here. Do not modify the baseline schema above.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
@@ -1153,6 +1167,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         214,
         "Add sandbox metadata to sessions and remove cli_sandbox config",
         _migrate_sessions_sandbox_fields,
+    ),
+    (
+        215,
+        "Persist requested and effective reasoning metadata on agent_runs",
+        _migrate_agent_run_reasoning_fields,
     ),
 ]
 

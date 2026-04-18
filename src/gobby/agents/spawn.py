@@ -101,6 +101,11 @@ def prepare_terminal_spawn(
     claimed_session_id: str | None = None,
     timeout_seconds: float | None = None,
     sandbox_enabled: bool = False,
+    requested_reasoning_effort: str | None = None,
+    effective_reasoning_effort: str | None = None,
+    reasoning_required: bool = False,
+    reasoning_status: str = "not_requested",
+    reasoning_message: str | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -185,6 +190,11 @@ def prepare_terminal_spawn(
         run_id=agent_run_id,
         task_id=task_id,
         timeout_seconds=timeout_seconds,
+        requested_reasoning_effort=requested_reasoning_effort,
+        effective_reasoning_effort=effective_reasoning_effort,
+        reasoning_required=reasoning_required,
+        reasoning_status=reasoning_status,
+        reasoning_message=reasoning_message,
     )
 
     # Persist agent_run_id to session record for hook-based lifecycle tracking
@@ -245,6 +255,11 @@ async def prepare_codex_spawn_with_preflight(
     max_agent_depth: int = 5,
     preflight_timeout: float = 30.0,
     sandbox_enabled: bool = False,
+    requested_reasoning_effort: str | None = None,
+    effective_reasoning_effort: str | None = None,
+    reasoning_required: bool = False,
+    reasoning_status: str = "not_requested",
+    reasoning_message: str | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a Codex terminal spawn with preflight session ID capture.
@@ -313,6 +328,24 @@ async def prepare_codex_spawn_with_preflight(
 
     # Generate agent run ID
     agent_run_id = f"run-{uuid.uuid4().hex[:12]}"
+
+    from gobby.storage.agents import LocalAgentRunManager
+
+    agent_run_mgr = LocalAgentRunManager(session_manager._storage.db)
+    agent_run_mgr.create(
+        parent_session_id=parent_session_id,
+        provider="codex",
+        prompt=prompt or "",
+        workflow_name=workflow_name,
+        agent_name=agent_name,
+        child_session_id=child_session.id,
+        run_id=agent_run_id,
+        requested_reasoning_effort=requested_reasoning_effort,
+        effective_reasoning_effort=effective_reasoning_effort,
+        reasoning_required=reasoning_required,
+        reasoning_status=reasoning_status,
+        reasoning_message=reasoning_message,
+    )
 
     # Persist agent_run_id to session record for hook-based lifecycle tracking
     session_manager.update_terminal_pickup_metadata(

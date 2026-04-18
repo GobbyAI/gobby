@@ -7,6 +7,13 @@ import { AgentSkillsEditor } from './AgentSkillsEditor'
 import { AgentStepsEditor } from './AgentStepsEditor'
 import { AgentToolBlocksEditor } from './AgentToolBlocksEditor'
 import type { WorkflowStep } from './AgentStepsEditor'
+import {
+  AUTO_REASONING_EFFORT,
+  getModelsForProvider,
+  getOrderedProviders,
+  getReasoningOptionsForModel,
+  type ProviderModelEntry,
+} from '../../lib/providerModels'
 
 export interface AgentFormData {
   name: string
@@ -17,6 +24,8 @@ export interface AgentFormData {
   instructions: string
   provider: string
   model: string
+  reasoning_effort: string
+  reasoning_required: boolean
   mode: string
   isolation: string
   base_branch: string
@@ -36,6 +45,8 @@ export interface AgentItemForPanel {
     instructions: string | null
     provider: string
     model: string | null
+    reasoning_effort?: string | null
+    reasoning_required?: boolean | null
     fallback_agent: string | null
     mode: string
     isolation: string | null
@@ -79,7 +90,7 @@ interface AgentEditFormProps {
   onSave: () => void
   onCancel: () => void
   isEditing: boolean
-  providerModels: Record<string, { value: string; label: string }[]>
+  providerCatalog: ProviderModelEntry[]
   saveDisabled?: boolean
   editingId?: string | null
   branches?: string[]
@@ -107,6 +118,8 @@ interface AgentEditFormProps {
   onBlockedMcpToolsChange?: (tools: string[]) => void
   agentNames?: string[]
 }
+
+const FALLBACK_PROVIDER_OPTIONS = ['claude', 'codex', 'gemini', 'qwen']
 
 function FormInput({ label, value, onChange, placeholder, required }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; required?: boolean
@@ -154,7 +167,7 @@ function MetaRow({ label, children }: { label: string; children: React.ReactNode
 
 export function AgentEditForm({
   isOpen, readOnly, agentItem,
-  form, onChange, onSave, onCancel, isEditing, providerModels, saveDisabled,
+  form, onChange, onSave, onCancel, isEditing, providerCatalog, saveDisabled,
   editingId, branches = [], isGitProject = true, projectId,
   rules, onRulesChange, ruleSelectors, onRuleSelectorsChange,
   variables, onVariablesChange,
@@ -173,9 +186,28 @@ export function AgentEditForm({
   const view = sidebarViewProp ?? 'form'
 
   const isInheritProvider = form.provider === 'inherit'
-  const models = isInheritProvider ? [{ value: '', label: '(default)' }] : providerModels[form.provider]
+  const providerOptions = (() => {
+    const discovered = getOrderedProviders(providerCatalog.map(entry => entry.provider))
+    return discovered.length > 0 ? discovered : FALLBACK_PROVIDER_OPTIONS
+  })()
+  const models = isInheritProvider
+    ? [{ value: '', label: '(default)' }]
+    : [{ value: '', label: '(default)' }, ...getModelsForProvider(providerCatalog, form.provider)]
   const isKnown = models?.some(m => m.value === form.model)
   const showCustomModel = !isInheritProvider && (customModelInput || !models || (!isKnown && form.model !== ''))
+  const reasoningOptions = isInheritProvider
+    ? [{ value: AUTO_REASONING_EFFORT, label: 'Auto', disabled: true }]
+    : getReasoningOptionsForModel(providerCatalog, form.provider, form.model)
+  const reasoningDisabled = reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled)
+  const resolveReasoningEffort = (provider: string, model: string, currentReasoning: string): string => {
+    if (provider === 'inherit') {
+      return AUTO_REASONING_EFFORT
+    }
+    const options = getReasoningOptionsForModel(providerCatalog, provider, model)
+    return options.some(option => option.value === currentReasoning)
+      ? currentReasoning
+      : AUTO_REASONING_EFFORT
+  }
 
   const branchKnown = form.base_branch === 'inherit' || branches.includes(form.base_branch)
   const showCustomBranch = isGitProject && (customBranchInput || (!branchKnown && form.base_branch !== ''))
@@ -251,6 +283,8 @@ export function AgentEditForm({
           <div className="agent-edit-meta">
             <MetaRow label="Provider"><span>{rd.provider}</span></MetaRow>
             <MetaRow label="Model"><span>{rd.model || '(default)'}</span></MetaRow>
+            <MetaRow label="Reasoning"><span>{rd.reasoning_effort || 'Auto'}</span></MetaRow>
+            <MetaRow label="Require reasoning"><span>{rd.reasoning_required ? 'Yes' : 'No'}</span></MetaRow>
             {rd.fallback_agent && (
               <MetaRow label="Fallback"><span>{rd.fallback_agent}</span></MetaRow>
             )}
@@ -454,19 +488,35 @@ export function AgentEditForm({
                 const v = e.target.value
                 if (v === 'inherit') {
                   setCustomModelInput(false)
-                  onChange({ ...form, provider: v, model: '' })
+                  onChange({
+                    ...form,
+                    provider: v,
+                    model: '',
+                    reasoning_effort: AUTO_REASONING_EFFORT,
+                    reasoning_required: false,
+                  })
                 } else {
-                  const newModels = providerModels[v]
+                  const newModels = getModelsForProvider(providerCatalog, v)
                   const valid = newModels?.some(m => m.value === form.model)
                   setCustomModelInput(false)
-                  onChange({ ...form, provider: v, model: valid ? form.model : '' })
+                  const nextModel = valid ? form.model : ''
+                  const nextReasoning = resolveReasoningEffort(v, nextModel, form.reasoning_effort)
+                  onChange({
+                    ...form,
+                    provider: v,
+                    model: nextModel,
+                    reasoning_effort: nextReasoning,
+                    reasoning_required:
+                      nextReasoning === AUTO_REASONING_EFFORT ? false : form.reasoning_required,
+                  })
                 }
               }}>
                 <option value="inherit">(default)</option>
-                <option value="claude">Claude</option>
-                <option value="gemini">Gemini</option>
-                <option value="codex">Codex</option>
-                <option value="cursor">Cursor</option>
+                {providerOptions.map(provider => (
+                  <option key={provider} value={provider}>
+                    {provider}
+                  </option>
+                ))}
               </select>
             </MetaRow>
 
@@ -487,7 +537,17 @@ export function AgentEditForm({
               ) : (
                 <select className="agent-edit-input" value={form.model} onChange={e => {
                   if (e.target.value === '__custom__') { setCustomModelInput(true); set('model', '') }
-                  else set('model', e.target.value)
+                  else {
+                    const nextModel = e.target.value
+                    const nextReasoning = resolveReasoningEffort(form.provider, nextModel, form.reasoning_effort)
+                    onChange({
+                      ...form,
+                      model: nextModel,
+                      reasoning_effort: nextReasoning,
+                      reasoning_required:
+                        nextReasoning === AUTO_REASONING_EFFORT ? false : form.reasoning_required,
+                    })
+                  }
                 }}>
                   {models?.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                   {!isInheritProvider && <option value="__custom__">Custom...</option>}
@@ -518,6 +578,41 @@ export function AgentEditForm({
                   + Add fallback agent
                 </button>
               )}
+            </MetaRow>
+
+            <MetaRow label="Reasoning">
+              <select
+                className="agent-edit-input"
+                value={form.reasoning_effort}
+                onChange={e => {
+                  const nextReasoning = e.target.value
+                  onChange({
+                    ...form,
+                    reasoning_effort: nextReasoning,
+                    reasoning_required:
+                      nextReasoning === AUTO_REASONING_EFFORT ? false : form.reasoning_required,
+                  })
+                }}
+                disabled={reasoningDisabled}
+              >
+                {reasoningOptions.map(option => (
+                  <option key={option.value} value={option.value} disabled={option.disabled}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </MetaRow>
+
+            <MetaRow label="Require support">
+              <label className="agent-edit-checkbox">
+                <input
+                  type="checkbox"
+                  checked={form.reasoning_required}
+                  disabled={form.reasoning_effort === AUTO_REASONING_EFFORT}
+                  onChange={e => set('reasoning_required', e.target.checked)}
+                />
+                <span>{form.reasoning_effort === AUTO_REASONING_EFFORT ? 'Disabled on Auto' : 'Fail if unsupported'}</span>
+              </label>
             </MetaRow>
 
             <MetaRow label="Mode">

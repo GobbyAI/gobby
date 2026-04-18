@@ -93,6 +93,8 @@ def agents() -> None:
 )
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, gemini, etc.)")
 @click.option("--model", help="Model override")
+@click.option("--reasoning-effort", help="Reasoning effort override (e.g. low, medium, high, xhigh)")
+@click.option("--reasoning-required/--no-reasoning-required", default=False, help="Fail instead of warning when the requested reasoning is unsupported")
 @click.option("--timeout", default=120.0, help="Execution timeout in seconds")
 @click.option("--max-turns", default=10, help="Maximum turns")
 @click.option(
@@ -111,6 +113,8 @@ def spawn_agent_cmd(
     terminal: str,
     provider: str,
     model: str | None,
+    reasoning_effort: str | None,
+    reasoning_required: bool,
     timeout: float,
     max_turns: int,
     session_context: str,
@@ -151,6 +155,9 @@ def spawn_agent_cmd(
         arguments["task"] = task
     if model:
         arguments["model"] = model
+    if reasoning_effort:
+        arguments["reasoning_effort"] = reasoning_effort
+        arguments["reasoning_required"] = reasoning_required
 
     # Call the daemon's MCP tool endpoint
     try:
@@ -189,6 +196,9 @@ def spawn_agent_cmd(
 
         if result.get("message"):
             click.echo(f"  {result['message']}")
+        reasoning = result.get("reasoning") or {}
+        if reasoning.get("message"):
+            click.echo(f"  Reasoning: {reasoning['message']}")
 
         if result.get("output"):
             click.echo(f"\nOutput:\n{result['output']}")

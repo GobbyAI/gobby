@@ -25,6 +25,10 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("claude", model="claude-3-opus", prompt="hello")
         assert cmd == ["claude", "--model", "claude-3-opus", "hello"]
 
+    def test_claude_with_reasoning_effort(self):
+        cmd, _env = build_cli_command("claude", reasoning_effort="high", prompt="hello")
+        assert cmd == ["claude", "--effort", "high", "hello"]
+
     def test_gemini_basic(self):
         cmd, _env = build_cli_command("gemini", prompt="hello")
         assert cmd == ["gemini", "hello"]
@@ -52,6 +56,10 @@ class TestBuildCliCommand:
     def test_codex_with_model(self):
         cmd, _env = build_cli_command("codex", model="gpt-4", prompt="hello")
         assert cmd == ["codex", "--model", "gpt-4", "hello"]
+
+    def test_codex_with_reasoning_effort(self):
+        cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
+        assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
 
     def test_generic_sandbox_args(self):
         cmd, _env = build_cli_command("claude", prompt="hello", sandbox_args=["--sandbox"])
@@ -98,6 +106,10 @@ class TestBuildCodexResume:
     def test_resume_with_model(self):
         cmd = build_codex_command_with_resume("ext-123", model="gpt-4")
         assert cmd == ["codex", "resume", "ext-123", "--model", "gpt-4"]
+
+    def test_resume_with_reasoning_effort(self):
+        cmd = build_codex_command_with_resume("ext-123", reasoning_effort="high")
+        assert cmd == ["codex", "-c", 'model_reasoning_effort="high"', "resume", "ext-123"]
 
     def test_resume_with_working_directory(self):
         cmd = build_codex_command_with_resume("ext-123", working_directory="/tmp")

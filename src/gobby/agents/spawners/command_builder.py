@@ -15,6 +15,7 @@ def build_cli_command(
     working_directory: str | None = None,
     sandbox_args: list[str] | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     mode: str = "agent",
     output_format: str | None = None,
     env_overrides: dict[str, str] | None = None,
@@ -66,6 +67,8 @@ def build_cli_command(
             command.extend(["--session-id", session_id])
         if model:
             command.extend(["--model", model])
+        if reasoning_effort:
+            command.extend(["--effort", reasoning_effort])
         if auto_approve:
             command.append("--dangerously-skip-permissions")
         if mode == "interactive":
@@ -87,6 +90,8 @@ def build_cli_command(
         # Codex CLI flags
         if model:
             command.extend(["--model", model])
+        if cli == "codex" and reasoning_effort:
+            command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if auto_approve:
             command.append("--full-auto")
         if working_directory:
@@ -110,6 +115,7 @@ def build_codex_command_with_resume(
     gobby_session_id: str | None = None,
     working_directory: str | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     sandbox_args: list[str] | None = None,
 ) -> list[str]:
     """
@@ -130,7 +136,12 @@ def build_codex_command_with_resume(
     Returns:
         Command list for subprocess execution
     """
-    command = ["codex", "resume", codex_external_id]
+    command = ["codex"]
+
+    if reasoning_effort:
+        command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
+
+    command.extend(["resume", codex_external_id])
 
     if model:
         command.extend(["--model", model])

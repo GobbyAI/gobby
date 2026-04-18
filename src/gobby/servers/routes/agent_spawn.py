@@ -12,8 +12,9 @@ import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
@@ -40,11 +41,20 @@ class AgentSpawnRequest(BaseModel):
     isolation: Literal["none", "worktree", "clone"] | None = None
     provider: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_required: bool | None = None
     workflow: str | None = None
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
     max_turns: int | None = None
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_reasoning_effort(str(value))
 
 
 class AgentSpawnResponse(BaseModel):
@@ -57,6 +67,8 @@ class AgentSpawnResponse(BaseModel):
     isolation: str | None = None
     branch_name: str | None = None
     pid: int | None = None
+    message: str | None = None
+    reasoning: dict[str, Any] | None = None
     error: str | None = None
 
 
@@ -83,6 +95,15 @@ class LaunchDefaultsRequest(BaseModel):
     web_chat: bool = False
     isolation: Literal["none", "worktree", "clone"] = "none"
     model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_required: bool | None = None
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_reasoning_effort(str(value))
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +114,8 @@ _BUILT_IN_DEFAULTS: dict[str, Any] = {
     "agent_name": "default",
     "isolation": "inherit",
     "model": None,
+    "reasoning_effort": None,
+    "reasoning_required": False,
 }
 
 # Semaphore to cap concurrent batch spawns
@@ -352,6 +375,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             workflow=effective_workflow,
             provider=req.provider,
             model=req.model,
+            reasoning_effort=req.reasoning_effort,
+            reasoning_required=req.reasoning_required,
             timeout=req.timeout,
             max_turns=req.max_turns,
             parent_session_id=parent_session_id,
@@ -378,6 +403,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 isolation=result.get("isolation"),
                 branch_name=result.get("branch_name"),
                 pid=result.get("pid"),
+                message=result.get("message"),
+                reasoning=result.get("reasoning"),
             )
         else:
             return AgentSpawnResponse(
@@ -489,6 +516,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 "agent_name": request.agent_name,
                 "isolation": request.isolation,
                 "model": request.model,
+                "reasoning_effort": request.reasoning_effort,
+                "reasoning_required": bool(request.reasoning_required),
             }
             store.set(key, existing, source="web_ui")
             return {"status": "success", "category": request.category}

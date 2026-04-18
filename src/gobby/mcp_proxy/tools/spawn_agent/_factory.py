@@ -152,6 +152,8 @@ def create_spawn_agent_registry(
         workflow: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_required: bool | None = None,
         # Limits
         timeout: float | None = None,
         max_turns: int | None = None,
@@ -174,6 +176,8 @@ def create_spawn_agent_registry(
             workflow: Workflow/pipeline to use
             provider: AI provider (claude/gemini/qwen/codex)
             model: Model to use
+            reasoning_effort: Optional reasoning override for supported providers/models
+            reasoning_required: Fail instead of warning when the requested reasoning is unsupported
             timeout: Timeout in seconds
             max_turns: Maximum conversation turns
             parent_session_id: Session reference (accepts #N, N, UUID, or prefix) for the parent session
@@ -306,6 +310,8 @@ def create_spawn_agent_registry(
             workflow=effective_workflow,
             provider=provider,
             model=model,
+            reasoning_effort=reasoning_effort,
+            reasoning_required=reasoning_required,
             timeout=timeout,
             max_turns=max_turns,
             parent_session_id=resolved_parent_session_id,
@@ -347,6 +353,8 @@ def create_spawn_agent_registry(
         base_branch: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_required: bool | None = None,
         parent_session_id: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
@@ -396,6 +404,8 @@ def create_spawn_agent_registry(
                     base_branch=base_branch,
                     provider=provider,
                     model=model,
+                    reasoning_effort=reasoning_effort,
+                    reasoning_required=reasoning_required,
                     timeout=timeout,
                     parent_session_id=parent_session_id,
                 )
