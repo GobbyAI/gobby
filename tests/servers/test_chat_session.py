@@ -336,9 +336,14 @@ class TestProjectRouting:
         assert captured_options["effort"] == "high"
 
     @pytest.mark.asyncio
-    async def test_start_materializes_sandbox_settings_file(self, session: ChatSession) -> None:
+    async def test_start_materializes_sandbox_settings_file(
+        self, session: ChatSession, tmp_path: Path
+    ) -> None:
         """Sandboxed Claude web chat should point the SDK at a generated settings file."""
         session.sandbox_config = SandboxConfig(enabled=True)
+
+        headless = tmp_path / "headless.json"
+        headless.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
 
         captured_options: dict[str, Any] = {}
 
@@ -356,6 +361,7 @@ class TestProjectRouting:
             patch(
                 "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
             ),
+            patch("gobby.servers.chat_session._HEADLESS_SETTINGS", headless),
             patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
             patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
         ):

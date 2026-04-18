@@ -104,14 +104,19 @@ class TestVoxCPMProvider:
     def test_status_marks_known_provider_unavailable_when_factory_import_fails(
         self, voice_config: VoiceConfig
     ) -> None:
-        with patch("gobby.voice.providers.importlib.import_module", side_effect=ImportError("missing")):
+        with patch(
+            "gobby.voice.providers.importlib.import_module", side_effect=ImportError("missing")
+        ):
             status = get_tts_provider_status(voice_config)
 
         assert status.available is False
         assert status.reason == "TTS provider unavailable: voxcpm"
 
     def test_create_tts_provider_returns_none_when_factory_init_raises(
-        self, voice_config: VoiceConfig, caplog: pytest.LogCaptureFixture
+        self,
+        voice_config: VoiceConfig,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         def broken_factory(config: VoiceConfig) -> object:
             raise RuntimeError(f"boom: {config.tts_provider}")
@@ -264,7 +269,10 @@ class TestVoxCPMProvider:
 
     @pytest.mark.asyncio
     async def test_warmup_warns_when_runtime_falls_back_to_cpu(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        enable_log_propagation: None,
     ) -> None:
         from gobby.voice.tts_voxcpm import VoxCPMProvider
 
