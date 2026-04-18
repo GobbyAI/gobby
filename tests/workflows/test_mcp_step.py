@@ -168,6 +168,7 @@ def mock_llm_service():
 @pytest.fixture
 def mock_tool_proxy():
     proxy = AsyncMock()
+    proxy.get_tool_schema = AsyncMock(return_value={"success": True, "tool": {"inputSchema": {}}})
     proxy.call_tool = AsyncMock(return_value={"success": True, "task_id": "#42"})
     return proxy
 
@@ -190,12 +191,39 @@ class TestExecuteMCPStep:
         context: dict = {"inputs": {}, "steps": {}}
         result = await execute_mcp_step(step, context, lambda: mock_tool_proxy)
 
+        mock_tool_proxy.get_tool_schema.assert_not_called()
         mock_tool_proxy.call_tool.assert_called_once_with(
-            "gobby-tasks", "suggest_next_task", {"parent_task_id": "#123"}
+            "gobby-tasks",
+            "suggest_next_task",
+            {"parent_task_id": "#123"},
+            session_id=None,
         )
         # success key is stripped by handler (commit 509f7ad5)
         assert "success" not in result
         assert result["task_id"] == "#42"
+
+    @pytest.mark.asyncio
+    async def test_mcp_step_prefetches_schema_for_pipeline_session(self, mock_tool_proxy) -> None:
+        """Pipeline MCP steps unlock the target tool before execution."""
+        step = PipelineStep(
+            id="test_step",
+            mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
+        )
+
+        context: dict = {"inputs": {}, "steps": {}, "session_id": "pipeline-session-123"}
+        await execute_mcp_step(step, context, lambda: mock_tool_proxy)
+
+        mock_tool_proxy.get_tool_schema.assert_called_once_with(
+            "gobby-workflows",
+            "list_pipeline_executions",
+            session_id="pipeline-session-123",
+        )
+        mock_tool_proxy.call_tool.assert_called_once_with(
+            "gobby-workflows",
+            "list_pipeline_executions",
+            {},
+            session_id="pipeline-session-123",
+        )
 
     @pytest.mark.asyncio
     async def test_mcp_step_no_arguments(self, mock_tool_proxy) -> None:
@@ -208,7 +236,10 @@ class TestExecuteMCPStep:
         context: dict = {"inputs": {}, "steps": {}}
         await execute_mcp_step(step, context, lambda: mock_tool_proxy)
 
-        mock_tool_proxy.call_tool.assert_called_once_with("gobby-agents", "wait_for_agent", {})
+        mock_tool_proxy.get_tool_schema.assert_not_called()
+        mock_tool_proxy.call_tool.assert_called_once_with(
+            "gobby-agents", "wait_for_agent", {}, session_id=None
+        )
 
     @pytest.mark.asyncio
     async def test_mcp_step_raises_without_tool_proxy_getter(self) -> None:

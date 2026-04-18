@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SYSTEM_SESSION_ID, LocalSessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -163,6 +163,37 @@ class TestLocalSessionManager:
         assert session.turn_count == 0
         assert session.tool_call_count == 0
         assert session.last_assistant_content is None
+
+    def test_register_recreates_missing_system_parent_session(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Register self-heals the system parent row before inserting children."""
+        session_manager.db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+        assert (
+            session_manager.db.fetchone(
+                "SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)
+            )
+            is None
+        )
+
+        session = session_manager.register(
+            external_id="pipeline-child",
+            machine_id="machine-abc",
+            source="pipeline",
+            project_id=sample_project["id"],
+            parent_session_id=SYSTEM_SESSION_ID,
+        )
+
+        repaired = session_manager.db.fetchone(
+            "SELECT id, external_id, source FROM sessions WHERE id = ?",
+            (SYSTEM_SESSION_ID,),
+        )
+        assert repaired is not None
+        assert repaired["external_id"] == "system"
+        assert repaired["source"] == "system"
+        assert session.parent_session_id == SYSTEM_SESSION_ID
 
     def test_register_session_has_stats_columns(
         self,

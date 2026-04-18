@@ -11,6 +11,7 @@ from gobby.storage.migrations import (
     get_current_version,
     run_migrations,
 )
+from gobby.storage.sessions import SYSTEM_SESSION_ID
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -81,6 +82,28 @@ def test_migrations_idempotency(tmp_path) -> None:
     applied = run_migrations(db)
     assert applied == 0
     assert get_current_version(db) == initial_version
+
+
+def test_migrations_recreate_missing_system_session(tmp_path) -> None:
+    """Existing databases self-heal the bootstrapped system session on startup."""
+    db_path = tmp_path / "system_session_repair.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+    db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    assert db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)) is None
+
+    applied = run_migrations(db)
+
+    assert applied == 0
+    repaired = db.fetchone(
+        "SELECT id, external_id, source, title FROM sessions WHERE id = ?",
+        (SYSTEM_SESSION_ID,),
+    )
+    assert repaired is not None
+    assert repaired["external_id"] == "system"
+    assert repaired["source"] == "system"
+    assert repaired["title"] == "_system"
 
 
 def test_tasks_table_includes_claimed_by_session_id_on_fresh_db(tmp_path) -> None:

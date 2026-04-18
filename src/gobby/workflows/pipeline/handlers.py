@@ -55,10 +55,27 @@ async def execute_mcp_step(
                             f"Failed to set project context for pipeline MCP step: {ctx_err}"
                         )
 
+            # Internal pipeline execution still needs to satisfy progressive
+            # discovery rules before calling the tool.
+            try:
+                await tool_proxy.get_tool_schema(
+                    mcp_config.server,
+                    mcp_config.tool,
+                    session_id=pipeline_session_id,
+                )
+            except Exception as schema_err:
+                logger.debug(
+                    "Failed to prefetch schema for pipeline MCP step %s:%s: %s",
+                    mcp_config.server,
+                    mcp_config.tool,
+                    schema_err,
+                )
+
         result = await tool_proxy.call_tool(
             mcp_config.server,
             mcp_config.tool,
             mcp_config.arguments or {},
+            session_id=pipeline_session_id,
         )
     finally:
         if session_token is not None:

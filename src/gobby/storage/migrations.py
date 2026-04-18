@@ -1332,4 +1332,10 @@ def run_migrations(db: LocalDatabase) -> int:
         applied = _run_migration_list(db, current_version, MIGRATIONS)
         total_applied += applied
 
+    # Existing databases may be missing the bootstrapped root session due to
+    # prior drift or partial upgrades; restore it idempotently on every startup.
+    from gobby.storage.sessions import ensure_system_session
+
+    ensure_system_session(db)
+
     return total_applied

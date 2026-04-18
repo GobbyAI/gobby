@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,52 @@ logger = logging.getLogger(__name__)
 # Well-known system session ID — bootstrapped at DB init.
 # Used as the default parent for pipelines and cron jobs that have no caller session.
 SYSTEM_SESSION_ID = "00000000-0000-0000-0000-000000000001"
+SYSTEM_SESSION_PROJECT_ID = PERSONAL_PROJECT_ID
+SYSTEM_SESSION_EXTERNAL_ID = "system"
+SYSTEM_SESSION_MACHINE_ID = "system"
+SYSTEM_SESSION_SOURCE = "system"
+SYSTEM_SESSION_TITLE = "_system"
+
+
+def ensure_system_session(db: DatabaseProtocol) -> None:
+    """Ensure the bootstrapped root session for cron/pipeline work exists."""
+    existing = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    if existing is not None:
+        return
+
+    project = db.fetchone("SELECT id FROM projects WHERE id = ?", (SYSTEM_SESSION_PROJECT_ID,))
+    if project is None:
+        raise RuntimeError(
+            "Missing required _personal project for system session bootstrap "
+            f"({SYSTEM_SESSION_PROJECT_ID})"
+        )
+
+    now = datetime.now(UTC).isoformat()
+    db.execute(
+        """
+        INSERT OR IGNORE INTO sessions (
+            id, external_id, machine_id, source, project_id, title,
+            status, agent_depth, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
+        """,
+        (
+            SYSTEM_SESSION_ID,
+            SYSTEM_SESSION_EXTERNAL_ID,
+            SYSTEM_SESSION_MACHINE_ID,
+            SYSTEM_SESSION_SOURCE,
+            SYSTEM_SESSION_PROJECT_ID,
+            SYSTEM_SESSION_TITLE,
+            now,
+            now,
+        ),
+    )
+
+    recreated = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    if recreated is None:
+        raise RuntimeError(f"Failed to recreate missing system session {SYSTEM_SESSION_ID}")
+
+    logger.warning("Recreated missing system session %s", SYSTEM_SESSION_ID)
 
 
 class LocalSessionManager:
@@ -83,6 +130,9 @@ class LocalSessionManager:
             Session instance
         """
         now = datetime.now(UTC).isoformat()
+
+        if parent_session_id == SYSTEM_SESSION_ID:
+            ensure_system_session(self.db)
 
         # Check if this exact session already exists (daemon restart case)
         existing = self.find_by_external_id(
@@ -674,6 +724,8 @@ class LocalSessionManager:
 
     def update_parent_session_id(self, session_id: str, parent_session_id: str) -> Session | None:
         """Update parent session ID."""
+        if parent_session_id == SYSTEM_SESSION_ID:
+            ensure_system_session(self.db)
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET parent_session_id = ?, updated_at = ? WHERE id = ?",

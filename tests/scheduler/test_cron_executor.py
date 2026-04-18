@@ -10,6 +10,7 @@ import pytest
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.sessions import SYSTEM_SESSION_ID, LocalSessionManager
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
@@ -141,6 +142,52 @@ async def test_execute_pipeline_no_executor(
     result = await executor.execute(job, run)
     assert result.status == "failed"
     assert "not configured" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_recreates_missing_system_session(
+    cron_storage: CronJobStorage, temp_db: LocalDatabase
+) -> None:
+    """Pipeline cron runs repair the root system session before creating cron sessions."""
+    pipeline = MagicMock()
+    pipeline.name = "nightly-memory-cleanup"
+
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = LocalSessionManager(temp_db)
+
+    execution = MagicMock()
+    execution.id = "pe-cron-123"
+    execution.status = "completed"
+    pipeline_executor.execute = AsyncMock(return_value=execution)
+
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+
+    temp_db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    assert temp_db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)) is None
+
+    job = _make_job(
+        cron_storage,
+        "pipeline",
+        {"pipeline_name": "nightly-memory-cleanup"},
+    )
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "completed"
+    repaired = temp_db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    assert repaired is not None
+
+    cron_session_id = pipeline_executor.execute.await_args.kwargs["session_id"]
+    cron_session = temp_db.fetchone(
+        "SELECT source, parent_session_id FROM sessions WHERE id = ?",
+        (cron_session_id,),
+    )
+    assert cron_session is not None
+    assert cron_session["source"] == "cron"
+    assert cron_session["parent_session_id"] == SYSTEM_SESSION_ID
 
 
 @pytest.mark.asyncio
