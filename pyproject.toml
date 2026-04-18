@@ -68,7 +68,6 @@ dependencies = [
 email = ["aiosmtplib>=2.0", "aioimaplib>=1.0"]
 voice = [
     "faster-whisper>=1.0.0",
-    "kokoro-onnx>=0.5.0",
     "chatterbox-tts",
 ]
 

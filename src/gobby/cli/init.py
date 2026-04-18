@@ -120,10 +120,7 @@ def init(
         try:
             import clawcare  # noqa: F401
         except ImportError:
-            click.echo(
-                "  Warning: clawcare not found. "
-                "Install: uv add clawcare"
-            )
+            click.echo("  Warning: clawcare not found. Install: uv add clawcare")
 
         # Show detected verification commands
         if result.verification:

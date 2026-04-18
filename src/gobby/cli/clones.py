@@ -150,7 +150,11 @@ def create_clone(
 )
 @click.option("--workflow", "-w", help="Workflow to activate")
 @click.option("--reasoning-effort", help="Reasoning effort override")
-@click.option("--reasoning-required/--no-reasoning-required", default=False, help="Fail instead of warning when the requested reasoning is unsupported")
+@click.option(
+    "--reasoning-required/--no-reasoning-required",
+    default=False,
+    help="Fail instead of warning when the requested reasoning is unsupported",
+)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def spawn_agent(
     clone_ref: str,

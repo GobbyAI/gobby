@@ -93,8 +93,14 @@ def agents() -> None:
 )
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, gemini, etc.)")
 @click.option("--model", help="Model override")
-@click.option("--reasoning-effort", help="Reasoning effort override (e.g. low, medium, high, xhigh)")
-@click.option("--reasoning-required/--no-reasoning-required", default=False, help="Fail instead of warning when the requested reasoning is unsupported")
+@click.option(
+    "--reasoning-effort", help="Reasoning effort override (e.g. low, medium, high, xhigh)"
+)
+@click.option(
+    "--reasoning-required/--no-reasoning-required",
+    default=False,
+    help="Fail instead of warning when the requested reasoning is unsupported",
+)
 @click.option("--timeout", default=120.0, help="Execution timeout in seconds")
 @click.option("--max-turns", default=10, help="Maximum turns")
 @click.option(

@@ -9,9 +9,12 @@ def test_get_version_uses_package_metadata() -> None:
         assert get_version() == "1.2.3"
 
 
+import gobby
+
+
 def test_get_version_falls_back_to_module_version() -> None:
     with patch(
         "gobby.utils.version.version",
         side_effect=PackageNotFoundError("Package metadata is unavailable"),
     ):
-        assert get_version() == "0.4.0"
+        assert get_version() == gobby.__version__
