@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks.inbox import _load_envelope, drain_hook_inbox_once
+from gobby.hooks.inbox import _compute_sleep_seconds, _load_envelope, drain_hook_inbox_once
 
 pytestmark = pytest.mark.unit
 
@@ -112,3 +112,8 @@ def test_load_envelope_quarantines_non_utf8_files(tmp_path: Path) -> None:
     assert quarantined.read_bytes() == b"\xff\xfe\x00bad-json"
     meta = json.loads((inbox_dir / "quarantine" / f"{envelope_path.name}.meta.json").read_text())
     assert meta["reason"] == "invalid_json"
+
+
+def test_compute_sleep_seconds_clamps_negative_jitter() -> None:
+    with patch("gobby.hooks.inbox._JITTER_RANDOM.uniform", return_value=-10.0):
+        assert _compute_sleep_seconds(interval_seconds=5, jitter_seconds=10.0) == 0.0

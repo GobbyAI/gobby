@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
 from collections.abc import Callable
 from pathlib import Path
+from random import SystemRandom
 from typing import Any
 
 import httpx
@@ -16,6 +16,7 @@ from gobby.cli.utils import get_gobby_home
 from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
+_JITTER_RANDOM = SystemRandom()
 
 
 def get_hook_inbox_dir() -> Path:
@@ -170,6 +171,14 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
     return replayed
 
 
+def _compute_sleep_seconds(interval_seconds: int, jitter_seconds: float) -> float:
+    """Return a non-negative poll interval with bounded jitter."""
+    return max(
+        0.0,
+        interval_seconds + _JITTER_RANDOM.uniform(-jitter_seconds, jitter_seconds),
+    )
+
+
 async def drain_hook_inbox_loop(
     app: Any,
     is_shutdown_requested: Callable[[], bool],
@@ -188,10 +197,7 @@ async def drain_hook_inbox_loop(
 
     while not is_shutdown_requested():
         try:
-            sleep_seconds = max(
-                0.0,
-                interval_seconds + random.uniform(-jitter_seconds, jitter_seconds),
-            )
+            sleep_seconds = _compute_sleep_seconds(interval_seconds, jitter_seconds)
             await asyncio.sleep(sleep_seconds)
             replayed = await drain_hook_inbox_once(app)
             if replayed > 0:
