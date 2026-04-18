@@ -238,6 +238,55 @@ class TestCodexBackend:
         assert isinstance(events[-1], DoneEvent)
 
     @pytest.mark.asyncio
+    async def test_send_message_passes_reasoning_effort_as_effort(self) -> None:
+        handlers: dict[str, list[Any]] = {}
+
+        def add_handler(method: str, handler: Any) -> None:
+            handlers.setdefault(method, []).append(handler)
+
+        async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            for handler in handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                )
+            return SimpleNamespace(id="turn-1")
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.add_notification_handler = MagicMock(side_effect=add_handler)
+        client.remove_notification_handler = MagicMock()
+        client.start_turn = AsyncMock(side_effect=start_turn)
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session._model = "gpt-5.4"
+        session.reasoning_effort = "xhigh"
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+
+        events = [event async for event in backend.send_message(session, "hello")]
+
+        client.start_turn.assert_awaited_once_with(
+            "thread-1",
+            "hello",
+            context_prefix=None,
+            model="gpt-5.4",
+            effort="xhigh",
+        )
+        assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
     async def test_interrupt_uses_thread_and_turn_identity(self) -> None:
         client = MagicMock()
         client.is_connected = True

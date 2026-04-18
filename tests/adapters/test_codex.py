@@ -731,6 +731,50 @@ class TestCodexAppServerClientTurnManagement:
             assert params["input"][2]["path"] == "/local/path.jpg"
 
     @pytest.mark.asyncio
+    async def test_start_turn_with_effort(self):
+        """start_turn sends effort for per-turn reasoning overrides."""
+        client = CodexAppServerClient()
+
+        mock_result = {
+            "turn": {
+                "id": "turn-effort",
+                "status": "inProgress",
+                "items": [],
+            }
+        }
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ) as mock_send:
+            await client.start_turn("thr-1", "Help me refactor", effort="xhigh")
+
+            params = mock_send.call_args[0][1]
+            assert params["effort"] == "xhigh"
+            assert "reasoningEffort" not in params
+
+    @pytest.mark.asyncio
+    async def test_start_turn_maps_legacy_reasoning_effort_override(self):
+        """start_turn keeps legacy callers working by mapping reasoningEffort."""
+        client = CodexAppServerClient()
+
+        mock_result = {
+            "turn": {
+                "id": "turn-legacy-effort",
+                "status": "inProgress",
+                "items": [],
+            }
+        }
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ) as mock_send:
+            await client.start_turn("thr-1", "Help me refactor", reasoningEffort="high")
+
+            params = mock_send.call_args[0][1]
+            assert params["effort"] == "high"
+            assert "reasoningEffort" not in params
+
+    @pytest.mark.asyncio
     async def test_interrupt_turn(self):
         """interrupt_turn sends request."""
         client = CodexAppServerClient()

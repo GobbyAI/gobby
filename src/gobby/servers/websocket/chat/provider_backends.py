@@ -1090,7 +1090,7 @@ class CodexWebChatBackend:
                 prompt,
                 context_prefix=context_prefix,
                 model=session._model,
-                reasoningEffort=session.reasoning_effort,
+                effort=session.reasoning_effort,
             )
             session._turn_id = turn.id or session._turn_id
 

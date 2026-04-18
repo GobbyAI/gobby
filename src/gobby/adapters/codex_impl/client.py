@@ -427,6 +427,7 @@ class CodexAppServerClient:
         prompt: str,
         images: list[str] | None = None,
         context_prefix: str | None = None,
+        effort: str | None = None,
         **config_overrides: Any,
     ) -> CodexTurn:
         """
@@ -438,6 +439,7 @@ class CodexAppServerClient:
             images: Optional list of image paths or URLs
             context_prefix: Optional context to prepend to instructions field.
                            Used for injecting session metadata and workflow context.
+            effort: Optional reasoning effort override for this and subsequent turns.
             **config_overrides: Optional config overrides (cwd, model, etc.)
 
         Returns:
@@ -462,6 +464,12 @@ class CodexAppServerClient:
         # Add context prefix as instructions field
         if context_prefix:
             params["instructions"] = context_prefix
+
+        # App-server v2 uses `effort` for per-turn reasoning overrides.
+        if effort:
+            params["effort"] = effort
+        elif "reasoningEffort" in config_overrides and "effort" not in config_overrides:
+            params["effort"] = config_overrides.pop("reasoningEffort")
 
         params.update(config_overrides)
 
