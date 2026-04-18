@@ -37,7 +37,7 @@ echo ""
 
 # Mypy - strict mode
 echo ">>> Running mypy (strict)..."
-if uv run mypy src/ --strict 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"; then
+if uv run mypy src/ --strict --no-incremental 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"; then
     echo "✓ Mypy passed"
 else
     echo "✗ Mypy failed"
