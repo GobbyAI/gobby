@@ -203,4 +203,4 @@ class TestSyncBundledAgents:
         assert len(rows) > 0
         names = [r.name for r in rows]
         # Check for agents from the new-format bundled definitions
-        assert any(n in names for n in ("default", "developer", "expander"))
+        assert any(n in names for n in ("default", "developer", "qa-reviewer"))

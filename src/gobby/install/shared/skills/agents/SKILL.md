@@ -117,8 +117,8 @@ exit_condition: "current_step == 'terminate'"
 - `implement` step: All tools, but block `close_task` and `kill_agent`. Transition on `review_submitted`.
 - `terminate` step: Only `kill_agent`.
 
-**Research → Output (expander pattern):**
-- `research` step: All tools, block premature output. Transition on `spec_saved`.
+**Research → Persist Result:**
+- `research` step: All tools, block premature exits. Transition on `result_saved`.
 - `terminate` step.
 
 **Review → Decide (QA pattern):**

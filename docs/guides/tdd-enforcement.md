@@ -25,7 +25,7 @@ Epic: "User Authentication"
 
 ### How It Works
 
-1. The expander agent outputs plain feature tasks with categories (`code`, `config`, `docs`, etc.)
+1. The compiled expansion output contains plain feature tasks with categories (`code`, `config`, `docs`, etc.)
 2. The expansion system identifies tasks with `code` or `config` categories
 3. For multi-phase plans, it creates **subepic tasks** for each phase (from `## Phase N: Title` headings)
 4. It wraps each phase's TDD-eligible tasks with:
@@ -48,9 +48,9 @@ Epic: "User Authentication"
 | `planning` | No | Architecture/design work |
 | `manual` | No | Manual verification |
 
-### What the Expander Agent Should NOT Do
+### What the Expansion Compiler Should NOT Do
 
-The expander agent outputs plain feature tasks. It should NOT:
+The compiled expansion output should contain plain feature tasks. It should NOT:
 
 - Create `[TDD]`, `[IMPL]`, or `[REF]` prefixed tasks
 - Create separate "Write tests for..." tasks
