@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,6 +59,8 @@ class TestVoiceRoutes:
         assert data["voice_loading"] is False
         assert data["stt_warmup_status"] == "idle"
         assert data["tts_warmup_status"] == "idle"
+        assert data["tts_backend_kind"] == "embedded"
+        assert data["tts_capabilities"]["supports_reference_audio"] is False
 
     def test_status_no_config(self, client: TestClient, server_with_voice: MagicMock) -> None:
         """When server.config is None."""
@@ -105,6 +108,7 @@ class TestVoiceRoutes:
         assert data["stt_available"] is True
         assert data["stt_reason"] == ""
         assert data["stt_warmup_status"] == "idle"
+        assert data["tts_backend_kind"] == "embedded"
 
     def test_status_prefers_websocket_voice_status(
         self, client: TestClient, server_with_voice: MagicMock
@@ -123,6 +127,13 @@ class TestVoiceRoutes:
             "tts_provider": "chatterbox",
             "tts_available": True,
             "tts_reason": "",
+            "tts_backend_kind": "embedded",
+            "tts_capabilities": {
+                "supports_reference_audio": True,
+                "supports_reference_text": False,
+                "supports_streaming": False,
+                "supports_voice_cloning": True,
+            },
             "tts_warmup_status": "loading",
             "tts_warmup_error": "",
             "voice_ready": False,
@@ -154,6 +165,28 @@ class TestVoiceRoutes:
         response = client.get("/api/voice/status")
         data = response.json()
         assert data["whisper_model"] == "small"
+
+    def test_status_reports_voxcpm_capabilities(
+        self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
+    ) -> None:
+        ref = tmp_path / "reference.wav"
+        ref.write_bytes(b"RIFF" + b"\x00" * 100)
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=True,
+            tts_enabled=True,
+            tts_provider="voxcpm",
+            tts_reference_audio=str(ref),
+            tts_reference_text="Reference transcript",
+        )
+
+        with patch.dict("sys.modules", {"faster_whisper": MagicMock(), "voxcpm": MagicMock()}):
+            response = client.get("/api/voice/status")
+
+        data = response.json()
+        assert data["tts_provider"] == "voxcpm"
+        assert data["tts_available"] is True
+        assert data["tts_capabilities"]["supports_reference_text"] is True
+        assert data["tts_reference_text_configured"] is True
 
     # -----------------------------------------------------------------
     # POST /api/voice/transcribe

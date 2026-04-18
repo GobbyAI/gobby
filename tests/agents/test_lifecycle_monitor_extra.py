@@ -480,7 +480,8 @@ class TestDispatchFailureCountCRUD:
         mgr = LocalTaskManager(temp_db)
         task = mgr.create_task(title="test", task_type="task", project_id=sample_project["id"])
         # Set failure count and move out of open state
-        mgr.update_task(task.id, status="escalated", dispatch_failure_count=3)
+        mgr.update_task(task.id, dispatch_failure_count=3)
+        mgr.escalate_task(task.id, reason="dispatch failures")
         # Reopen
         mgr.reopen_task(task.id)
         reopened = mgr.get_task(task.id)

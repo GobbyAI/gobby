@@ -424,6 +424,50 @@ class TestExecuteSpawn:
             assert result.codex_session_id == "codex-ext-789"
 
     @pytest.mark.asyncio
+    async def test_codex_terminal_spawn_with_sandbox_config(self) -> None:
+        """Test that Codex terminal spawn applies sandbox flags."""
+        sandbox_config = SandboxConfig(enabled=True, mode="permissive")
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=mock_session_manager,
+            sandbox_config=sandbox_config,
+        )
+
+        mock_preflight = AsyncMock(
+            return_value=MagicMock(
+                session_id="gobby-sess-123",
+                env_vars={"GOBBY_CODEX_EXTERNAL_ID": "codex-ext-789"},
+            )
+        )
+
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
+
+        with (
+            patch(
+                "gobby.agents.spawn_executor.prepare_codex_spawn_with_preflight",
+                mock_preflight,
+            ),
+            patch(
+                "gobby.agents.spawn_executor.TmuxSpawner",
+                return_value=mock_spawner,
+            ),
+        ):
+            result = await execute_spawn(request)
+
+            command = mock_spawner.spawn.call_args.kwargs["command"]
+            assert "--sandbox" in command
+            assert "workspace-write" in command
+            assert result.success is True
+
+    @pytest.mark.asyncio
     async def test_claude_terminal_requires_session_manager(self):
         """Test that Claude spawn requires session_manager."""
         request = SpawnRequest(

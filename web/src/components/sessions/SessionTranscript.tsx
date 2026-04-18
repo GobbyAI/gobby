@@ -1,30 +1,11 @@
 import { useMemo } from 'react'
 import type { SessionMessage } from '../../hooks/useSessionDetail'
-import type { ChatMessage } from '../../types/chat'
+import { mapRenderedMessageToChatMessage } from '../../lib/chatMessageMapping'
 import { MessageItem } from '../chat/MessageItem'
 
 /** Map SessionMessages (RenderedMessage shape) to ChatMessages for rendering. */
-function mapToChatMessages(messages: SessionMessage[]): ChatMessage[] {
-  return messages.map((m) => {
-    const chatMsg: ChatMessage = {
-      id: m.id,
-      role: (m.role as 'user' | 'assistant' | 'system') || 'assistant',
-      content: m.content || '',
-      timestamp: new Date(m.timestamp),
-      contentBlocks: m.content_blocks,
-    }
-    // Extract toolCalls and thinkingContent for legacy component compat
-    if (m.content_blocks) {
-      for (const block of m.content_blocks) {
-        if (block.type === 'tool_chain' && block.tool_calls) {
-          chatMsg.toolCalls = [...(chatMsg.toolCalls || []), ...block.tool_calls]
-        } else if (block.type === 'thinking') {
-          chatMsg.thinkingContent = (chatMsg.thinkingContent || '') + block.content
-        }
-      }
-    }
-    return chatMsg
-  })
+function mapToChatMessages(messages: SessionMessage[]) {
+  return messages.map((message) => mapRenderedMessageToChatMessage(message))
 }
 
 interface SessionTranscriptProps {

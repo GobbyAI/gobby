@@ -1168,6 +1168,21 @@ class TestUpdateTaskTool:
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_update_task_blocks_escalated_status(self, mock_task_manager, mock_sync_manager):
+        """Test update_task blocks 'escalated' status changes."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        result = await registry.call(
+            "update_task",
+            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "status": "escalated"},
+        )
+
+        assert "error" in result
+        assert "Cannot set status to 'escalated'" in result["error"]
+        assert "escalate_task" in result["error"]
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_update_task_partial_update(self, mock_task_manager, mock_sync_manager):
         """Test update_task only includes provided fields.
 

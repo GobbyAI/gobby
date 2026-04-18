@@ -360,18 +360,18 @@ steps:
 exit_condition: "current_step == 'terminate'"
 ```
 
-**Research → Output (expander):**
+**Research → Persist Result:**
 ```yaml
 step_variables:
-  run_started: false
+  result_saved: false
 steps:
   - name: research
     allowed_tools: "all"
     blocked_mcp_tools: ["gobby-tasks:create_task", "gobby-agents:kill_agent"]
     on_mcp_success:
-      - { server: gobby-tasks-expansion, tool: start_expansion_run, action: set_variable, variable: run_started, value: true }
+      - { server: <your-server>, tool: <save-result-tool>, action: set_variable, variable: result_saved, value: true }
     transitions:
-      - { to: terminate, when: "vars.run_started" }
+      - { to: terminate, when: "vars.result_saved" }
   - name: terminate
     allowed_mcp_tools: ["gobby-agents:kill_agent"]
 exit_condition: "current_step == 'terminate'"

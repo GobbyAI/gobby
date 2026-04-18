@@ -6,6 +6,7 @@ Exposes functionality for:
 - get_config_section(prefix): Get an entire section as nested dict
 - set_config(key, value): Set a config value by dotted key
 - set_config_batch(entries): Set multiple keys atomically (validates once)
+- delete_config(key): Delete a config override by dotted key
 - list_config_keys(prefix?): List all config keys
 - ensure_defaults(section): Populate missing keys from Pydantic defaults
 """
@@ -49,7 +50,10 @@ def create_config_registry(
     """
     registry = InternalToolRegistry(
         name="gobby-config",
-        description="Daemon configuration - get_config, get_config_section, set_config, list_config_keys, ensure_defaults",
+        description=(
+            "Daemon configuration - get_config, get_config_section, set_config, "
+            "set_config_batch, delete_config, list_config_keys, ensure_defaults"
+        ),
     )
 
     # Mutable reference so tools always read the latest config
@@ -228,6 +232,65 @@ def create_config_registry(
             }
         except Exception as e:
             logger.exception("Failed to set config batch")
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="delete_config",
+        description=(
+            "Delete a config override by dotted key. Removes the row from "
+            "config_store and, if the key was stored as a secret, also clears "
+            "the encrypted blob from the secrets table (atomic). Validates "
+            "that the resulting DaemonConfig is still valid (Pydantic defaults "
+            "fill in for the removed key)."
+        ),
+    )
+    def delete_config(key: str) -> dict[str, Any]:
+        """Delete a config override, clearing secret storage when needed."""
+        from gobby.config.app import DaemonConfig as DaemonConfigCls
+
+        try:
+            override_keys = set(config_store.list_keys())
+            if key not in override_keys:
+                return {
+                    "success": False,
+                    "error": f"Key '{key}' not found in config_store (no override to delete)",
+                }
+
+            secret_keys = set(config_store.get_secret_keys())
+            had_secret = key in secret_keys
+
+            # Validate the post-delete state before mutating DB or memory.
+            flat = _flat_config()
+            flat.pop(key, None)
+            new_config = DaemonConfigCls(**unflatten_config(flat))
+
+            if had_secret:
+                if db is None:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Cannot clear secret for '{key}' — database not "
+                            "available. Secret deletion requires database access."
+                        ),
+                    }
+                from gobby.storage.secrets import SecretStore as SecretStoreCls
+
+                secret_store = SecretStoreCls(db)
+                config_store.clear_secret(key, secret_store)
+            else:
+                config_store.delete(key)
+
+            _state["config"] = new_config
+            config_setter(new_config)
+
+            return {
+                "success": True,
+                "key": key,
+                "deleted": True,
+                "had_secret": had_secret,
+            }
+        except Exception as e:
+            logger.exception(f"Failed to delete config key '{key}'")
             return {"success": False, "error": str(e)}
 
     @registry.tool(

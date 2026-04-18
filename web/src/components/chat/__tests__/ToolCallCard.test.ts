@@ -184,6 +184,17 @@ describe('groupToolCalls', () => {
     expect(group.toolName).toBe('mcp__gobby__list_tools')
   })
 
+  it('canonicalizes exec_command groups to Bash display names', () => {
+    const calls = [
+      makeCall({ id: '1', tool_name: 'exec_command' }),
+      makeCall({ id: '2', tool_name: 'exec_command' }),
+    ]
+    const result = groupToolCalls(calls)
+    const group = result[0] as ToolCallGroup
+    expect(group.displayName).toBe('Bash')
+    expect(group.toolName).toBe('exec_command')
+  })
+
   it('breaks group when ungroupable call interrupts same-type run', () => {
     // [Read, Read, AskUserQuestion, Read, Read]
     const calls = [

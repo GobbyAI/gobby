@@ -67,11 +67,13 @@ src/gobby/
 -- Channel configurations
 CREATE TABLE comms_channels (
     id TEXT PRIMARY KEY,
-    channel_type TEXT NOT NULL,            -- 'telegram', 'slack', 'discord', 'teams', 'email', 'sms'
+    channel_type TEXT NOT NULL CHECK (
+        channel_type IN ('telegram', 'slack', 'discord', 'teams', 'email', 'sms')
+    ),
     name TEXT NOT NULL UNIQUE,             -- Human-friendly: "my-telegram", "team-slack"
     enabled INTEGER NOT NULL DEFAULT 1,
     config_json TEXT NOT NULL DEFAULT '{}', -- Channel-specific non-secret config
-    webhook_secret TEXT,                   -- For verifying inbound webhooks
+    webhook_secret TEXT,                   -- Non-sensitive webhook verification token only; bearer/API credentials live in SecretStore via $secret:...
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -95,13 +97,17 @@ CREATE TABLE comms_messages (
     id TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL REFERENCES comms_channels(id) ON DELETE CASCADE,
     identity_id TEXT REFERENCES comms_identities(id) ON DELETE SET NULL,
-    direction TEXT NOT NULL,               -- 'inbound' or 'outbound'
+    direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
     content TEXT NOT NULL,
-    content_type TEXT NOT NULL DEFAULT 'text',
+    content_type TEXT NOT NULL DEFAULT 'text' CHECK (
+        content_type IN ('text', 'markdown', 'html', 'file', 'audio')
+    ),
     platform_message_id TEXT,
     platform_thread_id TEXT,
     session_id TEXT,
-    status TEXT NOT NULL DEFAULT 'sent',   -- 'pending', 'sent', 'delivered', 'failed', 'rate_limited'
+    status TEXT NOT NULL DEFAULT 'sent' CHECK (
+        status IN ('pending', 'sent', 'delivered', 'failed', 'rate_limited')
+    ),
     error TEXT,
     metadata_json TEXT DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -123,7 +129,27 @@ CREATE TABLE comms_routing_rules (
 );
 ```
 
-Plus indexes on channel_id, session_id, direction, created_at, enabled columns.
+```sql
+CREATE INDEX idx_comms_channels_enabled ON comms_channels(enabled);
+CREATE INDEX idx_comms_identities_channel_id ON comms_identities(channel_id);
+CREATE INDEX idx_comms_identities_session_id ON comms_identities(session_id);
+CREATE INDEX idx_comms_messages_channel_id ON comms_messages(channel_id);
+CREATE INDEX idx_comms_messages_session_id ON comms_messages(session_id);
+CREATE INDEX idx_comms_messages_direction ON comms_messages(direction);
+CREATE INDEX idx_comms_messages_created_at ON comms_messages(created_at);
+CREATE INDEX idx_comms_routing_rules_channel_id ON comms_routing_rules(channel_id);
+CREATE INDEX idx_comms_routing_rules_enabled_priority
+    ON comms_routing_rules(enabled, priority);
+```
+
+### Rollback
+
+```sql
+DROP TABLE IF EXISTS comms_routing_rules;
+DROP TABLE IF EXISTS comms_messages;
+DROP TABLE IF EXISTS comms_identities;
+DROP TABLE IF EXISTS comms_channels;
+```
 
 ---
 

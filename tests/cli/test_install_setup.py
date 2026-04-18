@@ -18,15 +18,18 @@ from gobby.cli.install_setup import (
     _install_gcode,
     _install_gcode_from_cargo_binstall,
     _install_gcode_from_cargo_install,
+    _install_gcode_from_github,
     _install_gsqz,
     _install_gsqz_from_cargo_binstall,
     _install_gsqz_from_cargo_install,
     _install_gsqz_from_github,
+    _resolve_latest_release_tag,
     _write_gcode_version_stamp,
     _write_gsqz_version_stamp,
     ensure_daemon_config,
     run_daemon_setup,
 )
+from gobby.cli.installers.hook_commands import build_hook_command
 
 pytestmark = pytest.mark.unit
 
@@ -89,9 +92,21 @@ class TestRunDaemonSetup:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup._install_gsqz")
     @patch("gobby.cli.install_setup._install_gcode")
+    @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gloc")
     @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
     def test_run_daemon_setup_success(
-        self, mock_ide, mock_gcode, mock_gsqz, mock_run, mock_mcp, mock_sync, mock_init, tmp_path
+        self,
+        mock_ide,
+        mock_gloc,
+        mock_ghook,
+        mock_gcode,
+        mock_gsqz,
+        mock_run,
+        mock_mcp,
+        mock_sync,
+        mock_init,
+        tmp_path,
     ):
         mock_db = MagicMock()
         mock_init.return_value = mock_db
@@ -99,6 +114,8 @@ class TestRunDaemonSetup:
         mock_mcp.return_value = {"success": True, "servers_added": ["gh"], "servers_skipped": []}
         mock_gsqz.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
+        mock_ghook.return_value = {"installed": True, "version": "1.0", "method": "github"}
+        mock_gloc.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ide.return_value = {"added": True}
 
         mock_run.return_value = MagicMock(returncode=0)
@@ -111,7 +128,59 @@ class TestRunDaemonSetup:
         mock_mcp.assert_called_once()
         mock_gsqz.assert_called_once()
         mock_gcode.assert_called_once()
+        mock_ghook.assert_called_once()
+        mock_gloc.assert_called_once()
         mock_ide.assert_called_once()
+
+    @patch("gobby.cli.utils.init_local_storage")
+    @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
+    @patch("gobby.cli.installers.install_default_mcp_servers")
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup._install_gsqz")
+    @patch("gobby.cli.install_setup._install_gcode")
+    @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gloc")
+    @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
+    def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
+        self,
+        mock_ide,
+        mock_gloc,
+        mock_ghook,
+        mock_gcode,
+        mock_gsqz,
+        mock_run,
+        mock_mcp,
+        mock_sync,
+        mock_init,
+        tmp_path,
+    ):
+        mock_db = MagicMock()
+        mock_init.return_value = mock_db
+        mock_sync.return_value = {"total_synced": 0, "errors": []}
+        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
+        mock_gsqz.return_value = {"skipped": True}
+        mock_gcode.return_value = {"skipped": True}
+        mock_gloc.return_value = {"skipped": True}
+        mock_ide.return_value = {"added": False}
+        mock_run.return_value = MagicMock(returncode=0)
+
+        def _fake_install_ghook():
+            bin_dir = tmp_path / ".gobby" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "ghook").write_text("#!/bin/sh\n")
+            return {"installed": True, "version": "0.1.1", "method": "github"}
+
+        mock_ghook.side_effect = _fake_install_ghook
+
+        with (
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.utils.native_bin.Path.home", return_value=tmp_path),
+        ):
+            run_daemon_setup(tmp_path)
+            command = build_hook_command("codex", "SessionStart", tmp_path / ".gobby" / "hooks")
+
+        assert str(tmp_path / ".gobby" / "bin" / "ghook") in command
+        assert "--gobby-owned" in command
 
 
 class TestGsqzHelpers:
@@ -156,10 +225,50 @@ class TestGsqzHelpers:
         fake_resp.__enter__.return_value = fake_resp
         mock_urlopen.return_value = fake_resp
 
-        res = _install_gsqz_from_github(tmp_path, "target-triple")
+        with patch(
+            "gobby.cli.install_setup._resolve_latest_release_tag",
+            return_value="gsqz-v1.2.3",
+        ):
+            res = _install_gsqz_from_github(tmp_path, "target-triple")
         assert res is True
         assert (tmp_path / "gsqz").exists()
         assert (tmp_path / "gsqz").read_bytes() == b"fake!"
+
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_resolve_latest_release_tag_prefers_matching_stable_prefix(self, mock_urlopen):
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = json.dumps(
+            [
+                {
+                    "tag_name": "sdk-v9.9.9",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-04-17T00:00:00Z",
+                },
+                {
+                    "tag_name": "gsqz-v1.2.0",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-04-15T00:00:00Z",
+                },
+                {
+                    "tag_name": "gsqz-v1.3.0-rc1",
+                    "draft": False,
+                    "prerelease": True,
+                    "published_at": "2026-04-16T00:00:00Z",
+                },
+                {
+                    "tag_name": "gsqz-v1.2.3",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-04-14T00:00:00Z",
+                },
+            ]
+        ).encode()
+        fake_resp.__enter__.return_value = fake_resp
+        mock_urlopen.return_value = fake_resp
+
+        assert _resolve_latest_release_tag(tag_prefix="gsqz-v") == "gsqz-v1.2.3"
 
     @patch("shutil.which", return_value="/bin/cargo-binstall")
     @patch("subprocess.run")
@@ -242,6 +351,28 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup.urlopen", side_effect=URLError("timeout"))
     def test_get_latest_gcode_version_fail(self, mock_url):
         assert _get_latest_gcode_version() is None
+
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_install_gcode_from_github_uses_binary_specific_tag_prefix(
+        self, mock_urlopen, tmp_path
+    ):
+        buf = BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="gcode")
+            info.size = 5
+            tar.addfile(info, BytesIO(b"fake!"))
+
+        buf.seek(0)
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = buf.read()
+        fake_resp.__enter__.return_value = fake_resp
+        mock_urlopen.return_value = fake_resp
+
+        assert _install_gcode_from_github(tmp_path, "aarch64-apple-darwin", "0.2.3") is True
+        url_called = mock_urlopen.call_args[0][0]
+        if hasattr(url_called, "full_url"):
+            url_called = url_called.full_url
+        assert "gcode-v0.2.3" in url_called
 
     @patch("shutil.which", return_value="/usr/bin/cargo-binstall")
     @patch("subprocess.run")

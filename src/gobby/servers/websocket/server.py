@@ -199,6 +199,8 @@ class WebSocketServer(
             async for message in websocket:
                 try:
                     await self._handle_message(websocket, message)
+                except ConnectionClosed:
+                    raise
                 except json.JSONDecodeError:
                     await self._send_error(websocket, "Invalid JSON format")
                 except Exception:
@@ -345,7 +347,7 @@ class WebSocketServer(
         await self._cleanup_tmux()
 
         # Stop voice subsystem
-        await self._cleanup_voice()
+        await self.cleanup_voice()
 
         # Stop all chat sessions (fire SESSION_END before each)
         for conv_id, session in list(self._chat_sessions.items()):

@@ -1021,14 +1021,14 @@ class TestMultipleEffects:
         assert calls[1]["server"] == "gobby-memory"
 
 
-class TestToolBlockPending:
-    """Tests for automatic tool_block_pending on before_tool blocks."""
+class TestBeforeToolBlockTracking:
+    """Tests for engine tracking of blocked BEFORE_TOOL attempts."""
 
     @pytest.mark.asyncio
-    async def test_tool_block_pending_set_on_before_tool_block(
+    async def test_before_tool_block_records_last_blocked_tool(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """tool_block_pending should be auto-set when a before_tool block fires."""
+        """A before_tool block should record the blocked tool name only."""
 
         _insert_rule(
             manager,
@@ -1044,7 +1044,8 @@ class TestToolBlockPending:
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables.get("tool_block_pending") is True
+        assert variables.get("_last_blocked_tool") == "Edit"
+        assert variables.get("tool_block_pending") is None
 
     @pytest.mark.asyncio
     async def test_tool_block_pending_not_set_on_stop_block(
@@ -1069,10 +1070,10 @@ class TestToolBlockPending:
         assert variables.get("tool_block_pending") is None
 
     @pytest.mark.asyncio
-    async def test_tool_block_pending_with_multi_effect(
+    async def test_before_tool_block_with_multi_effect_tracks_tool_name(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """tool_block_pending should be set even in multi-effect rules with block."""
+        """A multi-effect before_tool block should still track the blocked tool."""
 
         _insert_rule(
             manager,
@@ -1088,10 +1089,11 @@ class TestToolBlockPending:
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {}
-        event = _make_event(HookEventType.BEFORE_TOOL)
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        assert variables.get("tool_block_pending") is True
+        assert variables.get("_last_blocked_tool") == "Edit"
+        assert variables.get("tool_block_pending") is not True
         assert variables.get("x") == 42
 
     @pytest.mark.asyncio
@@ -1129,7 +1131,7 @@ class TestConsecutiveToolBlocks:
     async def test_counter_increments_on_consecutive_block(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """Counter should increment when tool_block_pending is already true."""
+        """Counter should increment when the same blocked tool is retried."""
 
         _insert_rule(
             manager,
@@ -1141,7 +1143,7 @@ class TestConsecutiveToolBlocks:
         )
 
         engine = RuleEngine(db)
-        variables: dict[str, Any] = {"tool_block_pending": True, "_last_blocked_tool": "Edit"}
+        variables: dict[str, Any] = {"_last_blocked_tool": "Edit"}
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
@@ -1151,7 +1153,7 @@ class TestConsecutiveToolBlocks:
     async def test_short_circuit_fires_at_threshold(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """At count >= 2, engine should short-circuit block without evaluating rules."""
+        """At the configured threshold, engine should short-circuit without evaluating rules."""
 
         # Insert a rule with set_variable to prove it never runs
         _insert_rule(
@@ -1168,15 +1170,15 @@ class TestConsecutiveToolBlocks:
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "tool_block_pending": True,
-            "consecutive_tool_blocks": 1,
+            "consecutive_tool_blocks": 3,
             "_last_blocked_tool": "Edit",
+            "max_consecutive_blocked_tool_attempts": 5,
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "block"
-        assert "3 times consecutively" in response.reason
+        assert "5 times consecutively" in response.reason
         assert "STOP retrying" in response.reason
         # Rule should NOT have been evaluated — no side effect
         assert variables.get("rule_ran") is None
@@ -1187,13 +1189,14 @@ class TestConsecutiveToolBlocks:
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "tool_block_pending": True,
             "consecutive_tool_blocks": 3,
+            "_last_blocked_tool": "Edit",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Read"})
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 0
+        assert variables["_last_blocked_tool"] == ""
 
     @pytest.mark.asyncio
     async def test_counter_resets_on_turn_start_boundary(self, db: LocalDatabase) -> None:
@@ -1210,7 +1213,7 @@ class TestConsecutiveToolBlocks:
     async def test_counter_not_incremented_when_block_pending_false(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """First block should NOT touch the counter (tool_block_pending is false)."""
+        """First block should NOT touch the counter when no blocked tool is tracked."""
 
         _insert_rule(
             manager,
@@ -1234,14 +1237,15 @@ class TestConsecutiveToolBlocks:
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "tool_block_pending": True,
             "consecutive_tool_blocks": 2,
+            "_last_blocked_tool": "Edit",
         }
         event = _make_event(HookEventType.AFTER_TOOL, data={"tool_name": "Edit"})
         event.metadata["is_failure"] = True
         await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert variables["consecutive_tool_blocks"] == 2
+        assert variables["_last_blocked_tool"] == "Edit"
 
 
 class TestNoRules:
@@ -1753,13 +1757,7 @@ class TestEditWritePending:
         # edit_write_pending should be cleared since the edit was rule-blocked
         assert variables.get("edit_write_pending") is False
 
-        # First stop blocked by tool_block_pending (self-clearing)
-        stop_event = _make_event(HookEventType.STOP)
-        response = await engine.evaluate(stop_event, session_id="sess-1", variables=variables)
-        assert response.decision == "block"
-        assert "tool-failure-recovery" in response.reason
-
-        # Second stop should be allowed — no edit-write-recovery loop
+        # Stop should now be allowed — a gate-blocked edit is not a tool execution failure
         stop_event = _make_event(HookEventType.STOP)
         response = await engine.evaluate(stop_event, session_id="sess-1", variables=variables)
         assert response.decision == "allow"
@@ -2506,7 +2504,6 @@ class TestConsecutiveBlockDifferentTool:
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "tool_block_pending": True,
             "consecutive_tool_blocks": 1,
             "_last_blocked_tool": "Edit",
         }

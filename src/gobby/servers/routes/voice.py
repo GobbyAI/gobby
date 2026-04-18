@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, UploadFile
@@ -47,7 +46,6 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             }
 
         voice_config = config.voice
-        tts_provider = getattr(voice_config, "tts_provider", "kokoro")
 
         # Check STT availability
         stt_available = False
@@ -64,37 +62,9 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             except ImportError as e:
                 stt_reason = f"faster-whisper not installed (uv sync --extra voice): {e}"
 
-        # Check TTS availability
-        tts_available = False
-        tts_reason = ""
-        if not voice_config.enabled:
-            tts_reason = "Voice not enabled in config"
-        elif not voice_config.tts_enabled:
-            tts_reason = "TTS disabled in config"
-        elif tts_provider == "chatterbox":
-            try:
-                import chatterbox  # noqa: F401
+        from gobby.voice.providers import get_tts_status_for_config
 
-                tts_available = True
-            except ImportError as e:
-                tts_reason = f"chatterbox not installed (uv sync --extra voice): {e}"
-
-            if tts_available:
-                ref = Path(voice_config.tts_reference_audio).expanduser()
-                if not ref.exists():
-                    tts_reason = f"Reference audio not found: {ref}"
-        else:
-            try:
-                import kokoro_onnx  # noqa: F401
-            except ImportError as e:
-                tts_reason = f"kokoro-onnx not installed (uv sync --extra voice): {e}"
-            else:
-                model_path = Path(voice_config.tts_model_path).expanduser()
-                voices_path = Path(voice_config.tts_voices_path).expanduser()
-                if model_path.exists() and voices_path.exists():
-                    tts_available = True
-                else:
-                    tts_reason = "Kokoro model files not found"
+        tts_status_fields = get_tts_status_for_config(voice_config).as_status_fields()
 
         result: dict[str, Any] = {
             "enabled": voice_config.enabled,
@@ -105,22 +75,12 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             "stt_warmup_status": "idle",
             "stt_warmup_error": "",
             "tts_enabled": voice_config.tts_enabled,
-            "tts_provider": tts_provider,
-            "tts_available": tts_available,
-            "tts_reason": tts_reason,
             "tts_warmup_status": "idle",
             "tts_warmup_error": "",
             "voice_ready": False,
             "voice_loading": False,
         }
-
-        if tts_provider == "chatterbox":
-            ref = Path(voice_config.tts_reference_audio).expanduser()
-            result["tts_reference_audio"] = str(ref)
-            result["tts_reference_audio_exists"] = ref.exists()
-            result["tts_device"] = voice_config.tts_device
-        else:
-            result["tts_voice"] = voice_config.tts_voice
+        result.update(tts_status_fields)
 
         return result
 

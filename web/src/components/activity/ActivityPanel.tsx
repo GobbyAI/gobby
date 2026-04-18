@@ -1,14 +1,9 @@
 import {
   useState,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
-import {
-  TooltipProvider,
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "../chat/ui/Tooltip";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { PlansTab } from "./PlansTab";
 import { FileChangesTab } from "./FileChangesTab";
@@ -122,6 +117,17 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
 
 const noopFetchDiff = async (): Promise<string> => "";
 
+// Width constants shared between the inline style, ResizeHandle, and the
+// `useActivityPanel` localStorage validator. CHAT_MIN_WIDTH mirrors the
+// `min-w-[400px]` on the chat column in ChatPage.tsx so the maxWidth calc
+// always leaves enough room for the chat to keep its floor.
+const PANEL_MIN_WIDTH = 280;
+const PANEL_MAX_WIDTH = 1200;
+const CHAT_MIN_WIDTH = 400;
+const LAYOUT_BUFFER = 24;
+
+type ActivityTabConfig = (typeof TABS)[number];
+
 interface ActivityPanelProps {
   isPinned: boolean;
   onPinnedChange: (pinned: boolean) => void;
@@ -161,6 +167,63 @@ interface ActivityPanelProps {
   isMobile?: boolean;
 }
 
+interface ActivityDropdownProps {
+  tabs: ActivityTabConfig[];
+  activeTab: ActivityTab;
+  activeTabConfig: ActivityTabConfig;
+  isOpen: boolean;
+  onToggle: () => void;
+  onSelect: (tab: ActivityTab) => void;
+  wrapperRef: React.Ref<HTMLDivElement>;
+}
+
+function ActivityDropdown({
+  tabs,
+  activeTab,
+  activeTabConfig,
+  isOpen,
+  onToggle,
+  onSelect,
+  wrapperRef,
+}: ActivityDropdownProps) {
+  return (
+    <div className="activity-panel-mobile-select-wrap" ref={wrapperRef}>
+      <button
+        type="button"
+        className="activity-panel-mobile-trigger"
+        onClick={onToggle}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+      >
+        <span className="activity-panel-mobile-trigger__value">
+          <span className="activity-panel-tab-icon">{activeTabConfig.icon}</span>
+          <span>{activeTabConfig.label}</span>
+        </span>
+        <span className="activity-panel-mobile-trigger__caret">
+          {isOpen ? "\u25B2" : "\u25BC"}
+        </span>
+      </button>
+      {isOpen && (
+        <div className="activity-panel-mobile-menu" role="menu">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={activeTab === tab.id}
+              className={`activity-panel-mobile-menu__item${activeTab === tab.id ? " active" : ""}`}
+              onClick={() => onSelect(tab.id)}
+            >
+              <span className="activity-panel-tab-icon">{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ActivityPanel({
   isPinned,
   onPinnedChange,
@@ -196,17 +259,53 @@ export function ActivityPanel({
   const [narrowViewport, setNarrowViewport] = useState(
     () => window.innerWidth < 1100,
   );
+  const [showMobileTabMenu, setShowMobileTabMenu] = useState(false);
+  const mobileTabMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const handleResize = () => setNarrowViewport(window.innerWidth < 1100);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+  useEffect(() => {
+    if (!showMobileTabMenu) {
+      return;
+    }
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (!mobileTabMenuRef.current?.contains(event.target)) {
+        setShowMobileTabMenu(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowMobileTabMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showMobileTabMenu]);
   const useOverlay = isMobile || narrowViewport;
+  const activeTabConfig = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
 
   if (!isPinned) return null;
 
   // Mobile: close handler
-  const handleClose = () => onPinnedChange(false);
+  const handleClose = () => {
+    setShowMobileTabMenu(false);
+    onPinnedChange(false);
+  };
+  const handleTabSelect = (tab: ActivityTab) => {
+    onTabChange(tab);
+    setShowMobileTabMenu(false);
+  };
 
   const tabContent = () => {
     switch (activeTab) {
@@ -226,7 +325,7 @@ export function ActivityPanel({
       case "pipelines":
         return <PipelinesTab projectId={projectId} />;
       case "tasks":
-        return <TasksTab projectId={projectId} />;
+        return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":
         return <FilesTab projectId={projectId} onAddToChat={onAddFileToChat} />;
       case "plans":
@@ -267,27 +366,16 @@ export function ActivityPanel({
     return (
       <div className="activity-panel-mobile-overlay">
         <div className="activity-panel">
-          {/* Icon tab strip with close button */}
           <div className="activity-panel-tabs">
-            <div className="activity-panel-tab-strip" role="tablist">
-              {TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  role="tab"
-                  aria-selected={activeTab === tab.id}
-                  className={`activity-panel-tab${activeTab === tab.id ? " active" : ""}`}
-                  onClick={() => onTabChange(tab.id)}
-                  title={tab.label}
-                >
-                  <span className="activity-panel-tab-icon">{tab.icon}</span>
-                  {activeTab === tab.id && (
-                    <span className="activity-panel-tab-label">
-                      {tab.label}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+            <ActivityDropdown
+              tabs={TABS}
+              activeTab={activeTab}
+              activeTabConfig={activeTabConfig}
+              isOpen={showMobileTabMenu}
+              onToggle={() => setShowMobileTabMenu((open) => !open)}
+              onSelect={handleTabSelect}
+              wrapperRef={mobileTabMenuRef}
+            />
             <button
               className="activity-panel-close"
               onClick={handleClose}
@@ -309,44 +397,34 @@ export function ActivityPanel({
       <ResizeHandle
         onResize={onWidthChange}
         panelWidth={panelWidth}
-        minWidth={280}
-        maxWidth={1200}
+        minWidth={PANEL_MIN_WIDTH}
+        maxWidth={PANEL_MAX_WIDTH}
       />
       <div
         className="activity-panel"
-        style={{ width: panelWidth, flexShrink: 0 }}
+        style={{
+          width: panelWidth,
+          minWidth: PANEL_MIN_WIDTH,
+          maxWidth: `calc(100vw - ${CHAT_MIN_WIDTH + LAYOUT_BUFFER}px)`,
+          flexShrink: 1,
+        }}
       >
-        {/* Tab strip */}
         <div className="activity-panel-tabs">
-          <TooltipProvider delayDuration={200}>
-            <div className="activity-panel-tab-strip" role="tablist">
-              {TABS.map((tab) => (
-                <Tooltip key={tab.id}>
-                  <TooltipTrigger asChild>
-                    <button
-                      role="tab"
-                      aria-selected={activeTab === tab.id}
-                      className={`activity-panel-tab${activeTab === tab.id ? " active" : ""}`}
-                      onClick={() => onTabChange(tab.id)}
-                    >
-                      <span className="activity-panel-tab-icon">
-                        {tab.icon}
-                      </span>
-                      {activeTab === tab.id && (
-                        <span className="activity-panel-tab-label">
-                          {tab.label}
-                        </span>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{tab.label}</TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
-          </TooltipProvider>
+          <ActivityDropdown
+            tabs={TABS}
+            activeTab={activeTab}
+            activeTabConfig={activeTabConfig}
+            isOpen={showMobileTabMenu}
+            onToggle={() => setShowMobileTabMenu((open) => !open)}
+            onSelect={handleTabSelect}
+            wrapperRef={mobileTabMenuRef}
+          />
           <button
             className="activity-panel-pin"
-            onClick={() => onPinnedChange(!isPinned)}
+            onClick={() => {
+              setShowMobileTabMenu(false);
+              onPinnedChange(!isPinned);
+            }}
             title={isPinned ? "Unpin panel" : "Pin panel"}
           >
             <PinIcon pinned={isPinned} />

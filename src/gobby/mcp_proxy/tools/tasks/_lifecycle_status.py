@@ -17,6 +17,33 @@ from gobby.tasks.state_semantics import get_claimed_session_id
 logger = logging.getLogger(__name__)
 
 
+def _clear_prior_claim_session_variables(
+    ctx: RegistryContext,
+    task_id: str,
+    prior_assignee: str | None,
+    *,
+    action: str,
+) -> None:
+    """Best-effort removal of a task from the prior owner's claimed task state."""
+    if not prior_assignee:
+        return
+
+    try:
+        from gobby.workflows.task_claim_state import remove_claimed_task
+
+        session_vars = ctx.session_var_manager.get_variables(prior_assignee)
+        merge_dict = remove_claimed_task(session_vars, task_id)
+        ctx.session_var_manager.merge_variables(prior_assignee, merge_dict)
+        logger.debug(
+            "Removed task %s from claimed_tasks for session %s on %s",
+            task_id,
+            prior_assignee,
+            action,
+        )
+    except Exception as e:
+        logger.debug("Best-effort claimed_tasks cleanup on %s failed: %s", action, e)
+
+
 def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the reopen_task tool on the given registry."""
 
@@ -42,19 +69,12 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
         try:
             ctx.task_manager.reopen_task(resolved_id, reason=reason)
 
-            # Remove from claimed_tasks session variable for the prior assignee
-            if prior_assignee:
-                try:
-                    from gobby.workflows.task_claim_state import remove_claimed_task
-
-                    session_vars = ctx.session_var_manager.get_variables(prior_assignee)
-                    merge_dict = remove_claimed_task(session_vars, resolved_id)
-                    ctx.session_var_manager.merge_variables(prior_assignee, merge_dict)
-                    logger.debug(
-                        f"Removed task {resolved_id} from claimed_tasks for session {prior_assignee} on reopen",
-                    )
-                except Exception as e:
-                    logger.debug(f"Best-effort claimed_tasks cleanup on reopen failed: {e}")
+            _clear_prior_claim_session_variables(
+                ctx,
+                resolved_id,
+                prior_assignee,
+                action="reopen",
+            )
 
             # Update session-task link to reflect reopen
             if prior_assignee:
@@ -132,6 +152,7 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return {"error": f"Task {task_id} not found"}
+        prior_assignee = get_claimed_session_id(task)
 
         if task.status in ("escalated", "closed"):
             return {"error": f"Cannot escalate task with status '{task.status}'."}
@@ -140,6 +161,13 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
             ctx.task_manager.escalate_task(resolved_id, reason=reason)
         except ValueError as e:
             return {"error": str(e)}
+
+        _clear_prior_claim_session_variables(
+            ctx,
+            resolved_id,
+            prior_assignee,
+            action="escalate",
+        )
 
         notify_parent_on_status_change(
             ctx.task_manager.db,
@@ -220,6 +248,7 @@ def register_mark_task_review_approved(
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return {"error": f"Task {task_id} not found"}
+        prior_assignee = get_claimed_session_id(task)
 
         # Validate: current status must be needs_review, in_progress, or escalated
         if task.status not in ("needs_review", "in_progress", "escalated"):
@@ -261,6 +290,13 @@ def register_mark_task_review_approved(
             return {"error": str(e)}
         if not updated:
             return {"error": f"Failed to approve task {task_id}"}
+
+        _clear_prior_claim_session_variables(
+            ctx,
+            resolved_id,
+            prior_assignee,
+            action="review approval",
+        )
 
         notify_parent_on_status_change(
             ctx.task_manager.db,
@@ -335,6 +371,7 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return {"error": f"Task {task_id} not found"}
+        prior_assignee = get_claimed_session_id(task)
 
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         try:
@@ -370,6 +407,13 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
             return {"error": str(e)}
         if not updated:
             return {"error": f"Failed to mark task {task_id} for review"}
+
+        _clear_prior_claim_session_variables(
+            ctx,
+            resolved_id,
+            prior_assignee,
+            action="needs_review",
+        )
 
         notify_parent_on_status_change(
             ctx.task_manager.db,

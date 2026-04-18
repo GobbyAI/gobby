@@ -1,8 +1,8 @@
 # Task Expansion
 
-Task expansion breaks a high-level epic into concrete, atomic subtasks with dependencies, validation criteria, and file annotations. It enforces a hard boundary between **research** (creative codebase analysis) and **execution** (mechanical task creation).
+Task expansion breaks a high-level epic into concrete, validated subtasks with dependencies, file annotations, and optional TDD structure. The current system is **run-based**: the pipeline starts an expansion run, `ExpansionService` compiles a normalized spec in-process, and that run is then applied and validated.
 
-This guide covers the expansion pipeline end-to-end: how plans feed into expansion, how the expander agent produces a spec, how validation works, and how TDD gets applied.
+This guide covers the current flow end-to-end: how plans feed into expansion, what gets stored on the run, how validation works, and how TDD is applied.
 
 For the orchestration flow that invokes expansion, see [Orchestration](./orchestration.md).
 
@@ -16,11 +16,9 @@ flowchart LR
     EPIC --> PIPELINE["expand-task pipeline"]
 
     subgraph PIPELINE["expand-task pipeline"]
-        SPAWN["Spawn expander agent"] --> WAIT["Wait for completion"]
-        WAIT --> VALIDATE["Validate spec"]
-        VALIDATE --> EXECUTE["Execute expansion"]
-        EXECUTE --> WIRE["Wire affected files"]
-        WIRE --> DEPS["Analyze file overlaps"]
+        START["start_expansion_run"] --> WAIT["wait for run completion"]
+        WAIT --> LOAD["get_expansion_run"]
+        LOAD --> VALIDATE["validate_expansion_run"]
     end
 
     PIPELINE --> TREE["Subtask tree<br/>#43, #44, #45..."]
@@ -28,166 +26,146 @@ flowchart LR
 
 The expansion flow:
 
-1. **Input**: An epic task (from a plan document or created manually)
-2. **Research**: Expander agent explores the codebase and produces a structured JSON spec
-3. **Validate**: Pipeline validates spec structure, dependencies, and coverage
-4. **Execute**: Pipeline atomically creates all subtasks with dependencies
-5. **Wire**: File annotations from the spec are attached to each subtask
-6. **Overlap detection**: Identifies subtasks that touch the same files (contention risk)
+1. **Input**: An epic task, optionally with a supporting plan file
+2. **Run start**: `start_expansion_run` creates or reuses an expansion run and launches background work
+3. **Compile**: `ExpansionService.compile_run()` builds a normalized compiled spec with phases, tasks, dependencies, and execution groups
+4. **Apply**: `ExpansionService.apply_run()` creates the task tree, wires dependencies, and attaches affected files
+5. **Validate**: `validate_expansion_run` checks both the compiled spec and the applied task tree
 
 ---
 
 ## The Expand-Task Pipeline
 
+The canonical pipeline is the bundled workflow at `src/gobby/install/shared/workflows/pipelines/expand-task.yaml`.
+
 ```yaml
 name: expand-task
 type: pipeline
 
-inputs:
-  task_id: null        # Epic to expand
-  agent: "expander"    # Researcher agent
-  provider: "claude"   # LLM provider
-
 steps:
-  - id: spawn_researcher    # 1. Spawn expander agent
-    mcp: { server: gobby-agents, tool: spawn_agent }
+  - id: start_run
+    mcp:
+      server: gobby-tasks-ops
+      tool: start_expansion_run
 
-  - id: wait_researcher     # 2. Wait for agent to finish
-    wait: { completion_id: "${{ steps.spawn_researcher.output.run_id }}" }
+  - id: wait_run
+    wait:
+      completion_id: "${{ steps.start_run.output.run_id }}"
 
-  - id: validate            # 3. Validate the saved spec
-    mcp: { server: gobby-tasks-ops, tool: validate_expansion_spec }
+  - id: get_run
+    mcp:
+      server: gobby-tasks-ops
+      tool: get_expansion_run
 
-  - id: check_valid         # 4. Fail if invalid
-    condition: "${{ not steps.validate.output.valid }}"
-    exec: "exit 1"
-
-  - id: execute             # 5. Create subtasks atomically
-    mcp: { server: gobby-tasks-ops, tool: execute_expansion }
-
-  - id: wire_files          # 6. Attach file annotations
-    mcp: { server: gobby-tasks-ops, tool: wire_affected_files_from_spec }
-
-  - id: analyze_deps        # 7. Detect file contention
-    mcp: { server: gobby-tasks-ops, tool: find_file_overlaps }
+  - id: validate_run
+    mcp:
+      server: gobby-tasks-ops
+      tool: validate_expansion_run
 ```
 
-The hard boundary: the expander agent only researches and saves a spec. It cannot call `execute_expansion` or `create_task` — those tools are blocked in the expander's step workflow. The pipeline validates and executes mechanically.
-
-**Source**: `src/gobby/install/shared/workflows/expand-task.yaml`
+If the run does not complete successfully, the pipeline fails. If validation reports an invalid compiled or applied result, the pipeline fails with the validation payload.
 
 ---
 
-## The Expander Agent
+## Expansion Runs
 
-The expander agent has a two-step workflow: `research` → `terminate`.
+`start_expansion_run` is the entrypoint for expansion. It:
 
-During `research`, most tools are available for codebase exploration — Read, Grep, Glob, Bash, MCP tools. But these MCP tools are blocked:
+- Resolves the target task and current session
+- Reuses an active run for the same task unless `force_new=True`
+- Persists run metadata such as `plan_file`, provider, model, and `auto_apply`
+- Launches background execution for compile/apply work
 
-- `gobby-tasks-ops:execute_expansion` — Pipeline's job, not the agent's
-- `gobby-tasks:create_task` — No manual task creation
-- `gobby-tasks:close_task` — Can't close tasks
-- `gobby-agents:kill_agent` — Can't terminate prematurely
-
-When the agent calls `save_expansion_spec`, the `on_mcp_success` handler sets `spec_saved = true`, which triggers the automatic transition to `terminate`. The agent then calls `kill_agent` to exit cleanly.
-
-**Source**: `src/gobby/install/shared/agents/expander.yaml`
+The run is the durable unit of state. Compiled output, apply results, created task IDs, and validation checkpoints are stored on the run rather than being written back to the parent task as a standalone spec blob.
 
 ---
 
-## The Expansion Spec
+## Compiled Spec Shape
 
-The expander agent produces a JSON spec with a `subtasks` array. Each subtask has:
+`ExpansionService.compile_run()` normalizes the model output into a compiled spec with top-level `phases`, `tasks`, `dependencies`, and `execution_groups`.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `title` | string | Yes | Short, actionable title |
-| `description` | string | No | Implementation details |
-| `priority` | int | No | 1=High, 2=Medium (default), 3=Low |
-| `task_type` | string | No | `"task"` (default), `"bug"`, `"feature"`, `"epic"` |
-| `category` | string | No | `"code"`, `"config"`, `"docs"`, `"refactor"`, `"test"`, `"research"`, `"planning"`, `"manual"` |
-| `validation_criteria` | string | No | How to verify completion |
-| `depends_on` | list[int] | No | 0-based indices of dependencies |
-| `affected_files` | list[string] | No | File paths this task will create or modify |
-| `parallel_group` | string | No | Group label for safe parallel dispatch |
-
-### Example Spec
+Example:
 
 ```json
 {
-  "subtasks": [
+  "phases": [
     {
-      "title": "Create database schema",
-      "description": "Define tables for users and sessions",
-      "priority": 1,
-      "category": "code",
-      "affected_files": ["src/storage/migrations.py", "src/storage/schema.sql"],
-      "validation_criteria": "Run migrations and verify tables exist"
-    },
-    {
-      "title": "Implement data access layer",
-      "description": "CRUD operations for users and sessions",
-      "depends_on": [0],
-      "category": "code",
-      "affected_files": ["src/storage/users.py", "src/storage/sessions.py"],
-      "parallel_group": "data-layer",
-      "validation_criteria": "Unit tests for all repository methods pass"
-    },
-    {
-      "title": "Add API endpoints",
-      "description": "REST endpoints for user management",
-      "depends_on": [1],
-      "category": "code",
-      "affected_files": ["src/api/users.py"],
-      "validation_criteria": "Integration tests pass"
+      "id": "phase-1",
+      "title": "Phase 1: Foundation",
+      "summary": "Build the foundation.",
+      "test_intent": {
+        "behaviors": ["Writes the new files"],
+        "suggested_test_files": ["tests/test_foundation.py"]
+      },
+      "task_ids": ["task-1"]
     }
-  ]
+  ],
+  "tasks": [
+    {
+      "id": "task-1",
+      "phase_id": "phase-1",
+      "title": "Implement the foundation",
+      "description": "Create the initial implementation.",
+      "category": "code",
+      "priority": 2,
+      "task_type": "task",
+      "validation": "Implementation is present.",
+      "affected_files": ["src/foundation.py"]
+    }
+  ],
+  "dependencies": [],
+  "execution_groups": []
 }
 ```
 
-### Spec Storage
+Important fields:
 
-The spec is saved to the task via `save_expansion_spec`, which stores it in the database as JSON attached to the parent task. This survives session compaction — if the expansion is interrupted, the spec persists and can be resumed.
+- `phases[].task_ids`: stable task IDs assigned to that phase
+- `tasks[].phase_id`: phase membership
+- `tasks[].validation`: validation criteria copied onto the created task
+- `tasks[].affected_files`: file annotations attached during apply
+- `tasks[].execution_group`: optional concurrency label used to tag created tasks
+- `dependencies[]`: edges between stable task IDs
 
 ---
 
 ## Validation
 
-Before execution, the pipeline validates the spec via `validate_expansion_spec`:
+`validate_expansion_run` performs two checks:
 
-1. **Structure** — Valid JSON with `subtasks` array, each subtask has required `title` field
-2. **Dependencies** — `depends_on` indices reference valid subtask positions, no circular dependencies
-3. **Categories** — Valid category values from the allowed set
-4. **Affected files** — File paths are strings (not validated against filesystem)
+1. **Compiled validation** via `ExpansionService.validate_compiled_spec()`
+2. **Applied validation** via `ExpansionService.validate_applied_run()` when tasks have already been created
 
-If validation fails, the pipeline halts with the error messages. The spec can be fixed by the user or by re-running the expander agent.
+Compiled validation checks:
 
----
+- At least one phase and one task
+- Unique phase IDs and task IDs
+- Every task references a valid phase
+- Every phase references valid task IDs
+- Dependency edges reference known tasks and do not form cycles
 
-## Execution
-
-`execute_expansion` atomically creates all subtasks:
-
-1. Creates each subtask as a child of the parent epic
-2. Wires `depends_on` relationships as task dependencies
-3. Sets `category`, `priority`, `validation_criteria` from the spec
-4. Returns the list of created task IDs
-
-This is mechanical — no LLM involved. The spec fully determines the output.
-
-### Post-Execution: File Wiring
-
-`wire_affected_files_from_spec` reads the spec's `affected_files` for each subtask and attaches them to the corresponding task. These annotations are used by `suggest_next_task` (with `count` > 1) to detect file contention and avoid dispatching conflicting tasks in parallel.
-
-### Post-Execution: Overlap Detection
-
-`find_file_overlaps` analyzes the file annotations across all subtasks and returns pairs of tasks that share files. This helps the orchestrator and human reviewers understand which tasks cannot safely run in parallel.
+Applied validation checks the created task tree against the run's stored task map after apply.
 
 ---
 
-## Plans → Expansion
+## Applying the Run
 
-The `/gobby plan` skill creates structured plan documents. The `/gobby expand` skill creates tasks from those plans. Here's how they connect:
+`ExpansionService.apply_run()` is the mechanical phase that turns the compiled spec into tasks:
+
+1. Creates phase sub-epics when the spec has multiple phases
+2. Creates implementation tasks under the correct parent
+3. Copies category, priority, task type, description, and validation text onto created tasks
+4. Adds task dependencies based on the compiled dependency graph
+5. Attaches affected files through the affected-files manager
+6. Stores `task_id_map` and `created_task_ids` back onto the run
+
+If a `plan_file` was provided, created tasks include a short plan reference block so the task description remains authoritative while the plan stays as supporting context.
+
+---
+
+## Plans -> Expansion
+
+The `/gobby plan` skill creates structured plan documents. The `/gobby expand` skill turns those plans into an epic plus an expansion run.
 
 ```mermaid
 sequenceDiagram
@@ -195,25 +173,25 @@ sequenceDiagram
     participant P as /gobby plan
     participant E as /gobby expand
     participant EP as expand-task pipeline
+    participant XS as ExpansionService
 
     U->>P: "Plan dark mode support"
-    P->>P: Gather requirements
     P->>P: Write .gobby/plans/dark-mode.md
     P-->>U: Plan ready for review
 
     U->>E: "/gobby expand .gobby/plans/dark-mode.md"
-    E->>E: Read plan file
     E->>E: Create epic task from plan
     E->>EP: Run expand-task pipeline
-    EP->>EP: Spawn expander → research → spec
-    EP->>EP: Validate → execute → wire files
+    EP->>XS: start_expansion_run
+    XS->>XS: compile_run -> optional apply_run
+    EP->>EP: get_expansion_run -> validate_expansion_run
     EP-->>E: Subtasks created
-    E-->>U: "Created 8 subtasks under epic #42"
+    E-->>U: "Created subtasks under epic #42"
 ```
 
 ### Plan Document Format
 
-Plans use `### N.N` headings for tasks with metadata in the heading:
+Plans use `## Phase N: Title` headings for phase structure and `### N.N` headings for task-level details.
 
 ```markdown
 ## Phase 1: Foundation
@@ -231,13 +209,14 @@ Target: `src/auth/handler.py`
 Full implementation details here...
 ```
 
-Each `### N.N` section becomes a subtask description during expansion. The implementing agent only sees its own subtask — not the full plan.
+Each `### N.N` section feeds the compiled task descriptions. The implementing agent still receives the concrete task, not the full planning conversation.
 
 ### What Plans Should NOT Contain
 
-Plans should NOT include explicit test tasks. When TDD is enabled, the expansion system wraps `code` and `config` tasks in a TDD sandwich automatically. Including test tasks manually creates duplicates.
+Plans should not include explicit TDD wrapper tasks. When TDD is enabled, the expansion system inserts those mechanically during apply.
 
-**Forbidden patterns in plans:**
+Forbidden patterns:
+
 - `"Write tests for..."` or `"Test..."` as task titles
 - `"[TDD]"`, `"[IMPL]"`, `"[REF]"` prefixes
 - Separate test tasks alongside implementation tasks
@@ -248,100 +227,68 @@ See [TDD Enforcement](./tdd-enforcement.md) for how TDD is applied during expans
 
 ## TDD Integration
 
-When TDD is enabled (`enforce_tdd = true`), the expansion system applies the **TDD sandwich pattern** to `code` and `config` category tasks, grouped per phase:
+When TDD is enabled (`enforce_tdd = true`), `apply_run()` wraps `code` and `config` tasks in a per-phase TDD sandwich:
 
 ```text
 Epic #42 "User Authentication"
 ├── Phase 1: Core Infrastructure [subepic]
 │   ├── [TEST] Phase 1: Write failing tests
-│   ├── [IMPL] Create database schema          (category: code)
-│   ├── [IMPL] Implement data access layer     (category: code)
+│   ├── Create database schema
+│   ├── Implement data access layer
 │   └── [REF] Phase 1: Refactor with green tests
 ├── Phase 2: API Layer [subepic]
 │   ├── [TEST] Phase 2: Write failing tests
-│   ├── [IMPL] Add API endpoints               (category: code)
+│   ├── Add API endpoints
 │   └── [REF] Phase 2: Refactor with green tests
-└── Document the API                            (category: docs, no TDD)
+└── Document the API
 ```
 
-### Phase Subepics
+Rules worth knowing:
 
-When a plan has multiple `## Phase N: Title` headings, the expansion system creates **subepic tasks** for each phase. Subtasks are parented under their phase's subepic instead of directly under the root epic. Phase titles are extracted from the plan document headings.
+- Multi-phase plans create phase sub-epics
+- Each TDD-enabled phase gets one `[TEST]` task and one `[REF]` task
+- Implementation tasks in that phase depend on the phase's `[TEST]` task
+- The phase's `[REF]` task depends on all TDD-eligible implementation tasks in that phase
+- Non-TDD categories such as `docs`, `refactor`, `test`, `research`, `planning`, and `manual` are passed through unchanged
 
-Single-phase plans (or plans without `## Phase` headings) produce a flat structure under the root epic — this is backwards compatible with the previous behavior.
-
-### TDD Sandwich
-
-The TDD sandwich is applied **per phase**:
-- **One [TEST] task** at the start of each phase — covers that phase's `code`/`config` subtasks
-- **One [REF] task** at the end of each phase — cleanup while keeping tests green
-- Phase N's `[REF]` blocks Phase N+1's `[TEST]` (cross-phase sequencing)
-- `docs`, `refactor`, `test`, `research`, `planning`, `manual` categories are not wrapped
-
-The TDD tasks are created by the expansion system, not by the expander agent. The agent outputs plain feature tasks; the system adds the sandwich.
-
-See [TDD Enforcement Guide](./tdd-enforcement.md) for the full pattern.
+See [TDD Enforcement](./tdd-enforcement.md) for the runtime rule layer that reinforces this structure during agent work.
 
 ---
 
 ## Invoking Expansion
 
-### Via `/gobby expand` Skill
+### Via `/gobby expand`
 
-```
-/gobby expand #42                          # Expand an existing epic
-/gobby expand .gobby/plans/dark-mode.md    # Create epic from plan, then expand
+```text
+/gobby expand #42
+/gobby expand .gobby/plans/dark-mode.md
 ```
 
-The skill handles:
-- Checking for pending specs (resume after compaction)
-- Creating the epic from a plan file
-- Invoking the `expand-task` pipeline
-- Reporting results
+The skill creates or resolves the epic, then invokes `expand-task` and reports the created tasks.
 
 ### Via Pipeline Directly
 
 ```python
-result = call_tool("gobby-workflows", "run_pipeline", {
+call_tool("gobby-workflows", "run_pipeline", {
     "name": "expand-task",
     "inputs": {
         "task_id": "#42",
-        "session_id": "#350"
-    }
-})
-# Block until expansion finishes
-call_tool("gobby-workflows", "wait_for_completion", {
-    "execution_id": result["execution_id"],
-    "timeout": 600
+        "plan_file": ".gobby/plans/dark-mode.md"
+    },
+    "wait_for_completion": true,
+    "wait_timeout": 600
 })
 ```
 
-### Via Orchestrator
+### Via Orchestration
 
-The orchestrator automatically invokes expansion on the first iteration if the epic hasn't been expanded:
-
-```yaml
-- id: expand_epic
-  condition: "${{ not inputs._worktree_id and not get_epic.output.is_expanded }}"
-  invoke_pipeline:
-    name: expand-task
-    arguments:
-      task_id: "${{ inputs.session_task }}"
-```
+Orchestration flows can invoke the same `expand-task` pipeline before dispatching developer and QA agents.
 
 ---
 
-## Resume After Interruption
+## Resume and Reuse
 
-If expansion is interrupted (session compaction, crash), the spec persists in the database. The `/gobby expand` skill checks for pending specs on startup:
-
-```python
-result = call_tool("gobby-tasks-ops", "get_expansion_spec", {"task_id": "#42"})
-if result.get("pending"):
-    # Skip research — go straight to validate + execute
-```
-
-This means the expensive research phase doesn't need to be repeated.
+Expansion work survives interruption through the expansion run record. If a run is already active for a task, `start_expansion_run` reuses it by default instead of starting over. That keeps compile/apply state on the run and avoids reviving the old spec-on-task model.
 
 ---
 
@@ -349,11 +296,11 @@ This means the expensive research phase doesn't need to be repeated.
 
 | Path | Purpose |
 |------|---------|
-| `src/gobby/install/shared/workflows/expand-task.yaml` | Expansion pipeline definition |
-| `src/gobby/install/shared/agents/expander.yaml` | Expander agent definition |
-| `src/gobby/tasks/prompts/expand-task.md` | Expansion prompt (spec format, rules) |
-| `src/gobby/tasks/prompts/expand-task-tdd.md` | TDD mode instructions |
-| `src/gobby/mcp_proxy/tools/tasks/_expansion.py` | Expansion MCP tools (save, validate, execute) |
+| `src/gobby/install/shared/workflows/pipelines/expand-task.yaml` | Canonical expansion pipeline |
+| `src/gobby/tasks/expansion_service.py` | Compile, apply, and validation logic |
+| `src/gobby/mcp_proxy/tools/tasks/_expansion.py` | Expansion MCP tools and run lifecycle |
+| `src/gobby/tasks/prompts/expand-task.md` | Expansion prompt |
+| `src/gobby/tasks/prompts/expand-task-tdd.md` | TDD-specific expansion guidance |
 | `src/gobby/install/shared/skills/expand/SKILL.md` | `/gobby expand` skill |
 | `src/gobby/install/shared/skills/plan/SKILL.md` | `/gobby plan` skill |
 

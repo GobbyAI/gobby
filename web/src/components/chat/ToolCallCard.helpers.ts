@@ -2,9 +2,19 @@ import type { ToolCall, ToolResult } from '../../types/chat'
 import { classifyTool } from '../../types/chat'
 
 const FILE_TOOL_TYPES = new Set(['read', 'edit'])
-const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob'])
+const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob', 'protocol'])
 const COMPACT_HEADER_NAMES = new Set(['list_mcp_servers', 'ExitPlanMode'])
 const UNGROUPABLE_TOOLS = new Set(['render_surface', 'AskUserQuestion'])
+const SHELL_ALIAS_NAMES = new Set([
+  'bash',
+  'shell',
+  'run_command',
+  'run_shell_command',
+  'runshellcommand',
+  'shelltool',
+  'commandexecution',
+  'exec_command',
+])
 const EXT_TO_LANGUAGE: Record<string, string> = {
   py: 'python', tsx: 'tsx', ts: 'typescript', jsx: 'jsx', js: 'javascript',
   json: 'json', yaml: 'yaml', yml: 'yaml', md: 'markdown', css: 'css',
@@ -34,22 +44,123 @@ export function resolveToolType(call: ToolCall): string {
   return classifyTool(formatToolName(call.tool_name))
 }
 
+function getShellCommand(args: Record<string, unknown>): string | null {
+  const command = args.command
+  if (typeof command === 'string' && command.trim()) return command
+
+  const cmd = args.cmd
+  if (typeof cmd === 'string' && cmd.trim()) return cmd
+
+  return null
+}
+
+export function getToolDisplayName(call: ToolCall): string {
+  const name = formatToolName(call.tool_name)
+  const toolType = resolveToolType(call)
+  if (toolType === 'protocol') {
+    return 'Protocol'
+  }
+  if (toolType === 'bash' && SHELL_ALIAS_NAMES.has(name.toLowerCase())) {
+    return 'Bash'
+  }
+  return name
+}
+
 function isTypedResult(result: unknown): result is ToolResult {
   if (typeof result !== 'object' || result === null) return false
   const obj = result as Record<string, unknown>
   return 'content' in obj && 'content_type' in obj
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function tryParseJsonValue(value: string): unknown {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function getMcpEnvelopeCandidate(content: unknown): unknown {
+  const parsedContent = typeof content === 'string' ? tryParseJsonValue(content) : content
+  if (!isRecord(parsedContent) || !('output' in parsedContent)) return parsedContent
+
+  const output = typeof parsedContent.output === 'string'
+    ? tryParseJsonValue(parsedContent.output)
+    : parsedContent.output
+
+  if (
+    isRecord(output) &&
+    typeof output.success === 'boolean' &&
+    typeof output.response_time_ms === 'number'
+  ) {
+    return output
+  }
+
+  return parsedContent
+}
+
+function normalizeDisplayResult(
+  content: unknown,
+  metadata?: Record<string, unknown>,
+): { content: unknown; metadata?: Record<string, unknown> } {
+  const parsedContent = getMcpEnvelopeCandidate(content)
+  if (
+    !isRecord(parsedContent) ||
+    typeof parsedContent.success !== 'boolean' ||
+    typeof parsedContent.response_time_ms !== 'number'
+  ) {
+    return { content, metadata }
+  }
+
+  const mergedMetadata = { ...(metadata ?? {}) }
+  if (mergedMetadata.response_time_ms == null) {
+    mergedMetadata.response_time_ms = parsedContent.response_time_ms
+  }
+
+  const innerContent = 'result' in parsedContent
+    ? parsedContent.result
+    : {
+        success: parsedContent.success,
+        error:
+          parsedContent.success
+            ? parsedContent.error
+            : (typeof parsedContent.error === 'string' && parsedContent.error
+                ? parsedContent.error
+                : 'Unknown error'),
+      }
+
+  if (isRecord(innerContent) && mergedMetadata.response_time_ms != null) {
+    return {
+      content: innerContent.response_time_ms == null
+        ? { ...innerContent, response_time_ms: mergedMetadata.response_time_ms }
+        : innerContent,
+      metadata: mergedMetadata,
+    }
+  }
+
+  return {
+    content: innerContent,
+    metadata: mergedMetadata,
+  }
+}
+
 export function extractResultContent(result: unknown): unknown {
-  if (isTypedResult(result)) return result.content
-  return result
+  if (!isTypedResult(result)) return normalizeDisplayResult(result).content
+  return normalizeDisplayResult(result.content, result.metadata).content
 }
 
 export function extractResultMetadata(
   result: unknown,
 ): Record<string, unknown> | undefined {
-  if (isTypedResult(result)) return result.metadata
-  return undefined
+  if (!isTypedResult(result)) return normalizeDisplayResult(result).metadata
+  return normalizeDisplayResult(result.content, result.metadata).metadata
 }
 
 export function getToolSummary(call: ToolCall): string | null {
@@ -62,7 +173,9 @@ export function getToolSummary(call: ToolCall): string | null {
     case 'edit':
       return (args.file_path as string) || null
     case 'bash':
-      return truncStr(args.command as string, 80)
+      return truncStr(getShellCommand(args), 80)
+    case 'protocol':
+      return (args.tag as string) || null
     case 'grep': {
       const pattern = args.pattern as string
       const path = args.path as string
@@ -164,7 +277,7 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
       segments.push({
         kind: 'group',
         toolName: call.tool_name,
-        displayName: formatToolName(call.tool_name),
+        displayName: getToolDisplayName(call),
         tool_calls: calls,
         hasErrors: calls.some((entry) => entry.status === 'error'),
         allCompleted: calls.every((entry) => entry.status === 'completed'),
@@ -326,7 +439,7 @@ export function extractBase64Image(result: unknown): string | null {
 export function buildChainSummary(toolCalls: ToolCall[]): string {
   const counts = new Map<string, number>()
   for (const toolCall of toolCalls) {
-    const name = formatToolName(toolCall.tool_name)
+    const name = getToolDisplayName(toolCall)
     counts.set(name, (counts.get(name) || 0) + 1)
   }
 

@@ -7,6 +7,11 @@ import { AgentEditForm } from '../agents/AgentEditForm'
 import type { AgentFormData } from '../agents/AgentEditForm'
 import type { WorkflowStep } from '../agents/AgentStepsEditor'
 import { PROVIDER_COLORS } from '../shared/sourceTheme'
+import {
+  AUTO_REASONING_EFFORT,
+  fetchProviderModelCatalog,
+  type ProviderModelEntry,
+} from '../../lib/providerModels'
 
 // =============================================================================
 // Types
@@ -22,6 +27,8 @@ interface AgentDefInfo {
     instructions: string | null
     provider: string
     model: string | null
+    reasoning_effort?: string | null
+    reasoning_required?: boolean | null
     fallback_agent: string | null
     mode: string
     isolation: string | null
@@ -73,24 +80,8 @@ const ISOLATION_COLORS: Record<string, string> = {
 
 const DEFAULT_FORM: AgentFormData = {
   name: '', description: '', role: '', goal: '', personality: '', instructions: '',
-  provider: 'inherit', model: '', fallback_agent: '', mode: 'inherit', isolation: 'inherit',
+  provider: 'inherit', model: '', reasoning_effort: AUTO_REASONING_EFFORT, reasoning_required: false, fallback_agent: '', mode: 'inherit', isolation: 'inherit',
   base_branch: 'inherit', timeout: 0, max_turns: 0, pipeline: '',
-}
-
-const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
-  inherit: [{ value: '', label: '(default)' }],
-  claude: [
-    { value: '', label: '(default)' },
-    { value: 'opus', label: 'Opus' },
-    { value: 'sonnet', label: 'Sonnet' },
-    { value: 'haiku', label: 'Haiku' },
-  ],
-  gemini: [{ value: '', label: '(default)' }],
-  qwen: [{ value: '', label: '(default)' }],
-  codex: [{ value: '', label: '(default)' }],
-  cursor: [{ value: '', label: '(default)' }],
-  windsurf: [{ value: '', label: '(default)' }],
-  copilot: [{ value: '', label: '(default)' }],
 }
 
 function agentDefToYaml(d: AgentDefInfo['definition']): string {
@@ -102,6 +93,8 @@ function agentDefToYaml(d: AgentDefInfo['definition']): string {
   if (d.instructions) obj.instructions = d.instructions
   obj.provider = d.provider
   if (d.model) obj.model = d.model
+  if (d.reasoning_effort) obj.reasoning_effort = d.reasoning_effort
+  if (d.reasoning_required) obj.reasoning_required = d.reasoning_required
   if (d.fallback_agent) obj.fallback_agent = d.fallback_agent
   obj.mode = d.mode
   if (d.isolation) obj.isolation = d.isolation
@@ -264,15 +257,12 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     })
   }, [projectId])
 
-  const [providerModels, setProviderModels] = useState(PROVIDER_MODELS)
+  const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([])
 
   useEffect(() => {
-    fetch(`${getBaseUrl()}/admin/models`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.models) setProviderModels(prev => ({ ...prev, ...data.models }))
-      })
-      .catch(e => console.error('Failed to fetch model list:', e))
+    fetchProviderModelCatalog()
+      .then(setProviderCatalog)
+      .catch(e => console.error('Failed to fetch provider catalog:', e))
   }, [])
 
   // Fetch pipeline list for selector
@@ -360,6 +350,10 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         base_branch: createForm.base_branch,
         timeout: createForm.timeout,
         max_turns: createForm.max_turns,
+        reasoning_effort:
+          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_effort : null,
+        reasoning_required:
+          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_required : false,
       }
       if (createForm.description) body.description = createForm.description
       if (createForm.role) body.role = createForm.role
@@ -412,6 +406,8 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       instructions: d.instructions || '',
       provider: d.provider,
       model: d.model || '',
+      reasoning_effort: d.reasoning_effort || AUTO_REASONING_EFFORT,
+      reasoning_required: !!d.reasoning_required,
       fallback_agent: d.fallback_agent || '',
       mode: d.mode,
       isolation: d.isolation || 'inherit',
@@ -455,6 +451,10 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         instructions: createForm.instructions || null,
         provider: createForm.provider,
         model: createForm.model || null,
+        reasoning_effort:
+          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_effort : null,
+        reasoning_required:
+          createForm.reasoning_effort !== AUTO_REASONING_EFFORT ? createForm.reasoning_required : false,
         fallback_agent: createForm.fallback_agent || null,
         mode: createForm.mode,
         isolation: createForm.isolation,
@@ -545,9 +545,11 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     if (d.role) body.role = d.role
     if (d.goal) body.goal = d.goal
     if (d.personality) body.personality = d.personality
-    if (d.instructions) body.instructions = d.instructions
-    if (d.model) body.model = d.model
-    if (d.fallback_agent) body.fallback_agent = d.fallback_agent
+      if (d.instructions) body.instructions = d.instructions
+      if (d.model) body.model = d.model
+      if (d.reasoning_effort) body.reasoning_effort = d.reasoning_effort
+      if (d.reasoning_required) body.reasoning_required = d.reasoning_required
+      if (d.fallback_agent) body.fallback_agent = d.fallback_agent
     if (d.isolation) body.isolation = d.isolation
     if (d.workflows) body.workflows = d.workflows
     try {
@@ -644,6 +646,8 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         instructions: parsed.instructions ?? null,
         provider: parsed.provider || yamlAgent.definition.provider,
         model: parsed.model ?? null,
+        reasoning_effort: parsed.reasoning_effort ?? null,
+        reasoning_required: parsed.reasoning_required ?? false,
         mode: parsed.mode || yamlAgent.definition.mode,
         isolation: parsed.isolation ?? null,
         base_branch: (parsed.base_branch as string) || yamlAgent.definition.base_branch,
@@ -693,6 +697,8 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         instructions: parsed.instructions ?? null,
         provider: parsed.provider || createForm.provider,
         model: parsed.model ?? null,
+        reasoning_effort: parsed.reasoning_effort ?? null,
+        reasoning_required: parsed.reasoning_required ?? false,
         mode: parsed.mode || createForm.mode,
         isolation: parsed.isolation ?? null,
         base_branch: (parsed.base_branch as string) || createForm.base_branch,
@@ -999,7 +1005,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         onSave={editingId ? handleUpdate : handleCreate}
         onCancel={() => { onToggleCreateForm(false); setEditingId(null); setSelectedAgent(null) }}
         isEditing={!!editingId}
-        providerModels={providerModels}
+        providerCatalog={providerCatalog}
         saveDisabled={!createForm.name.trim()}
         editingId={editingId}
         branches={branches}

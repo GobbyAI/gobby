@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, resolve_runtime_stdio_args
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
 from gobby.mcp_proxy.transports.stdio import (
     StdioTransportConnection,
@@ -168,6 +169,43 @@ class TestExpandArgs:
         with patch.dict(os.environ, {"DIR": "/tmp"}):
             result = _expand_args(["--dir", "${DIR}", "--verbose"])
             assert result == ["--dir", "/tmp", "--verbose"]
+
+
+class TestResolveRuntimeStdioArgs:
+    @patch(
+        "gobby.mcp_proxy.bundled.resolve_chrome_devtools_executable_path",
+        return_value="/tmp/chrome",
+    )
+    def test_injects_chrome_executable_at_runtime(self, _mock_path: MagicMock) -> None:
+        args = resolve_runtime_stdio_args(
+            "chrome-devtools",
+            ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"],
+        )
+
+        assert args == [
+            "-y",
+            CHROME_DEVTOOLS_NPM_PACKAGE,
+            "--no-usage-statistics",
+            "--executable-path=/tmp/chrome",
+        ]
+
+    @patch(
+        "gobby.mcp_proxy.bundled.resolve_chrome_devtools_executable_path",
+        return_value="/tmp/new-chrome",
+    )
+    def test_replaces_persisted_chrome_executable_arg(self, _mock_path: MagicMock) -> None:
+        args = resolve_runtime_stdio_args(
+            "chrome-devtools",
+            [
+                "-y",
+                CHROME_DEVTOOLS_NPM_PACKAGE,
+                "--executable-path=/tmp/old-chrome",
+                "--no-usage-statistics",
+            ],
+        )
+
+        assert "--executable-path=/tmp/old-chrome" not in args
+        assert "--executable-path=/tmp/new-chrome" in args
 
 
 # ===========================================================================

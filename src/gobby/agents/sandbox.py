@@ -1,14 +1,19 @@
-"""
-Sandbox Configuration Models.
+"""Sandbox configuration helpers for spawned CLIs.
 
-This module defines configuration models for sandbox/isolation settings
-when spawning agents. The actual sandboxing is handled by each CLI's
-built-in sandbox implementation - Gobby just passes the right flags.
+This module keeps the provider-specific sandbox contract in one place so the
+same rules can be reused by terminal spawns, web-chat backends, and any future
+installer/runtime glue that needs to materialize provider settings.
 """
 
+import asyncio
+import hashlib
+import json
+import logging
+import os
+import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +43,105 @@ class SandboxConfig(BaseModel):
     allow_network: bool = True
     extra_read_paths: list[str] = Field(default_factory=list)
     extra_write_paths: list[str] = Field(default_factory=list)
+
+
+_DAEMON_OWNED_SANDBOX_MODE: Literal["permissive", "restrictive"] = "permissive"
+_DAEMON_OWNED_ALLOW_NETWORK = True
+_DAEMON_SANDBOX_POLICY_VERSION = 1
+_WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
+    "This chat was created under a different sandbox policy. Continue it in a new chat."
+)
+logger = logging.getLogger(__name__)
+
+
+def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
+    """Normalize a config-like object into SandboxConfig."""
+    if config is None:
+        return None
+    if isinstance(config, SandboxConfig):
+        return config.model_copy(deep=True)
+    if isinstance(config, dict):
+        return SandboxConfig(**config)
+
+    raw_mode = str(getattr(config, "mode", "permissive"))
+    mode = cast(
+        Literal["permissive", "restrictive"],
+        raw_mode if raw_mode in {"permissive", "restrictive"} else "permissive",
+    )
+
+    return SandboxConfig(
+        enabled=bool(getattr(config, "enabled", False)),
+        mode=mode,
+        allow_network=bool(getattr(config, "allow_network", True)),
+        extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
+        extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
+    )
+
+
+def daemon_owned_sandbox_config(
+    config: Any | None,
+    *,
+    default_enabled: bool = True,
+) -> SandboxConfig:
+    """Resolve daemon-owned sandbox config into the internal runtime model."""
+    if config is None:
+        return SandboxConfig(
+            enabled=default_enabled,
+            mode=_DAEMON_OWNED_SANDBOX_MODE,
+            allow_network=_DAEMON_OWNED_ALLOW_NETWORK,
+        )
+
+    return SandboxConfig(
+        enabled=bool(getattr(config, "enabled", default_enabled)),
+        mode=_DAEMON_OWNED_SANDBOX_MODE,
+        allow_network=_DAEMON_OWNED_ALLOW_NETWORK,
+        extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
+        extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
+    )
+
+
+def web_chat_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
+    """Return the daemon-owned web-chat sandbox config."""
+    raw_config = getattr(daemon_config, "web_chat_sandbox", None) if daemon_config else None
+    return daemon_owned_sandbox_config(raw_config, default_enabled=True)
+
+
+def agent_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
+    """Return the daemon-owned spawned-agent sandbox config."""
+    raw_config = getattr(daemon_config, "agent_sandbox", None) if daemon_config else None
+    return daemon_owned_sandbox_config(raw_config, default_enabled=True)
+
+
+def daemon_owned_sandbox_policy_hash(
+    config: Any | None,
+    *,
+    scope: str,
+    default_enabled: bool = True,
+) -> str:
+    """Return a stable hash for daemon-owned sandbox policy snapshots."""
+    resolved = daemon_owned_sandbox_config(config, default_enabled=default_enabled)
+    payload = {
+        "version": _DAEMON_SANDBOX_POLICY_VERSION,
+        "scope": scope,
+        "enabled": resolved.enabled,
+        "mode": resolved.mode,
+        "allow_network": resolved.allow_network,
+        "extra_read_paths": resolved.extra_read_paths,
+        "extra_write_paths": resolved.extra_write_paths,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def web_chat_sandbox_policy_hash(daemon_config: Any | None) -> str:
+    """Return the current daemon-owned web-chat sandbox policy hash."""
+    raw_config = getattr(daemon_config, "web_chat_sandbox", None) if daemon_config else None
+    return daemon_owned_sandbox_policy_hash(raw_config, scope="web_chat", default_enabled=True)
+
+
+def web_chat_policy_mismatch_message() -> str:
+    """Return the standard web-chat sandbox policy mismatch message."""
+    return _WEB_CHAT_POLICY_MISMATCH_MESSAGE
 
 
 class ResolvedSandboxPaths(BaseModel):
@@ -110,27 +214,47 @@ class ClaudeSandboxResolver(SandboxResolver):
     def cli_name(self) -> str:
         return "claude"
 
+    def build_settings(
+        self,
+        config: SandboxConfig,
+        paths: ResolvedSandboxPaths,
+    ) -> dict[str, Any]:
+        """Return the current documented Claude sandbox settings payload.
+
+        Claude's current documented ``sandbox`` surface is scoped to the Bash
+        tool. Context7 did not surface a documented "allow all outbound
+        domains" wildcard, so Gobby keeps the sandbox enabled and disables
+        unsandboxed fallback without inventing undocumented network semantics.
+        """
+        if not config.enabled:
+            return {}
+
+        return {
+            "allowManagedPermissionRulesOnly": True,
+            "sandbox": {
+                "enabled": True,
+                "autoAllowBashIfSandboxed": False,
+                "allowUnsandboxedCommands": False,
+                "excludedCommands": [],
+                "network": {
+                    "allowUnixSockets": [],
+                    "allowAllUnixSockets": False,
+                    "allowLocalBinding": False,
+                    "allowedDomains": [],
+                    "httpProxyPort": None,
+                    "socksProxyPort": None,
+                },
+                "enableWeakerNestedSandbox": False,
+            },
+        }
+
     def resolve(
         self, config: SandboxConfig, paths: ResolvedSandboxPaths
     ) -> tuple[list[str], dict[str, str]]:
         if not config.enabled:
             return ([], {})
-
-        import json
-
-        # Build settings JSON for Claude Code
-        settings = {
-            "sandbox": {
-                "enabled": True,
-                "autoAllowBashIfSandboxed": True,
-                # Network config - allow localhost for Gobby daemon
-                "network": {
-                    "allowLocalBinding": True,
-                },
-            }
-        }
-
-        return (["--settings", json.dumps(settings)], {})
+        settings = self.build_settings(config, paths)
+        return (["--settings", json.dumps(settings, separators=(",", ":"))], {})
 
 
 class CodexSandboxResolver(SandboxResolver):
@@ -146,6 +270,18 @@ class CodexSandboxResolver(SandboxResolver):
     def cli_name(self) -> str:
         return "codex"
 
+    @staticmethod
+    def sandbox_policy(config: SandboxConfig) -> str:
+        """Return Codex CLI's documented sandbox mode string."""
+        return "read-only" if config.mode == "restrictive" else "workspace-write"
+
+    @staticmethod
+    def thread_sandbox_policy(config: SandboxConfig | None) -> str | None:
+        """Return the app-server sandbox policy for web-chat threads."""
+        if config is None or not config.enabled:
+            return None
+        return "read-only" if config.mode == "restrictive" else "workspace-write"
+
     def resolve(
         self, config: SandboxConfig, paths: ResolvedSandboxPaths
     ) -> tuple[list[str], dict[str, str]]:
@@ -154,11 +290,7 @@ class CodexSandboxResolver(SandboxResolver):
 
         args: list[str] = []
 
-        # Sandbox mode
-        if config.mode == "restrictive":
-            args.extend(["--sandbox", "read-only"])
-        else:
-            args.extend(["--sandbox", "workspace-write"])
+        args.extend(["--sandbox", self.sandbox_policy(config)])
 
         # Add extra write paths (workspace is implicit in workspace-write mode)
         for path in paths.write_paths:
@@ -180,6 +312,13 @@ class GeminiSandboxResolver(SandboxResolver):
     def cli_name(self) -> str:
         return "gemini"
 
+    @staticmethod
+    def seatbelt_profile(config: SandboxConfig, paths: ResolvedSandboxPaths) -> str:
+        """Return the documented Gemini/Qwen Seatbelt profile name."""
+        mode_prefix = "restrictive" if config.mode == "restrictive" else "permissive"
+        network_suffix = "open" if paths.allow_external_network else "proxied"
+        return f"{mode_prefix}-{network_suffix}"
+
     def resolve(
         self, config: SandboxConfig, paths: ResolvedSandboxPaths
     ) -> tuple[list[str], dict[str, str]]:
@@ -187,15 +326,109 @@ class GeminiSandboxResolver(SandboxResolver):
             return ([], {})
 
         args = ["-s"]
-        env: dict[str, str] = {}
-
-        # Set SEATBELT_PROFILE based on mode (macOS)
-        if config.mode == "restrictive":
-            env["SEATBELT_PROFILE"] = "restrictive-closed"
-        else:
-            env["SEATBELT_PROFILE"] = "permissive-open"
+        env = {"SEATBELT_PROFILE": self.seatbelt_profile(config, paths)}
 
         return (args, env)
+
+
+class QwenSandboxResolver(GeminiSandboxResolver):
+    """Qwen currently follows the same sandbox contract as Gemini."""
+
+    @property
+    def cli_name(self) -> str:
+        return "qwen"
+
+
+def merge_claude_settings(
+    base_settings: dict[str, Any],
+    config: SandboxConfig,
+    paths: ResolvedSandboxPaths,
+) -> dict[str, Any]:
+    """Merge Claude sandbox settings into an existing settings payload."""
+
+    def _merge(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(left)
+        for key, value in right.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = _merge(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+
+    resolver = ClaudeSandboxResolver()
+    overlay = resolver.build_settings(config, paths)
+    return _merge(base_settings, overlay)
+
+
+def materialize_claude_settings(
+    *,
+    base_settings_path: str | Path | None,
+    config: SandboxConfig,
+    workspace_path: str,
+    name: str = "runtime",
+) -> str | None:
+    """Write a deterministic Claude settings file for SDK-managed sessions."""
+    if not config.enabled:
+        if base_settings_path:
+            return str(Path(base_settings_path))
+        return None
+
+    payload: dict[str, Any] = {}
+    if base_settings_path:
+        source_path = Path(base_settings_path)
+        if source_path.exists():
+            try:
+                raw_payload = json.loads(source_path.read_text(encoding="utf-8"))
+                if isinstance(raw_payload, dict):
+                    payload = raw_payload
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "Failed to read Claude base settings for runtime sandbox overlay",
+                    extra={
+                        "path": str(source_path),
+                        "settings_purpose": "runtime_sandbox_overlay",
+                        "error": str(exc),
+                    },
+                    exc_info=True,
+                )
+                payload = {}
+
+    resolved_paths = compute_sandbox_paths(config, workspace_path=workspace_path)
+    merged = merge_claude_settings(payload, config, resolved_paths)
+    encoded = json.dumps(merged, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()[:12]
+
+    settings_dir = Path.home() / ".gobby" / "settings" / "runtime"
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    target = settings_dir / f"claude-{name}-{digest}.json"
+    if not target.exists():
+        temp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid.uuid4().hex}")
+        try:
+            with open(temp_path, "wb") as handle:
+                handle.write(json.dumps(merged, indent=2).encode("utf-8") + b"\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, target)
+        finally:
+            temp_path.unlink(missing_ok=True)
+    return str(target)
+
+
+async def materialize_claude_settings_async(
+    *,
+    base_settings_path: str | Path | None,
+    config: SandboxConfig,
+    workspace_path: str,
+    name: str = "runtime",
+) -> str | None:
+    """Materialize Claude settings without blocking the event loop."""
+    return await asyncio.to_thread(
+        materialize_claude_settings,
+        base_settings_path=base_settings_path,
+        config=config,
+        workspace_path=workspace_path,
+        name=name,
+    )
 
 
 def get_sandbox_resolver(cli: str) -> SandboxResolver:
@@ -215,6 +448,7 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
         "claude": ClaudeSandboxResolver,
         "codex": CodexSandboxResolver,
         "gemini": GeminiSandboxResolver,
+        "qwen": QwenSandboxResolver,
     }
 
     if cli not in resolvers:

@@ -322,7 +322,7 @@ Scope rules to specific agent types:
 rules:
   no-push-workers:
     event: before_tool
-    agent_scope: [developer, expander, qa-reviewer]
+    agent_scope: [developer, pipeline-worker, qa-reviewer]
     effect:
       type: block
       tools: [Bash]

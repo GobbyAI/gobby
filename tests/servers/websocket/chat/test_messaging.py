@@ -45,6 +45,8 @@ class DummyMessagingMixin(ChatMessagingMixin):
         model: str | None = None,
         project_id: str | None = None,
         resume_session_id: str | None = None,
+        provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncMock:
         sess = AsyncMock()
         sess.db_session_id = "db-id"
@@ -159,6 +161,37 @@ class TestHandleChatMessage:
 
 class TestStreamChatResponse:
     @pytest.mark.asyncio
+    async def test_startup_error_exposes_debug_detail(
+        self,
+        mixin: DummyMessagingMixin,
+        ws: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mixin.clients[ws] = {"conversation_id": "c1"}
+
+        with patch.object(
+            mixin,
+            "_create_chat_session",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ):
+            with caplog.at_level(
+                "DEBUG", logger="gobby.servers.websocket.chat._messaging"
+            ):
+                await mixin._stream_chat_response(ws, "c1", "hi", None)
+
+        messages = [json.loads(call[0][0]) for call in ws.send.call_args_list]
+        chat_error = next(msg for msg in messages if msg.get("type") == "chat_error")
+
+        assert chat_error["error"] == "Failed to start chat session. Please try again."
+        assert chat_error["error_detail"] == "RuntimeError: boom"
+        assert any(
+            record.levelname == "ERROR"
+            and "Failed to start chat session for conversation c1" in record.message
+            and record.exc_info
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
     async def test_stream_model_switch(self, mixin: DummyMessagingMixin, ws: AsyncMock):
         mixin.clients[ws] = {"conversation_id": "c1"}
         session = AsyncMock()
@@ -227,7 +260,7 @@ class TestStreamChatResponse:
 
         async def canceling_stream(content):
             raise asyncio.CancelledError()
-            yield  # noqa: unreachable — required to make this an async generator
+            yield  # required to make this an async generator
 
         # send_message must return an async generator directly (not a coroutine)
         session.send_message = lambda content: canceling_stream(content)

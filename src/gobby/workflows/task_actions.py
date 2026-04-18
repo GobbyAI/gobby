@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 def update_task_from_workflow(
     db: DatabaseProtocol,
     task_id: str,
-    status: str | None = None,
     validation_status: str | None = None,
     validation_feedback: str | None = None,
 ) -> Task | None:
@@ -28,7 +27,6 @@ def update_task_from_workflow(
     Args:
         db: LocalDatabase instance
         task_id: ID of the task to update
-        status: New status ('open', 'in_progress', 'closed')
         validation_status: Validation status ('pending', 'valid', 'invalid')
         validation_feedback: Feedback from validation
 
@@ -40,8 +38,6 @@ def update_task_from_workflow(
     try:
         # Build update kwargs only for provided values
         update_kwargs: dict[str, Any] = {}
-        if status is not None:
-            update_kwargs["status"] = status
         if validation_status is not None:
             update_kwargs["validation_status"] = validation_status
         if validation_feedback is not None:

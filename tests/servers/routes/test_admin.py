@@ -1,3 +1,4 @@
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -150,8 +151,22 @@ class TestAdminRoutes:
         # verify the method was called.
         mock_server._process_shutdown.assert_called()
 
+    @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
+    @patch(
+        "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
+        return_value=False,
+    )
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
-    def test_restart_endpoint(self, mock_popen, client, mock_server) -> None:
+    def test_restart_endpoint_uses_direct_helper(
+        self,
+        mock_popen,
+        _mock_service_mode,
+        _mock_getpid,
+        client,
+        mock_server,
+    ) -> None:
+        import gobby.servers.routes.admin._lifecycle as lifecycle
+
         response = client.post("/api/admin/restart")
         assert response.status_code == 200
         data = response.json()
@@ -159,14 +174,59 @@ class TestAdminRoutes:
         assert data["message"] == "Daemon restart initiated"
         assert "response_time_ms" in data
 
-        # Verify restarter subprocess was spawned
         mock_popen.assert_called_once()
+        command = mock_popen.call_args.args[0]
+        assert command == [sys.executable, "-c", lifecycle._DIRECT_RESTART_HELPER, "4321"]
 
-        # Verify shutdown was initiated
         mock_server._process_shutdown.assert_called()
 
+    @patch("gobby.servers.routes.admin._lifecycle.os.getpid", return_value=4321)
+    @patch(
+        "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
+        return_value=True,
+    )
     @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
-    def test_restart_endpoint_double_restart_guard(self, mock_popen, client, mock_server) -> None:
+    def test_restart_endpoint_uses_service_helper(
+        self,
+        mock_popen,
+        _mock_service_mode,
+        _mock_getpid,
+        client,
+        mock_server,
+    ) -> None:
+        import gobby.servers.routes.admin._lifecycle as lifecycle
+
+        response = client.post("/api/admin/restart")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "restarting"
+        assert data["message"] == "Daemon restart initiated"
+        assert "response_time_ms" in data
+
+        mock_popen.assert_called_once()
+        command = mock_popen.call_args.args[0]
+        assert command == [
+            sys.executable,
+            "-c",
+            lifecycle._SERVICE_RESTART_HELPER,
+            "4321",
+            str(mock_server.port),
+        ]
+
+        mock_server._process_shutdown.assert_called()
+
+    @patch(
+        "gobby.servers.routes.admin._lifecycle._should_restart_via_service_manager",
+        return_value=False,
+    )
+    @patch("gobby.servers.routes.admin._lifecycle.subprocess.Popen")
+    def test_restart_endpoint_double_restart_guard(
+        self,
+        mock_popen,
+        _mock_service_mode,
+        client,
+        mock_server,
+    ) -> None:
         # First restart should succeed
         response1 = client.post("/api/admin/restart")
         assert response1.json()["status"] == "restarting"
@@ -174,6 +234,31 @@ class TestAdminRoutes:
         # Second restart should be rejected
         response2 = client.post("/api/admin/restart")
         assert response2.json()["status"] == "already_restarting"
+        mock_popen.assert_called_once()
+
+
+class TestAdminRestartHelpers:
+    @patch("gobby.servers.routes.admin._lifecycle._append_restart_helper_log")
+    @patch("gobby.cli.installers.service.service_restart")
+    @patch("gobby.cli.daemon._wait_for_daemon_health")
+    @patch("gobby.servers.routes.admin._lifecycle._wait_for_process_exit", return_value=True)
+    def test_service_restart_helper_invokes_service_restart_when_needed(
+        self,
+        _mock_wait_for_exit,
+        mock_wait_for_health,
+        mock_service_restart,
+        mock_log,
+    ) -> None:
+        import gobby.servers.routes.admin._lifecycle as lifecycle
+
+        mock_wait_for_health.side_effect = [None, 0.5]
+        mock_service_restart.return_value = {"success": True, "method": "launchctl"}
+
+        lifecycle._run_service_restart_helper(4321, 60887)
+
+        mock_service_restart.assert_called_once_with()
+        assert mock_wait_for_health.call_count == 2
+        mock_log.assert_not_called()
 
 
 class TestHealthEndpoint:
@@ -206,227 +291,6 @@ class TestHealthEndpoint:
         data = response.json()
         # Should only have a single key
         assert list(data.keys()) == ["status"]
-
-
-class TestModelsEndpoint:
-    """Tests for GET /admin/models."""
-
-    @pytest.fixture
-    def mock_server(self):
-        server = MagicMock()
-        server.test_mode = False
-        # Config with default model
-        server.services.config.llm_providers.default_model = "haiku"
-        return server
-
-    @pytest.fixture
-    def client(self, mock_server):
-        from fastapi import FastAPI
-
-        app = FastAPI()
-        router = create_admin_router(mock_server)
-        app.include_router(router)
-        return TestClient(app)
-
-    @patch("gobby.servers.routes.admin._config._discover_models")
-    def test_models_returns_grouped(self, mock_discover, client) -> None:
-        mock_discover.return_value = {
-            "claude": ["haiku"],
-            "gpt": ["gpt-4.5-preview", "o3-mini"],
-        }
-
-        response = client.get("/api/admin/models")
-        assert response.status_code == 200
-        data = response.json()
-
-        assert "models" in data
-        assert "claude" in data["models"]
-        assert "gpt" in data["models"]
-        assert data["default_model"] == "haiku"
-
-    @patch("gobby.servers.routes.admin._config._discover_models")
-    def test_models_provider_filter(self, mock_discover, client) -> None:
-        mock_discover.return_value = {
-            "claude": ["haiku"],
-            "gpt": ["gpt-4.5-preview"],
-        }
-
-        response = client.get("/api/admin/models?provider=claude")
-        assert response.status_code == 200
-        data = response.json()
-
-        assert "claude" in data["models"]
-        assert "gpt" not in data["models"]
-
-    @patch("gobby.servers.routes.admin._config._discover_models")
-    def test_models_provider_filter_no_match(self, mock_discover, client) -> None:
-        mock_discover.return_value = {
-            "claude": ["haiku"],
-        }
-
-        response = client.get("/api/admin/models?provider=nonexistent")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["models"] == {}
-
-    @patch("gobby.servers.routes.admin._config._fallback_models_from_config")
-    @patch("gobby.servers.routes.admin._config._discover_models")
-    def test_models_fallback_on_discovery_error(
-        self, mock_discover, mock_fallback, client, mock_server
-    ) -> None:
-        mock_discover.side_effect = RuntimeError("Network error")
-        mock_fallback.return_value = {"claude": ["haiku"]}
-
-        response = client.get("/api/admin/models")
-        assert response.status_code == 200
-        data = response.json()
-
-        assert data["models"] == {"claude": ["haiku"]}
-        mock_fallback.assert_called_once_with(mock_server)
-
-    @patch("gobby.servers.routes.admin._config._discover_models")
-    def test_models_default_model_from_config(self, mock_discover, client) -> None:
-        mock_discover.return_value = {}
-
-        response = client.get("/api/admin/models")
-        data = response.json()
-        assert data["default_model"] == "haiku"
-
-    @patch("gobby.servers.routes.admin._config._discover_models")
-    def test_models_default_model_fallback(self, mock_discover) -> None:
-        """When no config default_model is set, returns None."""
-        server = MagicMock()
-        server.test_mode = False
-        server.services.config.llm_providers.default_model = None
-
-        from fastapi import FastAPI
-
-        app = FastAPI()
-        router = create_admin_router(server)
-        app.include_router(router)
-        client = TestClient(app)
-
-        mock_discover.return_value = {}
-        response = client.get("/api/admin/models")
-        data = response.json()
-        assert data["default_model"] is None
-
-
-class TestDiscoverModels:
-    """Tests for the _discover_models helper function."""
-
-    @patch("gobby.llm.model_registry.fetch_models_sync")
-    def test_discover_models_groups_by_provider(self, mock_fetch) -> None:
-        from gobby.llm.model_registry import ModelInfo
-        from gobby.servers.routes.admin._config import _discover_models
-
-        mock_fetch.return_value = [
-            ModelInfo(
-                "anthropic/claude-haiku-4-5",
-                "Anthropic: Claude Haiku 4.5",
-                "claude",
-                200000,
-                64000,
-            ),
-            ModelInfo("openai/gpt-4o", "OpenAI: GPT-4o", "codex", 128000, 16384),
-            ModelInfo(
-                "google/gemini-2.5-pro",
-                "Google: Gemini 2.5 Pro",
-                "gemini",
-                1000000,
-                65536,
-            ),
-        ]
-
-        result = _discover_models()
-
-        assert "claude" in result
-        assert "codex" in result
-        assert "gemini" in result
-        assert result["claude"] == [
-            {"value": "", "label": "(default)"},
-            {"value": "claude-haiku-4-5", "label": "Anthropic: Claude Haiku 4.5"},
-        ]
-
-    @patch("gobby.llm.model_registry.fetch_models_sync")
-    def test_discover_models_empty_registry(self, mock_fetch) -> None:
-        from gobby.servers.routes.admin._config import _discover_models
-
-        mock_fetch.return_value = []
-        result = _discover_models()
-        assert result == {}
-
-    @patch("gobby.llm.model_registry.fetch_models_sync")
-    def test_discover_models_strips_provider_prefix(self, mock_fetch) -> None:
-        from gobby.llm.model_registry import ModelInfo
-        from gobby.servers.routes.admin._config import _discover_models
-
-        mock_fetch.return_value = [
-            ModelInfo(
-                "anthropic/claude-sonnet-4-6",
-                "Anthropic: Claude Sonnet 4.6",
-                "claude",
-                200000,
-                64000,
-            ),
-        ]
-
-        result = _discover_models()
-        # Value should have provider prefix stripped
-        assert result["claude"][1]["value"] == "claude-sonnet-4-6"
-
-
-class TestFallbackModelsFromConfig:
-    """Tests for the _fallback_models_from_config helper function."""
-
-    def test_fallback_returns_models_from_config(self) -> None:
-        from gobby.servers.routes.admin._config import _fallback_models_from_config
-
-        server = MagicMock()
-        claude_config = MagicMock()
-        claude_config.get_models_list.return_value = ["haiku"]
-
-        server.services.config.llm_providers.claude = claude_config
-        server.services.config.llm_providers.codex = None
-
-        result = _fallback_models_from_config(server)
-
-        assert result["claude"] == [
-            {"value": "", "label": "(default)"},
-            {"value": "haiku", "label": "haiku"},
-        ]
-        assert "codex" not in result
-
-    def test_fallback_no_config(self) -> None:
-        from gobby.servers.routes.admin._config import _fallback_models_from_config
-
-        server = MagicMock()
-        server.services.config = None
-
-        result = _fallback_models_from_config(server)
-        assert result == {}
-
-    def test_fallback_no_llm_providers(self) -> None:
-        from gobby.servers.routes.admin._config import _fallback_models_from_config
-
-        server = MagicMock()
-        server.services.config.llm_providers = None
-
-        result = _fallback_models_from_config(server)
-        assert result == {}
-
-    def test_fallback_empty_models_list(self) -> None:
-        from gobby.servers.routes.admin._config import _fallback_models_from_config
-
-        server = MagicMock()
-        claude_config = MagicMock()
-        claude_config.get_models_list.return_value = []
-
-        server.services.config.llm_providers.claude = claude_config
-        server.services.config.llm_providers.codex = None
-
-        result = _fallback_models_from_config(server)
-        assert "claude" not in result
 
 
 class TestWorkflowsReloadEndpoint:

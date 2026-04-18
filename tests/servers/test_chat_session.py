@@ -1,12 +1,14 @@
 """Tests for ChatSession can_use_tool callback and pending question state."""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.sandbox import SandboxConfig
 from gobby.servers.chat_session import ChatSession
 
 pytestmark = pytest.mark.unit
@@ -332,6 +334,41 @@ class TestProjectRouting:
             await session.start(model="sonnet")
 
         assert captured_options["effort"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_start_materializes_sandbox_settings_file(self, session: ChatSession) -> None:
+        """Sandboxed Claude web chat should point the SDK at a generated settings file."""
+        session.sandbox_config = SandboxConfig(enabled=True)
+
+        captured_options: dict[str, Any] = {}
+
+        def capture_options(**kwargs: Any) -> MagicMock:
+            captured_options.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("gobby.servers.chat_session._find_cli_path", return_value="/usr/bin/claude"),
+            patch(
+                "gobby.servers.chat_session._build_gobby_mcp_entry",
+                return_value={"command": "gobby", "args": ["mcp-server"]},
+            ),
+            patch("gobby.servers.chat_session._find_project_root", return_value=None),
+            patch(
+                "gobby.servers.chat_session._load_chat_system_prompt", return_value="test prompt"
+            ),
+            patch("gobby.servers.chat_session.ClaudeAgentOptions", side_effect=capture_options),
+            patch("gobby.servers.chat_session.ClaudeSDKClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client_cls.return_value = mock_client
+
+            await session.start()
+
+        settings_path = captured_options.get("settings")
+        assert isinstance(settings_path, str)
+        payload = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+        assert payload["sandbox"]["enabled"] is True
+        assert payload["hooks"]["SessionStart"] == []
 
 
 class TestHistoryInjection:

@@ -3,15 +3,17 @@
 Relocated from tests/workflows/test_memory_actions.py as part of dead-code cleanup.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.memory.digest import (
+    _build_heuristic_title,
     _get_next_turn_number,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
     _synthesize_title,
+    bootstrap_session_title,
     build_turn_and_digest,
     memory_sync_export,
     memory_sync_import,
@@ -88,6 +90,73 @@ class TestGetNextTurnNumber:
     def test_non_sequential_turns(self) -> None:
         digest = "### Turn 1\nFirst\n\n### Turn 5\nFifth"
         assert _get_next_turn_number(digest) == 6
+
+
+class TestBuildHeuristicTitle:
+    """Tests for the first-prompt heuristic title bootstrap."""
+
+    def test_returns_none_for_empty_or_command_prompt(self) -> None:
+        assert _build_heuristic_title("") is None
+        assert _build_heuristic_title("   ") is None
+        assert _build_heuristic_title("/clear") is None
+
+    def test_strips_leading_phrase_and_truncates(self) -> None:
+        title = _build_heuristic_title(
+            "I'd like to generate a session title on the first user prompt submit."
+        )
+        assert title == "Generate a session title on the first"
+
+    def test_handles_multimodal_blocks(self) -> None:
+        title = _build_heuristic_title(
+            [
+                {"type": "text", "text": "Fix the auth bug in login.py"},
+                {"type": "image", "image_url": "ignored"},
+            ]
+        )
+        assert title == "Fix the auth bug in login.py"
+
+    def test_rejects_titles_that_truncate_to_too_short(self) -> None:
+        assert _build_heuristic_title("A") is None
+
+    def test_allows_two_character_titles(self) -> None:
+        assert _build_heuristic_title("PR") == "PR"
+
+
+class TestBootstrapSessionTitle:
+    """Tests for bootstrap_session_title helper."""
+
+    @pytest.mark.asyncio
+    async def test_bootstraps_heuristic_title(self) -> None:
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = None
+        session_manager.get.return_value = session
+        session_manager.update_title.return_value = session
+
+        title = await bootstrap_session_title(
+            session_manager,
+            "session-123",
+            "Please fix the auth bug in login.py",
+        )
+
+        assert title == "Fix the auth bug in login.py"
+        session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Fix the auth bug in login.py",
+            title_source="heuristic",
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_when_title_already_exists(self) -> None:
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = "Existing Title"
+        session_manager.get.return_value = session
+
+        title = await bootstrap_session_title(session_manager, "session-123", "Fix the auth bug")
+
+        assert title is None
+        session_manager.update_title.assert_not_called()
 
 
 class TestReadLastTurnFromTranscript:
@@ -196,6 +265,7 @@ class TestBuildTurnAndDigest:
         session.source = "claude"
         session.digest_markdown = None
         session.title = None
+        session.title_source = None
         session.seq_num = 42
         session.terminal_context = None
         sm.get.return_value = session
@@ -282,10 +352,8 @@ class TestBuildTurnAndDigest:
             assert result is None
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_successful_pipeline(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
@@ -317,13 +385,15 @@ class TestBuildTurnAndDigest:
         assert "### Turn 1" in digest_content
 
         # Verify title was updated
-        mock_session_manager.update_title.assert_called_once_with("session-123", "Fix Auth Bug")
+        mock_session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Fix Auth Bug",
+            title_source="llm",
+        )
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_skips_rename_when_title_is_unchanged(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
@@ -331,6 +401,7 @@ class TestBuildTurnAndDigest:
         """Already-titled sessions skip title synthesis entirely."""
         session = mock_session_manager.get.return_value
         session.title = "Fix Auth Bug"
+        session.title_source = "manual"
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -343,16 +414,13 @@ class TestBuildTurnAndDigest:
         assert result is not None
         assert "title" not in result
         mock_session_manager.update_title.assert_not_called()
-        mock_rename.assert_not_awaited()
         provider = mock_llm_service.get_default_provider.return_value
         assert provider.generate_text.await_count == 1
         assert provider.generate_text.await_args.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_appends_to_existing_digest(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
@@ -378,6 +446,34 @@ class TestBuildTurnAndDigest:
         assert "### Turn 2" in digest_content
 
     @pytest.mark.asyncio
+    async def test_refines_heuristic_title_once(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """A first-prompt heuristic title is refined after the first digest turn."""
+        session = mock_session_manager.get.return_value
+        session.title = "Fix the authentication bug in auth.py"
+        session.title_source = "heuristic"
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Fix the authentication bug in auth.py",
+            llm_service=mock_llm_service,
+        )
+
+        assert result is not None
+        assert result["title"] == "Fix Auth Bug"
+        mock_session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Fix Auth Bug",
+            title_source="llm",
+        )
+
+    @pytest.mark.asyncio
     async def test_digest_config_disabled(
         self, mock_memory_manager, mock_session_manager, mock_llm_service
     ):
@@ -396,10 +492,8 @@ class TestBuildTurnAndDigest:
         assert result is None
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_reads_from_transcript_when_no_prompt(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
@@ -496,6 +590,7 @@ class TestBuildTurnAndDigestIdempotency:
         session.source = "claude"
         session.digest_markdown = None
         session.title = None
+        session.title_source = None
         session.seq_num = 42
         session.terminal_context = None
         session.last_digest_input_hash = None  # No prior digest
@@ -521,10 +616,8 @@ class TestBuildTurnAndDigestIdempotency:
         return service
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_first_call_processes_and_stores_hash(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
@@ -577,10 +670,8 @@ class TestBuildTurnAndDigestIdempotency:
         provider.generate_text.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_synthesizes_missing_title_from_existing_digest_when_duplicate(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
@@ -610,8 +701,11 @@ class TestBuildTurnAndDigestIdempotency:
             "title_only": True,
             "digest_length": len(session.digest_markdown),
         }
-        mock_session_manager.update_title.assert_called_once_with("session-123", "Recovered Title")
-        mock_rename.assert_awaited_once()
+        mock_session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Recovered Title",
+            title_source="llm",
+        )
         mock_session_manager.update_last_turn_markdown.assert_not_called()
         mock_session_manager.update_digest_markdown.assert_not_called()
         mock_session_manager.update_last_digest_input_hash.assert_not_called()
@@ -634,6 +728,7 @@ class TestBuildTurnAndDigestIdempotency:
         session.digest_markdown = "### Turn 1\nExisting digest"
         session.last_digest_input_hash = expected_hash
         session.title = "Existing Title"
+        session.title_source = "manual"
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -664,6 +759,7 @@ class TestBuildTurnAndDigestIdempotency:
         session.last_digest_input_hash = expected_hash
         session.digest_markdown = None
         session.title = None
+        session.title_source = None
 
         result = await build_turn_and_digest(
             memory_manager=mock_memory_manager,
@@ -679,10 +775,8 @@ class TestBuildTurnAndDigestIdempotency:
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_different_content_processes(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
@@ -966,10 +1060,8 @@ class TestBuildTurnAndDigestCatchUp:
                     )
 
     @pytest.mark.asyncio
-    @patch("gobby.workflows.summary_actions._rename_tmux_window", new_callable=AsyncMock)
     async def test_catches_up_missed_turns(
         self,
-        mock_rename,
         mock_memory_manager,
         mock_llm_service,
         tmp_path,
@@ -991,6 +1083,8 @@ class TestBuildTurnAndDigestCatchUp:
         session.transcript_path = str(transcript)
         session.source = "claude"
         session.digest_markdown = "### Turn 1\nFirst turn already digested"
+        session.title = None
+        session.title_source = None
         session.seq_num = 99
         session.terminal_context = None
         session.last_digest_input_hash = None

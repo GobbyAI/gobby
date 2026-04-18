@@ -198,7 +198,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     }
             except ImportError:
                 logger.warning(
-                    f"cisco-ai-skill-scanner not installed, skipping security scan for {parsed_skill.name}",
+                    f"clawcare not installed, skipping security scan for {parsed_skill.name}",
                 )
 
             # Determine project ID for the skill

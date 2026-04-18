@@ -18,6 +18,7 @@ import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from gobby.config.app import (
     DaemonConfig,
@@ -25,6 +26,12 @@ from gobby.config.app import (
 )
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.models import parse_frontmatter
+from gobby.servers.tool_approvals import (
+    BUILT_IN_EXEMPTION_LABELS,
+    DEFAULT_GLOBAL_APPROVAL_RULES,
+    get_global_approval_rules,
+    set_global_approval_rules,
+)
 from gobby.storage.config_store import (
     ConfigStore,
     config_key_to_secret_name,
@@ -80,7 +87,14 @@ class SaveUISettingsRequest(BaseModel):
     model: str | None = None
     theme: str | None = None
     defaultChatMode: str | None = None
+    postPlanChatMode: str | None = None
     selectedProjectId: str | None = None
+
+
+class SaveApprovalRulesRequest(BaseModel):
+    """Request body for PUT /api/config/tool-approvals/global."""
+
+    rules: list[str]
 
 
 class ImportConfigRequest(BaseModel):
@@ -745,7 +759,14 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     # =========================================================================
 
     _UI_SETTINGS_PREFIX = "ui_settings."
-    _UI_SETTINGS_KEYS = ("fontSize", "model", "theme", "defaultChatMode", "selectedProjectId")
+    _UI_SETTINGS_KEYS = (
+        "fontSize",
+        "model",
+        "theme",
+        "defaultChatMode",
+        "postPlanChatMode",
+        "selectedProjectId",
+    )
 
     @router.get("/ui-settings")
     async def get_ui_settings() -> JSONResponse:
@@ -796,6 +817,41 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Failed to delete UI setting '{key}': {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.get("/tool-approvals/global")
+    async def get_global_tool_approval_rules() -> JSONResponse:
+        """Return daemon-wide approval rules plus read-only built-in exemptions."""
+        try:
+            rules = await run_in_threadpool(lambda: get_global_approval_rules(_get_config_store()))
+            return JSONResponse(
+                content={
+                    "rules": rules,
+                    "default_rules": list(DEFAULT_GLOBAL_APPROVAL_RULES),
+                    "built_in_exemptions": list(BUILT_IN_EXEMPTION_LABELS),
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to get global tool approval rules: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.put("/tool-approvals/global")
+    async def save_global_tool_approval_rules(request: SaveApprovalRulesRequest) -> JSONResponse:
+        """Persist daemon-wide approval rules."""
+        try:
+            rules = await run_in_threadpool(
+                lambda: set_global_approval_rules(_get_config_store(), request.rules)
+            )
+            return JSONResponse(
+                content={
+                    "ok": True,
+                    "rules": rules,
+                    "default_rules": list(DEFAULT_GLOBAL_APPROVAL_RULES),
+                    "built_in_exemptions": list(BUILT_IN_EXEMPTION_LABELS),
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to save global tool approval rules: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

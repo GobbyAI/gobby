@@ -652,11 +652,7 @@ class TestDeEscalateTask:
         self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
     ) -> None:
         # First set status to escalated
-        task_manager.update_task(
-            sample_task["id"],
-            status="escalated",
-            escalation_reason="Blocked on user input",
-        )
+        task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
         response = client.post(
             f"/api/tasks/{sample_task['id']}/de-escalate",
             json={
@@ -710,7 +706,7 @@ class TestDeEscalateTask:
     def test_de_escalate_without_reset_validation(
         self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
     ) -> None:
-        task_manager.update_task(sample_task["id"], status="escalated")
+        task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
         response = client.post(
             f"/api/tasks/{sample_task['id']}/de-escalate",
             json={

@@ -5,6 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.agents.sandbox import (
+    SandboxConfig,
+    web_chat_policy_mismatch_message,
+    web_chat_sandbox_config,
+    web_chat_sandbox_policy_hash,
+)
+from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.provider_backends import (
@@ -29,15 +36,58 @@ class WebChatRuntimeManager:
         gemini_default_model: str | None = None,
         codex_transcript_retry_attempts: int = 5,
         codex_transcript_retry_delay_seconds: float = 0.1,
+        daemon_config: DaemonConfig | None = None,
     ) -> None:
-        self._claude_backend = ClaudeWebChatBackend()
+        self._sandbox_config = web_chat_sandbox_config(daemon_config)
+        self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
+        self._claude_backend = ClaudeWebChatBackend(
+            sandbox_config=self._sandbox_config.model_copy(deep=True)
+        )
         self._codex_backend = CodexWebChatBackend(
             client=codex_client,
             transcript_retry_attempts=codex_transcript_retry_attempts,
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
+            sandbox_config=self._sandbox_config.model_copy(deep=True),
         )
-        self._gemini_backend = GeminiWebChatBackend(default_model=gemini_default_model)
-        self._qwen_backend = QwenWebChatBackend()
+        self._gemini_backend = GeminiWebChatBackend(
+            default_model=gemini_default_model,
+            sandbox_config=self._sandbox_config.model_copy(deep=True),
+        )
+        self._qwen_backend = QwenWebChatBackend(
+            sandbox_config=self._sandbox_config.model_copy(deep=True)
+        )
+
+    @property
+    def sandbox_config(self) -> SandboxConfig:
+        """Return the startup-snapshotted daemon-owned web-chat sandbox config."""
+        return self._sandbox_config.model_copy(deep=True)
+
+    @property
+    def sandbox_policy_hash(self) -> str:
+        """Return the startup-snapshotted web-chat sandbox policy hash."""
+        return self._sandbox_policy_hash
+
+    def policy_mismatch_reason(self, session: Any) -> str | None:
+        """Return a user-facing reason when a web-chat session cannot be resumed."""
+        if getattr(session, "session_type", None) != "web_chat":
+            return None
+
+        stored_policy_hash = getattr(session, "sandbox_policy_hash", None)
+        if (
+            isinstance(stored_policy_hash, str)
+            and stored_policy_hash
+            and stored_policy_hash != self._sandbox_policy_hash
+        ):
+            return web_chat_policy_mismatch_message()
+
+        stored_sandbox_enabled = getattr(session, "sandbox_enabled", None)
+        if (
+            isinstance(stored_sandbox_enabled, bool)
+            and stored_sandbox_enabled != self._sandbox_config.enabled
+        ):
+            return web_chat_policy_mismatch_message()
+
+        return None
 
     @property
     def codex_client(self) -> CodexAppServerClient | None:

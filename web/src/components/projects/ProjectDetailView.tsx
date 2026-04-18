@@ -7,7 +7,7 @@ interface ProjectDetailViewProps {
   activeTab: ProjectSubTab
   onTabChange: (tab: ProjectSubTab) => void
   onBack: () => void
-  onSave: (fields: Record<string, string | null>) => Promise<boolean>
+  onSave: (fields: Record<string, string | string[] | null>) => Promise<boolean>
   onDelete: () => Promise<boolean>
   /** Render prop for the Code tab (FilesPage scoped to project) */
   renderCodeTab?: () => React.ReactNode

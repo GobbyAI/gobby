@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
     from gobby.config.voice import VoiceConfig
 
+from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,19 +41,22 @@ def _auto_device() -> str:
 
 def _coerce_conditioning_audio(value: Any) -> Any:
     """Cast Chatterbox conditioning audio to float32 for MPS compatibility."""
+    torch_module: Any | None = None
     try:
         import torch
     except ImportError:  # pragma: no cover - torch is required when this is used
-        torch = None
+        pass
+    else:
+        torch_module = torch
 
     if isinstance(value, np.ndarray):
         if np.issubdtype(value.dtype, np.floating) and value.dtype != np.float32:
             return value.astype(np.float32, copy=False)
         return value
 
-    if torch is not None and torch.is_tensor(value):
-        if value.dtype.is_floating_point and value.dtype != torch.float32:
-            return value.to(dtype=torch.float32)
+    if torch_module is not None and torch_module.is_tensor(value):
+        if value.dtype.is_floating_point and value.dtype != torch_module.float32:
+            return value.to(dtype=torch_module.float32)
         return value
 
     if isinstance(value, list):
@@ -146,21 +151,44 @@ def _float32_conditioning_workarounds(model: Any) -> Iterator[None]:
                 yield
 
 
-class ChatterboxTurboProvider:
+class ChatterboxTurboProvider(BaseTTSProvider):
     """Local TTS via Chatterbox Turbo. Lazy-loads model on first use.
 
     Provides zero-shot voice cloning from a reference audio clip.
     Implements TTSProvider protocol from gobby.voice.tts.
     """
 
+    provider_name = "chatterbox"
+    capabilities = TTSProviderCapabilities(
+        supports_reference_audio=True,
+        supports_reference_text=False,
+        supports_streaming=False,
+        supports_voice_cloning=True,
+    )
+
     def __init__(self, config: VoiceConfig) -> None:
-        self._config = config
+        super().__init__(config)
         self._model: Any | None = None
         # Initialize the lock eagerly so two coroutines arriving in
         # _ensure_model concurrently cannot create separate locks.
         self._load_lock: asyncio.Lock = asyncio.Lock()
         self._sample_rate = 24000  # Chatterbox outputs 24kHz
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
+
+    def _availability(self) -> tuple[bool, str]:
+        try:
+            import chatterbox  # noqa: F401
+
+            return True, ""
+        except ImportError:
+            return False, "chatterbox not installed (uv sync --extra voice)"
+
+    def _status_details(self) -> dict[str, Any]:
+        return {
+            "tts_reference_audio": str(self._reference_audio),
+            "tts_reference_audio_exists": self._reference_audio.exists(),
+            "tts_device": self._config.tts_device,
+        }
 
     async def warmup(self) -> None:
         """Public entry point for preloading the TTS model."""
@@ -246,16 +274,6 @@ class ChatterboxTurboProvider:
             logger.error("Chatterbox TTS synthesis failed", exc_info=True)
         except Exception:
             logger.error("Chatterbox TTS synthesis failed", exc_info=True)
-
-    @property
-    def is_available(self) -> bool:
-        """Check if chatterbox is installed and reference audio exists."""
-        try:
-            import chatterbox  # noqa: F401
-
-            return True
-        except Exception:
-            return False
 
     @property
     def sample_rate(self) -> int:

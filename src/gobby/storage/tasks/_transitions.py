@@ -70,6 +70,7 @@ def release_task_claim(
     dispatch_failure_count: MaybeUnset[int | None] = UNSET,
     escalated_at: MaybeUnset[str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
+    validation_override_reason: MaybeUnset[str | None] = UNSET,
 ) -> Task:
     """Clear canonical and legacy ownership while optionally changing lifecycle state."""
     update_task(
@@ -83,6 +84,7 @@ def release_task_claim(
         dispatch_failure_count=dispatch_failure_count,
         escalated_at=escalated_at,
         escalation_reason=escalation_reason,
+        validation_override_reason=validation_override_reason,
     )
     return get_task(db, task_id)
 
@@ -130,7 +132,7 @@ def escalate_task(
     reason: str,
     validation_override_reason: str | None = None,
 ) -> Task:
-    """Escalate a task without dropping canonical ownership.
+    """Escalate a task and release canonical ownership.
 
     When ``validation_override_reason`` is provided, it is persisted in the
     same write as the escalation so callers don't need a second update_task
@@ -140,7 +142,7 @@ def escalate_task(
     if task.status == "escalated" or is_task_closed(task):
         raise ValueError(f"Cannot escalate task with status '{task.status}'.")
 
-    update_task(
+    return release_task_claim(
         db,
         task_id,
         status="escalated",
@@ -150,7 +152,6 @@ def escalate_task(
             validation_override_reason if validation_override_reason is not None else UNSET
         ),
     )
-    return get_task(db, task_id)
 
 
 def de_escalate_task(
@@ -191,7 +192,7 @@ def mark_task_needs_review(
     *,
     review_notes: str | None = None,
 ) -> Task:
-    """Submit a task for review while preserving ownership."""
+    """Submit a task for review and release ownership."""
     task = get_task(db, task_id)
     if is_task_closed(task) or task.status == "escalated":
         raise ValueError(
@@ -203,13 +204,12 @@ def mark_task_needs_review(
     if review_notes:
         description = (task.description or "") + f"\n\n[Review Notes]\n{review_notes}"
 
-    update_task(
+    return release_task_claim(
         db,
         task_id,
         status="needs_review",
         description=description,
     )
-    return get_task(db, task_id)
 
 
 def mark_task_review_approved(
@@ -218,7 +218,7 @@ def mark_task_review_approved(
     *,
     approval_notes: str | None = None,
 ) -> Task:
-    """Approve a task after review while preserving ownership."""
+    """Approve a task after review and release ownership."""
     task = get_task(db, task_id)
     if task.status not in ("needs_review", "in_progress", "escalated"):
         raise ValueError(
@@ -230,13 +230,12 @@ def mark_task_review_approved(
     if approval_notes:
         description = (task.description or "") + f"\n\n[Approval Notes]\n{approval_notes}"
 
-    update_task(
+    return release_task_claim(
         db,
         task_id,
         status="review_approved",
         description=description,
     )
-    return get_task(db, task_id)
 
 
 def close_task(
@@ -275,5 +274,33 @@ def close_task(
         closed_in_session_id=closed_in_session_id,
         closed_commit_sha=closed_commit_sha,
         validation_override_reason=validation_override_reason,
+    )
+    return get_task(db, task_id)
+
+
+def reconcile_task_state(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    status: str,
+    title: MaybeUnset[str | None] = UNSET,
+    description: MaybeUnset[str | None] = UNSET,
+    priority: MaybeUnset[int | None] = UNSET,
+) -> Task:
+    """Apply externally-sourced lifecycle state without reopening generic update paths.
+
+    This helper is intentionally narrow: it exists for sync/reconciliation flows
+    that need to project external lifecycle state into a task without exposing
+    raw status/ownership mutation through LocalTaskManager.update_task().
+    """
+    update_task(
+        db,
+        task_id,
+        title=title,
+        description=description,
+        status=status,
+        priority=priority,
+        assignee=None,
+        claimed_by_session_id=None,
     )
     return get_task(db, task_id)

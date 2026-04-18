@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ContextUsage, ChatSendOptions } from '../../types/chat'
+import type { QueuedFile, ChatMode, ChatModeInfo, ContextUsage, ChatSendOptions } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
@@ -9,7 +9,7 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/Select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from './ui/Select'
 import { SourceIcon } from '../shared/SourceIcon'
 import {
   AUTO_REASONING_EFFORT,
@@ -40,6 +40,8 @@ interface ChatInputProps {
   onPaletteSelect?: (item: PaletteItem) => void
   mode?: ChatMode
   onModeChange?: (mode: ChatMode) => void
+  modeOptions?: ChatModeInfo[]
+  modeDisabled?: boolean
   sttEnabled?: boolean
   voiceInputMode?: VoiceInputMode
   isRecording?: boolean
@@ -51,8 +53,10 @@ interface ChatInputProps {
   worktreePath?: string | null
   projectId?: string | null
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void
+  worktreePickerDisabled?: boolean
   agentName?: string
   onAgentChange?: (agentName: string) => void
+  agentPickerDisabled?: boolean
   agentDefinitions?: AgentDefInfo[]
   agentGlobalDefs?: AgentDefInfo[]
   agentProjectDefs?: AgentDefInfo[]
@@ -84,6 +88,9 @@ interface ChatInputProps {
   showObserveOverlay?: boolean
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
+  attachmentsDisabled?: boolean
+  onToggleActivityPanel?: () => void
+  isActivityPanelPinned?: boolean
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -106,8 +113,10 @@ export function ChatInput({
   onInputChange,
   paletteItems = [],
   onPaletteSelect,
-  mode = 'accept_edits',
+  mode = 'normal',
   onModeChange,
+  modeOptions,
+  modeDisabled = false,
   sttEnabled = false,
   voiceInputMode = 'ptt',
   isRecording = false,
@@ -119,8 +128,10 @@ export function ChatInput({
   worktreePath,
   projectId,
   onWorktreeChange,
+  worktreePickerDisabled = false,
   agentName,
   onAgentChange,
+  agentPickerDisabled = false,
   agentDefinitions = [],
   agentGlobalDefs = [],
   agentProjectDefs = [],
@@ -144,6 +155,9 @@ export function ChatInput({
   showObserveOverlay = false,
   onAttachObservedSession,
   proxyDeliveryNotice = null,
+  attachmentsDisabled = false,
+  onToggleActivityPanel,
+  isActivityPanelPinned = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -158,6 +172,7 @@ export function ChatInput({
   const latchedRef = useRef(false)
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
+  const attachmentsDisabledRef = useRef(attachmentsDisabled)
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
 
@@ -167,12 +182,27 @@ export function ChatInput({
     queuedFilesRef.current = queuedFiles
   }, [queuedFiles])
   useEffect(() => {
+    attachmentsDisabledRef.current = attachmentsDisabled
+  }, [attachmentsDisabled])
+  const clearQueuedFiles = useCallback(() => {
+    queuedFilesRef.current.forEach((qf) => {
+      if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
+    })
+    queuedFilesRef.current = []
+    setQueuedFiles([])
+  }, [])
+  useEffect(() => {
     return () => {
       queuedFilesRef.current.forEach((qf) => {
         if (qf.previewUrl) URL.revokeObjectURL(qf.previewUrl)
       })
     }
   }, [])
+  useEffect(() => {
+    if (attachmentsDisabled) {
+      clearQueuedFiles()
+    }
+  }, [attachmentsDisabled, clearQueuedFiles])
 
   useEffect(() => {
     const textarea = textareaRef.current
@@ -210,16 +240,17 @@ export function ChatInput({
 
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim()
-    const hasFiles = queuedFiles.length > 0
+    const filesToSend = attachmentsDisabled ? [] : queuedFiles
+    const hasFiles = filesToSend.length > 0
     if ((trimmed || hasFiles) && !disabled) {
-      onSend(trimmed, hasFiles ? queuedFiles : undefined, {
+      onSend(trimmed, hasFiles ? filesToSend : undefined, {
         reasoningEffort: currentReasoning,
       })
       setInput('')
-      setQueuedFiles([])
+      clearQueuedFiles()
       onScrollToBottom?.()
     }
-  }, [currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
+  }, [attachmentsDisabled, clearQueuedFiles, currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
 
   const handleChange = useCallback((value: string) => {
     setInput(value)
@@ -239,7 +270,7 @@ export function ChatInput({
   }, [onPaletteSelect, onInputChange])
 
   const handleFilesSelected = useCallback((files: FileList | null) => {
-    if (!files) return
+    if (!files || attachmentsDisabled) return
     const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
     Array.from(files).forEach((file) => {
       if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -253,6 +284,10 @@ export function ChatInput({
       reader.onload = () => {
         const result = reader.result as string
         const base64 = result.split(',')[1] || null
+        if (attachmentsDisabledRef.current) {
+          if (previewUrl) URL.revokeObjectURL(previewUrl)
+          return
+        }
         setQueuedFiles((prev) => [...prev, { id, file, previewUrl, base64 }])
       }
       reader.onerror = () => {
@@ -261,7 +296,7 @@ export function ChatInput({
       }
       reader.readAsDataURL(file)
     })
-  }, [])
+  }, [attachmentsDisabled])
 
   const removeFile = useCallback((id: string) => {
     setQueuedFiles((prev) => {
@@ -558,6 +593,10 @@ export function ChatInput({
     primaryButtonKind === 'mic-recording' && 'ring-2 ring-red-500/70 ring-offset-2 ring-offset-background animate-pulse',
   )
 
+  const activityPanelButtonLabel = isActivityPanelPinned
+    ? 'Hide activity panel'
+    : 'Show activity panel'
+
   return (
     <div
       className={`border-t border-border bg-background px-4 py-3${isDragOver ? ' ring-2 ring-accent ring-inset bg-accent/5' : ''}`}
@@ -628,9 +667,24 @@ export function ChatInput({
           <div className="chat-input-toolbar">
             <div className="chat-input-toolbar__left">
               {onModeChange && (
-                <ModeSelector mode={mode} onModeChange={onModeChange} disabled={disabled} />
+                <ModeSelector
+                  mode={mode}
+                  onModeChange={onModeChange}
+                  disabled={disabled || modeDisabled}
+                  modes={modeOptions}
+                />
               )}
-              <Button size="icon" variant="ghost" onClick={() => fileInputRef.current?.click()} disabled={disabled} title="Attach file">
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || attachmentsDisabled}
+                title={
+                  attachmentsDisabled
+                    ? 'Attached session owns attachments'
+                    : 'Attach file'
+                }
+              >
                 <PaperclipIcon />
               </Button>
               {onAgentChange && agentName && agentDefinitions.length > 0 && (
@@ -643,16 +697,33 @@ export function ChatInput({
                   showScopeToggle={agentShowScopeToggle}
                   hasGlobal={agentHasGlobal}
                   hasProject={agentHasProject}
+                  disabled={disabled || agentPickerDisabled}
                 />
+              )}
+              {onToggleActivityPanel && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={onToggleActivityPanel}
+                  title={activityPanelButtonLabel}
+                  aria-label={activityPanelButtonLabel}
+                  className={cn(
+                    'chat-input-panel-toggle',
+                    isActivityPanelPinned && 'chat-input-panel-toggle--active',
+                  )}
+                >
+                  <PanelIcon pinned={isActivityPanelPinned} />
+                </Button>
               )}
             </div>
             <div className="chat-input-toolbar__right">
-              {onWorktreeChange && (
+              {!canSelectModel && onWorktreeChange && (
                 <BranchIndicator
                   currentBranch={currentBranch ?? null}
                   worktreePath={worktreePath ?? null}
                   projectId={projectId ?? null}
                   onWorktreeChange={onWorktreeChange}
+                  disabled={disabled || worktreePickerDisabled}
                 />
               )}
               <ContextUsageIndicator
@@ -768,14 +839,17 @@ export function ChatInput({
                     </div>
                   </SelectTrigger>
                   <SelectContent side="top" className="chat-input-select__content">
-                    {orderedProviders.map((candidateProvider) => (
-                      <SelectItem key={candidateProvider} value={candidateProvider}>
-                        <span className="chat-input-select__item">
-                          <SourceIcon source={candidateProvider} size={14} />
-                          <span>{getProviderDisplayName(candidateProvider)}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      <SelectLabel className="chat-input-select__label">Provider</SelectLabel>
+                      {orderedProviders.map((candidateProvider) => (
+                        <SelectItem key={candidateProvider} value={candidateProvider}>
+                          <span className="chat-input-select__item">
+                            <SourceIcon source={candidateProvider} size={14} />
+                            <span>{getProviderDisplayName(candidateProvider)}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
 
@@ -796,11 +870,14 @@ export function ChatInput({
                     </div>
                   </SelectTrigger>
                   <SelectContent side="top" className="chat-input-select__content">
-                    {modelOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      <SelectLabel className="chat-input-select__label">Model</SelectLabel>
+                      {modelOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
 
@@ -818,19 +895,34 @@ export function ChatInput({
                     title={providerPickerDisabledReason ?? 'Select reasoning effort'}
                   >
                     <div className="chat-input-select__value">
+                      <BrainIcon />
                       <span className="chat-input-select__text">
                         {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
                       </span>
                     </div>
                   </SelectTrigger>
                   <SelectContent side="top" className="chat-input-select__content">
-                    {reasoningOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
+                    <SelectGroup>
+                      <SelectLabel className="chat-input-select__label">Effort</SelectLabel>
+                      {reasoningOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
+
+                      {onWorktreeChange && (
+                        <BranchIndicator
+                          currentBranch={currentBranch ?? null}
+                          worktreePath={worktreePath ?? null}
+                          projectId={projectId ?? null}
+                          onWorktreeChange={onWorktreeChange}
+                          disabled={disabled || worktreePickerDisabled}
+                          variant="select"
+                        />
+                      )}
               </div>
             </div>
           )}
@@ -883,6 +975,29 @@ function PaperclipIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
+
+function PanelIcon({ pinned }: { pinned: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+      {pinned && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
+    </svg>
+  )
+}
+
+function BrainIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.5 2A3.5 3.5 0 0 0 6 5.5v1A2.5 2.5 0 0 0 3.5 9v1.5A2.5 2.5 0 0 0 6 13v3a4 4 0 0 0 4 4" />
+      <path d="M14.5 2A3.5 3.5 0 0 1 18 5.5v1A2.5 2.5 0 0 1 20.5 9v1.5A2.5 2.5 0 0 1 18 13v3a4 4 0 0 1-4 4" />
+      <path d="M9 8h1" />
+      <path d="M14 8h1" />
+      <path d="M9 12h6" />
+      <path d="M12 13v5" />
     </svg>
   )
 }

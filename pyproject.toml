@@ -19,6 +19,7 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "aiofiles>=24.1.0",
+    "aiohttp>=3.11.0",
     "anthropic>=0.75.0",
     "click>=8.1.0",
     "fastapi>=0.115.0",
@@ -34,18 +35,19 @@ dependencies = [
     "jinja2>=3.1.0",
     "claude-agent-sdk>=0.1.39",
     "wcwidth>=0.2.14",
+    "tomlkit>=0.13.3",
     "tomli-w>=1.0.0",
     "msgspec>=0.20.0",
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "qdrant-client>=1.12.0",
-    # python-multipart 0.0.21 has CVE-2026-24486 - pin to fixed version
-    "python-multipart>=0.0.22",
+    # python-multipart <0.0.26 has CVE-2026-24486, CVE-2026-40347 - pin to fixed version
+    "python-multipart>=0.0.26",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
     # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
     "cryptography>=46.0.7",
-    "cisco-ai-skill-scanner>=0.1.1",
+    "clawcare>=0.9.0",
     # pyjwt <2.12.0 has CVE-2026-32597 (transitive via mcp)
     "pyjwt>=2.12.0",
     # Native SDK executors for autonomous mode
@@ -67,7 +69,6 @@ dependencies = [
 email = ["aiosmtplib>=2.0", "aioimaplib>=1.0"]
 voice = [
     "faster-whisper>=1.0.0",
-    "kokoro-onnx>=0.5.0",
     "chatterbox-tts",
 ]
 
@@ -83,7 +84,11 @@ Issues = "https://github.com/GobbyAI/gobby/issues"
 [tool.uv]
 # tokenizers 0.20.3 fails to build from sdist on Python 3.14
 # (missing project.version in pyproject.toml). Force >=0.21.
-constraint-dependencies = ["tokenizers>=0.21"]
+constraint-dependencies = [
+    "tokenizers>=0.21",
+    # authlib <1.6.11 has GHSA-jj8c-mmj3-mmgv (transitive via fastmcp)
+    "authlib>=1.6.11",
+]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -97,6 +102,7 @@ gobby = [
     "install/claude/**/*",
     "install/gemini/**/*",
     "install/codex/**/*",
+    "install/qwen/**/*",
     "install/shared/**/*",
     "storage/*.sql",
     "data/*",
@@ -106,7 +112,7 @@ gobby = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
-python_files = ["test_*.py"]
+python_files = ["test_*.py", "run_*_sandbox.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
@@ -141,6 +147,11 @@ filterwarnings = [
     # Ignore third-party deprecation warnings (oletools)
     "ignore::DeprecationWarning:oletools",
     "ignore::DeprecationWarning:oletools.*",
+    # Ignore upstream warnings from optional voice dependencies on Python 3.14
+    "ignore:pkg_resources is deprecated as an API\\.:UserWarning",
+    "ignore:Deprecated call to `pkg_resources\\.declare_namespace\\('google'\\)`:DeprecationWarning",
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
     # Ignore MCP SDK streamable_http_client deprecation (upstream)
     "ignore:Use `streamable_http_client` instead:DeprecationWarning",
 ]
@@ -187,10 +198,6 @@ exclude = ["build"]
 [[tool.mypy.overrides]]
 module = "aiofiles.*"
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
 
 [tool.bandit]
 targets = ["src"]

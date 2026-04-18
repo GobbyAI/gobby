@@ -101,6 +101,9 @@ from gobby.storage.tasks._transitions import (
     mark_task_review_approved as _mark_task_review_approved,
 )
 from gobby.storage.tasks._transitions import (
+    reconcile_task_state as _reconcile_task_state,
+)
+from gobby.storage.tasks._transitions import (
     release_task_claim as _release_task_claim,
 )
 
@@ -319,7 +322,36 @@ class LocalTaskManager:
         validation_override_reason: MaybeUnset[str | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
-        """Update task fields."""
+        """Update metadata fields only.
+
+        Lifecycle and ownership mutations must go through the dedicated task
+        transition methods so claim/session state stays coherent.
+        """
+        blocked_fields = [
+            field_name
+            for field_name, value in (
+                ("status", status),
+                ("assignee", assignee),
+                ("claimed_by_session_id", claimed_by_session_id),
+                ("lifecycle_stage", lifecycle_stage),
+                ("closed_reason", closed_reason),
+                ("closed_at", closed_at),
+                ("closed_in_session_id", closed_in_session_id),
+                ("closed_commit_sha", closed_commit_sha),
+                ("escalated_at", escalated_at),
+                ("escalation_reason", escalation_reason),
+            )
+            if value is not UNSET
+        ]
+        if blocked_fields:
+            blocked_display = ", ".join(blocked_fields)
+            raise ValueError(
+                "LocalTaskManager.update_task does not allow lifecycle or ownership fields. "
+                "Use claim_task, release_task_claim, mark_task_needs_review, "
+                "mark_task_review_approved, escalate_task, de_escalate_task, close_task, "
+                f"or reopen_task instead. Blocked fields: {blocked_display}"
+            )
+
         parent_changed = _update_task(
             self.db,
             task_id=task_id,
@@ -359,6 +391,32 @@ class LocalTaskManager:
 
         self._notify_listeners()
         return self.get_task(task_id)
+
+    def reconcile_task_state(
+        self,
+        task_id: str,
+        *,
+        status: str,
+        title: MaybeUnset[str | None] = UNSET,
+        description: MaybeUnset[str | None] = UNSET,
+        priority: MaybeUnset[int | None] = UNSET,
+    ) -> Task:
+        """Apply externally-sourced lifecycle state and metadata.
+
+        This is an explicit internal reconciliation path for sync/adaptor code
+        that must project external status into local task state without using
+        the generic metadata update surface.
+        """
+        task = _reconcile_task_state(
+            self.db,
+            task_id=task_id,
+            status=status,
+            title=title,
+            description=description,
+            priority=priority,
+        )
+        self._notify_listeners()
+        return task
 
     def claim_task(self, task_id: str, session_id: str, force: bool = False) -> Task:
         """Claim a task for a session, preserving non-open lifecycle states."""
@@ -453,7 +511,7 @@ class LocalTaskManager:
         *,
         validation_override_reason: str | None = None,
     ) -> Task:
-        """Escalate a task for human intervention.
+        """Escalate a task for human intervention and release ownership.
 
         Optionally persists a validation override reason in the same write
         so callers don't need a follow-up update_task call.
@@ -486,7 +544,7 @@ class LocalTaskManager:
         return task
 
     def mark_task_needs_review(self, task_id: str, review_notes: str | None = None) -> Task:
-        """Mark a task as ready for review without dropping ownership."""
+        """Mark a task as ready for review and release ownership."""
         task = _mark_task_needs_review(self.db, task_id=task_id, review_notes=review_notes)
         self._notify_listeners()
         return task
@@ -496,7 +554,7 @@ class LocalTaskManager:
         task_id: str,
         approval_notes: str | None = None,
     ) -> Task:
-        """Mark a task as review-approved without dropping ownership."""
+        """Mark a task as review-approved and release ownership."""
         task = _mark_task_review_approved(
             self.db,
             task_id=task_id,

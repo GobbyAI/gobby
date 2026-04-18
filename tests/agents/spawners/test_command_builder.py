@@ -3,7 +3,6 @@ import pytest
 from gobby.agents.spawners.command_builder import (
     build_cli_command,
     build_codex_command_with_resume,
-    build_gemini_command_with_resume,
 )
 
 pytestmark = pytest.mark.unit
@@ -25,6 +24,10 @@ class TestBuildCliCommand:
     def test_claude_with_model(self):
         cmd, _env = build_cli_command("claude", model="claude-3-opus", prompt="hello")
         assert cmd == ["claude", "--model", "claude-3-opus", "hello"]
+
+    def test_claude_with_reasoning_effort(self):
+        cmd, _env = build_cli_command("claude", reasoning_effort="high", prompt="hello")
+        assert cmd == ["claude", "--effort", "high", "hello"]
 
     def test_gemini_basic(self):
         cmd, _env = build_cli_command("gemini", prompt="hello")
@@ -53,6 +56,10 @@ class TestBuildCliCommand:
     def test_codex_with_model(self):
         cmd, _env = build_cli_command("codex", model="gpt-4", prompt="hello")
         assert cmd == ["codex", "--model", "gpt-4", "hello"]
+
+    def test_codex_with_reasoning_effort(self):
+        cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
+        assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
 
     def test_generic_sandbox_args(self):
         cmd, _env = build_cli_command("claude", prompt="hello", sandbox_args=["--sandbox"])
@@ -83,33 +90,6 @@ class TestBuildCliCommand:
         assert env == {"CUSTOM_VAR": "value"}
 
 
-class TestBuildGeminiResume:
-    def test_basic_resume(self):
-        cmd = build_gemini_command_with_resume("ext-123")
-        assert cmd == ["gemini", "-r", "ext-123"]
-
-    def test_resume_with_prompt(self):
-        cmd = build_gemini_command_with_resume("ext-123", prompt="continue")
-        assert cmd == ["gemini", "-r", "ext-123", "-i", "continue"]
-
-    def test_resume_auto_approve(self):
-        cmd = build_gemini_command_with_resume("ext-123", auto_approve=True)
-        assert cmd == ["gemini", "-r", "ext-123", "--approval-mode", "yolo"]
-
-    def test_resume_with_model(self):
-        cmd = build_gemini_command_with_resume("ext-123", model="gemini-1.5-pro")
-        assert cmd == ["gemini", "-r", "ext-123", "--model", "gemini-1.5-pro"]
-
-    def test_resume_with_gobby_session(self):
-        cmd = build_gemini_command_with_resume(
-            "ext-123", gobby_session_id="gob-456", prompt="do it"
-        )
-        assert cmd[0:3] == ["gemini", "-r", "ext-123"]
-        assert cmd[3] == "-i"
-        assert "Your Gobby session_id is: gob-456" in cmd[4]
-        assert "do it" in cmd[4]
-
-
 class TestBuildCodexResume:
     def test_basic_resume(self):
         cmd = build_codex_command_with_resume("ext-123")
@@ -127,9 +107,20 @@ class TestBuildCodexResume:
         cmd = build_codex_command_with_resume("ext-123", model="gpt-4")
         assert cmd == ["codex", "resume", "ext-123", "--model", "gpt-4"]
 
+    def test_resume_with_reasoning_effort(self):
+        cmd = build_codex_command_with_resume("ext-123", reasoning_effort="high")
+        assert cmd == ["codex", "-c", 'model_reasoning_effort="high"', "resume", "ext-123"]
+
     def test_resume_with_working_directory(self):
         cmd = build_codex_command_with_resume("ext-123", working_directory="/tmp")
         assert cmd == ["codex", "resume", "ext-123", "-C", "/tmp"]
+
+    def test_resume_with_sandbox_args(self):
+        cmd = build_codex_command_with_resume(
+            "ext-123",
+            sandbox_args=["--sandbox", "workspace-write"],
+        )
+        assert cmd == ["codex", "resume", "ext-123", "--sandbox", "workspace-write"]
 
     def test_resume_with_gobby_session(self):
         cmd = build_codex_command_with_resume(

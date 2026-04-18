@@ -204,7 +204,10 @@ class TestGobbyRunnerRun:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
-            runner._shutdown_requested = True
+
+            async def _delayed_shutdown() -> None:
+                await asyncio.sleep(0)
+                runner._shutdown_requested = True
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
@@ -212,6 +215,7 @@ class TestGobbyRunnerRun:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    asyncio.create_task(_delayed_shutdown())
                     await runner.run()
 
             mock_mcp_manager.connect_all.assert_called_once()
@@ -852,6 +856,55 @@ class TestMetricsCleanupLoop:
 
 class TestGobbyRunnerShutdown:
     """Tests for shutdown handling in run method."""
+
+    @pytest.mark.asyncio
+    async def test_run_waits_for_http_shutdown_before_reaping_children(self, mock_config):
+        """Child reaping should only happen after HTTP shutdown completes."""
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.connect_all = AsyncMock()
+        mock_mcp_manager.disconnect_all = AsyncMock()
+
+        patches = create_base_patches(
+            mock_config=mock_config,
+            mock_mcp_manager=mock_mcp_manager,
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            runner._shutdown_requested = True
+
+            http_shutdown_complete = False
+
+            async def serve() -> None:
+                nonlocal http_shutdown_complete
+                await asyncio.sleep(0)
+                http_shutdown_complete = True
+
+            mock_process = MagicMock()
+
+            def children(*, recursive: bool) -> list[MagicMock]:
+                assert recursive is True
+                assert http_shutdown_complete is True
+                return []
+
+            mock_process.children.side_effect = children
+
+            with (
+                patch("uvicorn.Config"),
+                patch("uvicorn.Server") as mock_server_cls,
+                patch("psutil.Process", return_value=mock_process),
+            ):
+                mock_server = MagicMock()
+                mock_server.serve = AsyncMock(side_effect=serve)
+                mock_server.should_exit = False
+                mock_server_cls.return_value = mock_server
+
+                with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    await runner.run()
+
+            mock_process.children.assert_called_once_with(recursive=True)
 
     @pytest.mark.asyncio
     async def test_run_handles_http_server_shutdown_timeout(self, mock_config):

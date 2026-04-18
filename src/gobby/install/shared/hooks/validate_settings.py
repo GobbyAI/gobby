@@ -29,6 +29,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.cli.installers.hook_commands import is_gobby_hook_command
+
 
 @dataclass(frozen=True)
 class ValidationConfig:
@@ -215,7 +217,7 @@ def validate(config: ValidationConfig) -> int:
             # CLIs (e.g., Codex) that may use non-nested hook configs.
             command = hook_configs[0].get("command", "")
 
-        if "hook_dispatcher.py" not in command:
+        if not is_gobby_hook_command(command):
             print(f"Warning: {hook_type} not using dispatcher pattern")
 
     print(f"All {len(config.required_hooks)} required hook types configured")

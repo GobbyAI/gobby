@@ -9,9 +9,15 @@ from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.agents.sandbox import (
+    web_chat_policy_mismatch_message,
+    web_chat_sandbox_config,
+    web_chat_sandbox_policy_hash,
+)
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.tool_approvals import normalize_approved_tool_keys
 from gobby.servers.websocket.chat._lifecycle import _inject_agent_skills
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.machine_id import get_machine_id
@@ -19,6 +25,25 @@ from gobby.utils.machine_id import get_machine_id
 logger = logging.getLogger(__name__)
 
 _CANCEL_YIELD_DELAY = 0.1
+
+
+def _normalize_runtime_chat_mode(mode: str | None) -> str | None:
+    if mode == "accept_edits":
+        return "normal"
+    return mode
+
+
+def _normalize_web_chat_provider(provider: Any) -> str | None:
+    """Normalize provider identifiers persisted on web-chat sessions."""
+    if not isinstance(provider, str):
+        return None
+
+    normalized = provider.strip().lower()
+    if normalized in {"", "inherit"}:
+        return None
+    if normalized in {"claude", "gemini", "qwen", "codex"}:
+        return normalized
+    return None
 
 
 def _build_agent_identity_preamble(agent_body: Any) -> str | None:
@@ -68,6 +93,15 @@ def _get_runtime_transcript_path(session: ChatSessionProtocol) -> str | None:
 def _is_bootstrap_external_id(external_id: str | None) -> bool:
     """Return True when external_id is still a temporary web-chat bootstrap value."""
     return bool(external_id and external_id.startswith("web-chat-bootstrap:"))
+
+
+def _has_meaningful_web_chat_history(session: Any) -> bool:
+    """Return True when a web-chat row already has meaningful runtime history."""
+    return bool(
+        getattr(session, "message_count", 0)
+        or getattr(session, "turn_count", 0)
+        or getattr(session, "usage_output_tokens", 0)
+    )
 
 
 async def _resolve_git_branch(project_path: str | None) -> tuple[str | None, str | None]:
@@ -274,7 +308,7 @@ class ChatSessionMixin:
         # Early agent resolution to determine provider (Codex vs Claude SDK)
         pending_agents = getattr(self, "_pending_agents", {})
         pending_agent = pending_agents.pop(session_key, None)
-        agent_name = pending_agent or "default-web-chat"
+        agent_name = pending_agent or "default"
         agent_body = None
         if session_manager:
             try:
@@ -299,16 +333,26 @@ class ChatSessionMixin:
         # existing conversation. A stale frontend provider selection should not
         # silently re-route a restored session onto a different backend.
         pending_providers = getattr(self, "_pending_providers", {})
-        pending_provider = pending_providers.pop(session_key, None)
+        pending_provider = _normalize_web_chat_provider(pending_providers.pop(session_key, None))
         effective_provider = pending_provider
         if not effective_provider and existing_db_session:
-            effective_provider = getattr(existing_db_session, "source", None)
+            effective_provider = _normalize_web_chat_provider(
+                getattr(existing_db_session, "source", None)
+            )
         if not effective_provider:
-            effective_provider = provider
+            effective_provider = _normalize_web_chat_provider(provider)
         if not effective_provider and agent_body:
-            effective_provider = getattr(agent_body, "provider", None)
+            effective_provider = _normalize_web_chat_provider(getattr(agent_body, "provider", None))
 
+        daemon_cfg = getattr(self, "daemon_config", None)
         runtime_manager = getattr(self, "web_chat_runtime_manager", None)
+        if runtime_manager is not None:
+            current_web_chat_sandbox = runtime_manager.sandbox_config
+            current_web_chat_policy_hash = runtime_manager.sandbox_policy_hash
+        else:
+            current_web_chat_sandbox = web_chat_sandbox_config(daemon_cfg)
+            current_web_chat_policy_hash = web_chat_sandbox_policy_hash(daemon_cfg)
+        current_web_chat_sandbox_enabled = bool(current_web_chat_sandbox.enabled)
         provider_name = effective_provider or "claude"
         session: ChatSessionProtocol
         if runtime_manager is not None:
@@ -388,7 +432,6 @@ class ChatSessionMixin:
         session._on_plan_ready = _notify_plan_ready
 
         # Wire config from daemon
-        daemon_cfg = getattr(self, "daemon_config", None)
         if daemon_cfg is not None:
             session._config = daemon_cfg
             tool_approval_cfg = getattr(daemon_cfg, "tool_approval", None)
@@ -402,7 +445,7 @@ class ChatSessionMixin:
         if daemon_cfg is not None:
             chat_cfg = getattr(daemon_cfg, "chat", None)
             if chat_cfg is not None:
-                session.chat_mode = chat_cfg.default_mode
+                session.chat_mode = _normalize_runtime_chat_mode(chat_cfg.default_mode) or "plan"
 
         # Set project context on session BEFORE start() so env vars and CWD
         # are correctly configured for the CLI subprocess.
@@ -427,6 +470,9 @@ class ChatSessionMixin:
                     project_id=effective_pid,
                     session_type="web_chat",
                     status="active",
+                    terminal_context={},
+                    sandbox_enabled=current_web_chat_sandbox_enabled,
+                    sandbox_policy_hash=current_web_chat_policy_hash,
                 )
                 if normalized_session is not None:
                     existing_db_session = normalized_session
@@ -440,6 +486,50 @@ class ChatSessionMixin:
                     existing_db_session.id,
                     e,
                 )
+
+        if existing_db_session and getattr(existing_db_session, "session_type", None) == "web_chat":
+            mismatch_reason = None
+            stored_policy_hash = getattr(existing_db_session, "sandbox_policy_hash", None)
+            if (
+                isinstance(stored_policy_hash, str)
+                and stored_policy_hash
+                and stored_policy_hash != current_web_chat_policy_hash
+            ):
+                mismatch_reason = web_chat_policy_mismatch_message()
+
+            stored_sandbox_enabled = getattr(existing_db_session, "sandbox_enabled", None)
+            if (
+                mismatch_reason is None
+                and isinstance(stored_sandbox_enabled, bool)
+                and stored_sandbox_enabled != current_web_chat_sandbox_enabled
+            ):
+                mismatch_reason = web_chat_policy_mismatch_message()
+
+            if mismatch_reason and runtime_manager is not None:
+                runtime_mismatch_reason = runtime_manager.policy_mismatch_reason(
+                    existing_db_session
+                )
+                if isinstance(runtime_mismatch_reason, str) and runtime_mismatch_reason:
+                    mismatch_reason = runtime_mismatch_reason
+
+            if mismatch_reason:
+                if _has_meaningful_web_chat_history(existing_db_session):
+                    raise RuntimeError(mismatch_reason)
+                if session_manager:
+                    try:
+                        migrated = await asyncio.to_thread(
+                            session_manager.update,
+                            existing_db_session.id,
+                            sandbox_enabled=current_web_chat_sandbox_enabled,
+                            sandbox_policy_hash=current_web_chat_policy_hash,
+                        )
+                        if migrated is not None:
+                            existing_db_session = migrated
+                    except Exception:
+                        logger.debug(
+                            "Failed to migrate empty web-chat session to current sandbox policy",
+                            exc_info=True,
+                        )
 
         # Bind to the durable web-chat DB row if one already exists. Terminal
         # resumes also reuse their existing row and normalize it to web_chat
@@ -458,17 +548,18 @@ class ChatSessionMixin:
             ):
                 session.resume_session_id = existing_db_session.external_id
 
-            if existing_db_session.chat_mode and existing_db_session.chat_mode != "plan":
-                session.chat_mode = existing_db_session.chat_mode
+            runtime_mode = _normalize_runtime_chat_mode(existing_db_session.chat_mode)
+            if runtime_mode and runtime_mode != "plan":
+                session.chat_mode = runtime_mode
             if existing_db_session.usage_output_tokens:
                 session._accumulated_output_tokens = existing_db_session.usage_output_tokens
-            if existing_db_session.approved_tools_json:
-                try:
-                    session._approved_tools = set(
-                        json.loads(existing_db_session.approved_tools_json)
-                    )
-                except (ValueError, TypeError):
-                    logger.debug("Malformed approved_tools_json, ignoring")
+                if existing_db_session.approved_tools_json:
+                    try:
+                        session._approved_tools = normalize_approved_tool_keys(
+                            json.loads(existing_db_session.approved_tools_json)
+                        )
+                    except (ValueError, TypeError):
+                        logger.debug("Malformed approved_tools_json, ignoring")
 
             logger.info(
                 f"Hydrated web-chat session {existing_db_session.id} "
@@ -483,6 +574,8 @@ class ChatSessionMixin:
                     source=effective_provider or "claude",
                     project_id=effective_pid,
                     session_type="web_chat",
+                    sandbox_enabled=current_web_chat_sandbox_enabled,
+                    sandbox_policy_hash=current_web_chat_policy_hash,
                 )
                 session.db_session_id = db_session.id
                 session.seq_num = db_session.seq_num
@@ -507,13 +600,16 @@ class ChatSessionMixin:
 
                 # Restore persisted state from DB (safe for both new and returning
                 # sessions — new rows have defaults that won't clobber anything).
-                if db_session.chat_mode and db_session.chat_mode != "plan":
-                    session.chat_mode = db_session.chat_mode
+                runtime_mode = _normalize_runtime_chat_mode(db_session.chat_mode)
+                if runtime_mode and runtime_mode != "plan":
+                    session.chat_mode = runtime_mode
                 if db_session.usage_output_tokens:
                     session._accumulated_output_tokens = db_session.usage_output_tokens
                 if db_session.approved_tools_json:
                     try:
-                        session._approved_tools = set(json.loads(db_session.approved_tools_json))
+                        session._approved_tools = normalize_approved_tool_keys(
+                            json.loads(db_session.approved_tools_json)
+                        )
                     except (ValueError, TypeError):
                         logger.debug("Malformed approved_tools_json, ignoring")
                 logger.info(
@@ -527,7 +623,7 @@ class ChatSessionMixin:
         pending_modes = getattr(self, "_pending_modes", {})
         pending_mode = pending_modes.pop(session_key, None)
         if pending_mode:
-            session.chat_mode = pending_mode
+            session.chat_mode = _normalize_runtime_chat_mode(pending_mode) or pending_mode
 
         # Wire DB persistence callback for chat_mode changes
         if session_manager and session.db_session_id:

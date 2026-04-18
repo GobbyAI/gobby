@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback } from 'react'
 import '../workflows/LaunchAgentModal.css'
 import { useAgentSpawn } from '../../hooks/useAgentSpawn'
 import type { AgentDefinition, SpawnResult } from '../../hooks/useAgentSpawn'
+import {
+  AUTO_REASONING_EFFORT,
+  fetchProviderModelCatalog,
+  getModelsForProvider,
+  getReasoningOptionsForModel,
+  type ProviderModelEntry,
+} from '../../lib/providerModels'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,12 +77,15 @@ export function LaunchAgentDialog({
   const [agentName, setAgentName] = useState('default')
   const [isolation, setIsolation] = useState<Isolation>('none')
   const [model, setModel] = useState<string>('')
+  const [reasoningEffort, setReasoningEffort] = useState<string>(AUTO_REASONING_EFFORT)
+  const [reasoningRequired, setReasoningRequired] = useState(false)
   const [promptText, setPromptText] = useState('')
   const [promptExpanded, setPromptExpanded] = useState(false)
   const [rememberDefaults, setRememberDefaults] = useState(false)
 
   // Data
   const [definitions, setDefinitions] = useState<AgentDefinition[]>([])
+  const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([])
   const [loadingPrompt, setLoadingPrompt] = useState(false)
 
   // Result
@@ -87,8 +97,14 @@ export function LaunchAgentDialog({
     if (!isOpen) return
     setResult(null)
     setError(null)
+    setAgentName('default')
+    setIsolation('none')
+    setModel('')
+    setReasoningEffort(AUTO_REASONING_EFFORT)
+    setReasoningRequired(false)
 
     fetchDefinitions(projectId || undefined).then(setDefinitions)
+    fetchProviderModelCatalog().then(setProviderCatalog)
 
     if (projectId) {
       getDefaults(projectId).then(allDefaults => {
@@ -98,10 +114,29 @@ export function LaunchAgentDialog({
           setAgentName(catDefaults.agent_name || 'default')
           setIsolation(catDefaults.isolation || 'none')
           setModel(catDefaults.model || '')
+          setReasoningEffort(catDefaults.reasoning_effort || AUTO_REASONING_EFFORT)
+          setReasoningRequired(Boolean(catDefaults.reasoning_required))
         }
       })
     }
   }, [isOpen, projectId, taskCategory, fetchDefinitions, getDefaults])
+
+  const selectedDefinition = definitions.find(d => d.definition.name === agentName)
+  const effectiveProvider = selectedDefinition?.definition.provider && selectedDefinition.definition.provider !== 'inherit'
+    ? selectedDefinition.definition.provider
+    : 'claude'
+  const effectiveModel = model || selectedDefinition?.definition.model || ''
+  const modelOptions = getModelsForProvider(providerCatalog, effectiveProvider)
+  const reasoningOptions = getReasoningOptionsForModel(providerCatalog, effectiveProvider, effectiveModel)
+  const reasoningDisabled = reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled)
+
+  useEffect(() => {
+    const currentValues = new Set(reasoningOptions.map(option => option.value))
+    if (!currentValues.has(reasoningEffort)) {
+      setReasoningEffort(AUTO_REASONING_EFFORT)
+      setReasoningRequired(false)
+    }
+  }, [reasoningOptions, reasoningEffort])
 
   // Load prompt preview on open
   useEffect(() => {
@@ -115,6 +150,22 @@ export function LaunchAgentDialog({
     })
   }, [isOpen, taskId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const currentValues = new Set(reasoningOptions.map(option => option.value))
+    if (!currentValues.has(reasoningEffort)) {
+      setReasoningEffort(AUTO_REASONING_EFFORT)
+      setReasoningRequired(false)
+    }
+  }, [reasoningOptions, reasoningEffort])
+
+  const handleAgentChange = useCallback((nextAgentName: string) => {
+    const nextDefinition = definitions.find(d => d.definition.name === nextAgentName)
+    setAgentName(nextAgentName)
+    setModel(nextDefinition?.definition.model || '')
+    setReasoningEffort(nextDefinition?.definition.reasoning_effort || AUTO_REASONING_EFFORT)
+    setReasoningRequired(Boolean(nextDefinition?.definition.reasoning_required))
+  }, [definitions])
+
   const handleLaunch = useCallback(async () => {
     setError(null)
     const spawnResult = await spawn({
@@ -123,6 +174,8 @@ export function LaunchAgentDialog({
       prompt: promptText || undefined,
       isolation: isolation !== 'none' ? isolation : undefined,
       model: model || undefined,
+      reasoning_effort: reasoningEffort,
+      reasoning_required: reasoningEffort !== AUTO_REASONING_EFFORT ? reasoningRequired : false,
     })
 
     if (spawnResult.success) {
@@ -133,6 +186,8 @@ export function LaunchAgentDialog({
           agent_name: agentName,
           isolation,
           model: model || undefined,
+          reasoning_effort: reasoningEffort,
+          reasoning_required: reasoningEffort !== AUTO_REASONING_EFFORT ? reasoningRequired : false,
         })
       }
       setResult(spawnResult)
@@ -140,7 +195,7 @@ export function LaunchAgentDialog({
     } else {
       setError(spawnResult.error || 'Launch failed')
     }
-  }, [taskId, agentName, promptText, isolation, model, rememberDefaults, projectId, taskCategory, spawn, saveDefaults, onSpawned])
+  }, [taskId, agentName, promptText, isolation, model, reasoningEffort, reasoningRequired, rememberDefaults, projectId, taskCategory, spawn, saveDefaults, onSpawned])
 
   if (!isOpen) return null
 
@@ -157,6 +212,9 @@ export function LaunchAgentDialog({
           <div className="launch-agent-success">
             <div className="launch-agent-success-icon">&#10003;</div>
             <p className="launch-success-text">Agent spawned successfully.</p>
+            {result.reasoning?.message && (
+              <p className="launch-success-text">{result.reasoning.message}</p>
+            )}
             <button className="launch-agent-btn launch-agent-btn--primary" onClick={onClose}>
               Done
             </button>
@@ -189,7 +247,7 @@ export function LaunchAgentDialog({
             <select
               className="launch-agent-select"
               value={agentName}
-              onChange={e => setAgentName(e.target.value)}
+              onChange={e => handleAgentChange(e.target.value)}
             >
               {definitions.length === 0 && <option value="default">default</option>}
               {definitions.map(d => (
@@ -232,10 +290,55 @@ export function LaunchAgentDialog({
               onChange={e => setModel(e.target.value)}
             >
               <option value="">Default (from agent definition)</option>
-              <option value="opus">Opus</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="haiku">Haiku</option>
+              {modelOptions.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
+          </div>
+
+          <div className="launch-agent-field">
+            <label className="launch-agent-label">Reasoning</label>
+            <select
+              className="launch-agent-select"
+              value={reasoningEffort}
+              onChange={e => {
+                const nextReasoning = e.target.value
+                setReasoningEffort(nextReasoning)
+                if (nextReasoning === AUTO_REASONING_EFFORT) {
+                  setReasoningRequired(false)
+                }
+              }}
+              disabled={reasoningDisabled}
+            >
+              {reasoningOptions.map(option => (
+                <option key={option.value} value={option.value} disabled={option.disabled}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <label className="launch-agent-checkbox">
+            <input
+              type="checkbox"
+              checked={reasoningRequired}
+              disabled={reasoningEffort === AUTO_REASONING_EFFORT}
+              onChange={e => setReasoningRequired(e.target.checked)}
+            />
+            Require reasoning support
+          </label>
+          {reasoningDisabled && (
+            <div className="launch-agent-field-hint">Reasoning is not available for the selected provider/model.</div>
+          )}
+          {error && reasoningEffort !== AUTO_REASONING_EFFORT && !reasoningRequired && (
+            <div className="launch-agent-field-hint">Unsupported reasoning falls back with a warning unless Require reasoning support is enabled.</div>
+          )}
+
+          <div className="launch-agent-field">
+            <label className="launch-agent-label">Model Provider</label>
+            <div className="launch-agent-task-context">{effectiveProvider}</div>
           </div>
 
           {/* Prompt preview */}
@@ -310,8 +413,11 @@ export function BatchLaunchAgentDialog({
   const [agentName, setAgentName] = useState('default')
   const [isolation, setIsolation] = useState<Isolation>('none')
   const [model, setModel] = useState<string>('')
+  const [reasoningEffort, setReasoningEffort] = useState<string>(AUTO_REASONING_EFFORT)
+  const [reasoningRequired, setReasoningRequired] = useState(false)
   const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set())
   const [definitions, setDefinitions] = useState<AgentDefinition[]>([])
+  const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([])
   const [batchResult, setBatchResult] = useState<{ succeeded: number; failed: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -320,8 +426,23 @@ export function BatchLaunchAgentDialog({
     setBatchResult(null)
     setError(null)
     setExcludedIds(new Set())
+    setAgentName('default')
+    setIsolation('none')
+    setModel('')
+    setReasoningEffort(AUTO_REASONING_EFFORT)
+    setReasoningRequired(false)
     fetchDefinitions(projectId || undefined).then(setDefinitions)
+    fetchProviderModelCatalog().then(setProviderCatalog)
   }, [isOpen, projectId, fetchDefinitions])
+
+  const selectedDefinition = definitions.find(d => d.definition.name === agentName)
+  const effectiveProvider = selectedDefinition?.definition.provider && selectedDefinition.definition.provider !== 'inherit'
+    ? selectedDefinition.definition.provider
+    : 'claude'
+  const effectiveModel = model || selectedDefinition?.definition.model || ''
+  const modelOptions = getModelsForProvider(providerCatalog, effectiveProvider)
+  const reasoningOptions = getReasoningOptionsForModel(providerCatalog, effectiveProvider, effectiveModel)
+  const reasoningDisabled = reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled)
 
   const toggleExclude = useCallback((id: string) => {
     setExcludedIds(prev => {
@@ -345,12 +466,14 @@ export function BatchLaunchAgentDialog({
       agent_name: agentName,
       isolation: isolation !== 'none' ? isolation : undefined as any,
       model: model || undefined,
+      reasoning_effort: reasoningEffort,
+      reasoning_required: reasoningEffort !== AUTO_REASONING_EFFORT ? reasoningRequired : false,
     }))
 
     const result = await spawnBatch(spawns)
     setBatchResult({ succeeded: result.succeeded, failed: result.failed })
     onSpawned?.(result.succeeded, result.failed)
-  }, [tasks, excludedIds, agentName, isolation, model, spawnBatch, onSpawned])
+  }, [tasks, excludedIds, agentName, isolation, model, reasoningEffort, reasoningRequired, spawnBatch, onSpawned])
 
   if (!isOpen) return null
 
@@ -439,11 +562,45 @@ export function BatchLaunchAgentDialog({
             <label className="launch-agent-label">Model Override</label>
             <select className="launch-agent-select" value={model} onChange={e => setModel(e.target.value)}>
               <option value="">Default</option>
-              <option value="opus">Opus</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="haiku">Haiku</option>
+              {modelOptions.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
+
+          <div className="launch-agent-field">
+            <label className="launch-agent-label">Reasoning</label>
+            <select
+              className="launch-agent-select"
+              value={reasoningEffort}
+              onChange={e => {
+                const nextReasoning = e.target.value
+                setReasoningEffort(nextReasoning)
+                if (nextReasoning === AUTO_REASONING_EFFORT) {
+                  setReasoningRequired(false)
+                }
+              }}
+              disabled={reasoningDisabled}
+            >
+              {reasoningOptions.map(option => (
+                <option key={option.value} value={option.value} disabled={option.disabled}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <label className="launch-agent-checkbox">
+            <input
+              type="checkbox"
+              checked={reasoningRequired}
+              disabled={reasoningEffort === AUTO_REASONING_EFFORT}
+              onChange={e => setReasoningRequired(e.target.checked)}
+            />
+            Require reasoning support
+          </label>
 
           {error && <div className="launch-agent-error">{error}</div>}
         </div>

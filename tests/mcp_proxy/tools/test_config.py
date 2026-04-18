@@ -263,7 +263,7 @@ class TestConfigKeyToSecretName:
     """Tests for config_key_to_secret_name helper."""
 
     def test_simple_key(self) -> None:
-        assert config_key_to_secret_name("voice.elevenlabs_api_key") == "elevenlabs_api_key"
+        assert config_key_to_secret_name("service.provider_api_key") == "provider_api_key"
 
     def test_nested_key(self) -> None:
         assert config_key_to_secret_name("a.b.c") == "c"
@@ -276,7 +276,7 @@ class TestIsSecretKeyName:
     """Tests for is_secret_key_name helper."""
 
     def test_api_key_suffix(self) -> None:
-        assert is_secret_key_name("voice.elevenlabs_api_key") is True
+        assert is_secret_key_name("service.provider_api_key") is True
 
     def test_password_suffix(self) -> None:
         assert is_secret_key_name("db.db_password") is True
@@ -308,25 +308,25 @@ class TestConfigStoreSecrets:
         self, config_store: ConfigStore, secret_store: SecretStore
     ) -> None:
         """set_secret stores a $secret: reference in config_store."""
-        config_store.set_secret("voice.elevenlabs_api_key", "sk-test-123", secret_store)
-        raw = config_store.get("voice.elevenlabs_api_key")
-        assert raw == "$secret:elevenlabs_api_key"
+        config_store.set_secret("service.provider_api_key", "sk-test-123", secret_store)
+        raw = config_store.get("service.provider_api_key")
+        assert raw == "$secret:provider_api_key"
 
     def test_set_secret_encrypts_value(
         self, config_store: ConfigStore, secret_store: SecretStore
     ) -> None:
         """set_secret encrypts the actual value in the secrets table."""
-        config_store.set_secret("voice.elevenlabs_api_key", "sk-test-123", secret_store)
-        decrypted = secret_store.get("elevenlabs_api_key")
+        config_store.set_secret("service.provider_api_key", "sk-test-123", secret_store)
+        decrypted = secret_store.get("provider_api_key")
         assert decrypted == "sk-test-123"
 
     def test_set_secret_marks_is_secret(
         self, config_store: ConfigStore, secret_store: SecretStore
     ) -> None:
         """set_secret sets is_secret=1 in config_store."""
-        config_store.set_secret("voice.elevenlabs_api_key", "sk-test-123", secret_store)
+        config_store.set_secret("service.provider_api_key", "sk-test-123", secret_store)
         keys = config_store.get_secret_keys()
-        assert "voice.elevenlabs_api_key" in keys
+        assert "service.provider_api_key" in keys
 
     def test_get_secret_keys_empty(self, config_store: ConfigStore) -> None:
         """get_secret_keys returns empty list when no secrets exist."""
@@ -343,10 +343,10 @@ class TestConfigStoreSecrets:
 
     def test_clear_secret(self, config_store: ConfigStore, secret_store: SecretStore) -> None:
         """clear_secret removes from both config_store and secrets."""
-        config_store.set_secret("voice.elevenlabs_api_key", "sk-test-123", secret_store)
-        config_store.clear_secret("voice.elevenlabs_api_key", secret_store)
-        assert config_store.get("voice.elevenlabs_api_key") is None
-        assert secret_store.get("elevenlabs_api_key") is None
+        config_store.set_secret("service.provider_api_key", "sk-test-123", secret_store)
+        config_store.clear_secret("service.provider_api_key", secret_store)
+        assert config_store.get("service.provider_api_key") is None
+        assert secret_store.get("provider_api_key") is None
         assert config_store.get_secret_keys() == []
 
     def test_normal_set_does_not_mark_secret(self, config_store: ConfigStore) -> None:
@@ -384,7 +384,7 @@ class TestSetConfigSecret:
         """set_config with is_secret=True encrypts the value."""
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
             tool = config_registry_with_db.get_tool("set_config")
-            result = tool(key="voice.elevenlabs_api_key", value="sk-test-456", is_secret=True)
+            result = tool(key="service.provider_api_key", value="sk-test-456", is_secret=True)
 
             assert result["success"] is True
             assert result["stored_as"] == "encrypted_secret"
@@ -392,12 +392,12 @@ class TestSetConfigSecret:
 
             # Verify encrypted in secrets table
             secret_store = SecretStore(temp_db)
-            decrypted = secret_store.get("elevenlabs_api_key")
+            decrypted = secret_store.get("provider_api_key")
             assert decrypted == "sk-test-456"
 
             # Verify config_store has reference
-            raw = config_store.get("voice.elevenlabs_api_key")
-            assert raw == "$secret:elevenlabs_api_key"
+            raw = config_store.get("service.provider_api_key")
+            assert raw == "$secret:provider_api_key"
 
     def test_set_config_normal_unchanged(
         self, config_registry_with_db, config_store: ConfigStore
@@ -562,3 +562,123 @@ class TestSetConfigBatch:
         assert result["success"] is False
         # Should not have persisted the invalid value
         assert config_store.get("daemon_port") is None
+
+
+class TestDeleteConfig:
+    """Tests for delete_config tool."""
+
+    @pytest.fixture
+    def config_registry_with_db(
+        self,
+        temp_db: LocalDatabase,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+    ) -> InternalToolRegistry:
+        """Create a config registry with db for secret-aware deletion tests."""
+        return create_config_registry(
+            config=config_state["config"],
+            config_store=config_store,
+            config_setter=lambda c: config_state.__setitem__("config", c),
+            db=temp_db,
+        )
+
+    def test_delete_config_removes_db_row(
+        self, config_registry, config_store: ConfigStore
+    ) -> None:
+        """Deleting a normal override removes its DB row."""
+        set_tool = config_registry.get_tool("set_config")
+        delete_tool = config_registry.get_tool("delete_config")
+
+        assert set_tool(key="daemon_port", value=61000)["success"] is True
+
+        result = delete_tool(key="daemon_port")
+
+        assert result["success"] is True
+        assert result["deleted"] is True
+        assert result["had_secret"] is False
+        assert "daemon_port" not in config_store.list_keys()
+
+    def test_delete_config_updates_in_memory_to_default(
+        self, config_registry, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Deleting an override restores the Pydantic default in memory."""
+        default_port = DaemonConfig().daemon_port
+        set_tool = config_registry.get_tool("set_config")
+        delete_tool = config_registry.get_tool("delete_config")
+
+        assert set_tool(key="daemon_port", value=61001)["success"] is True
+
+        result = delete_tool(key="daemon_port")
+
+        assert result["success"] is True
+        assert config_state["config"].daemon_port == default_port
+        assert config_state["config"].daemon_port != 61001
+
+    def test_delete_config_returns_error_for_missing_key(self, config_registry) -> None:
+        """Deleting a key with no DB override returns a not-found error."""
+        delete_tool = config_registry.get_tool("delete_config")
+
+        result = delete_tool(key="daemon_port")
+
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_delete_config_clears_secret(
+        self,
+        config_registry_with_db,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Deleting a secret override clears both the config row and secret blob."""
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
+            set_tool = config_registry_with_db.get_tool("set_config")
+            delete_tool = config_registry_with_db.get_tool("delete_config")
+
+            assert (
+                set_tool(key="embeddings.api_key", value="sk-delete-123", is_secret=True)[
+                    "success"
+                ]
+                is True
+            )
+
+            result = delete_tool(key="embeddings.api_key")
+
+            secret_store = SecretStore(temp_db)
+            assert result["success"] is True
+            assert result["had_secret"] is True
+            assert "embeddings.api_key" not in config_store.list_keys()
+            assert secret_store.get("api_key") is None
+            assert config_state["config"].embeddings.api_key is None
+
+    def test_delete_config_requires_db_for_secrets(
+        self,
+        config_registry_with_db,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Secret deletion fails cleanly when the registry has no DB access."""
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
+            set_tool = config_registry_with_db.get_tool("set_config")
+            assert (
+                set_tool(key="embeddings.api_key", value="sk-delete-456", is_secret=True)[
+                    "success"
+                ]
+                is True
+            )
+
+            dbless_registry = create_config_registry(
+                config=config_state["config"],
+                config_store=config_store,
+                config_setter=lambda c: config_state.__setitem__("config", c),
+            )
+            delete_tool = dbless_registry.get_tool("delete_config")
+            result = delete_tool(key="embeddings.api_key")
+
+            secret_store = SecretStore(temp_db)
+            assert result["success"] is False
+            assert "database not available" in result["error"].lower()
+            assert "embeddings.api_key" in config_store.list_keys()
+            assert secret_store.get("api_key") == "sk-delete-456"
+            assert config_state["config"].embeddings.api_key == "sk-delete-456"

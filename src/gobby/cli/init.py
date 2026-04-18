@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.project_init import initialize_project
 
 logger = logging.getLogger(__name__)
@@ -53,11 +54,11 @@ def init(
 
         # Trigger initial code indexing via gcode
         try:
-            gcode_bin = Path.home() / ".gobby" / "bin" / "gcode"
-            if gcode_bin.exists():
+            gcode_bin = resolve_native_bin("gcode")
+            if gcode_bin:
                 click.echo("Indexing codebase...")
                 proc = subprocess.run(
-                    [str(gcode_bin), "index", "--project", str(result.project_path)],
+                    [gcode_bin, "index", "--project", str(result.project_path)],
                     capture_output=True,
                     text=True,
                     timeout=300,
@@ -115,14 +116,11 @@ def init(
         if not shutil.which("clawhub"):
             click.echo("  Warning: clawhub CLI not found. Install: npm i -g clawhub")
 
-        # Check Cisco skill-scanner (skill safety scanning)
+        # Check ClawCare (skill safety scanning)
         try:
-            import skill_scanner  # noqa: F401
+            import clawcare  # noqa: F401
         except ImportError:
-            click.echo(
-                "  Warning: cisco-ai-skill-scanner not found. "
-                "Install: uv add cisco-ai-skill-scanner"
-            )
+            click.echo("  Warning: clawcare not found. Install: uv add clawcare")
 
         # Show detected verification commands
         if result.verification:

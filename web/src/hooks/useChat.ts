@@ -9,11 +9,19 @@ import type {
   TokenUsage,
   ToolResult,
 } from "../types/chat";
-import { classifyTool } from "../types/chat";
+import { classifyTool, normalizeChatMode } from "../types/chat";
 import type { QueuedFile } from "../types/chat";
 import type { A2UISurfaceState, UserAction } from "../components/canvas/types";
 import type { CanvasPanelState } from "../components/canvas/hooks/useCanvasPanel";
+import {
+  mapRenderedMessageToChatMessage,
+  normalizeChatRole,
+} from "../lib/chatMessageMapping";
 import { AUTO_REASONING_EFFORT } from "../lib/providerModels";
+import {
+  canProxyAttachObservationMeta,
+  canProxyAttachSessionRecord,
+} from "../lib/sessionProxyAttach";
 
 const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
@@ -50,6 +58,13 @@ interface ChatError {
   message_id?: string;
   request_id?: string;
   error: string;
+  error_detail?: string;
+}
+
+interface PendingProxyMessage {
+  clientMessageId: string;
+  currentMessageId: string;
+  sessionId: string;
 }
 
 interface ToolStatusMessage {
@@ -168,6 +183,71 @@ function isChatProvider(value: unknown): value is string {
 
 function isValidSessionType(value: unknown): value is "terminal" | "web_chat" {
   return value === "terminal" || value === "web_chat";
+}
+
+function enqueuePendingProxyMessage(
+  pendingQueues: Map<string, string[]>,
+  entry: PendingProxyMessage,
+): void {
+  const queue = pendingQueues.get(entry.sessionId) ?? [];
+  queue.push(entry.clientMessageId);
+  pendingQueues.set(entry.sessionId, queue);
+}
+
+function consumePendingProxyMessage(
+  pending: Map<string, PendingProxyMessage>,
+  pendingQueues: Map<string, string[]>,
+  sessionId: string,
+): PendingProxyMessage | null {
+  const queue = pendingQueues.get(sessionId);
+  if (!queue) {
+    return null;
+  }
+
+  while (queue.length > 0) {
+    const clientMessageId = queue.shift();
+    if (!clientMessageId) {
+      continue;
+    }
+    const entry = pending.get(clientMessageId) ?? null;
+    if (entry) {
+      if (queue.length === 0) {
+        pendingQueues.delete(sessionId);
+      } else {
+        pendingQueues.set(sessionId, queue);
+      }
+      return entry;
+    }
+  }
+
+  pendingQueues.delete(sessionId);
+  return null;
+}
+
+function removePendingProxyMessageFromQueue(
+  pendingQueues: Map<string, string[]>,
+  sessionId: string,
+  clientMessageId: string,
+): void {
+  const queue = pendingQueues.get(sessionId);
+  if (!queue) {
+    return;
+  }
+
+  const next = queue.filter((id) => id !== clientMessageId);
+  if (next.length === 0) {
+    pendingQueues.delete(sessionId);
+    return;
+  }
+  pendingQueues.set(sessionId, next);
+}
+
+function clearPendingProxyMessages(
+  pending: Map<string, PendingProxyMessage>,
+  pendingQueues: Map<string, string[]>,
+): void {
+  pending.clear();
+  pendingQueues.clear();
 }
 
 function normalizeSessionType(value: unknown): "terminal" | "web_chat" | null {
@@ -330,9 +410,19 @@ function toSessionObservationMeta(
     status:
       overrides?.status ??
       (typeof session.status === "string" ? session.status : "unknown"),
+    canProxyAttach:
+      overrides?.canProxyAttach ??
+      (typeof session.can_proxy_attach === "boolean"
+        ? session.can_proxy_attach
+        : undefined),
     model:
       overrides?.model ??
       (typeof session.model === "string" ? session.model : null),
+    reasoningEffort:
+      overrides?.reasoningEffort ??
+      (typeof session.reasoning_effort === "string"
+        ? session.reasoning_effort
+        : null),
     externalId:
       overrides?.externalId ??
       (typeof session.external_id === "string" ? session.external_id : ""),
@@ -377,6 +467,23 @@ interface ApiMessage {
   content_blocks?: ContentBlock[]; // Snake case from RenderedMessage shape
   model?: string | null;
   usage?: TokenUsage | null;
+}
+
+function mapStoredChatMessage(m: {
+  id: string;
+  role: string;
+  content: string;
+  tool_calls?: ToolCall[];
+  created_at: string;
+}): ChatMessage {
+  return {
+    id: m.id,
+    role: normalizeChatRole(m.role, m.content),
+    content: m.content,
+    contentBlocks: m.content ? [{ type: "text" as const, content: m.content }] : [],
+    toolCalls: m.tool_calls ?? [],
+    timestamp: new Date(m.created_at),
+  };
 }
 
 function tryParseJSON(value: unknown): unknown {
@@ -513,7 +620,7 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
 
       const chatMsg: ChatMessage = {
         id,
-        role: (m.role as "user" | "assistant" | "system") || "assistant",
+        role: normalizeChatRole(m.role, m.content, m.content_blocks),
         content: m.content || "",
         timestamp,
         contentBlocks: m.content_blocks,
@@ -769,33 +876,6 @@ function mapApiMessages(messages: ApiMessage[]): ChatMessage[] {
   return result;
 }
 
-function mapRenderedMessageToChatMessage(
-  message: Record<string, unknown>,
-): ChatMessage {
-  const chatMsg: ChatMessage = {
-    id: String(message.id ?? `ws-${Date.now()}`),
-    role:
-      (message.role as string as "user" | "assistant" | "system") ||
-      "assistant",
-    content: (message.content as string) ?? "",
-    timestamp: new Date((message.timestamp as string) ?? Date.now()),
-    contentBlocks: message.content_blocks as ContentBlock[] | undefined,
-  };
-
-  if (chatMsg.contentBlocks) {
-    for (const block of chatMsg.contentBlocks) {
-      if (block.type === "tool_chain" && block.tool_calls) {
-        chatMsg.toolCalls = [...(chatMsg.toolCalls || []), ...block.tool_calls];
-      } else if (block.type === "thinking") {
-        chatMsg.thinkingContent =
-          (chatMsg.thinkingContent || "") + block.content;
-      }
-    }
-  }
-
-  return chatMsg;
-}
-
 export function useChat() {
   const [conversationId, setConversationId] = useState<string>(() =>
     loadConversationId(),
@@ -840,7 +920,7 @@ export function useChat() {
   // Active agent tracking — persisted to survive page reloads
   const ACTIVE_AGENT_KEY = "gobby-active-agent";
   const [activeAgent, setActiveAgent] = useState<string>(
-    () => localStorage.getItem(ACTIVE_AGENT_KEY) || "default-web-chat",
+    () => localStorage.getItem(ACTIVE_AGENT_KEY) || "default",
   );
 
   // Session title — stored from switchConversation to survive filtered list race
@@ -918,6 +998,10 @@ export function useChat() {
   const [attachedSessionMeta, setAttachedSessionMeta] =
     useState<SessionObservationMeta | null>(null);
   const attachedSessionMetaRef = useRef<SessionObservationMeta | null>(null);
+  const pendingProxyMessagesRef = useRef<Map<string, PendingProxyMessage>>(
+    new Map(),
+  );
+  const pendingProxySessionQueuesRef = useRef<Map<string, string[]>>(new Map());
   const [isContinuingSession, setIsContinuingSession] = useState(false);
   const continuingSessionIdRef = useRef<string | null>(null);
   const continuationRollbackRef = useRef<ContinuationRollbackSnapshot | null>(
@@ -1065,11 +1149,12 @@ export function useChat() {
       if (nextMeta?.ref) {
         setSessionRef(nextMeta.ref);
       }
+      setCurrentBranch(nextMeta?.gitBranch ?? null);
       if (nextMeta && isChatProvider(nextMeta.source)) {
         setSelectedProvider(nextMeta.source);
       }
       if (nextMeta?.chatMode) {
-        const restored = nextMeta.chatMode as ChatMode;
+        const restored = normalizeChatMode(nextMeta.chatMode);
         if (restored !== currentModeRef.current) {
           currentModeRef.current = restored;
           onModeChangedRef.current?.(restored);
@@ -1084,14 +1169,12 @@ export function useChat() {
 
   const clearSessionObservationState = useCallback(
     ({ preserveViewing = false }: { preserveViewing?: boolean } = {}) => {
-      if (
-        observedSessionIdRef.current &&
-        wsRef.current?.readyState === WebSocket.OPEN
-      ) {
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
             type: "detach_from_session",
-            session_id: observedSessionIdRef.current,
+            session_id: observedSessionId,
           }),
         );
       }
@@ -1105,6 +1188,10 @@ export function useChat() {
       observedSessionMetaRef.current = null;
       attachedSessionIdRef.current = null;
       attachedSessionMetaRef.current = null;
+      clearPendingProxyMessages(
+        pendingProxyMessagesRef.current,
+        pendingProxySessionQueuesRef.current,
+      );
       sessionInteractionModeRef.current = "none";
       setObservedSessionId(null);
       setAttachedSessionId(null);
@@ -1288,8 +1375,8 @@ export function useChat() {
       );
       setProxyDeliveryNotice(snapshot.proxyDeliveryNotice);
       setIsLoadingMessages(false);
-      currentModeRef.current = snapshot.currentMode;
-      onModeChangedRef.current?.(snapshot.currentMode);
+      currentModeRef.current = normalizeChatMode(snapshot.currentMode);
+      onModeChangedRef.current?.(normalizeChatMode(snapshot.currentMode));
 
       if (
         snapshot.observedSessionId &&
@@ -1379,25 +1466,7 @@ export function useChat() {
           .then((data) => {
             if (viewingSessionIdRef.current) return;
             if (!data?.messages?.length) return;
-            const backfilled: ChatMessage[] = data.messages.map(
-              (m: {
-                id: string;
-                role: string;
-                content: string;
-                tool_calls?: ToolCall[];
-                seq: number;
-                created_at: string;
-              }) => ({
-                id: m.id,
-                role: m.role as "user" | "assistant" | "system",
-                content: m.content,
-                contentBlocks: m.content
-                  ? [{ type: "text" as const, content: m.content }]
-                  : [],
-                toolCalls: m.tool_calls ?? [],
-                timestamp: new Date(m.created_at),
-              }),
-            );
+            const backfilled: ChatMessage[] = data.messages.map(mapStoredChatMessage);
             setMessages((prev) => {
               const existingIds = new Set(prev.map((m) => m.id));
               const newMsgs = backfilled.filter((m) => !existingIds.has(m.id));
@@ -1570,9 +1639,10 @@ export function useChat() {
             .conversation_id as string | undefined;
           // Only apply mode changes for the CURRENT conversation
           if (!msgConvId || msgConvId === conversationIdRef.current) {
-            const newMode = (data as Record<string, unknown>).mode as
-              | ChatMode
+            const rawMode = (data as Record<string, unknown>).mode as
+              | string
               | undefined;
+            const newMode = rawMode ? normalizeChatMode(rawMode) : undefined;
             const reason = (data as Record<string, unknown>).reason as
               | string
               | undefined;
@@ -1585,17 +1655,6 @@ export function useChat() {
               if (reason === "plan_approved") {
                 setPlanPendingApproval(false);
                 planContentRef.current = null;
-              }
-              if (
-                reason === "plan_approved" &&
-                pendingPlanExecutionRef.current
-              ) {
-                pendingPlanExecutionRef.current = false;
-                setTimeout(() => {
-                  sendMessageRef.current?.(
-                    "Plan approved — proceed with implementation.",
-                  );
-                }, 200);
               }
               if (
                 reason === "plan_changes_requested" &&
@@ -1670,11 +1729,12 @@ export function useChat() {
             if (continuedMeta.ref) {
               setSessionRef(continuedMeta.ref);
             }
+            setCurrentBranch(continuedMeta.gitBranch ?? null);
             if (continuedMeta.source && isChatProvider(continuedMeta.source)) {
               setSelectedProvider(continuedMeta.source);
             }
             if (continuedMeta.chatMode) {
-              const restored = continuedMeta.chatMode as ChatMode;
+              const restored = normalizeChatMode(continuedMeta.chatMode);
               currentModeRef.current = restored;
               onModeChangedRef.current?.(restored);
             }
@@ -1692,6 +1752,21 @@ export function useChat() {
               .catch(() => {});
           }
           clearContinuationRollback();
+          const resumeNotice =
+            typeof continued.resume_notice === "string"
+              ? continued.resume_notice
+              : null;
+          if (resumeNotice) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `system-resume-notice-${uuid()}`,
+                role: "system" as const,
+                content: resumeNotice,
+                timestamp: new Date(),
+              },
+            ]);
+          }
           console.log("Session continued:", data);
         } else if (data.type === "error") {
           const err = data as Record<string, unknown>;
@@ -1811,6 +1886,7 @@ export function useChat() {
               source: "unknown",
               title: null,
               status: "unknown",
+              canProxyAttach: false,
               model: null,
               externalId: "",
               chatMode: null,
@@ -1830,21 +1906,44 @@ export function useChat() {
           setViewingSessionMeta(meta);
           viewingSessionMetaRef.current = meta;
           const requestedMode = pendingSessionInteractionModeRef.current;
-          const proxyCapable =
-            meta.sessionType === "terminal" && meta.status === "active";
+          const proxyCapable = canProxyAttachObservationMeta(meta);
           const nextMode =
             requestedMode === "proxy" && !proxyCapable ? "none" : requestedMode;
+          clearPendingProxyMessages(
+            pendingProxyMessagesRef.current,
+            pendingProxySessionQueuesRef.current,
+          );
           setSessionInteractionMode(nextMode);
+          sessionInteractionModeRef.current = nextMode;
           if (nextMode === "proxy") {
             setAttachedSessionId(sid);
+            attachedSessionIdRef.current = sid;
             setAttachedSessionMeta(meta);
+            attachedSessionMetaRef.current = meta;
             setProxyDeliveryNotice(null);
+            if (
+              meta.chatMode === "act" ||
+              meta.chatMode === "accept_edits" ||
+              meta.chatMode === "bypass" ||
+              meta.chatMode === "normal" ||
+              meta.chatMode === "plan"
+            ) {
+              const restored = normalizeChatMode(meta.chatMode);
+              if (restored !== currentModeRef.current) {
+                currentModeRef.current = restored;
+                onModeChangedRef.current?.(restored);
+              }
+            }
           } else {
             setAttachedSessionId(null);
+            attachedSessionIdRef.current = null;
             setAttachedSessionMeta(null);
+            attachedSessionMetaRef.current = null;
             setProxyDeliveryNotice(
               requestedMode === "proxy" && meta.sessionType === "terminal"
-                ? "This terminal session is paused. Use Resume Session to continue it in web chat."
+                ? meta.status === "paused"
+                  ? "This terminal session is paused. Use Resume Session to continue it in web chat."
+                  : "This terminal session can only be resumed in web chat right now."
                 : null,
             );
           }
@@ -1901,11 +2000,37 @@ export function useChat() {
             });
           }
         } else if (data.type === "detach_from_session_result") {
+          const sid =
+            typeof (data as Record<string, unknown>).session_id === "string"
+              ? ((data as Record<string, unknown>).session_id as string)
+              : null;
+          if (sid) {
+            const isCurrentObserved = observedSessionIdRef.current === sid;
+            const isCurrentAttached = attachedSessionIdRef.current === sid;
+            const isCurrentViewedTerminal =
+              viewingSessionIdRef.current === sid &&
+              viewingSessionMetaRef.current?.sessionType === "terminal";
+            if (
+              !isCurrentObserved &&
+              !isCurrentAttached &&
+              !isCurrentViewedTerminal
+            ) {
+              return;
+            }
+          }
           setObservedSessionId(null);
           observedSessionMetaRef.current = null;
           setAttachedSessionId(null);
+          attachedSessionIdRef.current = null;
           setAttachedSessionMeta(null);
+          attachedSessionMetaRef.current = null;
+          clearPendingProxyMessages(
+            pendingProxyMessagesRef.current,
+            pendingProxySessionQueuesRef.current,
+          );
+          setProxyDeliveryNotice(null);
           setSessionInteractionMode("none");
+          sessionInteractionModeRef.current = "none";
           // Keep viewingSessionId/Meta — return to view-only mode
         } else if (
           data.type === "session_message" &&
@@ -1927,6 +2052,16 @@ export function useChat() {
           }
 
           const renderedMessage = mapRenderedMessageToChatMessage(msg);
+          const pendingProxyMessage =
+            renderedMessage.role === "user" &&
+            smSessionId === attachedSessionIdRef.current &&
+            sessionInteractionModeRef.current === "proxy"
+              ? consumePendingProxyMessage(
+                  pendingProxyMessagesRef.current,
+                  pendingProxySessionQueuesRef.current,
+                  smSessionId,
+                )
+              : null;
           setMessages((prev) => {
             const existingIdx = prev.findIndex(
               (message) => message.id === renderedMessage.id,
@@ -1936,10 +2071,77 @@ export function useChat() {
               updated[existingIdx] = renderedMessage;
               return updated;
             }
+            if (pendingProxyMessage) {
+              const pendingIdx = prev.findIndex(
+                (message) => message.id === pendingProxyMessage.currentMessageId,
+              );
+              if (pendingIdx >= 0) {
+                const updated = [...prev];
+                updated[pendingIdx] = renderedMessage;
+                return updated;
+              }
+            }
+            if (
+              renderedMessage.role === "user" &&
+              smSessionId === attachedSessionIdRef.current &&
+              sessionInteractionModeRef.current === "proxy"
+            ) {
+              const optimisticIdx = prev.findIndex(
+                (message) =>
+                  message.role === "user" &&
+                  message.id.startsWith("user-") &&
+                  message.content === renderedMessage.content,
+              );
+              if (optimisticIdx >= 0) {
+                const updated = [...prev];
+                updated[optimisticIdx] = renderedMessage;
+                return updated;
+              }
+            }
             return [...prev, renderedMessage];
           });
+          if (pendingProxyMessage) {
+            pendingProxyMessage.currentMessageId = renderedMessage.id;
+          }
         } else if (data.type === "send_to_cli_session_result") {
           const result = data as Record<string, unknown>;
+          const clientMessageId =
+            typeof result.client_message_id === "string"
+              ? result.client_message_id
+              : null;
+          const messageId =
+            typeof result.message_id === "string" ? result.message_id : null;
+          if (clientMessageId) {
+            const pendingProxyMessage =
+              pendingProxyMessagesRef.current.get(clientMessageId) ?? null;
+            if (pendingProxyMessage) {
+              if (messageId && result.delivered !== false) {
+                setMessages((prev) => {
+                  const messageIdx = prev.findIndex(
+                    (message) =>
+                      message.id === pendingProxyMessage.currentMessageId ||
+                      message.id === messageId,
+                  );
+                  if (messageIdx < 0) {
+                    return prev;
+                  }
+                  const updated = [...prev];
+                  updated[messageIdx] = {
+                    ...updated[messageIdx],
+                    id: messageId,
+                  };
+                  return updated;
+                });
+                pendingProxyMessage.currentMessageId = messageId;
+                removePendingProxyMessageFromQueue(
+                  pendingProxySessionQueuesRef.current,
+                  pendingProxyMessage.sessionId,
+                  clientMessageId,
+                );
+                pendingProxyMessagesRef.current.delete(clientMessageId);
+              }
+            }
+          }
           setProxyDeliveryNotice(
             result.delivered === false
               ? "Message queued until the session yields."
@@ -2066,17 +2268,6 @@ export function useChat() {
         }));
       }
 
-      // Plan approval auto-send is handled in the mode_changed handler above,
-      // since the agent's turn has already ended by the time the user approves.
-      // Safety fallback: if somehow still pending here, consume it.
-      if (pendingPlanExecutionRef.current) {
-        pendingPlanExecutionRef.current = false;
-        setTimeout(() => {
-          sendMessageRef.current?.(
-            "Plan approved — proceed with implementation.",
-          );
-        }, 200);
-      }
       if (pendingPlanFeedbackRef.current) {
         const feedback = pendingPlanFeedbackRef.current;
         pendingPlanFeedbackRef.current = null;
@@ -2096,6 +2287,9 @@ export function useChat() {
 
     setIsStreaming(false);
     setIsThinking(false);
+    if (import.meta.env.DEV && error.error_detail) {
+      console.error("Chat startup error detail:", error.error_detail);
+    }
     setMessages((prev) => [
       ...prev,
       {
@@ -2109,7 +2303,7 @@ export function useChat() {
 
   // Handle tool status updates
   const handleToolStatus = useCallback((status: ToolStatusMessage) => {
-    if (!isActiveRequest(status.request_id)) {
+    if (status.status !== "pending_approval" && !isActiveRequest(status.request_id)) {
       console.debug(
         "Dropping stale tool_status, request_id:",
         status.request_id,
@@ -2385,7 +2579,7 @@ export function useChat() {
           if (!s || conversationIdRef.current !== id) return;
           applyMainSessionMeta(s);
           if (s.chat_mode) {
-            const restored = s.chat_mode as ChatMode;
+            const restored = normalizeChatMode(s.chat_mode);
             if (
               wsRef.current?.readyState === WebSocket.OPEN &&
               Date.now() - lastServerModeTimestampRef.current > 2000
@@ -2413,7 +2607,7 @@ export function useChat() {
   // Start a new chat conversation, optionally with a specific agent
   const startNewChat = useCallback(
     (agentName?: string) => {
-      const effectiveAgent = agentName || "default-web-chat";
+      const effectiveAgent = agentName || "default";
       setActiveAgent(effectiveAgent);
       clearSessionObservationState();
       resetMainChatState();
@@ -2500,6 +2694,7 @@ export function useChat() {
         provider?: string | null;
         model?: string | null;
         reasoningEffort?: string | null;
+        chatMode?: string | null;
       },
     ): Promise<string> => {
       const reasoningEffort = normalizeReasoningEffort(
@@ -2564,13 +2759,18 @@ export function useChat() {
       const continuationModel =
         options?.model ??
         (typeof sourceSession?.model === "string" ? sourceSession.model : null);
+      const continuationChatMode =
+        typeof options?.chatMode === "string" && options.chatMode
+          ? normalizeChatMode(options.chatMode)
+          : null;
       // Propagate the source session's chat mode into the new continuation
       // session BEFORE calling ensureMainSession — otherwise the server-side
       // session is created with whatever local mode happened to be active.
       const sourceChatMode =
-        typeof sourceSession?.chat_mode === "string"
-          ? (sourceSession.chat_mode as ChatMode)
-          : null;
+        continuationChatMode ??
+        (typeof sourceSession?.chat_mode === "string"
+          ? normalizeChatMode(sourceSession.chat_mode)
+          : null);
 
       applyMainSessionMeta(sourceSession);
       if (continuationProvider) {
@@ -2618,6 +2818,7 @@ export function useChat() {
           provider: continuationProvider,
           model: continuationModel,
           reasoning_effort: reasoningEffort,
+          chat_mode: sourceChatMode,
         }),
       );
 
@@ -2709,14 +2910,15 @@ export function useChat() {
 
   // Send mode change to backend
   const sendMode = useCallback((mode: ChatMode) => {
-    currentModeRef.current = mode; // Always track latest intended mode
+    const normalizedMode = normalizeChatMode(mode);
+    currentModeRef.current = normalizedMode; // Always track latest intended mode
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!conversationIdRef.current) return;
     setPlanPendingApproval(false);
     wsRef.current.send(
       JSON.stringify({
         type: "set_mode",
-        mode,
+        mode: normalizedMode,
         conversation_id: conversationIdRef.current,
       }),
     );
@@ -2846,7 +3048,22 @@ export function useChat() {
 
       // Route to a swapped terminal session when proxy mode is active.
       if (isProxyTerminal) {
-        const messageId = `user-${uuid()}`;
+        const proxySessionId = attachedSessionIdRef.current;
+        if (!proxySessionId) {
+          return false;
+        }
+        const clientMessageId = uuid();
+        const messageId = `user-${clientMessageId}`;
+        const pendingProxyMessage = {
+          clientMessageId,
+          currentMessageId: messageId,
+          sessionId: proxySessionId,
+        };
+        pendingProxyMessagesRef.current.set(clientMessageId, pendingProxyMessage);
+        enqueuePendingProxyMessage(
+          pendingProxySessionQueuesRef.current,
+          pendingProxyMessage,
+        );
         setMessages((prev) => [
           ...prev,
           {
@@ -2860,8 +3077,9 @@ export function useChat() {
         wsRef.current.send(
           JSON.stringify({
             type: "send_to_cli_session",
-            session_id: attachedSessionIdRef.current,
+            session_id: proxySessionId,
             content,
+            client_message_id: clientMessageId,
           }),
         );
         return true;
@@ -3008,23 +3226,16 @@ export function useChat() {
     [],
   );
 
-  // Track whether we're waiting for plan_approved mode_changed to auto-send
-  const pendingPlanExecutionRef = useRef(false);
   const pendingPlanFeedbackRef = useRef<string | null>(null);
 
-  // Approve the current plan — tells backend to unlock write tools,
-  // then sends a follow-up message to prompt the agent to begin execution.
+  // Approve the current plan while keeping the session in plan mode.
   const approvePlan = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!conversationIdRef.current) return;
     if (!planContentRef.current) return;
-    pendingPlanExecutionRef.current = true;
     // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
     setPlanPendingApproval(false);
     planContentRef.current = null;
-    // Optimistically switch mode out of plan (WS mode_changed will confirm/correct)
-    currentModeRef.current = "accept_edits";
-    onModeChangedRef.current?.("accept_edits");
     wsRef.current.send(
       JSON.stringify({
         type: "plan_approval_response",
@@ -3066,19 +3277,29 @@ export function useChat() {
       }
 
       // Detach from any active WS subscription first
-      if (observedSessionIdRef.current) {
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId) {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({
               type: "detach_from_session",
-              session_id: observedSessionIdRef.current,
+              session_id: observedSessionId,
             }),
           );
         }
+        observedSessionIdRef.current = null;
         setObservedSessionId(null);
         observedSessionMetaRef.current = null;
+        attachedSessionIdRef.current = null;
         setAttachedSessionId(null);
+        attachedSessionMetaRef.current = null;
         setAttachedSessionMeta(null);
+        clearPendingProxyMessages(
+          pendingProxyMessagesRef.current,
+          pendingProxySessionQueuesRef.current,
+        );
+        sessionInteractionModeRef.current = "none";
+        setProxyDeliveryNotice(null);
         setSessionInteractionMode("none");
       }
 
@@ -3121,7 +3342,9 @@ export function useChat() {
             source: s.source || "unknown",
             title: s.title || null,
             status: s.status || "unknown",
+            canProxyAttach: canProxyAttachSessionRecord(s),
             model: s.model || null,
+            reasoningEffort: s.reasoning_effort || null,
             externalId: s.external_id || "",
             chatMode: s.chat_mode || null,
             gitBranch: s.git_branch || null,
@@ -3131,6 +3354,7 @@ export function useChat() {
             agentName: null,
             sessionType: normalizeSessionType(s.session_type),
           };
+          viewingSessionMetaRef.current = nextMeta;
           setViewingSessionMeta(nextMeta);
           if (nextMeta.agentRunId) {
             void resolveAgentName(nextMeta.agentRunId).then((agentName) => {
@@ -3174,22 +3398,34 @@ export function useChat() {
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {
     // Detach from any active WS subscription
-    if (observedSessionIdRef.current) {
+    const observedSessionId = observedSessionIdRef.current;
+    if (observedSessionId) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
             type: "detach_from_session",
-            session_id: observedSessionIdRef.current,
+            session_id: observedSessionId,
           }),
         );
       }
+      observedSessionIdRef.current = null;
       setObservedSessionId(null);
       observedSessionMetaRef.current = null;
+      attachedSessionIdRef.current = null;
       setAttachedSessionId(null);
+      attachedSessionMetaRef.current = null;
       setAttachedSessionMeta(null);
+      clearPendingProxyMessages(
+        pendingProxyMessagesRef.current,
+        pendingProxySessionQueuesRef.current,
+      );
+      sessionInteractionModeRef.current = "none";
+      setProxyDeliveryNotice(null);
       setSessionInteractionMode("none");
     }
 
+    viewingSessionIdRef.current = null;
+    viewingSessionMetaRef.current = null;
     setViewingSessionId(null);
     setViewingSessionMeta(null);
     setMessages([]);
@@ -3198,6 +3434,7 @@ export function useChat() {
     if (mainSessionMeta) {
       setSessionRef(mainSessionMeta.ref);
       setSessionTitle(mainSessionMeta.title ?? null);
+      setCurrentBranch(mainSessionMeta.gitBranch ?? null);
       if (mainSessionMeta.contextWindow) {
         setContextUsage((prev) => ({
           ...prev,
@@ -3216,6 +3453,7 @@ export function useChat() {
     } else {
       setSessionRef(null);
       setSessionTitle(null);
+      setCurrentBranch(null);
       setContextUsage({
         totalInputTokens: 0,
         outputTokens: 0,
@@ -3247,7 +3485,7 @@ export function useChat() {
         .then((data) => {
           const s = data?.session;
           if (s?.chat_mode) {
-            onModeChangedRef.current?.(s.chat_mode as ChatMode);
+            onModeChangedRef.current?.(normalizeChatMode(s.chat_mode));
           }
         })
         .catch(() => {});
@@ -3260,6 +3498,29 @@ export function useChat() {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       pendingSessionInteractionModeRef.current = mode;
       setProxyDeliveryNotice(null);
+
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId && observedSessionId !== sessionId) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "detach_from_session",
+            session_id: observedSessionId,
+          }),
+        );
+        observedSessionIdRef.current = null;
+        observedSessionMetaRef.current = null;
+        attachedSessionIdRef.current = null;
+        attachedSessionMetaRef.current = null;
+        clearPendingProxyMessages(
+          pendingProxyMessagesRef.current,
+          pendingProxySessionQueuesRef.current,
+        );
+        sessionInteractionModeRef.current = "none";
+        setObservedSessionId(null);
+        setAttachedSessionId(null);
+        setAttachedSessionMeta(null);
+        setSessionInteractionMode("none");
+      }
 
       // Don't reset messages if already viewing this session
       if (viewingSessionIdRef.current !== sessionId) {
@@ -3331,8 +3592,18 @@ export function useChat() {
   const detachFromSession = useCallback(() => {
     if (!attachedSessionIdRef.current) return;
 
+    clearPendingProxyMessages(
+      pendingProxyMessagesRef.current,
+      pendingProxySessionQueuesRef.current,
+    );
+    attachedSessionIdRef.current = null;
+    attachedSessionMetaRef.current = null;
+    sessionInteractionModeRef.current = observedSessionIdRef.current
+      ? "observe"
+      : "none";
     setAttachedSessionId(null);
     setAttachedSessionMeta(null);
+    setProxyDeliveryNotice(null);
     setSessionInteractionMode(
       observedSessionIdRef.current ? "observe" : "none",
     );
@@ -3366,25 +3637,7 @@ export function useChat() {
             conversationIdRef.current !== existingConvId
           )
             return;
-          const restored: ChatMessage[] = data.messages.map(
-            (m: {
-              id: string;
-              role: string;
-              content: string;
-              tool_calls?: ToolCall[];
-              seq: number;
-              created_at: string;
-            }) => ({
-              id: m.id,
-              role: m.role as "user" | "assistant" | "system",
-              content: m.content,
-              contentBlocks: m.content
-                ? [{ type: "text" as const, content: m.content }]
-                : [],
-              toolCalls: m.tool_calls ?? [],
-              timestamp: new Date(m.created_at),
-            }),
-          );
+          const restored: ChatMessage[] = data.messages.map(mapStoredChatMessage);
           setMessages(restored);
           if (data.max_seq) lastSeqRef.current = data.max_seq;
         })

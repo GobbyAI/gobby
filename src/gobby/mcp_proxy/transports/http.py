@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+from contextlib import AsyncExitStack
 from typing import Any
 
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 from gobby.mcp_proxy.models import ConnectionState, MCPError
 from gobby.mcp_proxy.transports.base import BaseTransportConnection
@@ -16,9 +18,11 @@ logger = logging.getLogger("gobby.mcp.client")
 class HTTPTransportConnection(BaseTransportConnection):
     """HTTP/Streamable HTTP transport connection using MCP SDK.
 
-    Uses a dedicated background task to own the streamablehttp_client lifecycle,
+    Uses a dedicated background task to own the streamable_http_client lifecycle,
     ensuring that context entry and exit happen in the same task (required by anyio).
     """
+
+    _OWNER_TASK_SHUTDOWN_TIMEOUT = 2.0
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -69,7 +73,7 @@ class HTTPTransportConnection(BaseTransportConnection):
         return self._session
 
     async def _run_connection(self) -> None:
-        """Background task that owns the streamablehttp_client lifecycle."""
+        """Background task that owns the streamable_http_client lifecycle."""
         if self._disconnect_event is None or self._session_ready is None:
             raise RuntimeError("Connection events not initialized")
 
@@ -78,10 +82,15 @@ class HTTPTransportConnection(BaseTransportConnection):
             if not self.config.url:
                 raise ValueError("URL is required for HTTP transport")
 
-            async with streamablehttp_client(
-                self.config.url,
-                headers=self.config.headers,
-            ) as (read_stream, write_stream, _):
+            async with AsyncExitStack() as stack:
+                http_client = create_mcp_http_client(headers=self.config.headers)
+                managed_client = await stack.enter_async_context(http_client)
+                read_stream, write_stream, _ = await stack.enter_async_context(
+                    streamable_http_client(
+                        self.config.url,
+                        http_client=managed_client,
+                    )
+                )
                 self._session_context = ClientSession(read_stream, write_stream)
                 async with self._session_context as session:
                     self._session = session
@@ -119,13 +128,30 @@ class HTTPTransportConnection(BaseTransportConnection):
         """Clean up the owner task."""
         if self._owner_task is not None:
             if not self._owner_task.done():
-                self._owner_task.cancel()
-                try:
-                    await asyncio.wait_for(self._owner_task, timeout=2.0)
-                except asyncio.CancelledError:
-                    logger.debug(f"Owner task cancelled for {self.config.name}")
-                except TimeoutError:
-                    logger.warning(f"Owner task cleanup timed out for {self.config.name}")
+                done, _pending = await asyncio.wait(
+                    {self._owner_task},
+                    timeout=self._OWNER_TASK_SHUTDOWN_TIMEOUT,
+                )
+                if done:
+                    try:
+                        await self._owner_task
+                    except asyncio.CancelledError:
+                        logger.debug(f"Owner task cancelled for {self.config.name}")
+                    except Exception as e:
+                        logger.warning(f"Owner task cleanup failed for {self.config.name}: {e}")
+                else:
+                    self._owner_task.cancel()
+                    try:
+                        await asyncio.wait_for(
+                            self._owner_task,
+                            timeout=self._OWNER_TASK_SHUTDOWN_TIMEOUT,
+                        )
+                    except asyncio.CancelledError:
+                        logger.debug(f"Owner task cancelled for {self.config.name}")
+                    except TimeoutError:
+                        logger.warning(f"Owner task cleanup timed out for {self.config.name}")
+                    except Exception as e:
+                        logger.warning(f"Owner task cleanup failed for {self.config.name}: {e}")
             self._owner_task = None
         self._disconnect_event = None
         self._session_ready = None

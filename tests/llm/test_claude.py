@@ -62,16 +62,6 @@ def claude_config() -> DaemonConfig:
     )
 
 
-@pytest.fixture
-def api_key_config() -> DaemonConfig:
-    """DaemonConfig with Claude provider in api_key mode."""
-    return DaemonConfig(
-        llm_providers=LLMProvidersConfig(
-            claude=LLMProviderConfig(models="claude-sonnet-4-5", auth_mode="api_key"),
-        ),
-    )
-
-
 @contextmanager
 def mock_claude_sdk(mock_query_func: Any) -> Generator[None]:
     """Mock the Claude Agent SDK for testing."""

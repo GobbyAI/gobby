@@ -11,6 +11,7 @@ from gobby.storage.migrations import (
     get_current_version,
     run_migrations,
 )
+from gobby.storage.sessions import SYSTEM_SESSION_ID
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -83,6 +84,28 @@ def test_migrations_idempotency(tmp_path) -> None:
     assert get_current_version(db) == initial_version
 
 
+def test_migrations_recreate_missing_system_session(tmp_path) -> None:
+    """Existing databases self-heal the bootstrapped system session on startup."""
+    db_path = tmp_path / "system_session_repair.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+    db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    assert db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)) is None
+
+    applied = run_migrations(db)
+
+    assert applied == 0
+    repaired = db.fetchone(
+        "SELECT id, external_id, source, title FROM sessions WHERE id = ?",
+        (SYSTEM_SESSION_ID,),
+    )
+    assert repaired is not None
+    assert repaired["external_id"] == "system"
+    assert repaired["source"] == "system"
+    assert repaired["title"] == "_system"
+
+
 def test_tasks_table_includes_claimed_by_session_id_on_fresh_db(tmp_path) -> None:
     """Fresh baseline schema should include canonical task ownership."""
     db_path = tmp_path / "tasks_claim_owner.db"
@@ -106,6 +129,17 @@ def test_agent_runs_table_includes_claimed_session_id_on_fresh_db(tmp_path) -> N
 
     agent_run_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(agent_runs)")}
     assert "claimed_session_id" in agent_run_columns
+
+
+def test_sessions_table_includes_title_source_on_fresh_db(tmp_path) -> None:
+    """Fresh baseline schema should include title provenance tracking."""
+    db_path = tmp_path / "sessions_title_source.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    session_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(sessions)")}
+    assert "title_source" in session_columns
 
 
 def test_tasks_claimed_session_fk_is_set_null_on_fresh_db(tmp_path) -> None:

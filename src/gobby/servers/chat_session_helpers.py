@@ -150,32 +150,35 @@ def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOut
         return SyncHookJSONOutput()
     output = SyncHookJSONOutput()
     if resp.get("decision") == "block":
-        specific: PreToolUseHookSpecificOutput = PreToolUseHookSpecificOutput(
+        blocked_specific = PreToolUseHookSpecificOutput(
             hookEventName="PreToolUse",
             permissionDecision="deny",
         )
         if resp.get("reason"):
-            specific["permissionDecisionReason"] = resp["reason"]
-        output["hookSpecificOutput"] = specific
+            blocked_specific["permissionDecisionReason"] = resp["reason"]
+        output["hookSpecificOutput"] = blocked_specific
         if resp.get("reason"):
             output["reason"] = resp["reason"]
-    elif resp.get("modified_input"):
-        # Rewrite tool input (rewrite_input effect)
-        specific_rewrite = PreToolUseHookSpecificOutput(
-            hookEventName="PreToolUse",
-        )
-        specific_rewrite["updatedInput"] = resp["modified_input"]
+    else:
+        specific: PreToolUseHookSpecificOutput | None = None
+        if (
+            resp.get("modified_input") is not None
+            or resp.get("context")
+            or resp.get("auto_approve")
+        ):
+            specific = PreToolUseHookSpecificOutput(
+                hookEventName="PreToolUse",
+            )
+        if specific is None:
+            return output
+        if resp.get("modified_input") is not None:
+            # Rewrite tool input (rewrite_input effect)
+            specific["updatedInput"] = resp["modified_input"]
         if resp.get("auto_approve"):
-            specific_rewrite["permissionDecision"] = "allow"
+            specific["permissionDecision"] = "allow"
         if resp.get("context"):
-            specific_rewrite["additionalContext"] = _truncate(resp["context"])
-        output["hookSpecificOutput"] = specific_rewrite
-    elif resp.get("context"):
-        specific_ctx = PreToolUseHookSpecificOutput(
-            hookEventName="PreToolUse",
-        )
-        specific_ctx["additionalContext"] = _truncate(resp["context"])
-        output["hookSpecificOutput"] = specific_ctx
+            specific["additionalContext"] = _truncate(resp["context"])
+        output["hookSpecificOutput"] = specific
     return output
 
 

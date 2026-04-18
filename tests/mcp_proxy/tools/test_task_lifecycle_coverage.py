@@ -577,6 +577,42 @@ class TestEscalateTask:
         )
         assert "error" not in result
 
+    @pytest.mark.asyncio
+    async def test_escalate_clears_claimed_tasks_variable(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Escalation removes the task from the prior owner's claimed_tasks."""
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        session_id = "session-abc"
+        task = _make_task(id=task_id, status="in_progress", assignee=session_id)
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.escalate_task.return_value = task
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
+            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+        ):
+            mock_svm = MagicMock()
+            mock_svm.get_variables.return_value = {
+                "task_claimed": True,
+                "claimed_tasks": {task_id: "#42"},
+            }
+            MockSVM.return_value = mock_svm
+            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call(
+                "escalate_task",
+                {"task_id": task_id, "reason": "blocked"},
+            )
+
+        assert "error" not in result
+        mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+        mock_svm.merge_variables.assert_called_once_with(
+            session_id,
+            {"task_claimed": False, "claimed_tasks": {}},
+        )
+
 
 # ---------------------------------------------------------------------------
 # mark_task_review_approved tests
@@ -651,6 +687,42 @@ class TestMarkTaskReviewApproved:
         assert "error" in result
         assert "Failed to approve" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_approve_clears_claimed_tasks_variable(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Review approval removes the task from the prior owner's claimed_tasks."""
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        session_id = "session-abc"
+        task = _make_task(id=task_id, status="needs_review", assignee=session_id)
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.mark_task_review_approved.return_value = task
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
+            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+        ):
+            mock_svm = MagicMock()
+            mock_svm.get_variables.return_value = {
+                "task_claimed": True,
+                "claimed_tasks": {task_id: "#42"},
+            }
+            MockSVM.return_value = mock_svm
+            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call(
+                "mark_task_review_approved",
+                {"task_id": task_id},
+            )
+
+        assert "error" not in result
+        mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+        mock_svm.merge_variables.assert_called_once_with(
+            session_id,
+            {"task_claimed": False, "claimed_tasks": {}},
+        )
+
 
 # ---------------------------------------------------------------------------
 # mark_task_needs_review tests
@@ -722,6 +794,42 @@ class TestMarkTaskNeedsReview:
             {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
         )
         assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_mark_needs_review_clears_claimed_tasks_variable(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Needs-review transition removes the task from the prior owner's claimed_tasks."""
+        task_id = "550e8400-e29b-41d4-a716-446655440000"
+        session_id = "session-abc"
+        task = _make_task(id=task_id, status="in_progress", assignee=session_id)
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.mark_task_needs_review.return_value = task
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVM,
+            patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
+        ):
+            mock_svm = MagicMock()
+            mock_svm.get_variables.return_value = {
+                "task_claimed": True,
+                "claimed_tasks": {task_id: "#42"},
+            }
+            MockSVM.return_value = mock_svm
+            mock_remove.return_value = {"task_claimed": False, "claimed_tasks": {}}
+
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call(
+                "mark_task_needs_review",
+                {"task_id": task_id},
+            )
+
+        assert "error" not in result
+        mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
+        mock_svm.merge_variables.assert_called_once_with(
+            session_id,
+            {"task_claimed": False, "claimed_tasks": {}},
+        )
 
 
 # ---------------------------------------------------------------------------

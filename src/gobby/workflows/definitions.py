@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from gobby.agents.reasoning import normalize_reasoning_effort
+
 # --- Workflow Definition Models (YAML) ---
 
 
@@ -269,6 +271,8 @@ class AgentDefinitionBody(BaseModel):
     # Execution
     provider: str = "inherit"
     model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_required: bool | None = None
     fallback_agent: str | None = None
     api_base: str | None = Field(
         default=None,
@@ -294,6 +298,15 @@ class AgentDefinitionBody(BaseModel):
     steps: list[WorkflowStep] | None = None
     step_variables: dict[str, Any] = Field(default_factory=dict)
     exit_condition: str | None = None
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return normalize_reasoning_effort(value)
+        return normalize_reasoning_effort(str(value))
 
     def build_prompt_preamble(self) -> str | None:
         """Build structured prompt preamble from role/goal/personality/instructions."""

@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SYSTEM_SESSION_ID, LocalSessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -25,6 +25,7 @@ class TestSession:
             source="claude",
             project_id=sample_project["id"],
         )
+        session_manager.update(session.id, title_source="manual")
 
         row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session.id,))
         assert row is not None
@@ -33,6 +34,7 @@ class TestSession:
         assert session_from_row.id == session.id
         assert session_from_row.external_id == "test-cli-key"
         assert session_from_row.source == "claude"
+        assert session_from_row.title_source == "manual"
 
     def test_to_dict(
         self,
@@ -54,7 +56,77 @@ class TestSession:
         assert d["machine_id"] == "machine-1"
         assert d["source"] == "gemini"
         assert d["title"] == "Test Session"
+        assert d["title_source"] is None
         assert d["status"] == "active"
+
+    def test_to_dict_and_brief_include_title_source(self) -> None:
+        session = Session(
+            id="sess-title-source",
+            external_id="ext-title-source",
+            machine_id="machine-1",
+            source="gemini",
+            project_id="proj-1",
+            title="Titled Session",
+            title_source="manual",
+            status="active",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch=None,
+            parent_session_id=None,
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:05:00Z",
+        )
+
+        assert session.to_dict()["title_source"] == "manual"
+        assert session.to_brief()["title_source"] == "manual"
+
+    def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self) -> None:
+        """Paused tmux sessions remain attachable while terminal liveness metadata exists."""
+        session = Session(
+            id="sess-live-tmux",
+            external_id="ext-live-tmux",
+            machine_id="machine-1",
+            source="qwen",
+            project_id="proj-1",
+            title="Live tmux session",
+            status="paused",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch="main",
+            parent_session_id=None,
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:05:00Z",
+            terminal_context={"tmux_pane": "%12"},
+            session_type="terminal",
+        )
+
+        assert session.can_proxy_attach is True
+        assert session.to_dict()["can_proxy_attach"] is True
+
+    def test_parent_pid_does_not_count_as_terminal_liveness(self) -> None:
+        session = Session(
+            id="sess-parent-pid-only",
+            external_id="ext-parent-pid-only",
+            machine_id="machine-1",
+            source="qwen",
+            project_id="proj-1",
+            title="Stale pid session",
+            status="paused",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch="main",
+            parent_session_id=None,
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:05:00Z",
+            terminal_context={"parent_pid": 12345},
+            session_type="terminal",
+        )
+
+        assert session.has_terminal_liveness is False
+        assert session.can_proxy_attach is False
 
 
 class TestLocalSessionManager:
@@ -92,6 +164,37 @@ class TestLocalSessionManager:
         assert session.tool_call_count == 0
         assert session.last_assistant_content is None
 
+    def test_register_recreates_missing_system_parent_session(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Register self-heals the system parent row before inserting children."""
+        session_manager.db.execute("DELETE FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+        assert (
+            session_manager.db.fetchone(
+                "SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,)
+            )
+            is None
+        )
+
+        session = session_manager.register(
+            external_id="pipeline-child",
+            machine_id="machine-abc",
+            source="pipeline",
+            project_id=sample_project["id"],
+            parent_session_id=SYSTEM_SESSION_ID,
+        )
+
+        repaired = session_manager.db.fetchone(
+            "SELECT id, external_id, source FROM sessions WHERE id = ?",
+            (SYSTEM_SESSION_ID,),
+        )
+        assert repaired is not None
+        assert repaired["external_id"] == "system"
+        assert repaired["source"] == "system"
+        assert session.parent_session_id == SYSTEM_SESSION_ID
+
     def test_register_session_has_stats_columns(
         self,
         session_manager: LocalSessionManager,
@@ -122,6 +225,55 @@ class TestLocalSessionManager:
         assert row["turn_count"] == 0
         assert row["tool_call_count"] == 0
         assert row["last_assistant_content"] is None
+
+    def test_register_persists_sandbox_metadata(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="sandboxed-session",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            sandbox_enabled=True,
+            sandbox_policy_hash="policy-abc",
+        )
+
+        assert session.sandbox_enabled is True
+        assert session.sandbox_policy_hash == "policy-abc"
+
+        reloaded = session_manager.get(session.id)
+        assert reloaded is not None
+        assert reloaded.sandbox_enabled is True
+        assert reloaded.sandbox_policy_hash == "policy-abc"
+
+    def test_register_preserves_unknown_sandbox_metadata_as_null(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="unknown-sandbox-session",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            sandbox_enabled=None,
+            sandbox_policy_hash=None,
+        )
+
+        row = session_manager.db.fetchone(
+            "SELECT sandbox_enabled, sandbox_policy_hash FROM sessions WHERE id = ?",
+            (session.id,),
+        )
+        assert row is not None
+        assert row["sandbox_enabled"] is None
+        assert row["sandbox_policy_hash"] is None
+
+        reloaded = session_manager.get(session.id)
+        assert reloaded is not None
+        assert reloaded.sandbox_enabled is None
+        assert reloaded.sandbox_policy_hash is None
 
     def test_register_upserts_on_conflict(
         self,
@@ -262,6 +414,61 @@ class TestLocalSessionManager:
         updated = session_manager.update_title(session.id, "New Title")
         assert updated is not None
         assert updated.title == "New Title"
+
+    def test_update_title_schedules_tmux_rename(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Title changes propagate to tmux through the shared title update path."""
+        session = session_manager.register(
+            external_id="tmux-title-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={"tmux_pane": "%42"},
+        )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.update_title(session.id, "Terminal Title")
+
+        assert updated is not None
+        mock_rename.assert_called_once()
+        renamed_session, renamed_title = mock_rename.call_args.args
+        assert renamed_session.id == session.id
+        assert renamed_title == "Terminal Title"
+
+    def test_update_title_can_update_source_without_renaming(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Changing provenance alone should not notify listeners or rename tmux."""
+        session = session_manager.register(
+            external_id="title-source-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Stable Title",
+            terminal_context={"tmux_pane": "%42"},
+        )
+        session_manager.update(session.id, title_source="heuristic")
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.update_title(
+                session.id,
+                "Stable Title",
+                title_source="llm",
+            )
+
+        assert updated is not None
+        assert updated.title_source == "llm"
+        assert calls == []
+        mock_rename.assert_not_called()
 
     def test_update_title_notifies_listeners(
         self,
@@ -447,15 +654,21 @@ class TestLocalSessionManager:
             title="Web Chat",
             model="claude-opus-4-5-20251101",
             chat_mode="accept_edits",
+            sandbox_enabled=True,
+            sandbox_policy_hash="policy-hash-123",
         )
 
         assert session.model == "claude-opus-4-5-20251101"
         assert session.chat_mode == "accept_edits"
+        assert session.sandbox_enabled is True
+        assert session.sandbox_policy_hash == "policy-hash-123"
 
         reloaded = session_manager.get(session.id)
         assert reloaded is not None
         assert reloaded.model == "claude-opus-4-5-20251101"
         assert reloaded.chat_mode == "accept_edits"
+        assert reloaded.sandbox_enabled is True
+        assert reloaded.sandbox_policy_hash == "policy-hash-123"
 
     def test_update_summary(
         self,
@@ -625,6 +838,66 @@ class TestLocalSessionManager:
 
         paused = session_manager.get(session.id)
         assert paused.status == "paused"
+
+    def test_pause_inactive_active_sessions_preserves_last_activity_time(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Auto-pausing should not make a stale session look freshly active."""
+        session = session_manager.register(
+            external_id="active-idle-preserve-time",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = datetime('now', '-31 minutes') WHERE id = ?",
+            (session.id,),
+        )
+        before = session_manager.db.fetchone(
+            "SELECT updated_at FROM sessions WHERE id = ?",
+            (session.id,),
+        )
+
+        count = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        assert count == 1
+
+        after = session_manager.db.fetchone(
+            "SELECT updated_at FROM sessions WHERE id = ?",
+            (session.id,),
+        )
+        assert before is not None
+        assert after is not None
+        assert after["updated_at"] == before["updated_at"]
+
+    def test_pause_then_expire_stale_session_uses_last_activity_time(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A very old session should expire in the same cleanup sweep after pause."""
+        session = session_manager.register(
+            external_id="ancient-active-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = datetime('now', '-25 hours') WHERE id = ?",
+            (session.id,),
+        )
+
+        paused = session_manager.pause_inactive_active_sessions(timeout_minutes=30)
+        expired = session_manager.expire_stale_sessions(timeout_hours=24)
+
+        assert paused == 1
+        assert expired == 1
+        stale = session_manager.get(session.id)
+        assert stale is not None
+        assert stale.status == "expired"
 
     def test_transcript_processing_lifecycle(
         self,

@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 211
+BASELINE_VERSION = 214
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -305,6 +305,19 @@ def _column_exists(db: LocalDatabase, table: str, column: str) -> bool:
         f"SELECT COUNT(*) as cnt FROM pragma_table_info('{table}') WHERE name = ?", (column,)
     )
     return bool(row and row["cnt"] > 0)
+
+
+def _add_column_if_missing(db: LocalDatabase, table: str, column_sql: str, column: str) -> None:
+    """Add a column only when it is absent, allowing migration reruns after version rewinds."""
+    if not _column_exists(db, table, column):
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+
+
+def _migrate_sessions_sandbox_fields(db: LocalDatabase) -> None:
+    """Add sandbox metadata columns and drop the unshipped cli_sandbox config surface."""
+    _add_column_if_missing(db, "sessions", "sandbox_enabled BOOLEAN DEFAULT 0", "sandbox_enabled")
+    _add_column_if_missing(db, "sessions", "sandbox_policy_hash TEXT", "sandbox_policy_hash")
+    db.execute("DELETE FROM config_store WHERE key LIKE 'cli_sandbox.%'")
 
 
 def _migrate_claimed_by_session_id(db: LocalDatabase) -> None:
@@ -610,6 +623,20 @@ def _drop_agent_runs_mode(db: LocalDatabase) -> None:
         CREATE INDEX idx_agent_runs_status ON agent_runs(status);
     """)
     db.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_agent_run_reasoning_fields(db: LocalDatabase) -> None:
+    """Add spawned-agent reasoning metadata columns to agent_runs."""
+    additions = (
+        ("requested_reasoning_effort", "TEXT"),
+        ("effective_reasoning_effort", "TEXT"),
+        ("reasoning_required", "INTEGER NOT NULL DEFAULT 0"),
+        ("reasoning_status", "TEXT NOT NULL DEFAULT 'not_requested'"),
+        ("reasoning_message", "TEXT"),
+    )
+    for column, ddl in additions:
+        if not _column_exists(db, "agent_runs", column):
+            db.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
 
 
 # Migrations beyond v171.
@@ -1131,6 +1158,21 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Update tasks.claimed_by_session_id to ON DELETE SET NULL",
         _migrate_tasks_claimed_session_fk_set_null,
     ),
+    (
+        213,
+        "Add title_source column to sessions",
+        lambda db: _add_column_if_missing(db, "sessions", "title_source TEXT", "title_source"),
+    ),
+    (
+        214,
+        "Add sandbox metadata to sessions and remove cli_sandbox config",
+        _migrate_sessions_sandbox_fields,
+    ),
+    (
+        215,
+        "Persist requested and effective reasoning metadata on agent_runs",
+        _migrate_agent_run_reasoning_fields,
+    ),
 ]
 
 
@@ -1308,5 +1350,11 @@ def run_migrations(db: LocalDatabase) -> int:
     if MIGRATIONS:
         applied = _run_migration_list(db, current_version, MIGRATIONS)
         total_applied += applied
+
+    # Existing databases may be missing the bootstrapped root session due to
+    # prior drift or partial upgrades; restore it idempotently on every startup.
+    from gobby.storage.sessions import ensure_system_session
+
+    ensure_system_session(db)
 
     return total_applied

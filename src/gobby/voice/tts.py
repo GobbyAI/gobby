@@ -1,15 +1,19 @@
-"""Text-to-speech service using Kokoro ONNX (local inference).
+"""Text-to-speech abstractions plus the Kokoro provider.
 
-Lazy-loads the model on first synthesis to avoid slowing daemon boot.
-All inference runs async — kokoro-onnx provides native async streaming.
+Lazy-loads model implementations on first synthesis to avoid slowing daemon
+boot. Providers expose a common lifecycle and status surface so the voice
+stack does not need provider-specific branching.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -19,17 +23,63 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class TTSProviderCapabilities:
+    """Stable provider capability flags exposed through status responses."""
+
+    supports_reference_audio: bool = False
+    supports_reference_text: bool = False
+    supports_streaming: bool = False
+    supports_voice_cloning: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TTSProviderStatus:
+    """Availability and metadata for a provider instance."""
+
+    provider: str
+    available: bool
+    reason: str = ""
+    backend_kind: Literal["embedded", "external"] = "embedded"
+    capabilities: TTSProviderCapabilities = field(default_factory=TTSProviderCapabilities)
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def as_status_fields(self) -> dict[str, Any]:
+        """Convert provider status to the public websocket/HTTP status shape."""
+        fields: dict[str, Any] = {
+            "tts_provider": self.provider,
+            "tts_available": self.available,
+            "tts_reason": self.reason,
+            "tts_backend_kind": self.backend_kind,
+            "tts_capabilities": asdict(self.capabilities),
+        }
+        fields.update(self.details)
+        return fields
+
+
 @runtime_checkable
 class TTSProvider(Protocol):
-    """Protocol for TTS engines — extensible for future providers."""
+    """Protocol for pluggable TTS engines."""
 
-    async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
-        """Yield (pcm_int16_bytes, sample_rate) chunks as they're generated."""
+    provider_name: str
+    backend_kind: Literal["embedded", "external"]
+    capabilities: TTSProviderCapabilities
+
+    async def warmup(self) -> None:
+        """Preload model state needed for synthesis."""
+        ...  # pragma: no cover
+
+    def unload(self) -> None:
+        """Release provider state and reclaim memory."""
+        ...  # pragma: no cover
+
+    def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
+        """Yield ``(pcm_int16_bytes, sample_rate)`` chunks as they are generated."""
         ...  # pragma: no cover
 
     @property
     def is_available(self) -> bool:
-        """Check if the TTS engine is installed and ready."""
+        """Check if the provider is installed and ready to initialize."""
         ...  # pragma: no cover
 
     @property
@@ -37,15 +87,80 @@ class TTSProvider(Protocol):
         """Output sample rate in Hz."""
         ...  # pragma: no cover
 
+    def get_status(self) -> TTSProviderStatus:
+        """Return availability, capabilities, and provider-specific details."""
+        ...  # pragma: no cover
 
-class KokoroTTS:
-    """Local TTS via kokoro-onnx. Lazy-loads model on first use.
 
-    Follows the same pattern as WhisperSTT: lazy loading, async, thread-safe.
-    """
+class BaseTTSProvider(ABC):
+    """Shared provider lifecycle and status helpers."""
+
+    provider_name = "unknown"
+    backend_kind: Literal["embedded", "external"] = "embedded"
+    capabilities = TTSProviderCapabilities()
 
     def __init__(self, config: VoiceConfig) -> None:
         self._config = config
+
+    @property
+    def is_available(self) -> bool:
+        available, _reason = self._availability()
+        return available
+
+    def get_status(self) -> TTSProviderStatus:
+        available, reason = self._availability()
+        return TTSProviderStatus(
+            provider=self.provider_name,
+            available=available,
+            reason=reason,
+            backend_kind=self.backend_kind,
+            capabilities=self.capabilities,
+            details=self._status_details(),
+        )
+
+    def _status_details(self) -> dict[str, Any]:
+        return {}
+
+    @abstractmethod
+    async def warmup(self) -> None:
+        """Preload model state needed for synthesis."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def unload(self) -> None:
+        """Release provider state and reclaim memory."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
+        """Yield ``(pcm_int16_bytes, sample_rate)`` chunks as they are generated."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def sample_rate(self) -> int:
+        """Output sample rate in Hz."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _availability(self) -> tuple[bool, str]:
+        """Return ``(available, reason)`` for the provider."""
+        raise NotImplementedError
+
+
+class KokoroTTS(BaseTTSProvider):
+    """Local TTS via kokoro-onnx. Lazy-loads model on first use."""
+
+    provider_name = "kokoro"
+    capabilities = TTSProviderCapabilities(
+        supports_reference_audio=False,
+        supports_reference_text=False,
+        supports_streaming=True,
+        supports_voice_cloning=False,
+    )
+
+    def __init__(self, config: VoiceConfig) -> None:
+        super().__init__(config)
         self._model: Any | None = None
         # Initialize the lock eagerly so two coroutines arriving in
         # _ensure_model concurrently cannot create separate locks.
@@ -57,13 +172,26 @@ class KokoroTTS:
         await self._ensure_model()
 
     def unload(self) -> None:
-        """Release the model to reclaim memory.
-
-        Safe to call from sync contexts: ``synthesize_stream`` captures the
-        model in a local variable, so clearing ``self._model`` cannot affect
-        an in-flight synthesis. Python attribute assignment is GIL-atomic.
-        """
+        """Release the model to reclaim memory."""
         self._model = None
+
+    def _status_details(self) -> dict[str, Any]:
+        return {
+            "tts_voice": self._config.tts_voice,
+        }
+
+    def _availability(self) -> tuple[bool, str]:
+        """Check if kokoro-onnx is installed and model files exist."""
+        try:
+            import kokoro_onnx  # noqa: F401
+        except ImportError:
+            return False, "kokoro-onnx not installed (uv sync --extra voice)"
+
+        model_path = Path(self._config.tts_model_path).expanduser()
+        voices_path = Path(self._config.tts_voices_path).expanduser()
+        if model_path.exists() and voices_path.exists():
+            return True, ""
+        return False, "Kokoro model files not found"
 
     async def _ensure_model(self) -> Any:
         """Lazy-load the Kokoro model (thread-safe, async)."""
@@ -71,18 +199,16 @@ class KokoroTTS:
             return self._model
 
         async with self._load_lock:
-            # Double-check after acquiring lock
             if self._model is not None:
                 return self._model
 
             logger.info(
-                f"Loading Kokoro TTS model (voice={self._config.tts_voice}, "
-                f"lang={self._config.tts_language})"
+                "Loading Kokoro TTS model (voice=%s, lang=%s)",
+                self._config.tts_voice,
+                self._config.tts_language,
             )
 
             def _load() -> Any:
-                from pathlib import Path
-
                 from kokoro_onnx import Kokoro
 
                 model_path = str(Path(self._config.tts_model_path).expanduser())
@@ -94,14 +220,7 @@ class KokoroTTS:
             return self._model
 
     async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
-        """Yield (pcm_int16_bytes, sample_rate) chunks for the given text.
-
-        Each chunk is a complete sentence's worth of audio, encoded as
-        16-bit signed integer PCM at 24kHz mono.
-
-        Raises no exceptions to callers — errors are logged and the
-        iterator simply ends.
-        """
+        """Yield ``(pcm_int16_bytes, sample_rate)`` chunks for the given text."""
         try:
             model = await self._ensure_model()
         except Exception:
@@ -118,7 +237,6 @@ class KokoroTTS:
 
             async for samples, sr in stream:
                 try:
-                    # Convert float32 samples to int16 PCM bytes
                     pcm_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
                     yield pcm_int16.tobytes(), sr
                 except Exception:
@@ -130,20 +248,6 @@ class KokoroTTS:
             raise
         except Exception:
             logger.error("TTS synthesis failed", exc_info=True)
-
-    @property
-    def is_available(self) -> bool:
-        """Check if kokoro-onnx is installed and model files exist."""
-        try:
-            import kokoro_onnx  # noqa: F401
-        except ImportError:
-            return False
-
-        from pathlib import Path
-
-        model_path = Path(self._config.tts_model_path).expanduser()
-        voices_path = Path(self._config.tts_voices_path).expanduser()
-        return model_path.exists() and voices_path.exists()
 
     @property
     def sample_rate(self) -> int:

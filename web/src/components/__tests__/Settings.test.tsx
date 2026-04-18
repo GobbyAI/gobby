@@ -14,6 +14,7 @@ const baseSettings = {
   chatMode: 'plan' as const,
   theme: 'dark' as const,
   defaultChatMode: 'plan' as const,
+  postPlanChatMode: 'normal' as const,
   sttEnabled: false,
   ttsEnabled: false,
   voiceInputMode: 'ptt' as const,
@@ -22,6 +23,35 @@ const baseSettings = {
 describe('Settings voice section', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('does not render the legacy model selector', () => {
+    vi.mocked(useVoiceCapabilities).mockReturnValue({
+      sttConfigEnabled: false,
+      ttsConfigEnabled: false,
+      sttAvailable: false,
+      ttsAvailable: false,
+      loading: false,
+    })
+
+    render(
+      <Settings
+        isOpen={true}
+        onClose={vi.fn()}
+        settings={baseSettings}
+        onFontSizeChange={vi.fn()}
+        onThemeChange={vi.fn()}
+        onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
+        onSttEnabledChange={vi.fn()}
+        onTtsEnabledChange={vi.fn()}
+        onVoiceInputModeChange={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByLabelText('Model')).toBeNull()
+    expect(screen.queryByText('Claude Opus')).toBeNull()
   })
 
   it('hides the voice section when voice is disabled in config', () => {
@@ -39,9 +69,9 @@ describe('Settings voice section', () => {
         onClose={vi.fn()}
         settings={baseSettings}
         onFontSizeChange={vi.fn()}
-        onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={vi.fn()}
@@ -67,9 +97,9 @@ describe('Settings voice section', () => {
         onClose={vi.fn()}
         settings={baseSettings}
         onFontSizeChange={vi.fn()}
-        onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={vi.fn()}
@@ -97,9 +127,9 @@ describe('Settings voice section', () => {
         onClose={vi.fn()}
         settings={baseSettings}
         onFontSizeChange={vi.fn()}
-        onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={onVoiceInputModeChange}
@@ -115,9 +145,9 @@ describe('Settings voice section', () => {
         onClose={vi.fn()}
         settings={{ ...baseSettings, sttEnabled: true, voiceInputMode: 'vad' }}
         onFontSizeChange={vi.fn()}
-        onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={onVoiceInputModeChange}
@@ -145,9 +175,9 @@ describe('Settings voice section', () => {
         onClose={vi.fn()}
         settings={baseSettings}
         onFontSizeChange={vi.fn()}
-        onModelChange={vi.fn()}
         onThemeChange={vi.fn()}
         onDefaultChatModeChange={vi.fn()}
+        onPostPlanChatModeChange={vi.fn()}
         onSttEnabledChange={vi.fn()}
         onTtsEnabledChange={vi.fn()}
         onVoiceInputModeChange={vi.fn()}

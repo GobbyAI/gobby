@@ -201,6 +201,7 @@ class TestRequireErrorTriage:
 
         assert body.when is not None
         assert "errors_resolved" in body.when
+        assert "session_edited_files" in body.when
 
 
 class TestRequireTaskClose:
@@ -724,12 +725,12 @@ class TestConsecutiveBlockScoping:
     """
 
     @pytest.mark.asyncio
-    async def test_same_tool_retried_3x_escalates(self, db) -> None:
-        """Same tool retried 3 times should hit the hardcoded escalation block."""
+    async def test_same_tool_retried_5x_escalates(self, db) -> None:
+        """Same tool retried 5 times should hit the configured escalation block."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
-            "tool_block_pending": True,
             "_last_blocked_tool": "TodoWrite",
+            "max_consecutive_blocked_tool_attempts": 5,
         }
 
         # Attempt 1: counter goes to 1, no escalation yet
@@ -743,27 +744,47 @@ class TestConsecutiveBlockScoping:
         # (no rules installed, so it allows)
         assert response1.decision == "allow"
 
-        # Re-set tool_block_pending (simulates the rule blocking it again)
-        variables["tool_block_pending"] = True
+        # Re-set blocked-tool tracking (simulates the rule blocking it again)
         variables["_last_blocked_tool"] = "TodoWrite"
 
-        # Attempt 2: counter goes to 2 → escalation block
+        # Attempt 2: counter goes to 2, still below threshold
         event2 = _make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
         response2 = await engine.evaluate(event2, "sess-1", variables)
         assert variables.get("consecutive_tool_blocks") == 2
-        assert response2.decision == "block"
-        assert "TodoWrite" in response2.reason
-        assert "3 times" in response2.reason
+        assert response2.decision == "allow"
+
+        variables["_last_blocked_tool"] = "TodoWrite"
+
+        # Attempt 3: counter goes to 3, still below threshold
+        event3 = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "TodoWrite"},
+        )
+        response3 = await engine.evaluate(event3, "sess-1", variables)
+        assert variables.get("consecutive_tool_blocks") == 3
+        assert response3.decision == "allow"
+
+        variables["_last_blocked_tool"] = "TodoWrite"
+
+        # Attempt 4: counter goes to 4 → escalation block on the 5th total attempt
+        event4 = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "TodoWrite"},
+        )
+        response4 = await engine.evaluate(event4, "sess-1", variables)
+        assert variables.get("consecutive_tool_blocks") == 4
+        assert response4.decision == "block"
+        assert "TodoWrite" in response4.reason
+        assert "5 times" in response4.reason
 
     @pytest.mark.asyncio
     async def test_different_tool_resets_counter(self, db) -> None:
         """Different tool after a block should reset counter and proceed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
-            "tool_block_pending": True,
             "_last_blocked_tool": "TodoWrite",
             "consecutive_tool_blocks": 1,
         }
@@ -780,11 +801,36 @@ class TestConsecutiveBlockScoping:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_pipeline_direct_mcp_retry_clears_stale_counter(self, db) -> None:
+        """Pipeline-scoped direct MCP calls should not inherit interactive retry state."""
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {
+            "_last_blocked_tool": "gobby-workflows:list_pipeline_executions",
+            "consecutive_tool_blocks": 2,
+        }
+
+        event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-workflows",
+                    "tool_name": "list_pipeline_executions",
+                },
+            },
+            source=SessionSource.PIPELINE,
+        )
+        response = await engine.evaluate(event, "sess-1", variables)
+
+        assert response.decision == "allow"
+        assert variables.get("consecutive_tool_blocks") == 0
+        assert variables.get("_last_blocked_tool") == ""
+
+    @pytest.mark.asyncio
     async def test_different_tool_blocked_starts_own_counter(self, db) -> None:
         """If a different tool is also rule-blocked, it starts its own counter."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
-            "tool_block_pending": True,
             "_last_blocked_tool": "TodoWrite",
             "consecutive_tool_blocks": 1,
         }
@@ -797,8 +843,7 @@ class TestConsecutiveBlockScoping:
         await engine.evaluate(event, "sess-1", variables)
         assert variables.get("consecutive_tool_blocks") == 0
 
-        # Simulate Edit being blocked by a rule (sets pending + last_blocked)
-        variables["tool_block_pending"] = True
+        # Simulate Edit being blocked by a rule (updates last_blocked)
         variables["_last_blocked_tool"] = "Edit"
 
         # Retry Edit — counter goes to 1
@@ -880,8 +925,51 @@ class TestConsecutiveBlockScoping:
         response = await engine.evaluate(event, "sess-1", variables)
 
         assert response.decision == "block"
-        assert variables.get("tool_block_pending") is True
+        assert variables.get("tool_block_pending") is not True
         assert variables.get("_last_blocked_tool") == "TodoWrite"
+
+    @pytest.mark.asyncio
+    async def test_rule_block_does_not_trigger_tool_failure_recovery_on_stop(self, db) -> None:
+        """A BEFORE_TOOL gate block should not make the next STOP look like a tool failure."""
+        from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        rule_body = {
+            "event": "before_tool",
+            "effects": [
+                {
+                    "type": "block",
+                    "tools": ["TodoWrite"],
+                    "reason": "Use gobby-tasks instead",
+                },
+            ],
+        }
+        mgr.create(
+            name="block-todowrite-stop-test",
+            workflow_type="rule",
+            definition_json=json.dumps(rule_body),
+            source="installed",
+            enabled=True,
+            priority=10,
+        )
+
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {}
+
+        blocked_event = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "TodoWrite"},
+        )
+        blocked = await engine.evaluate(blocked_event, "sess-1", variables)
+        assert blocked.decision == "block"
+        assert variables.get("_last_blocked_tool") == "TodoWrite"
+        assert variables.get("tool_block_pending") is not True
+
+        stop_event = _make_event(HookEventType.STOP)
+        stop = await engine.evaluate(stop_event, "sess-1", variables)
+
+        assert stop.decision == "allow"
+        assert "tool-failure-recovery" not in (stop.reason or "")
 
     @pytest.mark.asyncio
     async def test_death_spiral_scenario_recoverable(self, db) -> None:

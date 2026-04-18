@@ -9,6 +9,7 @@ export interface ProjectWithStats {
   github_url: string | null
   github_repo: string | null
   linear_team_id: string | null
+  approval_rules: string[]
   created_at: string
   updated_at: string
   session_count: number
@@ -85,7 +86,7 @@ export function useProjects() {
 
   const updateProject = useCallback(async (
     projectId: string,
-    fields: Partial<Pick<ProjectWithStats, 'name' | 'github_url' | 'github_repo' | 'linear_team_id'>>
+    fields: Partial<Pick<ProjectWithStats, 'name' | 'github_url' | 'github_repo' | 'linear_team_id' | 'approval_rules'>>
   ): Promise<boolean> => {
     try {
       const res = await fetch(`${baseUrl}/api/projects/${encodeURIComponent(projectId)}`, {

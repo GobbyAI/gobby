@@ -57,7 +57,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
   }, [selectedProject, projectId, allProjects]);
 
   const handleSave = useCallback(
-    async (fields: Record<string, string | null>) => {
+    async (fields: Record<string, string | string[] | null>) => {
       if (!activeProject) return false;
       return updateProject(activeProject.id, fields);
     },

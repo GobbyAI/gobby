@@ -26,6 +26,11 @@ from qdrant_client.models import (
 logger = logging.getLogger(__name__)
 
 
+def _vector_size(vectors_cfg: Any) -> int | None:
+    """Extract vector size from a Qdrant vectors config when available."""
+    return vectors_cfg.size if isinstance(vectors_cfg, VectorParams) else None
+
+
 class VectorStore:
     """Async wrapper around Qdrant for memory vector storage.
 
@@ -85,7 +90,7 @@ class VectorStore:
             try:
                 info = await asyncio.to_thread(client.get_collection, self._collection_name)
                 vectors_cfg = info.config.params.vectors
-                existing_dim = vectors_cfg.size if isinstance(vectors_cfg, VectorParams) else None
+                existing_dim = _vector_size(vectors_cfg)
                 if existing_dim is not None and existing_dim != self._embedding_dim:
                     logger.error(
                         f"Embedding dimension mismatch for collection '{self._collection_name}': "
@@ -285,6 +290,21 @@ class VectorStore:
             points=points,
         )
 
+    async def get_collection_dimension(self, collection_name: str | None = None) -> int | None:
+        """Return the vector dimension for a collection when readable."""
+        client = self._ensure_client()
+        resolved_name = collection_name or self._collection_name
+        try:
+            info = await asyncio.to_thread(client.get_collection, resolved_name)
+        except Exception as exc:
+            logger.warning(
+                "Failed to read Qdrant collection dimension for '%s': %s",
+                resolved_name,
+                exc,
+            )
+            return None
+        return _vector_size(info.config.params.vectors)
+
     async def ensure_collection(
         self, collection_name: str, embedding_dim: int | None = None
     ) -> None:
@@ -308,7 +328,7 @@ class VectorStore:
             try:
                 info = await asyncio.to_thread(client.get_collection, collection_name)
                 vectors_cfg = info.config.params.vectors
-                existing_dim = vectors_cfg.size if isinstance(vectors_cfg, VectorParams) else None
+                existing_dim = _vector_size(vectors_cfg)
                 if existing_dim is not None and existing_dim != dim:
                     # Auto-recreate with correct dimensions
                     await asyncio.to_thread(

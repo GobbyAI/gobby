@@ -17,6 +17,7 @@ from gobby.sessions.transcripts.base import (
 logger = logging.getLogger(__name__)
 
 _INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt"})
+_PROTOCOL_TOOL_NAME = "protocol_context"
 
 
 @dataclass
@@ -43,6 +44,13 @@ class RenderedToolCall:
     error: str | None = None
 
 
+@dataclass
+class _ProtocolContentSegment:
+    kind: str
+    text: str | None = None
+    tool_call: RenderedToolCall | None = None
+
+
 TOOL_TYPE_MAP = {
     "Bash": "bash",
     "Read": "read",
@@ -63,6 +71,9 @@ def classify_tool(tool_name: str | None) -> tuple[str, str | None]:
     """Returns (tool_type, server_name). Extracts server from mcp__server__tool naming."""
     if not tool_name:
         return "unknown", None
+
+    if tool_name.lower() == _PROTOCOL_TOOL_NAME:
+        return "protocol", None
 
     if is_shell_tool(tool_name):
         return "bash", None
@@ -228,10 +239,8 @@ def render_incremental(
         if msg.content_type in _INTERNAL_CONTENT_TYPES:
             continue
 
-        # 1. Classify role and detect hook feedback
-        role = msg.role
-        if _is_hook_feedback(msg):
-            role = "system"
+        # 1. Classify role and detect hook/protocol/bootstrap feedback
+        role = _classify_render_role(msg)
 
         # 2. Tool result pairing (can bypass turn logic if paired)
         is_tool_result = msg.content_type in ["tool_result", "mcp_tool_result"]
@@ -283,47 +292,359 @@ def _is_hook_feedback(msg: ParsedMessage) -> bool:
     return any(msg.content.startswith(p) for p in prefixes)
 
 
-# Protocol XML tags that should be stripped from rendered content
-_PROTOCOL_TAG_RE = re.compile(
-    r"<(?:system-reminder|task-notification|local-command-caveat|local-command-stdout"
-    r"|command-name|command-args|command-message|hook_context|hook-context"
-    r"|antml_thinking|antml_function_calls|antml_invoke)"
-    r"[^>]*>.*?</(?:system-reminder|task-notification|local-command-caveat|local-command-stdout"
-    r"|command-name|command-args|command-message|hook_context|hook-context"
-    r"|antml_thinking|antml_function_calls|antml_invoke)>",
+_PROTOCOL_TOOL_TAGS: tuple[str, ...] = (
+    "system-reminder",
+    "task-notification",
+    "local-command-caveat",
+    "local-command-stdout",
+    "command-name",
+    "command-args",
+    "command-message",
+    "hook_context",
+    "hook-context",
+    "antml_thinking",
+    "antml_function_calls",
+    "antml_invoke",
+    "environment_context",
+    "skill",
+    "permissions instructions",
+    "permission instructions",
+    "collaboration_mode",
+    "turn_aborted",
+    "system_instructions",
+    "instructions",
+    "skills_instructions",
+)
+
+_INLINE_WRAPPER_PROTOCOL_TAGS: tuple[str, ...] = (
+    "proposed_plan",
+    "proposed_implementation",
+    "search_quality_reflection",
+)
+
+
+def _tag_pattern(tags: tuple[str, ...]) -> str:
+    return "|".join(re.escape(tag) for tag in tags)
+
+
+_PROTOCOL_TOOL_TAG_PATTERN = _tag_pattern(_PROTOCOL_TOOL_TAGS)
+_INLINE_WRAPPER_PROTOCOL_TAG_PATTERN = _tag_pattern(_INLINE_WRAPPER_PROTOCOL_TAGS)
+
+# Protocol/context tags that should surface as collapsed protocol tool calls.
+_PROTOCOL_TOOL_RE = re.compile(
+    rf"<(?P<tag>{_PROTOCOL_TOOL_TAG_PATTERN})(?=[\s>])(?P<attrs>[^>]*)>"
+    rf"(?P<body>.*?)(?:</(?P=tag)\s*>|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+_INLINE_WRAPPER_PROTOCOL_TAG_RE = re.compile(
+    rf"</?(?:{_INLINE_WRAPPER_PROTOCOL_TAG_PATTERN})(?=[\s>])[^>]*>",
+    re.IGNORECASE,
+)
+
+_PROTOCOL_CHILD_RE = re.compile(
+    r"\s*<(?P<tag>[\w:-]+)>(?P<body>.*?)</(?P=tag)\s*>",
     re.DOTALL,
 )
+_MAX_PROTOCOL_PARSE_DEPTH = 50
 
-# Unclosed protocol tags (content extends to end of string)
-_PROTOCOL_TAG_UNCLOSED_RE = re.compile(
-    r"<(?:system-reminder|task-notification|local-command-caveat|hook_context)[^>]*>.*$",
-    re.DOTALL,
+_PROTOCOL_ATTR_RE = re.compile(r"""([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_SYSTEM_BOOTSTRAP_PREFIX_RE = re.compile(
+    r"^\s*(?:#\s*)?(?:AGENTS\.md instructions for\b|System instructions\b|Gobby Session ID:)",
+    re.IGNORECASE,
+)
+_SYSTEM_BOOTSTRAP_HEADING_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s+)?(?P<heading>[^:#]+):?\s*$")
+_SYSTEM_BOOTSTRAP_HEADINGS: frozenset[str] = frozenset(
+    {
+        "platform context",
+        "capabilities",
+        "lifecycle model",
+        "behavior",
+        "role",
+        "personality",
+        "values",
+        "interaction style",
+        "general",
+        "tools",
+        "working with the user",
+        "formatting rules",
+        "final answer instructions",
+        "intermediary updates",
+    }
+)
+_HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS: frozenset[str] = frozenset(
+    {
+        "platform context",
+        "capabilities",
+        "lifecycle model",
+        "personality",
+        "interaction style",
+        "final answer instructions",
+        "intermediary updates",
+    }
 )
 
-# Tags where only the wrapper should be stripped (content preserved)
-_TAG_ONLY_STRIP_RE = re.compile(
-    r"</?(?:proposed_plan|proposed_implementation|search_quality_reflection"
-    r"|permissions instructions|permission instructions|collaboration_mode)>"
-)
 
-
-def _strip_protocol_tags(content: str) -> str:
-    """Remove protocol XML tags from message content.
-
-    Strips system-reminder, task-notification, local-command-*,
-    hook_context, and other infrastructure tags that shouldn't be
-    displayed in the session viewer.  Also strips tag wrappers (but
-    preserves content) for proposed_plan, proposed_implementation,
-    and search_quality_reflection.
-    """
+def _sanitize_visible_protocol_text(content: str) -> str:
+    """Strip inline wrapper tags while preserving the visible content."""
     if "<" not in content:
         return content
-    result = _PROTOCOL_TAG_RE.sub("", content)
-    result = _PROTOCOL_TAG_UNCLOSED_RE.sub("", result)
-    result = _TAG_ONLY_STRIP_RE.sub("", result)
-    # Clean up leftover whitespace
-    result = re.sub(r"\n{3,}", "\n\n", result).strip()
-    return result
+    content = _INLINE_WRAPPER_PROTOCOL_TAG_RE.sub("", content)
+    return re.sub(r"\n{3,}", "\n\n", content)
+
+
+def _count_bootstrap_heading_matches(content: str) -> tuple[int, int]:
+    matched_headings: set[str] = set()
+    matched_high_signal_headings: set[str] = set()
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        heading_match = _SYSTEM_BOOTSTRAP_HEADING_RE.match(line)
+        if not heading_match:
+            continue
+
+        normalized_heading = heading_match.group("heading").strip().lower()
+        if normalized_heading not in _SYSTEM_BOOTSTRAP_HEADINGS:
+            continue
+
+        matched_headings.add(normalized_heading)
+        if normalized_heading in _HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS:
+            matched_high_signal_headings.add(normalized_heading)
+
+    return len(matched_headings), len(matched_high_signal_headings)
+
+
+def _looks_like_system_bootstrap_text(content: str) -> bool:
+    stripped = content.strip()
+    if not stripped:
+        return False
+
+    if _SYSTEM_BOOTSTRAP_PREFIX_RE.match(stripped):
+        return True
+
+    heading_count, high_signal_heading_count = _count_bootstrap_heading_matches(stripped)
+    return heading_count >= 3 or (heading_count >= 2 and high_signal_heading_count >= 1)
+
+
+def _parse_protocol_attributes(attr_text: str) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for match in _PROTOCOL_ATTR_RE.finditer(attr_text):
+        key = match.group(1)
+        value = match.group(2) if match.group(2) is not None else match.group(3)
+        attrs[key] = value or ""
+    return attrs
+
+
+def _parse_protocol_payload(content: str, depth: int = 0) -> Any:
+    content = content.strip()
+    if not content or "<" not in content or depth >= _MAX_PROTOCOL_PARSE_DEPTH:
+        return content
+
+    parsed_children: dict[str, Any] = {}
+    index = 0
+    matched_child = False
+
+    while index < len(content):
+        match = _PROTOCOL_CHILD_RE.match(content, index)
+        if not match:
+            break
+
+        matched_child = True
+        child_tag = match.group("tag")
+        child_value = _parse_protocol_payload(match.group("body"), depth + 1)
+        existing = parsed_children.get(child_tag)
+        if existing is None:
+            parsed_children[child_tag] = child_value
+        elif isinstance(existing, list):
+            existing.append(child_value)
+        else:
+            parsed_children[child_tag] = [existing, child_value]
+        index = match.end()
+
+    if matched_child and not content[index:].strip():
+        return parsed_children
+
+    return content
+
+
+def _make_protocol_tool_call(
+    tag: str,
+    body: str,
+    attrs: str,
+    source_index: int,
+    ordinal: int,
+) -> RenderedToolCall:
+    normalized_tag = tag.lower()
+    arguments: dict[str, Any] = {"tag": normalized_tag}
+    parsed_attrs = _parse_protocol_attributes(attrs)
+    if parsed_attrs:
+        arguments["attributes"] = parsed_attrs
+
+    result_content = _parse_protocol_payload(body)
+    result_type = "json" if isinstance(result_content, (dict, list)) else "text"
+
+    return RenderedToolCall(
+        id=f"protocol-{source_index}-{ordinal}",
+        tool_name=_PROTOCOL_TOOL_NAME,
+        server_name="builtin",
+        tool_type="protocol",
+        arguments=arguments,
+        result=ToolResult(
+            content=result_content,
+            content_type=result_type,
+            metadata={"protocol_tag": normalized_tag},
+        ),
+        status="completed",
+    )
+
+
+def _make_plain_text_protocol_tool_call(
+    tag: str,
+    body: str,
+    source_index: int,
+) -> RenderedToolCall:
+    return _make_protocol_tool_call(tag, body, "", source_index, 0)
+
+
+def _extract_protocol_content_segments(
+    content: str, source_index: int
+) -> list[_ProtocolContentSegment]:
+    if "<" not in content:
+        return [_ProtocolContentSegment(kind="text", text=content)] if content else []
+
+    segments: list[_ProtocolContentSegment] = []
+    last_end = 0
+    ordinal = 0
+
+    for match in _PROTOCOL_TOOL_RE.finditer(content):
+        visible_text = _sanitize_visible_protocol_text(content[last_end : match.start()]).rstrip()
+        if visible_text.strip():
+            segments.append(_ProtocolContentSegment(kind="text", text=visible_text))
+
+        ordinal += 1
+        segments.append(
+            _ProtocolContentSegment(
+                kind="protocol_tool",
+                tool_call=_make_protocol_tool_call(
+                    match.group("tag"),
+                    match.group("body"),
+                    match.group("attrs"),
+                    source_index,
+                    ordinal,
+                ),
+            )
+        )
+        last_end = match.end()
+
+    trailing_text = _sanitize_visible_protocol_text(content[last_end:]).lstrip()
+    if trailing_text.strip():
+        segments.append(_ProtocolContentSegment(kind="text", text=trailing_text))
+
+    if segments:
+        return segments
+
+    sanitized = _sanitize_visible_protocol_text(content)
+    return [_ProtocolContentSegment(kind="text", text=sanitized)] if sanitized.strip() else []
+
+
+def _is_protocol_only_text(content: str) -> bool:
+    segments = _extract_protocol_content_segments(content, source_index=0)
+    has_protocol_segment = False
+
+    for segment in segments:
+        if segment.kind == "protocol_tool":
+            has_protocol_segment = True
+            continue
+
+        if segment.text and segment.text.strip():
+            return False
+
+    return has_protocol_segment
+
+
+def _classify_render_role(msg: ParsedMessage) -> str:
+    if _is_hook_feedback(msg):
+        return "system"
+
+    if (
+        msg.role == "user"
+        and msg.content_type == "text"
+        and isinstance(msg.content, str)
+        and (_is_protocol_only_text(msg.content) or _looks_like_system_bootstrap_text(msg.content))
+    ):
+        return "system"
+
+    return msg.role
+
+
+def _append_text_content_block(
+    state: RenderState,
+    text: str,
+    source_line: int,
+) -> None:
+    if state.current_message is None:
+        return
+    if not state.current_message.content_blocks:
+        state.current_message.content_blocks = []
+
+    last_block = (
+        state.current_message.content_blocks[-1] if state.current_message.content_blocks else None
+    )
+
+    if last_block and last_block.type == "text" and isinstance(last_block.content, str):
+        last_block.content += text
+        previous_block = None
+    else:
+        state.current_message.content_blocks.append(
+            ContentBlock(type="text", content=text, source_line=source_line)
+        )
+        previous_block = (
+            state.current_message.content_blocks[-2]
+            if len(state.current_message.content_blocks) >= 2
+            else None
+        )
+
+    if (
+        previous_block
+        and previous_block.type == "tool_chain"
+        and state.current_message.content
+        and text
+        and not state.current_message.content[-1].isspace()
+        and not text[0].isspace()
+    ):
+        state.current_message.content += " "
+
+    state.current_message.content += text
+
+
+def _append_protocol_tool_call_block(
+    state: RenderState,
+    tool_call: RenderedToolCall,
+    source_line: int,
+) -> None:
+    if state.current_message is None:
+        return
+    if not state.current_message.content_blocks:
+        state.current_message.content_blocks = []
+
+    last_block = (
+        state.current_message.content_blocks[-1] if state.current_message.content_blocks else None
+    )
+    if (
+        last_block
+        and last_block.type == "tool_chain"
+        and last_block.tool_calls
+        and all(call.tool_type == "protocol" for call in last_block.tool_calls)
+    ):
+        last_block.tool_calls.append(tool_call)
+        return
+
+    state.current_message.content_blocks.append(
+        ContentBlock(type="tool_chain", tool_calls=[tool_call], source_line=source_line)
+    )
 
 
 def _process_message_block(
@@ -367,15 +688,41 @@ def _process_message_block(
         # Non-hashable content (e.g. dict) — skip deduplication
         pass
 
-    # Strip protocol tags from all message content
+    # Convert protocol/context tags in text content into synthetic tool calls.
     block_text: Any = msg.content
-    if isinstance(block_text, str):
-        block_text = _strip_protocol_tags(block_text)
 
     # Block Type Mapping
     original_type = msg.content_type
     block_type = original_type
     block_content: Any = block_text
+
+    if block_type == "text" and isinstance(block_text, str):
+        if _looks_like_system_bootstrap_text(block_text):
+            state.current_message.role = "system"
+            _append_protocol_tool_call_block(
+                state,
+                _make_plain_text_protocol_tool_call(
+                    "system_instructions",
+                    block_text.strip(),
+                    msg.index,
+                ),
+                msg.index,
+            )
+            return
+
+        is_protocol_only = _is_protocol_only_text(block_text)
+        for segment in _extract_protocol_content_segments(block_text, msg.index):
+            if segment.kind == "text" and segment.text is not None:
+                _append_text_content_block(state, segment.text, msg.index)
+            elif segment.kind == "protocol_tool" and segment.tool_call is not None:
+                if is_protocol_only:
+                    state.current_message.role = "system"
+                _append_protocol_tool_call_block(state, segment.tool_call, msg.index)
+        return
+
+    if isinstance(block_text, str):
+        block_text = _sanitize_visible_protocol_text(block_text)
+        block_content = block_text
 
     if block_type in ["tool_use", "mcp_tool_use"]:
         block_type = "tool_chain"

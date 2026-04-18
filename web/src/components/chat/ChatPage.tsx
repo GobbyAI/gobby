@@ -1,6 +1,7 @@
 import "./styles.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { AUTONOMOUS_CHAT_MODES } from "../../types/chat";
 import type {
   ChatState,
   ConversationState,
@@ -31,6 +32,7 @@ import {
   resolveProviderModelPair,
   type ProviderModelEntry,
 } from "../../lib/providerModels";
+import { canProxyAttachObservationMeta } from "../../lib/sessionProxyAttach";
 
 const VALID_ARTIFACT_TYPES = new Set<string>(["code", "text", "image", "sheet"]);
 
@@ -148,7 +150,6 @@ export function ChatPage({
   } = activity;
   const {
     onApprovePlan,
-    onModeChangeLocal,
     onPaletteSelect,
     onRequestPlanChanges,
     onSend,
@@ -222,13 +223,19 @@ export function ChatPage({
   const isAutonomousSession = Boolean(
     isSwappedTerminal && viewingMeta?.agentRunId,
   );
+  const isProxyAttached =
+    Boolean(chat.attachedSessionId) && chat.sessionInteractionMode === "proxy";
+  const canAttachViewedSession =
+    !isAutonomousSession && canProxyAttachObservationMeta(viewingMeta);
   const canControlViewedSession =
     viewingMeta?.sessionType === "terminal" && !isAutonomousSession;
-  const providerPickerDisabledReason = isAutonomousSession
-    ? chat.sessionInteractionMode === "proxy"
-      ? "Cannot change provider on a pipeline-managed session"
-      : "Observing autonomous session"
-    : null;
+  const providerPickerDisabledReason = isProxyAttached
+    ? "Attached session owns provider, model, and reasoning"
+    : isAutonomousSession
+      ? chat.sessionInteractionMode === "proxy"
+        ? "Cannot change provider on a pipeline-managed session"
+        : "Observing autonomous session"
+      : null;
   const mainInputSelection = resolveProviderModelPair(
     providerModelCatalog,
     {
@@ -257,18 +264,26 @@ export function ChatPage({
   const effectiveInputModel = isSwappedTerminal
     ? viewedInputSelection.model ?? ""
     : mainInputSelection.model ?? "";
+  const effectiveAgentName = isSwappedTerminal
+    ? viewingMeta?.agentName ?? chat.activeAgent
+    : chat.activeAgent;
+  const effectiveBranch = viewingMeta?.gitBranch ?? chat.currentBranch;
   const effectiveReasoningPreferenceKey = buildReasoningPreferenceKey(
     effectiveInputProvider,
     effectiveInputModel,
   );
-  const effectiveInputReasoning = getPreferredReasoningEffort(
-    providerModelCatalog,
-    effectiveInputProvider,
-    effectiveInputModel,
-    effectiveReasoningPreferenceKey
-      ? reasoningPreferences[effectiveReasoningPreferenceKey]
-      : null,
-  );
+  const preferredReasoningEffort = effectiveReasoningPreferenceKey
+    ? reasoningPreferences[effectiveReasoningPreferenceKey]
+    : null;
+  const effectiveInputReasoning =
+    isSwappedTerminal && viewingMeta?.reasoningEffort
+      ? viewingMeta.reasoningEffort
+      : getPreferredReasoningEffort(
+          providerModelCatalog,
+          effectiveInputProvider,
+          effectiveInputModel,
+          preferredReasoningEffort,
+        );
   const isReadOnlySession =
     isSwappedTerminal && chat.sessionInteractionMode !== "proxy";
   const showChatInput = !isReadOnlySession;
@@ -300,11 +315,38 @@ export function ChatPage({
     ) {
       return;
     }
+    if (effectiveInputModel) {
+      onModelChange?.(effectiveInputModel);
+    }
+    if (effectiveInputProvider && effectiveInputModel && effectiveInputReasoning) {
+      onReasoningPreferenceChange?.(
+        effectiveInputProvider,
+        effectiveInputModel,
+        effectiveInputReasoning,
+      );
+    }
     void chat.continueSessionInChat(
       chat.viewingSessionId,
       projectId ?? undefined,
+      {
+        provider: effectiveInputProvider,
+        model: effectiveInputModel,
+        reasoningEffort: effectiveInputReasoning,
+        chatMode: viewingMeta?.chatMode ?? null,
+      },
     );
-  }, [chat, isAutonomousSession, isSwappedTerminal, projectId]);
+  }, [
+    chat,
+    effectiveInputModel,
+    effectiveInputProvider,
+    effectiveInputReasoning,
+    isAutonomousSession,
+    isSwappedTerminal,
+    onModelChange,
+    onReasoningPreferenceChange,
+    projectId,
+    viewingMeta?.chatMode,
+  ]);
 
   const handleSwappedSessionProviderSelection = useCallback(
     async (provider: string, model: string, reasoningEffort: string | null) => {
@@ -318,7 +360,7 @@ export function ChatPage({
       }
 
       const confirmChange =
-        viewingMeta?.status === "active"
+        canAttachViewedSession
           ? await confirm({
               title: "Change provider?",
               description:
@@ -338,6 +380,7 @@ export function ChatPage({
         provider,
         model,
         reasoningEffort,
+        chatMode: viewingMeta?.chatMode ?? null,
       });
     },
     [
@@ -348,7 +391,8 @@ export function ChatPage({
       onModelChange,
       onReasoningPreferenceChange,
       projectId,
-      viewingMeta?.status,
+      viewingMeta?.chatMode,
+      canAttachViewedSession,
     ],
   );
 
@@ -557,19 +601,20 @@ export function ChatPage({
   const handleApprovePlan = useCallback(() => {
     setPendingPlanArtifactId(null);
     onApprovePlan?.();
-    // Direct local mode update — bypasses the ref-based callback bridge
-    // in useChat.approvePlan which can silently fail if the ref isn't wired.
-    onModeChangeLocal?.("accept_edits");
-    setIsPinned(false);
-  }, [onApprovePlan, onModeChangeLocal, setIsPinned]);
+    if (isMobile) {
+      setIsPinned(false);
+    }
+  }, [isMobile, onApprovePlan, setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
       setPendingPlanArtifactId(null);
       onRequestPlanChanges?.(feedback);
-      setIsPinned(false);
+      if (isMobile) {
+        setIsPinned(false);
+      }
     },
-    [onRequestPlanChanges, setIsPinned],
+    [isMobile, onRequestPlanChanges, setIsPinned],
   );
 
   // Close artifact and auto-close activity panel if it was opened programmatically
@@ -634,6 +679,7 @@ export function ChatPage({
             viewingMeta?.title ??
             activeTitle
           }
+          sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
           onOpenPalette={() => setShowCommandPalette(true)}
           onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
@@ -690,12 +736,14 @@ export function ChatPage({
               isAttached={!!chat.attachedSessionId}
               isAutonomousSession={isAutonomousSession}
               onAttach={
-                canControlViewedSession ? chat.onAttachToViewed : undefined
+                canAttachViewedSession ? chat.onAttachToViewed : undefined
               }
               onResume={
                 canControlViewedSession ? handleResumeViewedSession : undefined
               }
               onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+              onTogglePanel={!showChatInput ? togglePanel : undefined}
+              isPanelPinned={isPinned}
             />
           )}
 
@@ -713,13 +761,17 @@ export function ChatPage({
               onPaletteSelect={handlePaletteSelect}
               mode={chat.mode}
               onModeChange={chat.onModeChange}
+              modeDisabled={isProxyAttached}
+              modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
               contextUsage={chat.contextUsage}
-              currentBranch={chat.currentBranch}
+              currentBranch={effectiveBranch}
               worktreePath={chat.worktreePath}
               projectId={projectId ?? null}
               onWorktreeChange={chat.onWorktreeChange}
-              agentName={chat.activeAgent}
+              worktreePickerDisabled={isProxyAttached}
+              agentName={effectiveAgentName}
               onAgentChange={chat.onAgentChange}
+              agentPickerDisabled={isProxyAttached}
               agentDefinitions={agentDefinitions}
               agentGlobalDefs={agentGlobalDefs}
               agentProjectDefs={agentProjectDefs}
@@ -758,6 +810,9 @@ export function ChatPage({
               hasMessages={chat.messages.length > 0}
               proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
+              attachmentsDisabled={isProxyAttached}
+              onToggleActivityPanel={togglePanel}
+              isActivityPanelPinned={isPinned}
             />
           )}
         </ArtifactContext.Provider>

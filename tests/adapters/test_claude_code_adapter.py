@@ -530,6 +530,16 @@ class TestTranslateFromHookResponse:
         assert "hookSpecificOutput" in result
         assert result["hookSpecificOutput"]["hookEventName"] == "SessionStart"
 
+    def test_session_start_routes_banner_to_additional_context_only(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        banner = "Gobby Session ID: #100 (uuid-123)"
+        response = HookResponse(decision="allow", system_message=banner)
+
+        result = adapter.translate_from_hook_response(response, hook_type="session-start")
+
+        assert "systemMessage" not in result
+        assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
+
     def test_context_injection_post_tool_use(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow", context="Post tool context")
@@ -661,6 +671,30 @@ class TestResponseMetadata:
         ctx = result["hookSpecificOutput"]["additionalContext"]
         assert "Workflow injected context" in ctx
         assert "#100" in ctx
+
+    def test_session_start_banner_and_metadata_include_session_id_once(self) -> None:
+        """SessionStart does not duplicate the session ID between banner and metadata."""
+        adapter = ClaudeCodeAdapter()
+        banner = "Gobby Session ID: #100 (uuid-123)"
+        response = HookResponse(
+            decision="allow",
+            system_message=banner,
+            metadata={
+                "session_id": "uuid-123",
+                "session_ref": "#100",
+                "external_id": "ext-id-456",
+                "_first_hook_for_session": True,
+                "project_id": "proj-xyz",
+            },
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="session-start")
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert ctx.count(banner) == 1
+        assert "ext-id-456" in ctx
+        assert "proj-xyz" in ctx
 
     def test_empty_metadata(self) -> None:
         adapter = ClaudeCodeAdapter()

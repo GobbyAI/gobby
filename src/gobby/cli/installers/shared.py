@@ -18,6 +18,7 @@ from pathlib import Path
 from shutil import copy2, copytree
 from typing import TYPE_CHECKING, Any
 
+from gobby.cli.installers.hook_commands import config_contains_gobby_hook
 from gobby.cli.utils import get_install_dir
 
 if TYPE_CHECKING:
@@ -113,9 +114,7 @@ def clean_project_hooks(settings_file: Path) -> list[str]:
 
     removed: list[str] = []
     for hook_type in list(settings["hooks"].keys()):
-        # Serialize the entry and check for our dispatcher signature
-        entry_str = json.dumps(settings["hooks"][hook_type])
-        if "hook_dispatcher.py" in entry_str:
+        if config_contains_gobby_hook(settings["hooks"][hook_type]):
             del settings["hooks"][hook_type]
             removed.append(hook_type)
 

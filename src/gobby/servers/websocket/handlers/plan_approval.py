@@ -24,7 +24,7 @@ async def handle_plan_approval_response(
     """Handle plan_approval_response message from the web UI.
 
     Processes the user's decision on a proposed plan:
-    - "approve": Unlock write tools and transition to accept_edits mode
+    - "approve": Mark the plan approved while remaining in plan mode
     - "request_changes": Store feedback for the next prompt injection
 
     Message format:
@@ -60,7 +60,6 @@ async def handle_plan_approval_response(
         else:
             # Legacy path: plan approval before ExitPlanMode was called
             session.approve_plan()
-            session.set_chat_mode("accept_edits")
             await session.sync_sdk_permission_mode()
             try:
                 await websocket.send(
@@ -68,7 +67,7 @@ async def handle_plan_approval_response(
                         {
                             "type": "mode_changed",
                             "conversation_id": conversation_id,
-                            "mode": "accept_edits",
+                            "mode": "plan",
                             "reason": "plan_approved",
                         }
                     )
@@ -76,7 +75,7 @@ async def handle_plan_approval_response(
             except (ConnectionClosed, ConnectionClosedError):
                 pass
             logger.info(
-                f"Plan approved (legacy) for conversation {conversation_id[:8]}, switched to accept_edits",
+                f"Plan approved (legacy) for conversation {conversation_id[:8]}",
             )
     elif decision == "request_changes":
         feedback = data.get("feedback", "")
@@ -145,14 +144,13 @@ async def handle_recovered_plan_approval(
         return
 
     if decision == "approve":
-        await asyncio.to_thread(session_manager.update_chat_mode, db_session.id, "accept_edits")
         try:
             await websocket.send(
                 json.dumps(
                     {
                         "type": "mode_changed",
                         "conversation_id": conversation_id,
-                        "mode": "accept_edits",
+                        "mode": "plan",
                         "reason": "plan_approved",
                     }
                 )

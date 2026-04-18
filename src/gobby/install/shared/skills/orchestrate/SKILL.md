@@ -90,7 +90,7 @@ If validation fails, explain why and re-prompt.
 
 Ask: "How should subtasks be created?"
 - **(a) Run expand-task pipeline now** — Will block until expansion completes (~2-5 min)
-- **(b) Provide a plan file** — Path to .md plan file for the expander to use
+- **(b) Provide a plan file** — Path to a .md plan file for the expansion run to use
 - **(c) Skip** — Subtasks already exist under this epic
 
 If (a): Run expand-task pipeline with `wait_for_completion: true`:
@@ -130,7 +130,7 @@ First, fetch available agent definitions:
 defs = call_tool("gobby-workflows", "list_agent_definitions", {"enabled": true})
 ```
 
-Filter to developer-class agents (exclude agents whose name contains "qa", "reviewer", "conductor", "merge", "expander", "expansion", "default", "pipeline", "web-chat", "codex", "nightly"). Show the filtered list:
+Filter to developer-class agents (exclude agents whose name contains "qa", "reviewer", "conductor", "merge", "expansion", "default", "pipeline", "web-chat", "codex", "nightly"). Show the filtered list:
 
 ```text
 Available developer agents:

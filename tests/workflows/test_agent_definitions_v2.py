@@ -43,7 +43,7 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 
 class TestAgentDefinitionBodyModel:
-    """AgentDefinitionBody has exactly 16 fields with correct defaults."""
+    """AgentDefinitionBody has the current field set with correct defaults."""
 
     def test_minimal_creation(self) -> None:
         """Create with only required field (name)."""
@@ -105,11 +105,13 @@ class TestAgentDefinitionBodyModel:
         assert body.enabled is False
 
     def test_field_count(self) -> None:
-        """AgentDefinitionBody has exactly 23 fields."""
+        """AgentDefinitionBody exposes the current expanded field set."""
         from gobby.workflows.definitions import AgentDefinitionBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 23, f"Expected 23 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 25, f"Expected 25 fields, got {len(fields)}: {list(fields.keys())}"
+        assert "reasoning_required" in fields
+        assert "fallback_agent" in fields
 
     def test_workflows_default_empty(self) -> None:
         """Workflows defaults to empty AgentWorkflows."""

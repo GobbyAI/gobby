@@ -933,6 +933,45 @@ class TestCallMCPTool:
         assert response.status_code == 400
         assert "server_name" in response.json()["detail"]["error"]
 
+    def test_call_tool_tool_proxy_failure_is_flattened(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """ToolProxy failures should stay flat at the HTTP boundary."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._tools_handler = MagicMock()
+        server._tools_handler.tool_proxy = MagicMock()
+        server._tools_handler.tool_proxy.call_tool = AsyncMock(
+            return_value={
+                "success": False,
+                "error": "Tool not found",
+                "error_code": "TOOL_NOT_FOUND",
+                "server_name": "gobby-tasks",
+                "tool_name": "missing_tool",
+            }
+        )
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/call",
+                json={
+                    "server_name": "gobby-tasks",
+                    "tool_name": "missing_tool",
+                    "arguments": {},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"] == "Tool not found"
+        assert data["error_code"] == "TOOL_NOT_FOUND"
+        assert "result" not in data
+        assert "response_time_ms" in data
+
     def test_call_tool_internal_server_success(self, session_storage: LocalSessionManager) -> None:
         """Test calling tool on internal server."""
         server = create_http_server(
@@ -959,7 +998,7 @@ class TestCallMCPTool:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert "result" in data
+        assert data["result"] == {"tool": "list_tasks"}
         assert "response_time_ms" in data
 
     def test_call_tool_internal_server_failure(self, session_storage: LocalSessionManager) -> None:
@@ -1708,6 +1747,7 @@ class TestMCPProxy:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
+        assert data["result"] == {"tool": "list_tasks"}
 
     def test_proxy_internal_server_fallthrough(self, session_storage: LocalSessionManager) -> None:
         """Test proxy falls through to MCP manager when no internal manager."""
@@ -2124,6 +2164,47 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         assert response.json()["continue"] is True
 
+    def test_execute_hook_claude_envelope_source(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Envelope-shaped Claude requests should normalize to the flat adapter payload."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "schema_version": 1,
+                    "enqueued_at": "2026-04-16T12:00:00Z",
+                    "critical": False,
+                    "hook_type": "session-start",
+                    "source": "claude",
+                    "input_data": {"session_id": "claude-envelope"},
+                    "headers": {"X-Gobby-Session-Id": "embedded-session"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        assert mock_adapter.handle_native.call_args.args[0] == {
+            "hook_type": "session-start",
+            "source": "claude",
+            "input_data": {"session_id": "claude-envelope"},
+        }
+
     def test_execute_hook_gemini_source(self, session_storage: LocalSessionManager) -> None:
         """Test execute hook with Gemini source."""
         server = create_http_server(
@@ -2151,6 +2232,61 @@ class TestHooksEndpoints:
             )
 
         assert response.status_code == 200
+
+    @pytest.mark.parametrize(
+        ("source", "hook_type", "adapter_patch"),
+        [
+            ("claude", "pre-tool-use", "gobby.adapters.claude_code.ClaudeCodeAdapter"),
+            ("gemini", "BeforeTool", "gobby.adapters.gemini.GeminiAdapter"),
+            ("qwen", "BeforeTool", "gobby.adapters.qwen.QwenAdapter"),
+        ],
+    )
+    def test_execute_hook_normalizes_provider_pre_tool_use_for_hold_open(
+        self,
+        session_storage: LocalSessionManager,
+        source: str,
+        hook_type: str,
+        adapter_patch: str,
+    ) -> None:
+        """Web-chat approval hold-open must normalize raw provider hook names."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch(adapter_patch) as MockAdapter,
+            patch(
+                "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+                new_callable=AsyncMock,
+            ) as mock_hold_open,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+            mock_hold_open.return_value = {"decision": "approve"}
+
+            response = client.post(
+                "/api/hooks/execute",
+                headers={"X-Gobby-Session-Id": "sess-web-1"},
+                json={
+                    "hook_type": hook_type,
+                    "source": source,
+                    "input_data": {"tool_name": "Bash", "arguments": {"command": "pwd"}},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"decision": "approve"}
+        mock_hold_open.assert_awaited_once()
+        args = mock_hold_open.await_args.args
+        assert args[1] == "sess-web-1"
+        assert args[2] == "PreToolUse"
+        assert args[4] == source
 
     def test_execute_hook_codex_source(self, session_storage: LocalSessionManager) -> None:
         """Test execute hook with Codex source uses CodexHooksAdapter."""
@@ -2182,6 +2318,263 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         assert response.json()["continue"] is True
         MockAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        assert mock_adapter.handle_native.call_args.args[0] == {
+            "hook_type": "SessionStart",
+            "source": "codex",
+            "input_data": {"session_id": "test-123", "cwd": "/tmp"},
+        }
+
+    def test_execute_hook_codex_envelope_source(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Envelope-shaped Codex requests should normalize before adapter dispatch."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "schema_version": 1,
+                    "enqueued_at": "2026-04-16T12:00:00Z",
+                    "critical": True,
+                    "hook_type": "SessionStart",
+                    "source": "codex",
+                    "input_data": {"session_id": "test-envelope", "cwd": "/tmp"},
+                    "headers": {"X-Gobby-Session-Id": "embedded-codex"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        assert mock_adapter.handle_native.call_args.args[0] == {
+            "hook_type": "SessionStart",
+            "source": "codex",
+            "input_data": {"session_id": "test-envelope", "cwd": "/tmp"},
+        }
+
+    def test_execute_hook_rejects_unsupported_envelope_schema_version(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Envelope requests with an unknown schema version should fail fast."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = MagicMock()
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "schema_version": 99,
+                    "hook_type": "session-start",
+                    "source": "claude",
+                    "input_data": {},
+                },
+            )
+
+        assert response.status_code == 400
+        assert "Unsupported schema_version" in response.json()["detail"]
+
+    def test_execute_hook_envelope_requires_source(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Envelope requests still require source after normalization."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = MagicMock()
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "schema_version": 1,
+                    "hook_type": "session-start",
+                    "input_data": {},
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "source required"
+
+    def test_execute_hook_envelope_requires_hook_type(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Envelope requests still require hook_type after normalization."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = MagicMock()
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "schema_version": 1,
+                    "source": "claude",
+                    "input_data": {},
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "hook_type required"
+
+    def test_execute_hook_envelope_critical_metadata_does_not_change_payload(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Critical metadata is observational and must not affect normalized hook handling."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+
+            base_envelope = {
+                "schema_version": 1,
+                "enqueued_at": "2026-04-16T12:00:00Z",
+                "hook_type": "post-tool-use",
+                "source": "claude",
+                "input_data": {"tool_name": "Bash"},
+            }
+            responses = []
+            normalized_payloads = []
+            for critical in (False, True):
+                response = client.post(
+                    "/api/hooks/execute",
+                    json={**base_envelope, "critical": critical},
+                )
+                responses.append(response.json())
+                normalized_payloads.append(mock_adapter.handle_native.call_args.args[0])
+
+        assert responses == [{"continue": True}, {"continue": True}]
+        assert normalized_payloads == [
+            {
+                "hook_type": "post-tool-use",
+                "source": "claude",
+                "input_data": {"tool_name": "Bash"},
+            },
+            {
+                "hook_type": "post-tool-use",
+                "source": "claude",
+                "input_data": {"tool_name": "Bash"},
+            },
+        ]
+
+    def test_execute_hook_envelope_headers_do_not_override_http_headers(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Ingress must trust actual HTTP headers over the embedded envelope copy."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+            patch(
+                "gobby.servers.routes.mcp.hooks._maybe_hold_open",
+                new_callable=AsyncMock,
+            ) as mock_hold_open,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+            mock_hold_open.return_value = {"decision": "approve"}
+
+            response = client.post(
+                "/api/hooks/execute",
+                headers={"X-Gobby-Session-Id": "real-session"},
+                json={
+                    "schema_version": 1,
+                    "enqueued_at": "2026-04-16T12:00:00Z",
+                    "critical": False,
+                    "hook_type": "pre-tool-use",
+                    "source": "claude",
+                    "input_data": {"tool_name": "Bash", "arguments": {"command": "pwd"}},
+                    "headers": {"X-Gobby-Session-Id": "embedded-session"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"decision": "approve"}
+        mock_hold_open.assert_awaited_once()
+        assert mock_hold_open.await_args.args[1] == "real-session"
+
+    def test_execute_hook_logs_enqueued_at_for_envelope_requests(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Envelope metadata should be surfaced in structured route logging."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter,
+            patch("gobby.servers.routes.mcp.hooks.logger") as mock_logger,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "schema_version": 1,
+                    "enqueued_at": "2026-04-16T12:34:56Z",
+                    "critical": False,
+                    "hook_type": "session-start",
+                    "source": "claude",
+                    "input_data": {},
+                },
+            )
+
+        assert response.status_code == 200
+        matching_logs = [
+            call
+            for call in mock_logger.debug.call_args_list
+            if call.args and call.args[0] == "Hook executed: session-start"
+        ]
+        assert len(matching_logs) == 1
+        assert matching_logs[0].kwargs["extra"]["request_shape"] == "envelope"
+        assert matching_logs[0].kwargs["extra"]["enqueued_at"] == "2026-04-16T12:34:56Z"
 
     def test_execute_hook_codex_uses_hooks_adapter_not_app_server_adapter(
         self, session_storage: LocalSessionManager

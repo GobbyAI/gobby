@@ -1320,6 +1320,28 @@ class TestLifespan:
             with TestClient(server.app):
                 MockHM.assert_called_once()
 
+    def test_lifespan_cleans_up_voice_resources(self, session_storage: LocalSessionManager) -> None:
+        """Test that lifespan uses the explicit voice cleanup hook on shutdown."""
+        services = ServiceContainer(
+            config=None,
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+        )
+        mock_ws_server = MagicMock()
+        mock_ws_server.cleanup_voice = AsyncMock()
+        server.websocket_server = mock_ws_server
+
+        with TestClient(server.app):
+            pass
+
+        mock_ws_server.cleanup_voice.assert_awaited_once()
+
 
 # ============================================================================
 # run_server Function Tests

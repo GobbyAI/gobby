@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.sessions.terminal_kill import kill_terminal_session
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.sessions.transcript_archive import restore_transcript
@@ -38,6 +39,42 @@ def _as_str(value: Any) -> str | None:
 def _as_int(value: Any, default: int | None = None) -> int | None:
     """Return a JSON-safe int or the provided default."""
     return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def _has_terminal_liveness(terminal_context: Any) -> bool:
+    """Return True when terminal metadata indicates a live tmux-backed session."""
+    if not isinstance(terminal_context, dict):
+        return False
+
+    tmux_pane = terminal_context.get("tmux_pane")
+    if isinstance(tmux_pane, str) and tmux_pane:
+        return True
+
+    parent_pid = terminal_context.get("parent_pid")
+    if isinstance(parent_pid, int) and not isinstance(parent_pid, bool):
+        return parent_pid > 0
+    if isinstance(parent_pid, str):
+        try:
+            return int(parent_pid) > 0
+        except ValueError:
+            return False
+
+    return False
+
+
+def _can_proxy_attach_session(session: Any) -> bool:
+    """Return True when a terminal session is eligible for interactive proxy attach."""
+    if getattr(session, "session_type", None) != "terminal":
+        return False
+
+    explicit = getattr(session, "can_proxy_attach", None)
+    if isinstance(explicit, bool):
+        return explicit
+
+    if getattr(session, "status", None) == "active":
+        return True
+
+    return _has_terminal_liveness(getattr(session, "terminal_context", None))
 
 
 async def _release_source_session(
@@ -137,6 +174,7 @@ async def handle_continue_in_chat(
     target_provider = data.get("provider")
     target_model = data.get("model")
     target_reasoning_effort = _as_str(data.get("reasoning_effort"))
+    target_chat_mode = _as_str(data.get("chat_mode"))
 
     # Look up source session for project_id and SDK session ID
     session_manager = getattr(mixin, "session_manager", None)
@@ -153,6 +191,15 @@ async def handle_continue_in_chat(
     if resume_in_place:
         # Resuming a tmux session preserves the same durable session identity.
         conversation_id = source_session_id
+
+    runtime_manager = getattr(mixin, "web_chat_runtime_manager", None)
+    daemon_config = getattr(mixin, "daemon_config", None)
+    if runtime_manager is not None:
+        current_web_chat_sandbox_enabled = bool(runtime_manager.sandbox_config.enabled)
+        current_web_chat_policy_hash = runtime_manager.sandbox_policy_hash
+    else:
+        current_web_chat_sandbox_enabled = bool(web_chat_sandbox_config(daemon_config).enabled)
+        current_web_chat_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
 
     # --- Resume guard: reject if source session is actively in use ---
     if source_session:
@@ -174,11 +221,23 @@ async def handle_continue_in_chat(
     source_chat_mode = (
         _as_str(getattr(source_session, "chat_mode", None)) if source_session else None
     )
+    effective_chat_mode = target_chat_mode or source_chat_mode
     source_model = _as_str(getattr(source_session, "model", None)) if source_session else None
     effective_model = target_model or source_model
     can_sdk_resume = (
         not effective_provider or not source_provider or effective_provider == source_provider
     )
+    resume_notice: str | None = None
+
+    if (
+        can_sdk_resume
+        and source_session
+        and getattr(source_session, "session_type", None) == "web_chat"
+        and runtime_manager is not None
+    ):
+        resume_notice = runtime_manager.policy_mismatch_reason(source_session)
+        if resume_notice:
+            can_sdk_resume = False
 
     # 1. Source session's external_id IS the SDK session ID
     #    (web chat sessions update external_id -> SDK session ID after first turn)
@@ -225,11 +284,14 @@ async def handle_continue_in_chat(
                 source_session_id,
                 source=effective_provider,
                 model=effective_model,
-                chat_mode=source_chat_mode,
+                chat_mode=effective_chat_mode,
                 session_type="web_chat",
                 status="active",
                 title=source_title,
+                terminal_context={},
                 project_id=project_id,
+                sandbox_enabled=current_web_chat_sandbox_enabled,
+                sandbox_policy_hash=current_web_chat_policy_hash,
             )
         except Exception as e:
             logger.error(
@@ -252,8 +314,8 @@ async def handle_continue_in_chat(
                     )
                     or (source_title and getattr(target_session, "title", None) != source_title)
                     or (
-                        source_chat_mode
-                        and getattr(target_session, "chat_mode", None) != source_chat_mode
+                        effective_chat_mode
+                        and getattr(target_session, "chat_mode", None) != effective_chat_mode
                     )
                 ):
                     await asyncio.to_thread(
@@ -262,7 +324,7 @@ async def handle_continue_in_chat(
                         source=effective_provider,
                         model=effective_model,
                         title=source_title,
-                        chat_mode=source_chat_mode,
+                        chat_mode=effective_chat_mode,
                     )
         except Exception as e:
             logger.warning(
@@ -285,13 +347,13 @@ async def handle_continue_in_chat(
                 session_manager
                 and session.db_session_id
                 and not resume_in_place
-                and (source_title or source_chat_mode or effective_model)
+                and (source_title or effective_chat_mode or effective_model)
             ):
                 session_updates: dict[str, Any] = {}
                 if source_title:
                     session_updates["title"] = source_title
-                if source_chat_mode:
-                    session_updates["chat_mode"] = source_chat_mode
+                if effective_chat_mode:
+                    session_updates["chat_mode"] = effective_chat_mode
                 if effective_model:
                     session_updates["model"] = effective_model
                 if session_updates:
@@ -306,6 +368,9 @@ async def handle_continue_in_chat(
             return
     elif target_reasoning_effort is not None:
         session.reasoning_effort = target_reasoning_effort
+
+    if effective_chat_mode:
+        session.chat_mode = effective_chat_mode
 
     # History injection via message_manager removed (session_messages table dropped)
 
@@ -333,9 +398,11 @@ async def handle_continue_in_chat(
                 "title": source_title,
                 "source": effective_provider,
                 "model": effective_model,
-                "chat_mode": source_chat_mode,
+                "chat_mode": effective_chat_mode,
+                "reasoning_effort": target_reasoning_effort,
                 "session_type": "web_chat",
                 "status": "active",
+                "resume_notice": resume_notice,
             }
         )
     )
@@ -467,11 +534,13 @@ async def handle_attach_to_session(
                 "title": _as_str(getattr(session, "title", None)),
                 "status": _as_str(getattr(session, "status", None)) or "unknown",
                 "model": _as_str(getattr(session, "model", None)),
+                "reasoning_effort": _as_str(getattr(session, "reasoning_effort", None)),
                 "ref": ref,
                 "chat_mode": _as_str(getattr(session, "chat_mode", None)),
                 "git_branch": _as_str(getattr(session, "git_branch", None)),
                 "context_window": _as_int(getattr(session, "context_window", None)),
                 "session_type": _as_str(getattr(session, "session_type", None)),
+                "can_proxy_attach": _can_proxy_attach_session(session),
                 "workflow_name": workflow_name,
                 "agent_run_id": agent_run_id,
                 "agent_name": agent_name,
@@ -511,6 +580,7 @@ async def handle_send_to_cli_session(
     """
     session_id = data.get("session_id")
     content = data.get("content", "").strip()
+    client_message_id = _as_str(data.get("client_message_id"))
     if not session_id or not content:
         await mixin._send_error(websocket, "send_to_cli_session requires session_id and content")
         return
@@ -600,6 +670,7 @@ async def handle_send_to_cli_session(
                 "delivered": delivered_via_tmux,
                 "delivery_method": "tmux" if delivered_via_tmux else "hook_piggyback",
                 "message_id": msg_id,
+                "client_message_id": client_message_id,
             }
         )
     )

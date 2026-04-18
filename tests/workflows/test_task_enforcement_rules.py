@@ -8,13 +8,16 @@ task claim/release tracking.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.rule_engine import RuleEngine
 from gobby.workflows.sync import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -665,6 +668,17 @@ class TestBlockReopenTask:
         assert body.effects[0].type == "block"
         assert "reopen_task" in (body.when or "")
 
+    def test_when_checks_claimed_tasks(self, db, manager) -> None:
+        """Should only block when the target task is in this session's claimed_tasks."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("block-reopen-task")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.when is not None
+        assert "claimed_tasks" in body.when
+        assert "task_id" in body.when
+
     def test_reason_mentions_de_escalation(self, db, manager) -> None:
         """Guidance should route escalated work through de_escalate_task."""
         _sync_bundled(db)
@@ -674,6 +688,52 @@ class TestBlockReopenTask:
 
         reason = body.effects[0].reason or ""
         assert "de_escalate_task" in reason
+
+    @pytest.mark.asyncio
+    async def test_blocks_reopen_for_claimed_task_only(self, db) -> None:
+        """A reopen call should block only when the task is claimed by this session."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+
+        claimed_event = _make_reopen_event("#1")
+        claimed_variables = {
+            "task_claimed": True,
+            "claimed_tasks": {"uuid-1": "#1"},
+        }
+        claimed_response = await engine.evaluate(
+            claimed_event,
+            session_id="sess-1",
+            variables=claimed_variables,
+        )
+
+        assert claimed_response.decision == "block"
+        assert "reopen_task is blocked" in (claimed_response.reason or "")
+
+        unclaimed_event = _make_reopen_event("#2")
+        unclaimed_response = await engine.evaluate(
+            unclaimed_event,
+            session_id="sess-1",
+            variables=claimed_variables,
+        )
+
+        assert unclaimed_response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_allows_reopen_for_task_claimed_by_other_session(self, db) -> None:
+        """A task absent from this session's claimed_tasks should not be blocked."""
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+
+        response = await engine.evaluate(
+            _make_reopen_event("#77"),
+            session_id="sess-1",
+            variables={
+                "task_claimed": True,
+                "claimed_tasks": {"uuid-1": "#1"},
+            },
+        )
+
+        assert response.decision == "allow"
 
 
 class TestInjectTransitionSkill:
@@ -691,3 +751,22 @@ class TestInjectTransitionSkill:
         assert "reopen_task" in (body.when or "")
         assert "escalate_task" in (body.when or "")
         assert "de_escalate_task" in (body.when or "")
+
+
+def _make_reopen_event(task_id: str) -> HookEvent:
+    """Create a direct MCP reopen_task before_tool event."""
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session-ext",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "reopen_task",
+                "arguments": {"task_id": task_id},
+            },
+        },
+        metadata={"_platform_session_id": "test-session"},
+    )

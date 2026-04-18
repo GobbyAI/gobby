@@ -11,6 +11,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.utils.native_bin import resolve_native_bin
+
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
     from gobby.code_index.summarizer import SymbolSummarizer
@@ -66,21 +68,20 @@ async def _run_maintenance(
 ) -> None:
     """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
     projects = context.storage.list_indexed_projects()
-    gcode_bin = Path.home() / ".gobby" / "bin" / "gcode"
+    gcode_bin = resolve_native_bin("gcode")
 
-    gcode_available = gcode_bin.exists()
-    if not gcode_available:
+    if gcode_bin is None:
         logger.warning("gcode not installed — skipping maintenance index. Run `gobby install`.")
 
     for project in projects:
         if not project.root_path:
             continue
 
-        if gcode_available:
+        if gcode_bin is not None:
             proc: asyncio.subprocess.Process | None = None
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    str(gcode_bin),
+                    gcode_bin,
                     "index",
                     "--project",
                     str(project.root_path),

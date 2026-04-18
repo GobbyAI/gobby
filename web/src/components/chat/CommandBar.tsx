@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { getSessionTitleText } from '../../lib/sessionTitle'
+import { SourceIcon } from '../shared/SourceIcon'
 
 interface RunningAgent {
   run_id: string
@@ -14,6 +15,7 @@ interface RunningAgent {
 interface CommandBarProps {
   sessionRef: string | null
   title: string | null
+  sessionSource?: string | null
   onOpenPalette: () => void
   onOpenActiveSessions: () => void
   onNewChat: (agentName?: string) => void
@@ -31,10 +33,10 @@ interface CommandBarProps {
 export function CommandBar({
   sessionRef,
   title,
+  sessionSource,
   onOpenPalette,
   onOpenActiveSessions: _onOpenActiveSessions,
   onNewChat,
-  onTogglePanel,
   agents: _agents,
   agentDefinitions: _agentDefinitions = [],
   agentGlobalDefs: _agentGlobalDefs = [],
@@ -42,7 +44,6 @@ export function CommandBar({
   agentShowScopeToggle: _agentShowScopeToggle = false,
   agentHasGlobal: _agentHasGlobal = false,
   agentHasProject: _agentHasProject = false,
-  isPanelPinned,
 }: CommandBarProps) {
   const handleNewChat = useCallback(() => {
     onNewChat()
@@ -59,6 +60,11 @@ export function CommandBar({
           onClick={onOpenPalette}
           title="Switch session (Cmd+K)"
         >
+          {sessionSource && (
+            <span className="command-bar-source" aria-hidden="true">
+              <SourceIcon source={sessionSource} size={14} />
+            </span>
+          )}
           {sessionRef && (
             <span className="command-bar-ref">{sessionRef}</span>
           )}
@@ -79,15 +85,6 @@ export function CommandBar({
         >
           <PlusIcon />
         </button>
-
-        <button
-          type="button"
-          className="command-bar-btn"
-          onClick={onTogglePanel}
-          title={isPanelPinned ? 'Unpin panel (Cmd+`)' : 'Pin panel (Cmd+`)'}
-        >
-          <PanelIcon pinned={isPanelPinned} />
-        </button>
       </div>
     </div>
   )
@@ -97,16 +94,6 @@ function PlusIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" clipRule="evenodd" fillRule="evenodd">
       <path d="M8 1a1 1 0 0 1 1 1v5h5a1 1 0 1 1 0 2H9v5a1 1 0 1 1-2 0V9H2a1 1 0 0 1 0-2h5V2a1 1 0 0 1 1-1Z" />
-    </svg>
-  )
-}
-
-function PanelIcon({ pinned }: { pinned: boolean }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <line x1="15" y1="3" x2="15" y2="21" />
-      {pinned && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
     </svg>
   )
 }

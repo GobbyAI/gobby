@@ -6,12 +6,66 @@ the unified HookEvent/HookResponse models.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
+
+
+def system_message_has_session_banner(system_message: str | None) -> bool:
+    """Return whether a system message already includes the Gobby session banner."""
+    return isinstance(system_message, str) and "Gobby Session ID:" in system_message
+
+
+def build_first_hook_session_metadata_lines(
+    metadata: Mapping[str, Any],
+    *,
+    include_session_id_line: bool = True,
+    include_task_id: bool = True,
+    include_tty: bool = True,
+) -> list[str]:
+    """Build first-hook session metadata lines for startup context injection."""
+    session_id = metadata.get("session_id")
+    is_first_hook = metadata.get("_first_hook_for_session", False)
+    if not session_id or not is_first_hook:
+        return []
+
+    session_ref = metadata.get("session_ref")
+    external_id = metadata.get("external_id")
+    lines: list[str] = []
+
+    if include_session_id_line:
+        if session_ref:
+            lines.append(f"Gobby Session ID: {session_ref} ({session_id})")
+        else:
+            lines.append(f"Gobby Session ID: {session_id}")
+
+    if external_id:
+        lines.append(f"CLI-Specific Session ID (external_id): {external_id}")
+    if metadata.get("parent_session_id"):
+        lines.append(f"parent_session_id: {metadata['parent_session_id']}")
+    if metadata.get("machine_id"):
+        lines.append(f"machine_id: {metadata['machine_id']}")
+    if metadata.get("project_id"):
+        lines.append(f"project_id: {metadata['project_id']}")
+    if include_task_id and metadata.get("task_id"):
+        lines.append(
+            f"Assigned Task: {metadata['task_id']}"
+            " (use this for task operations, NOT the session ID above)"
+        )
+    if metadata.get("terminal_term_program"):
+        lines.append(f"terminal: {metadata['terminal_term_program']}")
+    if include_tty and metadata.get("terminal_tty"):
+        lines.append(f"tty: {metadata['terminal_tty']}")
+    if metadata.get("terminal_parent_pid"):
+        lines.append(f"parent_pid: {metadata['terminal_parent_pid']}")
+    if metadata.get("terminal_tmux_pane"):
+        lines.append(f"tmux pane: {metadata['terminal_tmux_pane']}")
+
+    return lines
 
 
 class BaseAdapter(ABC):

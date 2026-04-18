@@ -34,6 +34,8 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
     if mode not in valid_modes:
         await mixin._send_error(websocket, f"Invalid mode: {mode}. Must be one of {valid_modes}")
         return
+    if mode == "accept_edits":
+        mode = "normal"
 
     # Track which conversation this client is in (for scoped broadcasts)
     if conversation_id:

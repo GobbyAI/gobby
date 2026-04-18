@@ -185,6 +185,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._span_cleanup_task = None
     runner._metrics_archive_task = None
     runner._metric_snapshot_task = None
+    runner._hook_inbox_task = None
     runner._expired_isolation_task = None
 
     # Initialize local storage with dual-write if in project context
@@ -396,6 +397,17 @@ def init_services(runner: GobbyRunner) -> None:
     # MCP Proxy Manager - Initialize early for tool access
     # LocalMCPManager handles server/tool storage in SQLite
     runner.mcp_db_manager = LocalMCPManager(runner.database)
+    try:
+        bundled_mcp_stats = runner.mcp_db_manager.normalize_bundled_servers()
+    except Exception:
+        logger.exception("error normalizing bundled MCP servers")
+        bundled_mcp_stats = {"normalized": 0, "duplicates_removed": 0, "tools_migrated": 0}
+    if bundled_mcp_stats["normalized"] or bundled_mcp_stats["duplicates_removed"]:
+        logger.info(
+            "Normalized bundled MCP servers: %s normalized, %s duplicates removed",
+            bundled_mcp_stats["normalized"],
+            bundled_mcp_stats["duplicates_removed"],
+        )
 
     # Tool Metrics Manager for tracking call statistics
     from gobby.mcp_proxy.metrics import ToolMetricsManager
@@ -862,6 +874,7 @@ def init_servers(runner: GobbyRunner) -> None:
     services.web_chat_runtime_manager = WebChatRuntimeManager(
         codex_client=codex_client,
         gemini_default_model=gemini_default_model,
+        daemon_config=runner.config,
     )
 
     runner.http_server = HTTPServer(

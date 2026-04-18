@@ -318,6 +318,17 @@ specific upstream task.
 
 The following sections describe what `/gobby expand` expects and how it will process your plan.
 
+## Phase Heading Syntax
+
+Canonical form is `## Phase N: Name` (colon). Use this in new plans — all
+examples in this skill follow it.
+
+The parser also tolerates em-dash (`## Phase N — Name`), en-dash
+(`## Phase N – Name`), and ASCII hyphen (`## Phase N - Name`) for
+compatibility with existing plans, but `:` is preferred. Anything else
+(no separator, unusual punctuation) will not be recognized as a phase
+heading and that phase will be silently skipped during expansion.
+
 ## Task Granularity Guidelines
 
 Each task should be:

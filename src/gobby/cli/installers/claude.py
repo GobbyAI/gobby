@@ -16,6 +16,7 @@ from typing import Any
 
 from gobby.cli.utils import get_install_dir
 
+from .hook_commands import rewrite_hook_template_commands
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
     clean_project_hooks,
@@ -249,6 +250,7 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         logger.error(f"Failed to parse hooks template: {e}")
         result["error"] = f"Failed to parse hooks template: {e}"
         return result
+    rewrite_hook_template_commands(gobby_settings, cli_name="claude", hooks_dir=hooks_dir)
 
     # Ensure hooks section exists
     if "hooks" not in existing_settings:

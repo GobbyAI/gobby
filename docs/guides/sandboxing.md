@@ -115,6 +115,14 @@ SEATBELT_PROFILE=permissive-open gemini -s
 SEATBELT_PROFILE=restrictive-closed gemini -s
 ```
 
+For terminal-spawned Gemini/Qwen sessions, Gobby still uses that CLI-level
+`-s` path. Daemon-owned Gemini/Qwen ACP web chat is different: Gobby does not
+launch the ACP subprocess with daemon-applied Seatbelt flags because full-process
+Seatbelt blocked ACP startup on macOS. Those sessions still rely on ACP's
+proxied filesystem model and Gemini's tool-level sandboxing, but that is a
+different isolation layer than wrapping the entire ACP process in Gobby-managed
+Seatbelt.
+
 ## Sandbox Modes
 
 ### Permissive Mode

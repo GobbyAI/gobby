@@ -139,6 +139,31 @@ describe("useChat", () => {
     });
   });
 
+  it("restores protocol-tagged raw chat rows as system messages", async () => {
+    mockFetch.mockJsonResponse("/api/chat/test-conversation-id/messages", {
+      messages: [
+        {
+          id: "restored-protocol-1",
+          role: "user",
+          content:
+            '<local-command-caveat><command>npm test</command></local-command-caveat>',
+          tool_calls: [],
+          seq: 1,
+          created_at: "2026-04-14T00:00:00Z",
+        },
+      ],
+      max_seq: 1,
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(1);
+      expect(result.current.messages[0].role).toBe("system");
+    });
+  });
+
   it("sets isConnected when WS opens", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
@@ -281,6 +306,32 @@ describe("useChat", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("defaults activeAgent to default and resets to default on a fresh chat", async () => {
+    localStorage.clear();
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    expect(result.current.activeAgent).toBe("default");
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_info",
+        session_ref: "#42",
+        agent_name: "developer",
+      });
+    });
+
+    expect(result.current.activeAgent).toBe("developer");
+
+    act(() => result.current.startNewChat());
+
+    expect(result.current.activeAgent).toBe("default");
   });
 
   it("sendMessage adds user message and sends WS message", async () => {
@@ -933,6 +984,129 @@ describe("useChat", () => {
     expect(result.current.messages[0].content).toBe("Updated output");
   });
 
+  it("reclassifies protocol-tagged session_message events as system while viewing a session", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-1/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-1", {
+      session: {
+        id: "sess-1",
+        seq_num: 2310,
+        source: "codex",
+        title: "Observed session",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-1",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-1");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-1",
+        message: {
+          id: "sess-protocol-1",
+          role: "user",
+          content:
+            '<local-command-stdout><stdout>npm test</stdout></local-command-stdout>',
+          timestamp: "2026-04-09T00:00:01Z",
+        },
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].role).toBe("system");
+  });
+
+  it("reclassifies rendered protocol-only session_message events as system while viewing a session", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-1/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-1", {
+      session: {
+        id: "sess-1",
+        seq_num: 2310,
+        source: "codex",
+        title: "Observed session",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-1",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-1");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-1",
+        message: {
+          id: "sess-protocol-rendered-1",
+          role: "user",
+          content: "",
+          timestamp: "2026-04-09T00:00:01Z",
+          content_blocks: [
+            {
+              type: "tool_chain",
+              tool_calls: [
+                {
+                  id: "protocol-1",
+                  tool_name: "protocol_context",
+                  server_name: "builtin",
+                  tool_type: "protocol",
+                  status: "completed",
+                },
+              ],
+            },
+          ],
+        },
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].role).toBe("system");
+  });
+
   it("attachToViewed upgrades an active watched terminal session into proxy mode", async () => {
     await loadModule();
     mockFetch.mockJsonResponse(
@@ -1004,6 +1178,220 @@ describe("useChat", () => {
     expect(result.current.sessionInteractionMode).toBe("proxy");
     expect(result.current.attachedSessionId).toBe("sess-view");
   });
+
+  it("ignores stale detach acknowledgements after swapping watched terminal sessions", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-old/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-old", {
+      session: {
+        id: "sess-old",
+        seq_num: 2310,
+        source: "codex",
+        title: "Old Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-old",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-new/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-new", {
+      session: {
+        id: "sess-new",
+        seq_num: 2311,
+        source: "codex",
+        title: "New Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-new",
+        chat_mode: "bypass",
+        git_branch: "feature/swap",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-old");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      result.current.observeSession?.("sess-old", "observe");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-old",
+        external_id: "codex-ext-old",
+        source: "codex",
+        title: "Old Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#2310",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    const sendCountBeforeSwap = ws.send.mock.calls.length;
+
+    await act(async () => {
+      result.current.viewSession("sess-new");
+      result.current.observeSession?.("sess-new", "observe");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const detachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeSwap][0]);
+    const attachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeSwap + 1][0]);
+    expect(detachMsg).toMatchObject({
+      type: "detach_from_session",
+      session_id: "sess-old",
+    });
+    expect(attachMsg).toMatchObject({
+      type: "attach_to_session",
+      session_id: "sess-new",
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-new",
+        external_id: "codex-ext-new",
+        source: "codex",
+        title: "New Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#2311",
+        chat_mode: "bypass",
+        git_branch: "feature/swap",
+        context_window: 200000,
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "detach_from_session_result",
+        session_id: "sess-old",
+      });
+    });
+
+    expect(result.current.viewingSessionId).toBe("sess-new");
+    expect(result.current.viewingSessionMeta?.title).toBe("New Terminal");
+    expect(result.current.sessionInteractionMode).toBe("observe");
+    expect(result.current.attachedSessionId).toBeNull();
+  });
+
+  it.each([
+    ["codex", "gpt-5.4"],
+    ["gemini", "gemini-2.5-pro"],
+    ["qwen", "qwen3-coder"],
+  ])(
+    "keeps live %s tmux sessions attachable even when the session row is handoff_ready",
+    async (source, model) => {
+      await loadModule();
+      mockFetch.mockJsonResponse(
+        "/api/sessions/sess-live-handoff/messages?limit=100&offset=0",
+        {
+          messages: [],
+        },
+      );
+      mockFetch.mockJsonResponse("/api/sessions/sess-live-handoff", {
+        session: {
+          id: "sess-live-handoff",
+          seq_num: 2310,
+          source,
+          title: "Live handoff terminal",
+          status: "handoff_ready",
+          can_proxy_attach: true,
+          model,
+          external_id: `${source}-ext-view`,
+          chat_mode: "accept_edits",
+          git_branch: "main",
+          context_window: 200000,
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          usage_cache_read_tokens: 0,
+          usage_cache_creation_tokens: 0,
+          session_type: "terminal",
+          terminal_context: { tmux_pane: "%18" },
+        },
+      });
+
+      const { result } = renderHook(() => useChat());
+      const ws = mockWs.instances[0];
+      act(() => ws.simulateOpen());
+
+      await act(async () => {
+        result.current.viewSession("sess-live-handoff");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      act(() => {
+        result.current.attachToViewed?.();
+      });
+
+      act(() => {
+        ws.simulateMessage({
+          type: "attach_to_session_result",
+          session_id: "sess-live-handoff",
+          external_id: `${source}-ext-view`,
+          source,
+          title: "Live handoff terminal",
+          status: "handoff_ready",
+          can_proxy_attach: true,
+          model,
+          ref: "#2310",
+          chat_mode: "accept_edits",
+          git_branch: "main",
+          context_window: 200000,
+          session_type: "terminal",
+          messages: [],
+          total_count: 0,
+        });
+      });
+
+      expect(result.current.viewingSessionMeta?.canProxyAttach).toBe(true);
+      expect(result.current.sessionInteractionMode).toBe("proxy");
+      expect(result.current.attachedSessionId).toBe("sess-live-handoff");
+    },
+  );
 
   it("keeps autonomous session observation read-only", async () => {
     await loadModule();
@@ -1270,6 +1658,229 @@ describe("useChat", () => {
     );
   });
 
+  it("keeps optimistic proxy mapping when the ack has no message id", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "claude",
+        title: "Proxy session",
+        status: "active",
+        model: "sonnet",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.sendMessage("queued message");
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+
+    act(() => {
+      ws.simulateMessage({
+        type: "send_to_cli_session_result",
+        session_id: "sess-proxy",
+        delivered: false,
+        delivery_method: "hook_piggyback",
+        client_message_id: sentMsg.client_message_id,
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe(`user-${sentMsg.client_message_id}`);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-proxy",
+        message: {
+          id: "db-msg-later",
+          role: "user",
+          content: "queued message",
+          timestamp: "2026-04-17T20:01:00Z",
+        },
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe("db-msg-later");
+  });
+
+  it("restores attached terminal chat mode from attach metadata", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    const modeChanged = vi.fn();
+    act(() => result.current.setOnModeChanged(modeChanged));
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "codex",
+        title: "Proxy session",
+        status: "active",
+        model: "gpt-5.4",
+        reasoning_effort: "high",
+        chat_mode: "accept_edits",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    expect(result.current.sessionInteractionMode).toBe("proxy");
+    expect(result.current.attachedSessionMeta?.reasoningEffort).toBe("high");
+    expect(modeChanged).toHaveBeenCalledWith("normal");
+  });
+
+  it("reconciles optimistic proxy messages when the session broadcast arrives before the ack", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "claude",
+        title: "Proxy session",
+        status: "active",
+        model: "sonnet",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.sendMessage("hello world");
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+    expect(sentMsg.type).toBe("send_to_cli_session");
+    expect(sentMsg.client_message_id).toEqual(expect.any(String));
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe(`user-${sentMsg.client_message_id}`);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-proxy",
+        message: {
+          id: "db-msg-1",
+          role: "user",
+          content: "hello world",
+          timestamp: "2026-04-17T20:00:00Z",
+        },
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe("db-msg-1");
+    expect(result.current.messages[0].content).toBe("hello world");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "send_to_cli_session_result",
+        session_id: "sess-proxy",
+        delivered: true,
+        delivery_method: "tmux",
+        message_id: "db-msg-1",
+        client_message_id: sentMsg.client_message_id,
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe("db-msg-1");
+  });
+
+  it("reconciles duplicate proxy messages by FIFO session order instead of matching on content", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "claude",
+        title: "Proxy session",
+        status: "active",
+        model: "sonnet",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.sendMessage("repeat me");
+      result.current.sendMessage("repeat me");
+    });
+
+    expect(result.current.messages).toHaveLength(2);
+    const firstPendingId = result.current.messages[0].id;
+    const secondPendingId = result.current.messages[1].id;
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-proxy",
+        message: {
+          id: "db-msg-1",
+          role: "user",
+          content: "repeat me",
+          timestamp: "2026-04-17T20:00:00Z",
+        },
+      });
+    });
+
+    expect(result.current.messages[0].id).toBe("db-msg-1");
+    expect(result.current.messages[1].id).toBe(secondPendingId);
+    expect(result.current.messages[1].id).not.toBe(firstPendingId);
+  });
+
   it("keeps paused terminal sessions view-only instead of enabling proxy send mode", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
@@ -1299,6 +1910,39 @@ describe("useChat", () => {
     expect(result.current.sessionInteractionMode).toBe("none");
     expect(result.current.proxyDeliveryNotice).toBe(
       "This terminal session is paused. Use Resume Session to continue it in web chat.",
+    );
+  });
+
+  it("shows a resume-only notice for non-attachable handoff terminals", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-handoff", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-handoff",
+        external_id: "handoff-ext",
+        source: "codex",
+        title: "Resume-only terminal",
+        status: "handoff_ready",
+        can_proxy_attach: false,
+        model: "gpt-5.4",
+        ref: "#2314",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    expect(result.current.sessionInteractionMode).toBe("none");
+    expect(result.current.proxyDeliveryNotice).toBe(
+      "This terminal session can only be resumed in web chat right now.",
     );
   });
 
@@ -1376,7 +2020,7 @@ describe("useChat", () => {
       expect(result.current.contextUsage.contextWindow).toBe(200000);
     });
 
-    expect(modeChanged).toHaveBeenCalledWith("accept_edits");
+    expect(modeChanged).toHaveBeenCalledWith("normal");
   });
 
   it("restores the previous chat state when continueSessionInChat fails", async () => {

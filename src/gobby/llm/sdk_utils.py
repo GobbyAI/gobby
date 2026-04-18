@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
+
+from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +65,7 @@ _STATS_RE = re.compile(
 
 def _resolve_gsqz_bin() -> str | None:
     """Resolve the gsqz binary path. Returns None if not found."""
-    gobby_bin = Path.home() / ".gobby" / "bin" / "gsqz"
-    if gobby_bin.exists():
-        return str(gobby_bin)
-    which_gsqz = shutil.which("gsqz")
-    if which_gsqz:
-        return which_gsqz
-    return None
+    return resolve_native_bin("gsqz")
 
 
 def compress_context(

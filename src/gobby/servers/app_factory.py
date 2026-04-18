@@ -6,6 +6,7 @@ middleware, route registration, and static file mounts.
 """
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -327,12 +328,15 @@ def create_app(server: "HTTPServer") -> FastAPI:
             del app.state.title_update_listener
             logger.debug("Title update listener disconnected from session manager")
 
-        if ws_server and hasattr(ws_server, "stop_voice_warmup"):
+        voice_cleanup = getattr(ws_server, "cleanup_voice", None) if ws_server else None
+        if voice_cleanup:
             try:
-                await ws_server.stop_voice_warmup()
-                logger.debug("Voice model warmup stopped")
+                cleanup_result = voice_cleanup()
+                if inspect.isawaitable(cleanup_result):
+                    await cleanup_result
+                logger.debug("Voice resources cleaned up")
             except Exception as e:
-                logger.warning(f"Failed to stop voice warmup task: {e}")
+                logger.warning(f"Failed to clean up voice resources: {e}")
 
         # Cleanup CodexAdapter and stop app-server client
         if getattr(app.state, "codex_sync_task", None):

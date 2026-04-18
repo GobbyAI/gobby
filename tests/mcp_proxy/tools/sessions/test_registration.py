@@ -78,6 +78,7 @@ class TestRegisterSession:
             git_branch=None,
             parent_session_id=None,
             agent_depth=0,
+            sandbox_enabled=None,
         )
 
     def test_idempotent_returns_existing(self) -> None:
@@ -137,6 +138,7 @@ class TestRegisterSession:
             git_branch=None,
             parent_session_id=None,
             agent_depth=0,
+            sandbox_enabled=None,
         )
 
     @patch("gobby.utils.machine_id.get_machine_id", return_value=None)
@@ -202,6 +204,7 @@ class TestRegisterSession:
             git_branch="feature/foo",
             parent_session_id="parent-uuid",
             agent_depth=2,
+            sandbox_enabled=None,
         )
 
     def test_session_manager_none_returns_error(self) -> None:

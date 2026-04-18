@@ -21,6 +21,7 @@ import {
   extractResultMetadata,
   FILE_TOOL_TYPES,
   formatToolName,
+  getToolDisplayName,
   getLanguageFromPath,
   getToolSummary,
   groupToolCalls,
@@ -362,9 +363,9 @@ function ToolResultContent({ call }: { call: ToolCall }) {
 
 const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void; canvasSurfaces?: Map<string, A2UISurfaceState>; onCanvasInteraction?: (canvasId: string, action: UserAction) => void; nested?: boolean }) {
   const isActive = call.status === 'calling' || call.status === 'pending_approval'
-  const [expanded, setExpanded] = useState(isActive)
-  const displayName = formatToolName(call.tool_name)
+  const displayName = getToolDisplayName(call)
   const toolType = resolveToolType(call)
+  const [expanded, setExpanded] = useState(isActive || toolType !== 'protocol')
   const summary = getToolSummary(call)
   const isCompact = summary !== null && (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
   const isFileHeader = FILE_TOOL_TYPES.has(toolType)
@@ -462,7 +463,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
 })
 
 function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void }) {
-  const displayName = formatToolName(call.tool_name)
+  const displayName = getToolDisplayName(call)
   const isLive = onRespondToApproval && call.status === 'pending_approval'
   const [sendError, setSendError] = useState<string | null>(null)
 
@@ -926,13 +927,13 @@ export const ToolChainGroup = memo(function ToolChainGroup({ toolCalls, onRespon
 
 export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction }: ToolCallCardProps) {
   const segments = useMemo(() => groupToolCalls(toolCalls), [toolCalls])
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
+  const [groupExpansionOverrides, setGroupExpansionOverrides] = useState<Record<string, boolean>>({})
 
-  const toggleGroup = useCallback((key: string) => {
-    setCollapsedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
+  const toggleGroup = useCallback((key: string, defaultExpanded: boolean) => {
+    setGroupExpansionOverrides(prev => {
+      const current = prev[key]
+      const next = { ...prev }
+      next[key] = current == null ? !defaultExpanded : !current
       return next
     })
   }, [])
@@ -955,12 +956,14 @@ export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond,
           )
         }
         const groupKey = `${segment.tool_calls[0].id}-${segment.toolName}`
+        const defaultExpanded = segment.displayName !== 'Protocol' || segment.hasInFlight
+        const expanded = groupExpansionOverrides[groupKey] ?? defaultExpanded
         return (
           <ToolCallGroupHeader
             key={groupKey}
             group={segment}
-            expanded={!collapsedGroups.has(groupKey)}
-            onToggle={() => toggleGroup(groupKey)}
+            expanded={expanded}
+            onToggle={() => toggleGroup(groupKey, defaultExpanded)}
             onRespond={onRespond}
             onRespondToApproval={onRespondToApproval}
             canvasSurfaces={canvasSurfaces}
