@@ -78,7 +78,7 @@ class TestSecretKeyDetection:
         assert is_secret_key_name("db.admin_password") is True
 
     def test_api_key_is_secret(self) -> None:
-        assert is_secret_key_name("voice.elevenlabs_api_key") is True
+        assert is_secret_key_name("service.provider_api_key") is True
 
     def test_normal_key_is_not_secret(self) -> None:
         assert is_secret_key_name("auth.username") is False
