@@ -1169,14 +1169,12 @@ export function useChat() {
 
   const clearSessionObservationState = useCallback(
     ({ preserveViewing = false }: { preserveViewing?: boolean } = {}) => {
-      if (
-        observedSessionIdRef.current &&
-        wsRef.current?.readyState === WebSocket.OPEN
-      ) {
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId && wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
             type: "detach_from_session",
-            session_id: observedSessionIdRef.current,
+            session_id: observedSessionId,
           }),
         );
       }
@@ -2002,6 +2000,24 @@ export function useChat() {
             });
           }
         } else if (data.type === "detach_from_session_result") {
+          const sid =
+            typeof (data as Record<string, unknown>).session_id === "string"
+              ? ((data as Record<string, unknown>).session_id as string)
+              : null;
+          if (sid) {
+            const isCurrentObserved = observedSessionIdRef.current === sid;
+            const isCurrentAttached = attachedSessionIdRef.current === sid;
+            const isCurrentViewedTerminal =
+              viewingSessionIdRef.current === sid &&
+              viewingSessionMetaRef.current?.sessionType === "terminal";
+            if (
+              !isCurrentObserved &&
+              !isCurrentAttached &&
+              !isCurrentViewedTerminal
+            ) {
+              return;
+            }
+          }
           setObservedSessionId(null);
           observedSessionMetaRef.current = null;
           setAttachedSessionId(null);
@@ -3261,19 +3277,29 @@ export function useChat() {
       }
 
       // Detach from any active WS subscription first
-      if (observedSessionIdRef.current) {
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId) {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(
             JSON.stringify({
               type: "detach_from_session",
-              session_id: observedSessionIdRef.current,
+              session_id: observedSessionId,
             }),
           );
         }
+        observedSessionIdRef.current = null;
         setObservedSessionId(null);
         observedSessionMetaRef.current = null;
+        attachedSessionIdRef.current = null;
         setAttachedSessionId(null);
+        attachedSessionMetaRef.current = null;
         setAttachedSessionMeta(null);
+        clearPendingProxyMessages(
+          pendingProxyMessagesRef.current,
+          pendingProxySessionQueuesRef.current,
+        );
+        sessionInteractionModeRef.current = "none";
+        setProxyDeliveryNotice(null);
         setSessionInteractionMode("none");
       }
 
@@ -3372,22 +3398,34 @@ export function useChat() {
   // Clear viewing state and restore previous web chat
   const clearViewingSession = useCallback(() => {
     // Detach from any active WS subscription
-    if (observedSessionIdRef.current) {
+    const observedSessionId = observedSessionIdRef.current;
+    if (observedSessionId) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
             type: "detach_from_session",
-            session_id: observedSessionIdRef.current,
+            session_id: observedSessionId,
           }),
         );
       }
+      observedSessionIdRef.current = null;
       setObservedSessionId(null);
       observedSessionMetaRef.current = null;
+      attachedSessionIdRef.current = null;
       setAttachedSessionId(null);
+      attachedSessionMetaRef.current = null;
       setAttachedSessionMeta(null);
+      clearPendingProxyMessages(
+        pendingProxyMessagesRef.current,
+        pendingProxySessionQueuesRef.current,
+      );
+      sessionInteractionModeRef.current = "none";
+      setProxyDeliveryNotice(null);
       setSessionInteractionMode("none");
     }
 
+    viewingSessionIdRef.current = null;
+    viewingSessionMetaRef.current = null;
     setViewingSessionId(null);
     setViewingSessionMeta(null);
     setMessages([]);
@@ -3460,6 +3498,29 @@ export function useChat() {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       pendingSessionInteractionModeRef.current = mode;
       setProxyDeliveryNotice(null);
+
+      const observedSessionId = observedSessionIdRef.current;
+      if (observedSessionId && observedSessionId !== sessionId) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "detach_from_session",
+            session_id: observedSessionId,
+          }),
+        );
+        observedSessionIdRef.current = null;
+        observedSessionMetaRef.current = null;
+        attachedSessionIdRef.current = null;
+        attachedSessionMetaRef.current = null;
+        clearPendingProxyMessages(
+          pendingProxyMessagesRef.current,
+          pendingProxySessionQueuesRef.current,
+        );
+        sessionInteractionModeRef.current = "none";
+        setObservedSessionId(null);
+        setAttachedSessionId(null);
+        setAttachedSessionMeta(null);
+        setSessionInteractionMode("none");
+      }
 
       // Don't reset messages if already viewing this session
       if (viewingSessionIdRef.current !== sessionId) {

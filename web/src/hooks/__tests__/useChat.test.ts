@@ -1179,6 +1179,144 @@ describe("useChat", () => {
     expect(result.current.attachedSessionId).toBe("sess-view");
   });
 
+  it("ignores stale detach acknowledgements after swapping watched terminal sessions", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-old/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-old", {
+      session: {
+        id: "sess-old",
+        seq_num: 2310,
+        source: "codex",
+        title: "Old Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-old",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/sess-new/messages?limit=100&offset=0",
+      {
+        messages: [],
+      },
+    );
+    mockFetch.mockJsonResponse("/api/sessions/sess-new", {
+      session: {
+        id: "sess-new",
+        seq_num: 2311,
+        source: "codex",
+        title: "New Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-new",
+        chat_mode: "bypass",
+        git_branch: "feature/swap",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-old");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      result.current.observeSession?.("sess-old", "observe");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-old",
+        external_id: "codex-ext-old",
+        source: "codex",
+        title: "Old Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#2310",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    const sendCountBeforeSwap = ws.send.mock.calls.length;
+
+    await act(async () => {
+      result.current.viewSession("sess-new");
+      result.current.observeSession?.("sess-new", "observe");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const detachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeSwap][0]);
+    const attachMsg = JSON.parse(ws.send.mock.calls[sendCountBeforeSwap + 1][0]);
+    expect(detachMsg).toMatchObject({
+      type: "detach_from_session",
+      session_id: "sess-old",
+    });
+    expect(attachMsg).toMatchObject({
+      type: "attach_to_session",
+      session_id: "sess-new",
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-new",
+        external_id: "codex-ext-new",
+        source: "codex",
+        title: "New Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        ref: "#2311",
+        chat_mode: "bypass",
+        git_branch: "feature/swap",
+        context_window: 200000,
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "detach_from_session_result",
+        session_id: "sess-old",
+      });
+    });
+
+    expect(result.current.viewingSessionId).toBe("sess-new");
+    expect(result.current.viewingSessionMeta?.title).toBe("New Terminal");
+    expect(result.current.sessionInteractionMode).toBe("observe");
+    expect(result.current.attachedSessionId).toBeNull();
+  });
+
   it.each([
     ["codex", "gpt-5.4"],
     ["gemini", "gemini-2.5-pro"],
